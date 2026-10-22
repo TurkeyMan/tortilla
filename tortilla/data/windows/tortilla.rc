@@ -1,0 +1,6 @@
+// Windows resources: the icon (Explorer, the taskbar and every window
+// use the first one) and the application manifest (comctl32 v6,
+// per-monitor DPI v2, UTF-8 code page).
+#include <winuser.h>
+1 ICON "tortilla.ico"
+CREATEPROCESS_MANIFEST_RESOURCE_ID RT_MANIFEST "tortilla.manifest"

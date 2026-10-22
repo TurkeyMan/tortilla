@@ -1,0 +1,3 @@
+[submodule "rapport"]
+	path = rapport
+	url = https://github.com/TurkeyMan/rapport.git

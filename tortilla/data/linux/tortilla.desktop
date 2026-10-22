@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Tortilla
+GenericName=Git Log
+Comment=Browse and change a git repository's history
+Exec=tortilla %f
+Icon=tortilla
+Terminal=false
+Categories=Development;RevisionControl;
