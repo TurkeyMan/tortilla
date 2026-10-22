@@ -6,6 +6,7 @@
 #include "util/calendar.h"
 
 #include <ctime>
+#include <numeric>
 #include <unordered_set>
 
 namespace tortilla
@@ -275,6 +276,10 @@ void log_window::save_layout()
     st.set_numbers("log.panes", splitter_->sizes());
     st.set_numbers("log.columns", commit_list_->column_widths());
     st.set_numbers("log.files.columns", file_list_->column_widths());
+    auto order = [](const std::vector<size_t>& o)
+    { return std::vector<float>(o.begin(), o.end()); };
+    st.set_numbers("log.columns.order", order(commit_list_->column_order()));
+    st.set_numbers("log.files.columns.order", order(file_list_->column_order()));
     std::string visible;
     for (size_t i = 0; i < log_model::column_count; ++i)
         visible += commit_list_->column_visible(i) ? '1' : '0';
@@ -301,6 +306,11 @@ void log_window::restore_layout()
     if (auto v = st.numbers("log.panes"); v.size() == 3) splitter_->set_sizes(v);
     if (auto v = st.numbers("log.columns"); !v.empty()) commit_list_->set_column_widths(v);
     if (auto v = st.numbers("log.files.columns"); !v.empty()) file_list_->set_column_widths(v);
+    // The lists ignore an order that doesn't fit their columns.
+    auto order = [](const std::vector<float>& v)
+    { return std::vector<size_t>(v.begin(), v.end()); };
+    commit_list_->set_column_order(order(st.numbers("log.columns.order")));
+    file_list_->set_column_order(order(st.numbers("log.files.columns.order")));
     std::string visible = st.value("log.columns.visible");
     for (size_t i = 0; i < visible.size() && i < log_model::column_count; ++i)
         commit_list_->set_column_visible(i, visible[i] == '1');
@@ -769,6 +779,9 @@ rap::menu log_window::header_menu()
                           [this]
                       {
                           auto defaults = log_model::columns();
+                          std::vector<size_t> order(defaults.size());
+                          std::iota(order.begin(), order.end(), size_t(0));
+                          commit_list_->set_column_order(order);
                           for (size_t i = 0; i < defaults.size(); ++i)
                               commit_list_->set_column_visible(i, defaults[i].visible);
                       }},
