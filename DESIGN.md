@@ -1,9 +1,7 @@
 # Tortilla — design notes
 
-(Formerly "pengit"; renamed to Tortilla on 2026-10-22.)
-
-Carried over from a discussion in the IfritView workspace (2026-10-21/22).
-Nothing is built yet. This records the decisions and reasoning so far.
+The decisions behind Tortilla and the rapport library it's built on, and
+the reasoning for them.
 
 ## Goal
 
@@ -60,12 +58,12 @@ Two parts:
 ### Widget set (initial)
 
 - Window, modal dialog
-- VBox, HBox, Form (label/field pairs), Grid, Splitter, Tabs, Group, Spacer
+- vbox, hbox, form (label/field pairs), splitter, tabs, group, spacer
 - Virtual multi-column list: selection, sort, context menu, one
   custom-painted column
 - TextView: read-only with coloured spans (diffs) or editable (commit msg),
   monospace option
-- Entry, Button, Check, Combo, Label
+- entry, button, check, combo, drop_down, label
 - Menus/context menus, message box, file/folder dialog via portal
 - Post-to-UI-thread for worker results (revwalk, git commands)
 
@@ -85,32 +83,32 @@ Two parts:
 Declarative tree in C++, no pixel positions, no external markup files.
 
 ```cpp
-auto ui = Dialog{"Rebase", {
-    VBox{
-        Form{
-            {"Branch",   Label{}.bind(branchName)},
-            {"Upstream", Combo{}.bind(upstream)},
+auto ui = dialog{"Rebase", {
+    vbox{
+        form{
+            {"Branch",   label{}.bind(branch_name)},
+            {"Upstream", combo{}.bind(upstream)},
         },
-        Splitter{Vertical,
-            List{rebaseModel}.bind(commitList).stretch(),
-            TextView{}.readOnly().monospace().bind(commitMessage),
+        splitter{vertical,
+            list{columns, &rebase_model}.bind(commit_list).stretch(),
+            text_view{}.read_only().monospace().bind(commit_message),
         }.stretch(),
-        HBox{
-            Check{"Preserve merges"}.bind(preserveMerges),
-            Spacer{},
-            Button{"Up"}.onClick(moveUp),
-            Button{"Down"}.onClick(moveDown),
+        hbox{
+            check{"Preserve merges"}.bind(preserve_merges),
+            spacer{},
+            button{"Up"}.on_click(move_up),
+            button{"Down"}.on_click(move_down),
         },
-        Buttons{Ok("Start rebase"), Cancel},
+        buttons{ok("Start rebase"), cancel},
     }
 }};
 ```
 
-- `stretch()` takes spare space; `Spacer{}` pushes siblings apart.
-- `Form` is its own node so each backend applies its label alignment rules.
+- `stretch()` takes spare space; `spacer{}` pushes siblings apart.
+- `form` is its own node so each backend applies its label alignment rules.
 - Sizes are semantic: `width(40_ch)`, `height(6_lines)`, converted with real
   font metrics and scale.
-- Dialog buttons by **role** (Ok/Cancel/Apply/Help); backend orders them
+- Dialog buttons by **role** (ok/cancel/apply/help); the backend orders them
   (QDialogButtonBox, GTK conventions).
 - `.bind(x)` fills a typed handle member; no string IDs.
 
@@ -169,11 +167,12 @@ librapport-<tk> one backend plugin      Depends: librapport (exact version), the
 rapport/core/              librapport + librapport-dev
 rapport/backends/gtk3/     librapport-gtk3   (GtkTreeView, fixed-height mode)
 rapport/backends/gtk4/     librapport-gtk4   (GtkColumnView)
-rapport/backends/qt6/      librapport-qt6    (todo)
+rapport/backends/qt6/      librapport-qt6    (QTreeView, rows painted)
+rapport/backends/win32/    librapport-win32  (ListView, Direct2D painting)
 rapport/backends/gtk-common/  shared GTK source, compiled into both GTK backends
 rapport/backends/null/     headless test backend, not packaged
 rapport/examples/          demo (rebase dialog), gallery (all widgets + graph list)
-tortilla/                  the app
+src/ tests/ tools/ data/   Tortilla itself
 ```
 
 Each backend directory builds standalone against an installed rapport
