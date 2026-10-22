@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="data/icons/hicolor/256x256/apps/tortilla.png" width="256" alt="Tortilla's mascot: a turtle with a taco for a shell">
+</p>
+
 # Tortilla
 A portable TortoiseGit inspired git client
 
