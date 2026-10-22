@@ -1,9 +1,9 @@
+# Tortilla
+A portable TortoiseGit inspired git client
+
 <p align="center">
   <img src="data/icons/hicolor/256x256/apps/tortilla.png" width="256" alt="Tortilla's mascot: a turtle with a taco for a shell">
 </p>
-
-# Tortilla
-A portable TortoiseGit inspired git client
 
 Tortilla brings TortoiseGit's dialogs (the log, rebase, diff and their
 context menus) to Windows and Linux as a fast native app. On Windows it uses
