@@ -1,4 +1,4 @@
-# tortilla
+# Tortilla
 A portable TortoiseGit inspired git client
 
 Tortilla brings TortoiseGit's dialogs (the log, rebase, diff and their
