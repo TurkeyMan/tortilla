@@ -6,10 +6,11 @@ A fast, native git client for Windows and Linux.
 </p>
 
 Tortilla puts your repository's history, branches and changes in front of
-you, and keeps up with you as you work through them. It's a real desktop
-app: Win32 controls on Windows, GTK or Qt on Linux to match your desktop,
-and it opens in an instant. Repositories are read directly with libgit2;
-`git` itself runs only for the commands that change things.
+you, and keeps up with you as you work through them. It seamlessly adapts to
+your platform's own toolkit, for a truly native look and feel everywhere.
+It's lightning fast and responsive: it opens in an instant, and scrolls
+through years of history without breaking a sweat. It's not a web page
+pretending to be an application!
 
 If you've used TortoiseGit, you'll feel at home: Tortilla follows its
 dialogs and menus, and now runs on Linux too. It's built on
