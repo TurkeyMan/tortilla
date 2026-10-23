@@ -7,7 +7,23 @@
 # cache before anything else can fail.
 param([string]$Version = '', [switch]$ConfigureOnly)
 $ErrorActionPreference = 'Stop'
-function Check($what) { if ($LASTEXITCODE) { throw "$what failed ($LASTEXITCODE)" } }
+# Runs a command, showing its output; if it fails, its last lines also go
+# up as a GitHub error annotation, readable without the full log.
+function Run($what, [scriptblock]$command)
+{
+    # A program's stderr (git's warnings, say) isn't an error of ours.
+    $ErrorActionPreference = 'Continue'
+    $output = & $command 2>&1 | ForEach-Object { "$_" } | Tee-Object -Variable lines
+    $output | Out-Host
+    if ($LASTEXITCODE)
+    {
+        if ($env:GITHUB_ACTIONS) {
+            $tail = ($lines | Select-Object -Last 40) -join '%0A'
+            Write-Host "::error title=$what failed ($LASTEXITCODE)::$tail"
+        }
+        throw "$what failed ($LASTEXITCODE)"
+    }
+}
 
 if (-not $Version -and $env:GITHUB_REF_TYPE -eq 'tag') { $Version = $env:GITHUB_REF_NAME -replace '^v', '' }
 $appVersion = if ($Version) { $Version -replace '-.*$', '' } else {
@@ -15,14 +31,16 @@ $appVersion = if ($Version) { $Version -replace '-.*$', '' } else {
 }
 $suffix = if ($Version) { "-$Version" } else { '' }
 
-cmake -S . -B build-win -G 'Visual Studio 17 2022' -A x64 `
-    "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
-    -DVCPKG_TARGET_TRIPLET=x64-windows-static
-Check 'configure'
+Run 'configure' {
+    cmake -S . -B build-win -G 'Visual Studio 17 2022' -A x64 `
+        "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
+        -DVCPKG_TARGET_TRIPLET=x64-windows-static
+}
 if ($ConfigureOnly) { return }
-cmake --build build-win --config Release --parallel `
-    --target tortilla tortilla-shell tortilla-tests tortilla-rebase-tests
-Check 'build'
+Run 'build' {
+    cmake --build build-win --config Release --parallel `
+        --target tortilla tortilla-shell tortilla-tests tortilla-rebase-tests
+}
 $bin = 'build-win/bin/Release'
 
 # The tests make their own repositories: git needs an identity.
@@ -30,8 +48,7 @@ git config --global user.name 'Tortilla CI'
 git config --global user.email 'ci@tortilla.invalid'
 foreach ($t in 'tortilla-tests', 'tortilla-rebase-tests') {
     $scratch = New-Item -ItemType Directory (Join-Path $env:RUNNER_TEMP "$t-$(Get-Random)")
-    & "$bin/$t.exe" $scratch.FullName
-    Check $t
+    Run $t { & "$bin/$t.exe" $scratch.FullName }
 }
 
 $stage = 'dist/Tortilla'
@@ -41,8 +58,7 @@ Copy-Item "$bin/tortilla.exe", "$bin/tortilla-shell.dll", data/windows/tortilla.
 Copy-Item README.md, LICENSE $stage
 # Self-contained: nothing but Windows' own DLLs, for the exe and for the
 # extension Explorer loads.
-python rapport/ci/check-imports.py "$stage/bin/tortilla.exe" "$stage/bin/tortilla-shell.dll"
-Check 'the import check'
+Run 'the import check' { python rapport/ci/check-imports.py "$stage/bin/tortilla.exe" "$stage/bin/tortilla-shell.dll" }
 
 Compress-Archive -Path $stage -DestinationPath "dist/tortilla$suffix-windows-x86_64.zip"
 $makensis = Get-Command makensis -ErrorAction SilentlyContinue
@@ -51,8 +67,9 @@ if (-not $makensis) {
     if (-not (Test-Path $default)) { choco install nsis -y --no-progress | Out-Null }
     $makensis = $default
 }
-& $makensis /V2 "/DVERSION=$appVersion" "/DSTAGE=$((Resolve-Path $stage).Path)" `
-    "/DOUT=$((Resolve-Path dist).Path)\tortilla$suffix-windows-x86_64-setup.exe" data/windows/tortilla.nsi
-Check 'makensis'
+Run 'makensis' {
+    & $makensis /V2 "/DVERSION=$appVersion" "/DSTAGE=$((Resolve-Path $stage).Path)" `
+        "/DOUT=$((Resolve-Path dist).Path)\tortilla$suffix-windows-x86_64-setup.exe" data/windows/tortilla.nsi
+}
 Remove-Item -Recurse -Force $stage
 Get-ChildItem dist
