@@ -24,7 +24,7 @@ SetCompressor /SOLID lzma
 
 !define MUI_ICON "${__FILEDIR__}/tortilla.ico"
 !define MUI_UNICON "${__FILEDIR__}/tortilla.ico"
-!insertmacro MUI_PAGE_LICENSE "${STAGE}/LICENSE"
+!insertmacro MUI_PAGE_LICENSE "${STAGE}\LICENSE"
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
 !insertmacro MUI_PAGE_FINISH
@@ -67,7 +67,7 @@ Section "Tortilla"
   !insertmacro MoveAsideShellExtension
   RMDir /r /REBOOTOK "$INSTDIR\bin"
   SetOutPath "$INSTDIR"
-  File /r "${STAGE}/*"
+  File /r "${STAGE}\*"
   WriteUninstaller "$INSTDIR\uninstall.exe"
   CreateShortcut "$SMPROGRAMS\Tortilla.lnk" "$INSTDIR\bin\tortilla.exe"
 
