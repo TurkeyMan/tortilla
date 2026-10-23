@@ -69,7 +69,7 @@ if (-not $makensis) {
 }
 Run 'makensis' {
     & $makensis /V2 "/DVERSION=$appVersion" "/DSTAGE=$((Resolve-Path $stage).Path)" `
-        "/DOUT=$((Resolve-Path dist).Path)\tortilla$suffix-windows-x86_64-setup.exe" data/windows/tortilla.nsi
+        "/DOUT=$((Resolve-Path dist).Path)\tortilla$suffix-windows-x86_64-setup.exe" (Resolve-Path data/windows/tortilla.nsi).Path
 }
 Remove-Item -Recurse -Force $stage
 Get-ChildItem dist
