@@ -12,6 +12,8 @@ It's lightning fast and responsive: it opens in an instant, and scrolls
 through years of history without breaking a sweat. It's not a web page
 pretending to be an application!
 
+![The log window: the commit graph with branch and tag labels, the commit's details and its changed files](docs/screenshot.png)
+
 If you've used TortoiseGit, you'll feel at home: Tortilla follows its
 dialogs and menus, and now runs on Linux too. It's built on
 [rapport](https://github.com/TurkeyMan/rapport).
