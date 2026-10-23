@@ -27,6 +27,23 @@ Line numbers refer to that commit.
 | **GIT** | `src/Git/Git.cpp` |
 | **MAN-LOG** | `doc/source/en/TortoiseGit/tgit_dug/dug_log.xml`, published as https://tortoisegit.org/docs/tortoisegit/tgit-dug-showlog.html |
 | **MAN-REB** | `doc/source/en/TortoiseGit/tgit_dug/dug_rebase.xml`, published as https://tortoisegit.org/docs/tortoisegit/tgit-dug-rebase.html |
+| **CTX** | `src/TortoiseShell/ContextMenu.cpp` (the Explorer context menu; `CM` is already taken by ColumnManager) |
+| **MI** | `src/TortoiseShell/MenuInfo.cpp` (the menu table) |
+| **MI.h** | `src/TortoiseShell/MenuInfo.h` |
+| **GLB** | `src/TortoiseShell/Globals.h` (`TGitContextMenuEntries` bits and `ITEMIS_*` flags) |
+| **SC** | `src/TortoiseShell/ShellCache.cpp` (registry settings read by the shell extension) |
+| **SC.h** | `src/TortoiseShell/ShellCache.h` (default menu masks) |
+| **SE** | `src/TortoiseShell/ShellExt.cpp` |
+| **SE.h** | `src/TortoiseShell/ShellExt.h` |
+| **EC** | `src/TortoiseShell/ExplorerCommand.cpp` (Windows 11 sub-commands) |
+| **IO** | `src/TortoiseShell/IconOverlay.cpp` |
+| **RS** | `src/TortoiseShell/resourceshell.rc` (English strings and icon files of the shell extension; the same strings also appear in POT) |
+| **TGP** | `src/Git/TGitPath.cpp` |
+| **GAD** | `src/Git/GitAdminDir.cpp` |
+| **SLF** | `src/TortoiseProc/Settings/SetLookAndFeelPage.cpp` (the three context-menu settings pages) |
+| **SF** | `src/TortoiseGitSetup/StructureFragment.wxi` (installer registry entries) |
+| **APPX** | `src/TortoiseGitSetup/SparsePackage/AppxManifest.xml` (Windows 11 sparse package) |
+| **MAN-ADM** | `doc/source/en/TortoiseGit/tgit_app_admins.xml` |
 
 Labels are quoted exactly as they appear in the resources. `&` marks the mnemonic (the underlined access key).
 
@@ -952,3 +969,456 @@ Before the rebase starts, selecting exactly one row fills tab 0 with that commit
     - The exact dark-theme colour mapping (`CTheme::GetThemeColor`, not examined).
     - The layout of the Find ("Search log messages") dialog (not examined).
     - The Statistics dialog (out of scope).
+
+---
+
+## 4. Explorer context menu (shell extension)
+
+The shell extension is one COM class, `CShellExt`, that implements both the classic menu (`IContextMenu3`) and the Windows 11 top-level menu (`IExplorerCommand`). [SE.h:71-79] Both are built by the same function, `CShellExt::QueryContextMenu`, walking the same static table `menuInfo[]` in MI. [CTX:830-1116; MI:27-258]
+
+### 4.1 Registration
+
+- **Classic menu.** The installer registers the handler (`GuidUncontrolled`) under `ContextMenuHandlers\TortoiseGit` for `Drive`, `Directory`, `Directory\Background`, `Folder`, `LibraryLocation`, `LibraryFolder\background`, `lnkfile`, `InternetShortcut` and `*`. [SF:50-58, 93-95]
+- **Right-drag menu.** A separate class (`GuidDropHandler`) is registered under `DragDropHandlers\TortoiseGit` for `Directory` and `Folder`. [SF:53, 59]
+- **Windows 11 menu.** A sparse package declares `windows.fileExplorerContextMenus` with verb `TortoiseGit` (CLSID `A4FEC38E-C9F5-489A-ADAB-28DA10F523A3`, served by `TortoiseGitStub.dll`) for item types `Directory`, `Directory\Background` and `*`. There is no `Drive` entry. [APPX:38-57] The package is registered by TortoiseGitProc (`RegisterWin11ContextMenuCommand`, only on Windows 11 and after OOBE has completed) and by the "Register context menu" button on the settings page. [`src/TortoiseProc/Commands/RegisterWin11ContextMenu.cpp`; RC:2302]
+
+### 4.2 The menu table
+
+Each row of `menuInfo[]` is `{command, menuID, iconID, menuTextID, menuDescID, first, second, third, fourth}`. [MI.h:124-139]
+
+- `menuID` is one bit of the 64-bit `TGitContextMenuEntries` mask (4.6). Several rows can share a bit.
+- `first`..`fourth` are four `{yes, no}` pairs of `ITEMIS_*` flags. A pair matches when every `yes` bit is set **and** every `no` bit is clear. A pair `{0,0}` never matches; a pair with only `no` bits matches when all of them are clear. The row is shown when **any** of the four pairs matches. [MI.h:131-134; CTX:2322-2340]
+- `menuDescID` is the help text Explorer shows for the hovered item (`GetCommandString`, `GCS_HELPTEXT`); entries without one use "no description for this command is available". [CTX:1658-1697; RS:258]
+
+**Command lines.** Every command runs `<dir of the shell DLL>\TortoiseGitProc.exe` with ` /command:<name> ...`, and ` /hwnd:<parent HWND printed with %p>` is appended at the end. The one exception is "Review/apply single patch", which runs TortoiseGitMerge.exe with no `/hwnd`. [CTX:1217, 1560-1562, 1647-1654] The process is started through the Explorer window's `IShellDispatch2::ShellExecute` (after `AllowSetForegroundWindow(ASFW_ANY)`) when a site is available; otherwise it is created directly. [CTX:2264-2320] The path arguments come in three forms:
+
+- `/path:<sel>`: `/path:"<first selected item>"`, or `/path:"<folder>"` when nothing is selected (`AddPathCommand` with files allowed). [CTX:1127-1136]
+- `/path:<folder>`: always `/path:"<folder>"` (`AddPathCommand` with files not allowed).
+- `/pathfile:<tmp>`: `/pathfile:"<temp file>" /deletepathfile`. The temp file is created in the TortoiseGit temp directory with prefix `git`. It holds the selected paths as raw UTF-16 with no BOM, each followed by `L"\n"`, or the folder alone when nothing is selected. The *folders only* variant skips selected items that are not directories. [CTX:1138-1146, 698-739]
+
+Here *folder* (`folder_`) is the background folder, or the selected item itself when exactly one directory is selected. [CTX:355-358, 454-461] In the Windows 11 variant, *folder* is the first selected path. [EC:194-197]
+
+**Placement column.** **Top** means the entry is in the default top-level mask; **Shift** means it is in the default extended mask (hidden unless Shift is held); a blank means the TortoiseGit submenu. "Win11" marks membership of the default Windows 11 mask. [SC.h:27-50]
+
+**Flag abbreviations** in the conditions: ONE = ONLYONE, TWO, EXT = EXTENDED, GIT = INGIT, IVF = INVERSIONEDFOLDER, FOLD = FOLDER, FIG = FOLDERINGIT, ROOT = WCROOT, SUB = SUBMODULE, SUBC = SUBMODULECONTAINER, BARE = BAREREPO, MERGE = MERGEACTIVE, BISECT, STASH, SVN = GITSVN, CONFL = CONFLICTED, NORMAL, ADDED, DELETED, IGN = IGNORED, PATCH = PATCHFILE, INACC = INACCESSIBLE. `A&B !C` means "A and B set, C clear"; `|` separates the four alternatives. 4.3 explains how each flag is computed.
+
+Rows in table order. `—` rows are the table's separators (see 4.5 for when they are actually emitted). Label strings are the exact resource strings; `&` marks the mnemonic.
+
+| # | Label [RS line] | Icon (file) | `TortoiseGitProc` arguments | Conditions [MI line] | Placement |
+|---|---|---|---|---|---|
+| 1 | "Inaccessible..." [448] | `IDI_CLEANUP` (menucleanup.ico) | `inaccessible /path:<folder>` | INACC !GIT !FIG !BARE [29-30] | always top, also on Win11, ignores the extended mask [CTX:964, 1007-1011] |
+| 2 | "Clone..." [421] | `IDI_CLONE` (menucheckout.ico) | `clone /path:<folder>` | FOLD !GIT !FIG !BARE !INACC \| FOLD&IGN \| FOLD&EXT [32-33] | Top, Win11 |
+| 3 | "&Pull..." [419] | `IDI_PULL` (pull1.ico) | `pull /pathfile:<tmp>` (folders only) | FIG&ONE !BISECT !MERGE \| ROOT !BISECT !MERGE [35-36] | Win11 |
+| 4 | "F&etch..." [281] | `IDI_UPDATE` (menuupdate.ico) | `fetch /pathfile:<tmp>` (folders only) | FIG&ONE \| BARE \| ROOT [38-39] | |
+| 5 | "Pus&h..." [420] | `IDI_PUSH` (Push.ico) | `push /pathfile:<tmp>` (folders only) | FIG&ONE \| BARE \| ROOT [41-42] | Win11 |
+| 6 | "Sync..." [297] | `IDI_RELOCATE` (menurelocate.ico) | `sync /path:<folder> /seq:<n>`, where n is a per-process counter starting at 0 [CTX:50, 1220-1228] | FIG&ONE !BISECT !MERGE [44-45] | Top, Win11 |
+| — | | | | [48] | |
+| 7 | "&Commit..." (label rewritten, see 4.4) [208] | `IDI_COMMIT` (menucommit.ico) | `commit /pathfile:<tmp>` | GIT \| FIG [50-51] | Top, Win11 |
+| 8 | "SVN DCommit..." [295] | `IDI_COMMIT` | `svndcommit /path:<sel>` | GIT&SVN !BISECT !MERGE \| FIG&SVN !BISECT !MERGE [53-54] | |
+| 9 | "SVN Rebase" [319] | `IDI_REBASE` (menurebase.ico) | `svnrebase /path:<folder>` | FIG&SVN&ONE !BISECT !MERGE [56-57] | |
+| 10 | "SVN Fetch" [368] | `IDI_UPDATE` | `svnfetch /path:<folder>` | FIG&SVN&ONE [59-60] | |
+| 11 | "Import SVN Ignore ..." [300] | `IDI_IGNORE` (menuignore.ico) | `svnignore /path:<folder>` | FIG&SVN&ONE [62-63] | Shift |
+| — | | | | [65] | |
+| 12 | "&Diff" [390] | `IDI_DIFF` (menucompare.ico) | `diff /path:"<p1>"`. With exactly 2 items: `/path:"<p1>" /path2:"<p2>"`; otherwise the folder. Shift held at click adds `/alternative`. [CTX:1332-1349] | GIT&ONE \| TWO !FOLD [67-68] | Win11 |
+| 13 | "Diff later", or `Diff with "%s"` when a path is saved [381, 383] | `IDI_DIFF` | see 4.4 | ONE !FOLD [70-71] | |
+| 14 | "&Diff with previous version" [412] | `IDI_DIFF` | `prevdiff /path:<sel>` [+ `/alternative` if Shift] | GIT&ONE !ADDED [73-74] | |
+| — | | | | [76] | |
+| 15 | "Show &log" [394] | `IDI_LOG` (menulog.ico) | `log /path:<sel>` | GIT&ONE !ADDED \| FOLD&FIG&ONE !ADDED \| FIG&ONE !ADDED \| BARE [78-79] | Win11 |
+| 16 | "Show log of this folder" [409] | `IDI_LOG` | `log /path:<sel> /submodule` | FIG&ONE&ROOT&SUB [81-82] | |
+| 17 | "Show &RefLog" [287] | `IDI_LOG` | `reflog /path:<folder>` | FIG&ONE \| BARE [84-85] | |
+| 18 | "Browse References" [317] | `IDI_REPOBROWSE` (menurepobrowse.ico) | `refbrowse /path:<folder>` | FIG&ONE \| BARE [87-88] | |
+| 19 | "Daemon" [414] | `IDI_DAEMON` (menudaemon.ico) | `daemon /path:<sel>` | same as Show log [90-91] | |
+| 20 | "Revision &graph" [226] | `IDI_REVISIONGRAPH` (menurevisiongraph.ico) | `revisiongraph /path:<sel>` | same as Show log [93-94] | |
+| 21 | "&Repo-browser" [377] | `IDI_REPOBROWSE` | `repobrowser /path:<folder>` | FIG&ONE \| BARE&ONE [96-97] | Win11 |
+| 22 | "Check for modi&fications" [354] | `IDI_SHOWCHANGED` (menushowchanged.ico) | `repostatus /path:<sel>`, or `repostatus /pathfile:<tmp>` when more than one item is selected [CTX:1440-1445] | GIT \| FOLD&FIG [99-100] | |
+| 23 | "Rebase..." [282] | `IDI_REBASE` | `rebase /path:<folder>` | FIG&ONE !BISECT !MERGE [102-103] | |
+| 24 | "Stash changes" [283] | `IDI_SHELVE` (menushelve.ico) | `stashsave /path:<sel>` | GIT&ONE !MERGE [105-106] | Win11 |
+| 25 | "Stash Apply" [284] | `IDI_UNSHELVE` (menuunshelve.ico) | `stashapply /path:<folder>` | FIG&ONE&STASH [107-108] | Shift |
+| 26 | "Stash Pop" [299] | `IDI_UNSHELVE` | `stashpop /path:<folder>` | FIG&ONE&STASH [109-110] | |
+| 27 | "Stash List" [289] | `IDI_LOG` | `reflog /path:<folder> /ref:refs/stash` | FIG&ONE&STASH [111-112] | |
+| — | | | | [114] | |
+| 28 | "Bisect start" [239] | `IDI_BISECT` (menubisect.ico) | `bisect /path:<folder> /start` | FIG&ONE !BISECT !MERGE [116-117] | |
+| 29 | "Bisect good" [240] | `IDI_THUMB_UP` (thumb_up.ico) | `bisect /path:<folder> /good` | FIG&ONE&BISECT [119-120] | |
+| 30 | "Bisect bad" [327] | `IDI_THUMB_DOWN` (thumb_down.ico) | `bisect /path:<folder> /bad` | FIG&ONE&BISECT [122-123] | |
+| 31 | "Bisect skip" [336] | `IDI_BISECT` | `bisect /path:<folder> /skip` | FIG&ONE&BISECT [125-126] | |
+| 32 | "Bisect reset" [335] | `IDI_BISECT_RESET` (menubisectreset.ico) | `bisect /path:<folder> /reset` | FIG&ONE&BISECT [128-129] | |
+| — | | | | [131] | |
+| 33 | "&Edit conflicts" [396] | `IDI_CONFLICT` (menuconflict.ico) | `conflicteditor /path:<sel>` [+ `/alternative` if Shift] | GIT&CONFL !FOLD [133-134] | Win11 |
+| 34 | "Res&olve..." [213] | `IDI_RESOLVE` (menuresolve.ico) | `resolve /pathfile:<tmp>` | GIT&CONFL \| GIT&FOLD \| FIG [136-137] | |
+| 35 | "Abort &Merge" [374] | `IDI_MERGEABORT` (menumergeabort.ico) | `merge /path:<sel> /abort` | GIT&MERGE \| FIG&MERGE [139-140] | Win11 (shares the Merge bit) |
+| 36 | "Re&name..." [330] | `IDI_RENAME` (menurename.ico) | `rename /path:<sel>` [+ `/submodule` if SUB] | GIT&ONE&IVF !ROOT \| ROOT&SUB [142-143] | |
+| 37 | "&Delete" [332] | `IDI_DELETE` (menudelete.ico) | `remove /pathfile:<tmp>` [+ `/submodule` if SUB] | GIT&IVF !ADDED !ROOT \| FIG&ROOT&SUB [145-146] | |
+| 38 | "&Delete (keep local)" [427] | `IDI_DELETE` | `remove /pathfile:<tmp> /keep` | GIT&IVF !ADDED !ROOT [148-149] | |
+| 39 | "Re&vert..." [211] | `IDI_REVERT` (menurevert.ico) | `revert /pathfile:<tmp>` | GIT !NORMAL \| FIG [151-152] | Win11 |
+| 40 | "&Clean up..." [212] | `IDI_CLEANUP` | `cleanup /pathfile:<tmp>` | FIG&FOLD [154-155] | |
+| — | | | | [157] | |
+| 41 | "LFS" ► [342] | `IDI_LFS` (menulfs.ico) | submenu, see 4.4 | IVF&GIT [159-160] | |
+| — | | | | [162] | |
+| 42 | "S&witch/Checkout..." [231] | `IDI_SWITCH` (menuswitch.ico) | `switch /path:<folder>` | FIG&ONE [167-168] | Win11 |
+| 43 | "&Merge..." [232] | `IDI_MERGE` (menumerge.ico) | `merge /path:<folder>` | FIG&ONE !BISECT !MERGE [170-171] | Win11 |
+| 44 | "Create &Branch..." [233] | `IDI_COPY` (menucopy.ico) | `branch /path:<folder>` | FIG&ONE [173-174] | |
+| 45 | "Create &Tag..." [278] | `IDI_TAG` (Tag.ico) | `tag /path:<folder>` | FIG&ONE [175-176] | |
+| 46 | "E&xport..." [235] | `IDI_EXPORT` (menuexport.ico) | `export /path:<folder>` | FIG&ONE \| BARE [178-179] | |
+| — | | | | [181] | |
+| 47 | "Create repositor&y here..." [209] | `IDI_CREATEREPOS` (menucreaterepos.ico) | `repocreate /path:<folder>` | FOLD !GIT !FIG !BARE !INACC \| FOLD&IGN \| FOLD&EXT !GIT [183-184] | Top |
+| 48 | "&Add..." [210] | `IDI_ADD` (menuadd.ico) | `add /pathfile:<tmp>` | IVF !GIT \| GIT&FOLD \| IGN \| DELETED !FOLD !ONE [186-187] | |
+| 49 | "&Blame" [365] | `IDI_BLAME` (TortoiseGitBlame.ico) | `blame /path:<sel>` | GIT&ONE !FOLD !ADDED [189-190] | Win11 |
+| 50 | "Add to &ignore list" ► [356] | `IDI_IGNORE` | submenu, see 4.4 | IVF !IGN !GIT !ROOT [192-193] | |
+| 51 | "Delete and add to &ignore list" ► [220] | `IDI_IGNORE` | submenu, see 4.4 | IVF&GIT !IGN !ROOT [195-196] | (shares the Ignore bit with 50) |
+| — | | | | [202] | |
+| 52 | "Worktrees" [224] | `IDI_COPY` | `worktreelist /path:<folder>` | FIG&ONE \| BARE [204-205] | |
+| 53 | "Submodule Add..." [285] | `IDI_ADD` | `subadd /path:<folder>` | FIG&ONE [207-208] | |
+| 54 | "Submodule &Update..." [334] | `IDI_UPDATE` | `subupdate /pathfile:<tmp>`, plus `/bkpath:"<folder>"` when the folder flags contain SUBC, or the item flags contain SUBC&ROOT&ONE [CTX:1238-1246] | FIG&SUBC [210-211] | |
+| 55 | "Submodule Sync" [286] | `IDI_MENUSYNC` (menusync.ico) | `subsync /pathfile:<tmp>` [+ `/bkpath` as above] | FIG&SUBC [213-214] | Shift |
+| — | | | | [216] | |
+| 56 | "Create Patch Serial..." [279] | `IDI_CREATEPATCH` (menudiff.ico) | `formatpatch /path:<folder>` | FIG&ONE [218-219] | |
+| 57 | "Apply Patch Serial..." [280] | `IDI_PATCH` (menupatch.ico) | `importpatch /pathfile:<tmp>` | PATCH \| FIG&ONE [222-223] | |
+| 58 | "Review/apply single &patch..." [369] | `IDI_PATCH` | **TortoiseGitMerge.exe**, see 4.4 | PATCH&ONE \| EXT&ONE !FOLD [226-227] | |
+| 59 | "Send Mail..." [315] | `IDI_MENUSENDMAIL` (menusendmail.ico) | `sendmail /pathfile:<tmp>` | PATCH \| EXT !FOLD [229-230] | |
+| — | | | | [237] | |
+| 60 | "&Settings" [236] | `IDI_SETTINGS` (menusettings.ico) | `settings /path:<sel>` | FOLD \| !FOLD, i.e. always [239-240] | Win11 |
+| 61 | "&Help" [400] | `IDI_HELP` (menuhelp.ico) | `help` (no path) | always [241-242] | |
+| 62 | "A&bout" [237] | `IDI_ABOUT` (menuabout.ico) | `about` (no path) | always [243-244] | |
+
+Icon files are from RS:29-87 and RS:106. The table's last five rows are the submenu pseudo-entries (`SubMenu*`, label "&TortoiseGit" [RS:238]), used only for their icon and text. [MI:246-257] Copy, Paste and Unignore rows are commented out. [MI:164-165, 198-200, 232-235]
+
+### 4.3 How the `ITEMIS_*` flags are computed
+
+The flags are computed in `CShellExt::Initialize` into two words: `itemStates` (the selection) and `itemStatesFolder` (the background or drop-target folder). For the normal menu, `itemStatesFolder` is OR-ed into `itemStates`. [CTX:52-503, 443-444] The bit values are in GLB:137-162.
+
+**Selected items** [CTX:213-350]:
+
+1. Each selected path is skipped if it is excluded by `NoContextPaths` (4.6) or lies inside a `.git` directory. Every remaining path is added to the selection list. Any item ending in `.diff` or `.patch` (case-insensitive) sets PATCH. [CTX:224-235]
+2. Status is fetched for one item only: the first item for which the fetch succeeds (`statfetched`). Later items contribute only PATCH and their path. [CTX:236-237, 310]
+3. **Status source.** When `CacheType` is `exe` (the default) and the path passes `IsPathAllowed` (the overlay include/exclude lists and drive-type masks), the status is asked from the TGitCache process (`GetStatusFromRemoteCache`). With the cache, an item outside any working tree is skipped without contributing flags. Otherwise `GitStatus::GetStatus` computes the status in-process. If that fails but the path is inside a working tree, the status is taken as `normal`. [CTX:250-309; SC:28, 352-419] With `SimpleContext` on, selected directories get no status call at all; a directory counts as `normal` when it is inside a working tree. [CTX:241-245]
+4. Flags from the status call: FOLD when the item is a directory; FIG when it is a directory whose status is not unversioned, ignored or none; CONFL when conflicted. [CTX:266-273, 286-294]
+5. `GetAdminDirMask()` (**filesystem only**) is OR-ed in [TGP:685-731]:
+   - nothing if the path is not inside a working tree (no valid `.git` found walking up, see `GitAdminDir::HasAdminDir` [GAD:70-137]);
+   - otherwise GIT and IVF;
+   - for a directory, FIG; ROOT when the directory is the working-tree top; SUB when it is ROOT and its relative path matches a `submodule.*.path` in the parent repository's `.gitmodules` [TGP:733-754];
+   - STASH when `<gitdir>/refs/stash` exists or `packed-refs` contains `refs/stash` [TGP:756-823];
+   - SVN when `<gitdir>/svn/.metadata` exists;
+   - BISECT when `BISECT_START` exists, and MERGE when `MERGE_HEAD` exists, both in the (worktree-specific) admin dir;
+   - SUBC when `<worktree top>\.gitmodules` exists.
+
+   FIG is therefore set for **every directory inside a working tree**, including unversioned ones. The source says so in a TODO, and nothing later clears FIG. [CTX:192-194]
+6. **Status-derived adjustments**: GIT is cleared when the status is unversioned, ignored or none; IGN, NORMAL, CONFL, ADDED and DELETED are set from the matching status. [CTX:320-331]
+7. After the loop:
+   - IVF is set when the first item's **parent** directory is inside a working tree (`HasGITAdminDir(path, FALSE)`). [CTX:333-335]
+   - If the first item is itself a bare repository (it contains `HEAD`, `config`, `objects\`, `refs\` and a directory `refs\heads`), `itemStates` is **replaced** by BARE alone. [CTX:337-338; GAD:355-383]
+   - PATCHINCLIPBOARD is set when the clipboard holds format `TGIT_UNIFIEDDIFF`, and PATHINCLIPBOARD when it holds `CF_HDROP`. [CTX:342-349]
+
+**Background folder** (`pIDFolder`) [CTX:355-450]:
+
+- If the folder is excluded by `NoContextPaths`, it is dropped (`folder_` cleared).
+- Otherwise its status is fetched the same way, unless it is the path already fetched. `itemStatesFolder` gets `GetAdminDirMask()`, NORMAL, CONFL, ADDED, DELETED, IGN and always FOLD. A bare repository replaces `itemStatesFolder` with BARE.
+- INACC is set in `itemStates` when neither BARE nor IVF is set and either `<folder>\.git` exists, or bare detection found `refs\heads` that is not a directory (reftable format). [CTX:419-424]
+- If no items are selected, ONE is set. [CTX:441-442]
+- Quirk: on unversioned, ignored or none status, line 408 clears GIT in `itemStates`, not in `itemStatesFolder`. [CTX:407-408]
+
+**Count flags and the single-directory case** [CTX:452-500]:
+
+- TWO is set when exactly two paths remain.
+- With exactly one path, ONE is set. If that path is a directory, it also becomes *folder*, and a second status call is made **always in-process** (`GitStatus`, never the cache) unless it is the path already fetched. That call adds `GetAdminDirMask()`, clears GIT on unversioned, ignored or none, and sets IGN, FOLD, ADDED and DELETED. INACC is computed as above. [CTX:459-497]
+
+**Shift.** EXT is set when the shell passes `CMF_EXTENDEDVERBS`. [CTX:881-882] The extended-menu settings page describes this as "only be visible if the shift key is pressed while opening the context menu". [RC:1765] HASDIFFLATER is set when a diff-later path is saved; no table row tests it. [CTX:884-886]
+
+**Summary of what needs git status.** These come from the filesystem only:
+
+- GIT (initially), IVF, FIG, ROOT, SUB, STASH, SVN, BISECT, MERGE and SUBC (`GetAdminDirMask`);
+- BARE and INACC;
+- ONE, TWO, PATCH, EXT and the clipboard flags.
+
+These need the status: clearing GIT for unversioned or ignored items, IGN, NORMAL, CONFL, ADDED and DELETED; FOLD and FIG also come from the status branch, and the single-directory path adds FOLD without a status.
+
+**Windows limit.** For multi-selections, Windows passes at most 16 items to `Initialize` before `QueryContextMenu`, so the menu is built from at most the first 16 items. [CTX:2112-2115]
+
+### 4.4 Entries with special text or behaviour
+
+**Commit label** [CTX:526-588]:
+
+1. The path is *folder*, or else the first selected item. If that path is inside a submodule (`GetAdminDirMask` has SUB), the text becomes "&Commit submodule..." [RS:223].
+2. If `.git/HEAD` reads `ref: refs/heads/<name>`, the trailing dots are removed and ` -> "<name>"...` is appended. `&` in the branch name is doubled (`EscapeAccellerators`, `src/Utils/StringUtils.cpp:116-120`). Names longer than 64 characters are cut to 64 and given "..." before the quote.
+3. Results:
+   - top-level, on branch `main`: `Git &Commit -> "main"...`;
+   - in the submenu: `&Commit -> "main"...`;
+   - submodule: `&Commit submodule -> "main"...`.
+4. On a detached HEAD, `GetCurrentBranchFromFile` returns non-zero, so the plain label is kept. The 40-hex-digit shortening branch in CTX:548-560 is therefore unreachable. [GIT:921-977; `Git.h:431` default `fallback = false`]
+
+**Top-level prefix.** Entries placed at top level get the prefix `"Git "`. Their `&` mnemonics are removed when `ShellMenuAccelerators` is 0 (default 1). Submenu entries keep their `&`. [CTX:511-524]
+
+**Diff later** [CTX:590-603, 1350-1375]:
+
+- The saved path lives in `HKCU\Software\TortoiseGit\DiffLater`. [SE:37]
+- When a path is saved, the label becomes `Diff with "<path>"`, with the path compacted by `PathCompactPathEx` into a 40-character buffer (`cchMax` 39). This replaces the whole text, so a top-level "Diff later" loses its "Git " prefix.
+- On click:
+  - Ctrl held: clears the saved path and runs nothing.
+  - One item selected and nothing saved: saves the item's path and runs nothing.
+  - One item selected and a path saved: runs `diff /path:"<item>" /path2:<saved, escaped>` [+ `/alternative` if Shift], then clears the saved path.
+  - Any other selection: does nothing.
+
+**Review/apply single patch** (TortoiseGitMerge.exe) [CTX:1494-1562]:
+
+- If the clipboard holds a `TGIT_UNIFIEDDIFF` patch and the selection is not a patch file, the clipboard patch is written to a temp file and used.
+- With a patch: ` /diff:"<patch>"`, then `" /patchpath:"<folder>` if the folder flags have FIG, then ` /wc` if IVF.
+- Otherwise: ` /patchpath:"<first item or folder>"`.
+
+**LFS submenu** [CTX:1926-1977]:
+
+- Added only when the repository has a `<gitdir>\lfs` directory (`HasLFS` [TGP:897-906]) and at least one child matches.
+- Children, all running TortoiseGitProc:
+
+  | Label | Icon | Command | Condition |
+  |---|---|---|---|
+  | "Show locked files" [RS:344] | `IDI_REPOBROWSE` | `lfslocks /pathfile` | FIG&ONE |
+  | "Lock" [RS:346] | `IDI_LFSLOCK` | `lfslock /pathfile` | GIT&IVF !FOLD |
+  | "Unlock" [RS:348] | `IDI_LFSUNLOCK` | `lfsunlock /pathfile` | GIT&IVF !FOLD |
+
+  [CTX:1928-1932, 1628-1636]
+- The children are not affected by any mask. The "LFS" item always carries its icon, even when icons are disabled. [CTX:1960-1962]
+
+**Ignore submenu** [CTX:1979-2262]:
+
+- The submenu label is "Add to &ignore list" for unversioned items and "Delete and add to &ignore list" for versioned (GIT) items. Its icon is `IDI_IGNORE`; the children have no icons.
+- Children:
+
+  | Selection | Name item | Mask item (only when the item is not a folder and its name contains `.`) |
+  |---|---|---|
+  | One unversioned item | the file name → `ignore /pathfile` | `*<.ext from last dot>` → `ignore /pathfile /onlymask` |
+  | One versioned item | the file name → `ignore /pathfile /delete` | `*<.ext>` → `ignore /pathfile /delete /onlymask` |
+  | Several unversioned items | "&Ignore %d items by name" [RS:380] | "Ignore %d items by &extension" [RS:418] |
+  | Several versioned items | "Delete and &ignore %d items by name" [RS:309] | "Delete and ignore %d items by &extension" [RS:218-219] |
+
+- With several items, the mask item is always present, and both items carry the same `/delete` and `/onlymask` arguments as the single-item case. At 16 or more items, the "...multiple items..." variants replace the count. [RS:443-447]
+- The unignore branch depends on `ignoredprops`, which is never filled, so it never runs. Rows 50 and 51 also exclude IGN. [SE.h:99; MI:198]
+
+**Inaccessible** opens TortoiseGitProc's `inaccessible` command. It reports the libgit2 error and, for dubious-ownership errors or a `.git` file, offers to add the path to `safe.directory`. [`src/TortoiseProc/Commands/InaccessibleCommand.cpp:25-80`]
+
+### 4.5 Structure of the classic menu
+
+**Early exits.** No menu is added when [CTX:830-921]:
+
+- `CMF_DEFAULTONLY` is set, or the flags are not `CMF_NORMAL`, `CMF_EXPLORE` or `CMF_VERBSONLY`;
+- nothing is selected and there is no folder;
+- the folder is one of the known special folders: Recycle Bin, CD burning, Favorites, Start Menu (common and user), Network, Connections, Control Panel, Cookies, Fonts, History, Internet, Internet Cache, NetHood, Printers, PrintHood, Recent, SendTo [CTX:1889-1924];
+- any path starts with `::{` (a namespace item);
+- `HideMenusForUnversionedItems` is on, Shift is not held, and none of GIT, IVF, FIG, BARE or INACC is set;
+- the folder is inside `.git`;
+- for a shortcut (`CMF_VERBSONLY`) with one item, `GitAdminDir::HasAdminDir(<the .lnk path>)` is false;
+- the menu already contains an item whose `dwItemData` is the TortoiseGit marker string (to avoid a duplicate when several registrations fire).
+
+**Build order** [CTX:938-1116]:
+
+1. A separator is inserted at the shell's insert position.
+2. The table is walked in order. For each non-separator row:
+   - Skip if the row's bit is in the **extended mask** and EXT is not set (row 1 is exempt).
+   - Skip if every bit of its `menuID` is in the **disable mask**.
+   - Skip if no condition pair matches.
+   - If the row's bit is in the **top-level mask**, insert it directly into the Explorer menu at the next top-level position, with the "Git " prefix. Otherwise append it to the TortoiseGit submenu.
+3. After the walk, the submenu item is inserted below all top-level entries, followed by a separator. So the final layout is: separator, top-level entries in table order, "&TortoiseGit" ►, separator.
+4. If the submenu is empty, it is not inserted. Only the leading separator, the top-level entries and a closing separator remain. [CTX:1036-1050]
+
+**Submenu separators.** A separator row in the table only arms a flag. A separator is emitted just before the next submenu entry, and only if a submenu entry was added since the last emitted separator. So separators appear only between two groups that both contributed submenu entries; there is never a leading or trailing one. Top-level entries do not count toward this. [CTX:947-958, 975-985, 1025-1030] The separator test runs before the LFS and Ignore rows are expanded. A separator is therefore emitted when their table condition matches, even if the submenu then comes out empty (no `<gitdir>\lfs`, no selected files). The next group then emits none of its own, so only one separator results. These two rows set "entry added" but not "submenu non-empty", so a submenu holding only them would not be attached. [CTX:961-1001]
+
+**Submenu item** [CTX:1055-1107]:
+
+- Label "&TortoiseGit" [RS:238], with `&` stripped when `ShellMenuAccelerators` is 0.
+- Icon, chosen by the selection:
+
+  | Selection | Icon |
+  |---|---|
+  | A folder (background or one selected directory) | `IDI_MENUFOLDER` (tsvnmenufolder.ico); also carries the duplicate-detection marker |
+  | One file | `IDI_MENUFILE` (tsvnmenufile.ico) |
+  | One shortcut | `IDI_MENULINK` (tsvnmenulink.ico) |
+  | Several items | `IDI_MENUMULTIPLE` (tsvnmenumultiple.ico) |
+  | Otherwise | `IDI_APP` (Tortoise.ico) |
+
+**Icon rendering.** Icons are drawn as 32-bit PARGB bitmaps (`MIIM_BITMAP`), and the menu gets style `MNS_CHECKORBMP`. `ShowContextMenuIcons` (default TRUE) turns them off. [CTX:605-617, 943, 1118-1125]
+
+**What changes per situation** (default settings; derived from 4.2 and 4.3):
+
+- **Right-click on a folder inside a working tree** (one item), and **on the background of such a folder**: both produce the same flags (FOLD, FIG, GIT, IVF, ONE, plus ROOT at the top), so they get the same menu. Top level: "Git Sync..." and `Git &Commit -> "<branch>"...`. For a clean repository root with no stash, submodules, LFS, SVN, bisect or merge in progress, the submenu holds these groups:
+
+  | Group | Entries |
+  |---|---|
+  | 1 | Pull, Fetch, Push |
+  | 2 | Diff, Diff with previous version |
+  | 3 | Show log, Show RefLog, Browse References, Daemon, Revision graph, Repo-browser, Check for modifications, Rebase..., Stash changes |
+  | 4 | Bisect start |
+  | 5 | Resolve..., Revert..., Clean up... |
+  | 6 | Switch/Checkout..., Merge..., Create Branch..., Create Tag..., Export... |
+  | 7 | Add... |
+  | 8 | Worktrees, Submodule Add... |
+  | 9 | Create Patch Serial..., Apply Patch Serial... |
+  | 10 | Settings, Help, About |
+
+  On a subfolder (not ROOT), Rename..., Delete, Delete (keep local) and the ignore submenu become possible. Pull, Fetch and Push still appear through FIG&ONE.
+- **Folder or background outside any repository**: the top level holds "Git Clone..." and "Git Create repositor&y here...". The submenu holds only Settings, Help and About.
+- **File outside any repository**: no top-level entries. The submenu holds Diff later, Settings, Help and About. A `.diff` or `.patch` file adds Apply Patch Serial..., Review/apply single patch... and Send Mail....
+- **File inside a repository** (tracked): the top level holds the Commit entry. Diff, Diff later, Diff with previous version, Show log, Daemon, Revision graph, Check for modifications, Stash changes, Rename, Delete, Delete (keep local), Revert (unless NORMAL), Blame and the ignore submenu follow from their conditions. Unversioned files lose GIT, so they get no Commit and no other GIT-only entries; they get Add... and "Add to ignore list" instead. Pull, Fetch, Push, Switch and the other FIG&ONE entries do not appear, because a file never has FIG.
+- **Drive root**: there is no drive-specific code in CTX, so a drive is handled as a selected directory. The drive-type masks only choose between cache and in-process status (4.6).
+- **Shift held** (EXT):
+  - Import SVN Ignore, Stash Apply and Submodule Sync are no longer suppressed.
+  - Clone appears for any folder, even inside a repository.
+  - Create repository here appears for any folder that is not GIT.
+  - Review/apply single patch appears for any single non-folder item.
+  - Send Mail appears for any non-folder selection.
+  - `HideMenusForUnversionedItems` is bypassed.
+  - Shift **at click time** adds `/alternative` to Diff, Diff with previous version, Diff later and Edit conflicts. [CTX:1347-1348, 1368-1369, 1378-1379, 1422-1423]
+- **Multi-selection**: ONE is cleared, so every ONE-conditioned row drops out. What remains is driven by the first item's flags: Commit, Check for modifications, Resolve, Revert, Delete, Delete (keep local), Add, the multi-item ignore labels, Settings, Help and About. Pull, Fetch and Push remain via ROOT when the first item is a repository root. Diff appears when exactly two non-folder items are selected (TWO !FOLD) and diffs them against each other. The submenu icon is `IDI_MENUMULTIPLE`.
+
+**Keyboard and verbs.** In the submenu, `WM_MENUCHAR` is handled manually. One match executes the item; several matches cycle the selection. [CTX:1775-1843] Each inserted item also registers a canonical verb, namely its label with the first `&` removed (prefixed "Git " at top level), so `InvokeCommand` can be called by verb. [CTX:620-636, 1173-1181]
+
+### 4.6 Settings that affect the menu
+
+All values are under `HKCU\Software\TortoiseGit` unless stated. Changes are picked up through a registry-change notification on that key. [SC:26-171]
+
+| Value | Default | Effect |
+|---|---|---|
+| `ContextMenuEntries` / `ContextMenuEntrieshigh` (DWORD low and high halves of the 64-bit mask) | `0x00000406` / `0x00000020` = Sync \| Commit \| CreateRepo \| Clone [SC.h:43-46; SC:48-50] | Bits set = entry on the **top level**, otherwise in the submenu. UI: "Context Menu" page, "Show the selected items on the first level of the context menu", with Restore Default. [RC:701-716; SLF:136-288] |
+| `ContextMenuExtEntriesLow` / `ContextMenuExtEntriesHigh` | `0x40000000` / `0x00012000` = SVNIgnore \| StashApply \| SubmoduleSync [SC.h:48-50; SC:52-54] | Bits set = entry hidden unless Shift is held. UI: "Context Menu 2" page. [RC:1759-1769; SLF:298-376] |
+| `ContextMenu11Entries` (QWORD) | `0x2000103801871096` = Sync \| Commit \| Switch \| Revert \| Conflicteditor \| Diff \| Pull \| Push \| RepoBrowser \| Log \| Blame \| Clone \| Merge \| StashSave \| Settings [SC.h:27-41; SC:46] | Bits set = entry shown in the Windows 11 top menu (4.7). UI: "Windows 11 Context Menu" page. [RC:2292-2303; SLF:418-489] |
+| `ContextMenuEntriesMaskLow` / `High` in **HKLM and HKCU** (OR-ed together) | 0 / 0 [SC:56-59, 203-214] | Bits set = entry never shown (an administrator policy with no UI). The HKLM values are re-read at most every 10 s. [MAN-ADM:142-160] |
+| `HideMenusForUnversionedItems` | FALSE [SC:41] | Suppresses the whole menu outside working trees unless Shift is held (4.5). UI: "Hide Menus for unversioned paths". [RC:711] |
+| `NoContextPaths` (string, newline-separated) | "" [SC:69] | Paths excluded from the menu, case-insensitive [SC:311-350]: an entry ending in `*` is a prefix match; an entry ending in `\` matches that directory and everything below; any other entry is an exact match. Excluded items are dropped from the selection, and an excluded background folder is ignored. UI: "Do not show the context menu for the following paths:". [RC:712-713] |
+| `ShellMenuAccelerators` | TRUE [SC:37] | When 0, `&` is stripped from top-level labels and the submenu name. |
+| `ShowContextMenuIcons` | TRUE [CTX:943] | Icons on entries and on the submenu item. |
+| `SimpleContext` | FALSE [SC:38] | Skips the status call for selected directories (4.3). |
+| `EnableDragContextMenu` | TRUE [CTX:88, 743] | Enables the right-drag menu (4.8). UI: "Enable drag context menu". [RC:714] |
+| `CacheType` | 1 (`exe`), or 2 (`dll`) in a remote-desktop session [SC:28; SC.h:72-78] | `exe` makes the menu ask TGitCache for status; any other value uses in-process `GitStatus`. |
+| `OverlayIncludeList` / `OverlayExcludeList`, `DriveMaskFixed` (TRUE), `DriveMaskRemote`, `DriveMaskRemovable`, `DriveMaskCDROM`, `DriveMaskRAM`, `DriveMaskFloppy`, `DriveMaskUnknown` (all FALSE) | [SC:30-36, 690-695] | Feed `IsPathAllowed`. For the menu they only decide cache versus in-process status; they **do not** hide entries. Recycle-bin paths are always disallowed. [SC:717-735] |
+| `DiffLater` | "" [SE:37] | The saved Diff-later path (4.4). |
+
+**Bit-to-entry mapping** of the 64-bit mask [GLB:22-83]:
+
+| Bit (hex) | Entries |
+|---|---|
+| `0x2` | Sync |
+| `0x4` | Commit |
+| `0x8` | Add |
+| `0x10` | Revert |
+| `0x20` | Cleanup |
+| `0x40` | Resolve |
+| `0x80` | Switch |
+| `0x100` | Sendmail |
+| `0x200` | Export |
+| `0x400` | CreateRepo |
+| `0x800` | Branch |
+| `0x1000` | Merge (Merge... and Abort Merge) |
+| `0x2000` | Remove |
+| `0x4000` | Rename |
+| `0x8000` | SubmoduleUpdate |
+| `0x10000` | Diff |
+| `0x20000` | Log |
+| `0x40000` | Conflicteditor |
+| `0x80000` | RefBrowser |
+| `0x100000` | ShowChanged |
+| `0x200000` | Ignore (both ignore submenus) |
+| `0x400000` | RefLog |
+| `0x800000` | Blame |
+| `0x1000000` | RepoBrowser |
+| `0x2000000` | ApplyPatch |
+| `0x4000000` | RemoveKeep |
+| `0x8000000` | SVNRebase |
+| `0x10000000` | SVNDCommit |
+| `0x40000000` | SVNIgnore |
+| `0x100000000` | LogSubmodule |
+| `0x200000000` | PrevDiff |
+| `0x400000000` | ClipPaste (unused) |
+| `0x800000000` | Pull |
+| `0x1000000000` | Push |
+| `0x2000000000` | Clone |
+| `0x4000000000` | Tag |
+| `0x8000000000` | FormatPatch |
+| `0x10000000000` | ImportPatch |
+| `0x20000000000` | DiffLater |
+| `0x40000000000` | Fetch |
+| `0x80000000000` | Rebase |
+| `0x100000000000` | StashSave |
+| `0x200000000000` | StashApply |
+| `0x400000000000` | StashList |
+| `0x800000000000` | SubmoduleAdd |
+| `0x1000000000000` | SubmoduleSync |
+| `0x2000000000000` | StashPop |
+| `0x4000000000000` | DiffTwo (no table row) |
+| `0x8000000000000` | Bisect (all five bisect rows) |
+| `0x10000000000000` | Inaccessible |
+| `0x80000000000000` | SVNFetch |
+| `0x100000000000000` | RevisionGraph |
+| `0x200000000000000` | Daemon |
+| `0x400000000000000` | Worktree |
+| `0x1000000000000000` | LFS |
+| `0x2000000000000000` | Settings |
+| `0x4000000000000000` | Help |
+| `0x8000000000000000` | About |
+
+Bit `0x1` is unused.
+
+**Settings-page lists.** The settings pages list one row per distinct bit, in table order. They skip separators, the submenu pseudo-rows, Abort Merge and Inaccessible, and take the label with mnemonics removed. [SLF:30-59]
+
+### 4.7 Windows 11 top-level menu (`IExplorerCommand`)
+
+**Root command** [CTX:2342-2525]:
+
+- Title "TortoiseGit" (literal, not localized); icon `TortoiseGitProc.exe,-<IDI_APP>`; flags `ECF_HASSUBCOMMANDS`; `Invoke` is not implemented.
+- `GetState` hides it in these cases:
+  - Inside the **classic** menu: the site exposes `IOleWindow` and the window class is not `NamespaceTreeControl`. In the navigation tree, the item is found by hit-testing the message position.
+  - When `fOkToBeSlow` is false, it returns `E_PENDING` instead.
+  - When no item can be resolved. For the folder background, the item is the folder shown in the Explorer view.
+  - When `HideMenusForUnversionedItems` is on, Shift (`GetKeyState`) is not held, and none of GIT, IVF or FIG is set. Unlike the classic check, BARE and INACC do not count here.
+  - When the built command list is empty.
+- The selection is fed through the same `Initialize` (as a data object, so a background folder becomes a selected directory). Then `QueryContextMenu(nullptr, ..., CMF_EXTENDEDVERBS | CMF_NORMAL)` collects sub-commands instead of menu items.
+
+**Differences from the classic menu**, all following from that call [CTX:881-882, 962-1032; EC:124-222]:
+
+- **Different mask.** Only rows whose bit is in `ContextMenu11Entries` are added, plus Inaccessible (always). The result is one flat list; there is no nested TortoiseGit submenu below the root.
+- **EXT is always set**, because the call passes `CMF_EXTENDEDVERBS`. Extended-only entries and EXT-conditioned entries behave as if Shift were held. With the default mask this means "Clone..." appears for every folder, including folders inside a repository.
+- **Titles.** There is no "Git " prefix, and `&` is not stripped (the title string keeps the mnemonic). Exception: a submodule Commit whose bit is also in the classic top-level mask gets the title `Git &Commit submodule -> "<branch>"...`, because that branch prefixes "Git " whenever `istop` is set. [CTX:536-544]
+- **Separators.** These are empty-title commands (`ECF_ISSEPARATOR`). The classic separator logic is reused, including its test of the classic top-level mask. A separator can therefore be emitted before a group whose entries are then not added because they are not in the Windows 11 mask. [CTX:975-985]
+- **Icons** are `TortoiseGitProc.exe,-<iconId>`, or none when `ShowContextMenuIcons` is off.
+- **LFS.** The LFS children (Show locked files, Lock, Unlock) are added **flat**, without the "LFS" parent, whenever the repository has LFS and the LFS row is not masked. This happens regardless of the Windows 11 mask, because `InsertLFSSubmenu` passes a null menu to `InsertGitMenu`, which then always appends a command. [CTX:997-1001, 1942-1953, 616-619]
+- **Ignore.** Ignore entries are added only if the Ignore bit is in the Windows 11 mask. They are flattened after a separator, with each title prefixed by the submenu label and ": ". [CTX:989-996, 2236-2249]
+- **Invoke** passes `GetForegroundWindow()` as hwnd and uses the first selected path as *folder*. [EC:173-199]
+- **Diff later quirk:** `Invoke` reads and writes `HKCU\Software\TortoiseGitMerge\DiffLater`, while the classic menu uses `HKCU\Software\TortoiseGit\DiffLater`. The two menus do not share the saved path. [EC:193; SE:37]
+
+**Default Windows 11 list.** For a clean repository-root folder, the list is, in table order:
+
+1. Clone...
+2. &Pull...
+3. Pus&h...
+4. Sync...
+5. `&Commit -> "<branch>"...`
+6. *separator*
+7. &Diff
+8. *separator*
+9. Show &log
+10. &Repo-browser
+11. Stash changes
+12. *separator* (emitted at the Bisect start row, which is then not added)
+13. Re&vert...
+14. *separator* (emitted at the LFS row)
+15. S&witch/Checkout...
+16. &Merge...
+17. *separator* (emitted at the Add row)
+18. &Settings
+
+There is no separator between Sync and Commit. Commit is in the classic top-level mask, so it neither emits nor counts toward separators. This sequence was traced by hand through CTX:945-1033 with the default masks. Blame and Edit conflicts appear only for files that meet their conditions.
+
+### 4.8 Right-drag menu and overlays (brief)
+
+- **Right-drag** (drop handler, `QueryDropContext` [CTX:741-828]). With `EnableDragContextMenu` on, these flat entries are added when their source and target conditions hold, followed by a separator:
+  - "Git Move versioned item(s) here" (`dropmove`)
+  - "Git Move and rename versioned item here" (`dropmove /rename`)
+  - "Git Copy and add files to this WC" (`dropcopyadd`)
+  - for patch files, "Review/apply single &patch..." and "Apply Patch Serial..." (`importpatch`)
+  - "Git New worktree..." (`dropnewworktree`)
+
+  [RS:392-393, 426, 433] Drop commands pass `/pathfile` plus `/droptarget:"<folder>"`. [CTX:1148-1159]
+- **Overlays and status cache.** Overlays are separate `IShellIconOverlayIdentifier` classes, one per state; `IsMemberOf` is the entry point. [IO:114-230; GLB:121-135] Overlays honour `IsPathAllowed` and use the same `CacheType` switch: `exe` queries TGitCache over its pipe, `dll`/`dllFull` use the in-process `GitFolderStatus` cache. The context menu shares only the `exe` cache path. Elsewhere it computes status in-process, and it never reads the overlay result. [CTX:250-309; IO:144-224]
+
+### 4.9 Not established from source
+
+- Whether Explorer passes a non-null `pIDFolder` for item selections (as opposed to background clicks). The code handles both, but *folder* for a plain file selection depends on it.
+- How Explorer renders `&` in Windows 11 `IExplorerCommand` titles, and whether it collapses adjacent or dangling separators in either menu.
+- Whether the Windows 11 `Directory` item type covers drive roots (the manifest has no `Drive` entry).
+- Icon artwork (only the `.ico` file names are known).

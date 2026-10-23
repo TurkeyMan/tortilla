@@ -5,6 +5,7 @@
 
 #include "git/command.h"
 #include "git/diff_tool.h"
+#include "ui/compare.h"
 #include "ui/diff_window.h"
 #include "ui/menu_items.h"
 #include "ui/menu_text.h"
@@ -157,80 +158,12 @@ void log_window::confirm_then_run(const std::string& question, const std::string
                 });
 }
 
-// Comparing revisions, with the tool the Settings dialog's Diff Viewer page
-// chose: tortilla's unified diff window, git difftool with diff.tool, or a
-// command of the user's. `revisions` are as for git diff: one means against
-// the working tree.
+// Comparing revisions with the tool the Diff Viewer page chose (compare.h).
 void log_window::difftool(std::vector<std::string> revisions, std::vector<std::string> paths)
 {
-    auto name = [](const std::string& rev)
-    {
-        // Full hashes as TortoiseGit shows them: 8 characters.
-        const bool hex = rev.size() >= 40 && rev.find_first_not_of("0123456789abcdef") >= 40;
-        return hex ? rev.substr(0, 8) + rev.substr(40) : rev;
-    };
-    // One file: its name too, as TortoiseGit titles a file comparison.
-    const std::string file = paths.size() == 1 ? paths.front() + " : " : "";
-    const std::string base = file + name(revisions.front());
-    const std::string mine = file + (revisions.size() > 1 ? name(revisions[1]) : "working tree");
-    // Renames are only found with both paths given (rename detection is
-    // on by default in git diff).
-    std::vector<std::string> limit;
-    if (!paths.empty())
-    {
-        limit.push_back("--");
-        limit.insert(limit.end(), paths.begin(), paths.end());
-    }
-    const std::string dir = repo_.workdir();
-    auto offer_settings = [this](const std::string& text)
-    {
-        ui_.message(window_.get(),
-                    {.icon = rap::message_spec::icon::question,
-                     .title = "Tortilla",
-                     .text = text,
-                     .detail = "Choose one on the Diff Viewer page of the Settings.",
-                     .buttons = {rap::dialog_role::ok, rap::dialog_role::cancel}},
-                    [this](rap::dialog_role r)
-                    {
-                        if (r == rap::dialog_role::ok) open_settings(settings_page::diff_viewer);
-                    });
-    };
-
-    arg_list args;
-    switch (saved_diff_mode(dir))
-    {
-    case diff_mode::builtin:
-    {
-        arg_list diff{"diff"};
-        diff.insert(diff.end(), revisions.begin(), revisions.end());
-        diff.insert(diff.end(), limit.begin(), limit.end());
-        show_unified_diff(ui_, base + ".." + mine, dir, diff);
-        return;
-    }
-    case diff_mode::git:
-        if (git_diff_tool(dir).empty())
-            return offer_settings("git has no diff tool configured (diff.tool).");
-        args = {"difftool", "--no-prompt"};
-        if (paths.size() != 1) args.insert(args.begin() + 1, "--dir-diff");
-        args.insert(args.end(), revisions.begin(), revisions.end());
-        args.insert(args.end(), limit.begin(), limit.end());
-        break;
-    case diff_mode::custom:
-        if (diff_command().empty()) return offer_settings("No diff program is set.");
-        args = custom_difftool_args(diff_command(), revisions, base, mine, paths);
-        break;
-    }
-    auto output = std::make_shared<std::string>();
-    difftool_ = git_process::start(
-        ui_, dir, args, [output](const std::string& chunk) { *output += chunk; },
-        [this, output](int code)
-        {
-            if (code != 0)
-                ui_.message(window_.get(), {.icon = rap::message_spec::icon::error,
-                                            .title = "Tortilla",
-                                            .text = "The diff tool failed.",
-                                            .detail = *output});
-        });
+    difftool_ =
+        compare_revisions(ui_, window_.get(), repo_.workdir(), std::move(revisions),
+                          std::move(paths), [this] { open_settings(settings_page::diff_viewer); });
 }
 
 menu log_window::context_menu(std::optional<size_t> clicked)

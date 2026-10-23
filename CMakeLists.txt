@@ -5,12 +5,22 @@
 #   tortilla-qt   -> tortilla-core + librapport-qt6  -> librapport
 #   tortilla-gtk3 -> tortilla-core + librapport-gtk3 -> librapport
 cmake_minimum_required(VERSION 3.25)
-project(tortilla LANGUAGES CXX)
+project(tortilla VERSION 0.1 LANGUAGES CXX)
 
 # Executables and backend plugins land side by side so the loader finds
 # them next to the executable without installing.
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+
+# Windows builds are self-contained: rapport and its Win32 backend linked
+# in, and with MSVC the static C runtime, so tortilla.exe needs no DLLs of
+# ours (tortilla-shell.dll is separate only because Explorer loads it).
+if(WIN32 AND NOT DEFINED RAPPORT_STATIC)
+    set(RAPPORT_STATIC ON CACHE BOOL "Link rapport and its backends into tortilla")
+endif()
+if(MSVC)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
 
 add_subdirectory(rapport)
 
@@ -57,6 +67,7 @@ add_executable(tortilla
     src/log/log_actions.cpp
     src/log/log_file_actions.cpp
     src/rebase/rebase_window.cpp
+    src/ui/compare.cpp
     src/ui/progress_dialog.cpp
     src/ui/diff_window.cpp
     src/ui/settings_dialog.cpp)
@@ -65,7 +76,37 @@ if(WIN32)
     enable_language(RC)
     target_sources(tortilla PRIVATE data/windows/tortilla.rc)
     set_target_properties(tortilla PROPERTIES WIN32_EXECUTABLE ON)  # no console window
+    if(MSVC)
+        # main(), not WinMain; and tortilla.rc carries the manifest.
+        target_link_options(tortilla PRIVATE /ENTRY:mainCRTStartup /MANIFEST:NO)
+    endif()
 endif()
+
+# A static rapport registers the backends linked in, from a generated source
+# (a registration inside a static library would be dropped by the linker).
+if(RAPPORT_STATIC)
+    set(builtins "#include <rapport/rapport.h>\n")
+    foreach(backend win32 qt6 gtk4 gtk3)
+        if(TARGET rapport::backend_${backend})
+            string(APPEND builtins "RAPPORT_BUILTIN_BACKEND(${backend});\n")
+            target_link_libraries(tortilla PRIVATE rapport::backend_${backend})
+        endif()
+    endforeach()
+    file(GENERATE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/builtin_backends.cpp CONTENT "${builtins}")
+    target_sources(tortilla PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/builtin_backends.cpp)
+endif()
+
+# The file manager's context menu: TortoiseGit's Explorer menu, launching
+# tortilla [spec 4]. Built beside tortilla, which registers it
+# (tortilla --register-shell).
+rapport_add_shell_extension(tortilla-shell
+    NAME "Tortilla" ID org.tortilla.Tortilla
+    WINDOWS_CLSID {D73E7C0C-F88B-4DD5-AC56-9AABAB52E4EB}
+    SOURCES src/shell/shell_provider.cpp)
+add_custom_command(TARGET tortilla-shell-probe POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_CURRENT_SOURCE_DIR}/data/windows/tortilla.ico
+            $<TARGET_FILE_DIR:tortilla-shell-probe>/tortilla.ico)
+target_link_libraries(tortilla PRIVATE rapport::shell)
 
 if(UNIX AND NOT APPLE)
     include(GNUInstallDirs)
@@ -88,3 +129,13 @@ target_link_libraries(tortilla-icon-preview PRIVATE tortilla_git rapport::rappor
 
 add_executable(tortilla-rebase-tests tests/rebase_test.cpp)
 target_link_libraries(tortilla-rebase-tests PRIVATE tortilla_git rapport::rapport)
+
+# The tests run on the headless null backend: linked in, in a static build.
+if(RAPPORT_STATIC AND TARGET rapport::backend_null)
+    file(GENERATE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/null_backend.cpp
+         CONTENT "#include <rapport/rapport.h>\nRAPPORT_BUILTIN_BACKEND(null);\n")
+    foreach(test tortilla-tests tortilla-rebase-tests)
+        target_sources(${test} PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/null_backend.cpp)
+        target_link_libraries(${test} PRIVATE rapport::backend_null)
+    endforeach()
+endif()

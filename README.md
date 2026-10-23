@@ -30,18 +30,30 @@ It's early days. What works now:
   (WinMerge, Beyond Compare, Meld, KDiff3, ...), set in Settings.
 - Branches, tags, stash, reset, merge and switching, with the right
   questions asked when the working tree has changes.
+- **Explorer**: TortoiseGit's context menu on files and folders, opening
+  the log, diff, rebase and settings from where you are. The rest of its
+  entries are there, waiting for their dialogs.
+
+## Installing
+
+On Windows, run the installer from the
+[releases](https://github.com/TurkeyMan/tortilla/releases). It adds Tortilla
+to Explorer's context menu for every user. Tortilla runs git itself, so
+[Git for Windows](https://git-scm.com) needs to be installed too.
 
 ## Running
 
 ```sh
 tortilla [log] [path]           # the log for the repository holding path
 tortilla rebase [path] [upstream]
-tortilla diff [path] [rev] [rev2]
+tortilla diff [path] [rev] [rev2]  # no rev: the working tree against HEAD
 tortilla settings [path]
 ```
 
 `--all` starts the log with all branches; `--ui=gtk3`, `--ui=qt6` and so on
 pick the toolkit (`--which-ui` lists what was detected).
+`--register-shell` adds the context menu for just you, without installing;
+`--unregister-shell` removes it.
 
 ## Building
 

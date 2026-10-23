@@ -1,21 +1,44 @@
 // Tortilla: a TortoiseGit-style git GUI.
 //   tortilla [log] [--all] [path]   log window for the repository containing path
 //   tortilla rebase [path] [upstream]   rebase dialog
-//   tortilla diff [path] [rev] [rev2]   a commit (default HEAD), or rev..rev2, as a unified diff
+//   tortilla diff [path]              the working tree's changes under path, against HEAD
+//   tortilla diff [path] rev [rev2]   a commit, or rev..rev2, as a unified diff
 //   tortilla settings [path] [diff]     the Settings dialog (at Diff Viewer)
 //   tortilla --which-ui       show the detected desktop and backend order
+//   tortilla --register-shell / --unregister-shell [--all-users]
+//                             add or remove the file manager's context menu,
+//                             for this user or (elevated, as the installer
+//                             does) every user
+#include "git/repo.h"
 #include "log/log_window.h"
 #include "rebase/rebase_window.h"
+#include "ui/compare.h"
 #include "ui/diff_window.h"
 #include "ui/settings_dialog.h"
 
 #include <rapport/rapport.h>
+#include <rapport/shell.h>
+#include <rapport/sys.h>
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 
 int main(int argc, char** argv)
 {
+#ifdef _WIN32
+    // A GUI program has no console; started from one, write to it, so
+    // --which-ui and --register-shell can be read.
+    if (AttachConsole(ATTACH_PARENT_PROCESS))
+    {
+        std::freopen("CONOUT$", "w", stdout);
+        std::freopen("CONOUT$", "w", stderr);
+    }
+#endif
     rap::load_options opts;
     std::string command = "log";
     bool all_branches = false;
@@ -34,6 +57,28 @@ int main(int argc, char** argv)
             for (auto& b : d.preference) std::printf(" %s", b.c_str());
             std::printf("\n");
             return 0;
+        }
+        else if (std::strcmp(argv[i], "--register-shell") == 0 ||
+                 std::strcmp(argv[i], "--unregister-shell") == 0)
+        {
+            // tortilla-shell sits beside tortilla; on Windows it registers
+            // itself per user. Elsewhere packages install it.
+            const bool add = argv[i][2] == 'r';
+            bool everyone = false;
+            for (int j = 1; j < argc; ++j)
+                everyone = everyone || std::strcmp(argv[j], "--all-users") == 0;
+            const auto scope = everyone ? rap::shell::scope::machine : rap::shell::scope::user;
+#ifdef _WIN32
+            const auto module = rap::sys::executable_path().parent_path() / "tortilla-shell.dll";
+#else
+            const auto module = rap::sys::executable_path().parent_path() / "tortilla-shell";
+#endif
+            const bool ok =
+                add ? rap::shell::install(module, scope) : rap::shell::uninstall(module, scope);
+            std::fprintf(stderr, "tortilla: %s%s the context menu\n", ok ? "" : "couldn't ",
+                         add ? (ok ? "registered" : "register")
+                             : (ok ? "unregistered" : "unregister"));
+            return ok ? 0 : 1;
         }
         else if (args.empty() && command == "log" &&
                  (std::strcmp(argv[i], "log") == 0 || std::strcmp(argv[i], "rebase") == 0 ||
@@ -61,10 +106,43 @@ int main(int argc, char** argv)
         return (*ui)->run();
     }
 
+    if (command == "diff" && args.size() < 2)
+    {
+        // The working tree against HEAD, under path, with the chosen diff
+        // tool: Explorer's Diff.
+        auto repo = tortilla::repo::open(path);
+        if (!repo)
+        {
+            std::fprintf(stderr, "tortilla: %s\n", repo.error().c_str());
+            return 1;
+        }
+        const std::filesystem::path root = rap::sys::path_from_utf8(repo->workdir());
+        std::error_code ec;
+        const std::filesystem::path where = std::filesystem::relative(
+            std::filesystem::absolute(rap::sys::path_from_utf8(path)), root, ec);
+        std::vector<std::string> paths;
+        if (!ec && !where.empty() && where != ".")
+        {
+            std::string rel = rap::sys::path_to_utf8(where);
+            std::ranges::replace(rel, '\\', '/');
+            paths.push_back(rel);
+        }
+        auto quit = [&] { (*ui)->quit(); };
+        auto tool = tortilla::compare_revisions(
+            **ui, nullptr, repo->workdir(), {"HEAD"}, paths,
+            [&]
+            {
+                tortilla::show_settings(**ui, nullptr, repo->workdir(),
+                                        tortilla::settings_page::diff_viewer, {}, quit);
+            },
+            quit);
+        return (*ui)->run();
+    }
+
     if (command == "diff")
     {
         // One revision: that commit; two: git diff between them.
-        const std::string rev = args.size() > 1 ? args[1] : "HEAD";
+        const std::string rev = args[1];
         std::vector<std::string> git_args{"show", "--format=fuller", rev};
         std::string title = rev;
         if (args.size() > 2)

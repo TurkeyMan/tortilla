@@ -277,7 +277,11 @@ void log_window::save_layout()
     st.set_numbers("log.columns", commit_list_->column_widths());
     st.set_numbers("log.files.columns", file_list_->column_widths());
     auto order = [](const std::vector<size_t>& o)
-    { return std::vector<float>(o.begin(), o.end()); };
+    {
+        std::vector<float> v;
+        for (size_t i : o) v.push_back(float(i));
+        return v;
+    };
     st.set_numbers("log.columns.order", order(commit_list_->column_order()));
     st.set_numbers("log.files.columns.order", order(file_list_->column_order()));
     std::string visible;
@@ -308,7 +312,11 @@ void log_window::restore_layout()
     if (auto v = st.numbers("log.files.columns"); !v.empty()) file_list_->set_column_widths(v);
     // The lists ignore an order that doesn't fit their columns.
     auto order = [](const std::vector<float>& v)
-    { return std::vector<size_t>(v.begin(), v.end()); };
+    {
+        std::vector<size_t> o;
+        for (float f : v) o.push_back(size_t(f));
+        return o;
+    };
     commit_list_->set_column_order(order(st.numbers("log.columns.order")));
     file_list_->set_column_order(order(st.numbers("log.files.columns.order")));
     std::string visible = st.value("log.columns.visible");

@@ -93,7 +93,8 @@ void run_progress_dialog(rap::ui& ui, rap::window* parent, const std::string& ti
                    text_view{}.read_only().monospace().wrap(false).bind(p->output).stretch(),
                    progress_bar{}.bind(p->bar),
                    buttons{
-                       close().bind(p->close),
+                       // Qualified: POSIX close() is in scope through <unistd.h>.
+                       rap::layout::close().bind(p->close),
                        dialog_button{rap::dialog_role::none, "_Abort"}.bind(p->abort).on_click(
                            [raw = p.get()]
                            {
