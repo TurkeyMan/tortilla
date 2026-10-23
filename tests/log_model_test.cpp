@@ -189,10 +189,11 @@ int main(int argc, char** argv)
               "placeholders: none, sides appended");
         auto args =
             tortilla::custom_difftool_args("ls %base %mine", {"HEAD~1", "HEAD"}, "HEAD~1", "HEAD");
-        tortilla::git_result r = tortilla::run_git(repo, args, tortilla::git_output::stdout_only);
-        check(r.ok() && r.output.find("left") != std::string::npos &&
-                  r.output.find("right") != std::string::npos,
-              "custom diff tool runs through git difftool --dir-diff");
+        tortilla::git_result r = tortilla::run_git(repo, args, tortilla::git_output::all);
+        const bool ran = r.ok() && r.output.find("left") != std::string::npos &&
+                         r.output.find("right") != std::string::npos;
+        check(ran, "custom diff tool runs through git difftool --dir-diff");
+        if (!ran) std::printf("     git exited %d:\n%s\n", r.exit_code, r.output.c_str());
     }
 
     // The git runner: synchronous, then streamed on a worker.
