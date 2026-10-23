@@ -65,7 +65,13 @@ compare_revisions(rap::ui& ui, rap::window* parent, const std::string& dir,
             return nullptr;
         }
         args = {"difftool", "--no-prompt"};
-        if (paths.size() != 1) args.insert(args.begin() + 1, "--dir-diff");
+        if (paths.size() != 1)
+        {
+            args.insert(args.begin() + 1, "--dir-diff");
+#ifdef _WIN32
+            args.insert(args.begin() + 2, "--no-symlinks");  // see custom_difftool_args
+#endif
+        }
         args.insert(args.end(), revisions.begin(), revisions.end());
         args.insert(args.end(), limit.begin(), limit.end());
         break;

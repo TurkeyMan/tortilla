@@ -125,7 +125,16 @@ std::vector<std::string> custom_difftool_args(const std::string& command,
     std::vector<std::string> args{"-c", "difftool.tortilla.cmd=" +
                                             expand_placeholders(command, base_name, mine_name),
                                   "difftool"};
-    if (paths.size() != 1) args.push_back("--dir-diff");
+    if (paths.size() != 1)
+    {
+        args.push_back("--dir-diff");
+#ifdef _WIN32
+        // With core.symlinks on, git would link the working tree's files
+        // into its temporary folder, which Windows refuses without
+        // Developer Mode. Copies work everywhere, and git copies edits back.
+        args.push_back("--no-symlinks");
+#endif
+    }
     args.insert(args.end(), {"--tool=tortilla", "--no-prompt"});
     args.insert(args.end(), revisions.begin(), revisions.end());
     if (!paths.empty())
