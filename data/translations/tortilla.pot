@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: tortilla\n"
 "Report-Msgid-Bugs-To: https://github.com/TurkeyMan/tortilla/issues\n"
-"POT-Creation-Date: 2026-10-24 17:26+0000\n"
+"POT-Creation-Date: 2026-10-24 18:13+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -358,7 +358,7 @@ msgstr ""
 msgid "{0} - Switch/Checkout"
 msgstr ""
 
-#: src/changes/changes_view.cpp:208
+#: src/changes/changes_view.cpp:208 src/changes/remove.cpp:53
 #, c++-format
 msgid "“{0}”"
 msgstr ""
@@ -535,8 +535,9 @@ msgstr ""
 msgid "Delete {0}? They aren't in git, so this can't be undone."
 msgstr ""
 
-#: src/changes/changes_view.cpp:450 src/log/log_actions.cpp:523
-#: src/log/log_actions.cpp:537 src/log/log_actions.cpp:545
+#: src/changes/changes_view.cpp:450 src/changes/remove.cpp:67
+#: src/log/log_actions.cpp:523 src/log/log_actions.cpp:537
+#: src/log/log_actions.cpp:545
 msgid "Delete"
 msgstr ""
 
@@ -1001,6 +1002,48 @@ msgctxt "status"
 msgid "Assume unchanged"
 msgstr ""
 
+#: src/changes/remove.cpp:54
+#, c++-format
+msgid "{0} item"
+msgid_plural "{0} items"
+msgstr[0] ""
+msgstr[1] ""
+
+#: src/changes/remove.cpp:56
+msgid "It goes to the Recycle Bin, and git stops tracking it."
+msgstr ""
+
+#: src/changes/remove.cpp:58
+msgid "It goes to the Trash, and git stops tracking it."
+msgstr ""
+
+#: src/changes/remove.cpp:61
+#, c++-format
+msgid "Stop tracking {0}?"
+msgstr ""
+
+#: src/changes/remove.cpp:62 src/log/log_actions.cpp:523
+#: src/log/log_actions.cpp:537
+#, c++-format
+msgid "Delete {0}?"
+msgstr ""
+
+#: src/changes/remove.cpp:63
+msgid "It stays on disk, untracked."
+msgstr ""
+
+#: src/changes/remove.cpp:67
+msgid "Delete (keep local)"
+msgstr ""
+
+#: src/changes/remove.cpp:76
+msgid "Couldn't delete it."
+msgstr ""
+
+#: src/changes/remove.cpp:83
+msgid "git couldn't stop tracking it."
+msgstr ""
+
 #: src/git/command.cpp:59 src/git/command.cpp:95 src/git/command.cpp:132
 #, c++-format
 msgid "could not start git: {0}"
@@ -1206,11 +1249,6 @@ msgstr ""
 #: src/log/log_actions.cpp:521
 #, c++-format
 msgid "_Delete {0}"
-msgstr ""
-
-#: src/log/log_actions.cpp:523 src/log/log_actions.cpp:537
-#, c++-format
-msgid "Delete {0}?"
 msgstr ""
 
 #: src/log/log_actions.cpp:529

@@ -80,6 +80,8 @@ enum class run
     merge_abort,  // tortilla mergeabort <folder>
     edit_conflicts,  // tortilla conflicteditor <file>
     about,           // tortilla about
+    remove,          // tortilla remove <paths...>
+    remove_keep,     // tortilla removekeep <paths...>
 };
 
 struct row
@@ -177,9 +179,9 @@ inline constexpr row k_rows[] = {
     {"&Delete",
      {{{GIT | IVF, ADDED | ROOT}, {FIG | ROOT | SUB, 0}}},
      place::sub,
-     run::none,
+     run::remove,
      "remove"},
-    {"&Delete (keep local)", {{{GIT | IVF, ADDED | ROOT}}}, place::sub, run::none, "removekeep"},
+    {"&Delete (keep local)", {{{GIT | IVF, ADDED | ROOT}}}, place::sub, run::remove_keep, "removekeep"},
     {"Re&vert...", {{{GIT, NORMAL}, {FIG, 0}}}, place::sub, run::revert, "revert"},
     {"&Clean up...", {{{FIG | FOLD, 0}}}, place::sub, run::none, "cleanup"},
     separator,

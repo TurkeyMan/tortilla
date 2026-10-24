@@ -86,6 +86,7 @@ add_executable(tortilla
     src/shell/menu_icons.cpp
     src/util/gravatar.cpp
     src/ui/welcome_window.cpp
+    src/changes/remove.cpp
     src/i18n.cpp
     src/ui/askpass.cpp
     src/ui/windows.cpp
