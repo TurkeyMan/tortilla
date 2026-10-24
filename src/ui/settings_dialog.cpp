@@ -3,6 +3,7 @@
 #include "git/diff_tool.h"
 #include "log/action_icons.h"
 #include "settings.h"
+#include "shell/menu_table.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -24,9 +25,17 @@ struct state
     // Bound when their page is first shown; null until then, and an
     // unvisited page saves nothing.
     rap::drop_down* icon_style = nullptr;
-    rap::drop_down* diff_mode_select = nullptr;
+    rap::canvas* icon_preview = nullptr;
+    // Compare with: Tortilla's viewer, git difftool, each detected tool, then
+    // Custom (the command line shown only for it).
+    rap::drop_down* diff_tool_select = nullptr;
     rap::entry* diff_command = nullptr;
+    rap::widget* custom_help = nullptr;
     std::vector<detected_tool> tools;
+    // Context Menu: an entry's id and its "at the top level" box.
+    std::vector<std::pair<std::string, rap::check*>> top_entries;
+
+    int custom_index() const { return 2 + int(tools.size()); }
 };
 
 rap::node general_page(std::shared_ptr<state> st)
@@ -36,13 +45,95 @@ rap::node general_page(std::shared_ptr<state> st)
         std::clamp(std::atoi(settings::get().value("log.actionIcons", "1").c_str()), 0, 3));
     const int current = int(std::find(std::begin(k_icon_styles), std::end(k_icon_styles), saved) -
                             std::begin(k_icon_styles));
+    std::weak_ptr<state> weak = st;
+    // The five kinds of change in the chosen style, at the log's size and at
+    // twice that, on the list's background.
+    auto preview = [weak](rap::painter& p, rap::size_f size)
+    {
+        auto s = weak.lock();
+        if (!s) return;
+        const int chosen = s->icon_style ? std::clamp(s->icon_style->current(), 0, 3) : 1;
+        const action_icon_style style = k_icon_styles[chosen];
+        p.rect({0, 0, size.w, size.h}, 3, rap::paint{rap::theme_color::base},
+               rap::paint{rap::theme_color::mid});
+        constexpr action_bits kinds[] = {action_modified, action_added, action_deleted,
+                                         action_renamed, action_conflicted};
+        float x = 8;
+        for (float s : {13.f, 26.f})
+        {
+            for (action_bits a : kinds)
+            {
+                paint_action_icon(p, a, x, (size.h - s) / 2, s, style);
+                x += s + s * 0.4f;
+            }
+            x += 10;
+        }
+    };
     return vbox{
-        group{"Log",
-              form{
-                  {"Action icons",
-                   drop_down{{"Classic", "Glyphs", "Bevelled", "Line"}, current}.bind(st->icon_style)},
-              }},
+        group{
+            "Log",
+            form{
+                {"Action icons",
+                 hbox{
+                     drop_down{{"Classic", "Glyphs", "Bevelled", "Line"}, current}
+                         .bind(st->icon_style)
+                         .on_changed(
+                             [weak](int)
+                             {
+                                 if (auto s = weak.lock(); s && s->icon_preview)
+                                     s->icon_preview->invalidate();
+                             }),
+                     canvas{}.on_paint(preview).width(300_px).height(36_px).bind(st->icon_preview),
+                 }},
+            }},
         spacer{},
+    };
+}
+
+// Which of Explorer's entries are at the top level of its menu rather than
+// in the Tortilla submenu [TortoiseGit: Settings > Context Menu].
+rap::node context_menu_page(std::shared_ptr<state> st)
+{
+    using namespace rap::layout;
+    using namespace shell_menu;
+    // The saved choice, else the rows TortoiseGit puts at the top.
+    const std::string saved = settings::get().value(std::string(k_top_setting), "\x01");
+    auto chosen = [&](const row& r)
+    {
+        if (saved == "\x01") return r.where == place::top;
+        return ("," + saved + ",").find("," + std::string(r.id) + ",") != std::string::npos;
+    };
+    rap::nodes rows;
+    bool group_started = false;
+    // The checks bind to these elements: no reallocation once they're made.
+    st->top_entries.reserve(std::size(k_rows));
+    for (const row& r : k_rows)
+    {
+        if (!r.label)
+        {
+            if (group_started) rows.push_back(rap::layout::separator{});
+            group_started = false;
+            continue;
+        }
+        std::string text;
+        for (const char* c = r.label; *c; ++c)
+            if (*c != '&') text += *c;
+        // Inaccessible always leads the menu, as in TortoiseGit.
+        if (std::string_view(r.id) == "inaccessible")
+        {
+            rows.push_back(check{text, true}.enabled(false));
+            group_started = true;
+            continue;
+        }
+        st->top_entries.emplace_back(r.id, nullptr);
+        rows.push_back(check{text, chosen(r)}.bind(st->top_entries.back().second));
+        group_started = true;
+    }
+    return vbox{
+        label{"Checked entries appear directly in the file manager's context menu, with\n"
+              "\"Git\" before them; the rest are in its Tortilla submenu."},
+        // (vbox takes a fixed list; this one's built from the table.)
+        scroll{rap::node{rap::spec::box{rap::layout::vertical, std::move(rows)}, {}}}.stretch(),
     };
 }
 
@@ -51,62 +142,53 @@ rap::node diff_viewer_page(std::shared_ptr<state> st)
     using namespace rap::layout;
     const std::string git_tool = git_diff_tool(st->repo_dir);
     st->tools = detect_diff_tools();
-    std::weak_ptr<state> weak = st;
-    auto show_command = [weak](int mode)
+
+    std::vector<std::string> choices{"Tortilla's unified diff viewer",
+                                     git_tool.empty()
+                                         ? "git difftool (no diff.tool configured)"
+                                         : "git difftool (diff.tool: " + git_tool + ")"};
+    for (const detected_tool& t : st->tools) choices.push_back(t.name);
+    choices.push_back("Custom...");
+
+    // What's saved: a custom command that's a detected tool's shows as that tool.
+    int current = int(saved_diff_mode(st->repo_dir));
+    const std::string command = diff_command();
+    if (current == int(diff_mode::custom))
     {
-        if (auto s = weak.lock(); s && s->diff_command)
-            s->diff_command->set_enabled(mode == int(diff_mode::custom));
+        current = st->custom_index();
+        for (size_t i = 0; i < st->tools.size(); ++i)
+            if (st->tools[i].command == command) current = 2 + int(i);
+    }
+    const bool custom = current == st->custom_index();
+
+    std::weak_ptr<state> weak = st;
+    auto chosen = [weak](int choice)
+    {
+        auto s = weak.lock();
+        if (!s || !s->diff_command) return;
+        const bool custom = choice == s->custom_index();
+        s->diff_command->set_visible(custom);
+        if (s->custom_help) s->custom_help->set_visible(custom);
+        // Custom starts from the last tool picked, to adjust.
+        if (choice >= 2 && !custom) s->diff_command->set_text(s->tools[size_t(choice - 2)].command);
     };
-    const diff_mode mode = saved_diff_mode(st->repo_dir);
     return vbox{
         group{
             "Comparing revisions",
             vbox{
                 form{
                     {"Compare with",
-                     drop_down{{"Tortilla's unified diff viewer",
-                             git_tool.empty() ? "git difftool (no diff.tool configured)"
-                                             : "git difftool (diff.tool: " + git_tool + ")",
-                             "Another program:"},
-                            int(mode)}
-                         .bind(st->diff_mode_select)
-                         .on_changed(show_command)},
-                    {"Command",
-                     hbox{
-                         entry{diff_command()}
-                             .bind(st->diff_command)
-                             .placeholder("program %base %mine")
-                             .enabled(mode == diff_mode::custom)
-                             .stretch(),
-                         menu_button{"_Detect"}.on_menu(
-                             [weak]
-                             {
-                                 rap::menu m;
-                                 auto s = weak.lock();
-                                 if (!s) return m;
-                                 for (const detected_tool& t : s->tools)
-                                     m.push_back({.label = t.name,
-                                                  .action = [weak, command = t.command]
-                                                  {
-                                                      // Picking a tool means using it.
-                                                      if (auto s = weak.lock())
-                                                      {
-                                                          s->diff_mode_select->set_current(
-                                                              int(diff_mode::custom));
-                                                          s->diff_command->set_enabled(true);
-                                                          s->diff_command->set_text(command);
-                                                      }
-                                                  }});
-                                 if (m.empty())
-                                     m.push_back(
-                                         {.label = "No diff tools found", .enabled = false});
-                                 return m;
-                             }),
-                     }},
+                     drop_down{choices, current}.bind(st->diff_tool_select).on_changed(chosen)},
+                    {"Command", entry{command}
+                                    .bind(st->diff_command)
+                                    .placeholder("program %base %mine")
+                                    .visible(custom)},
                 },
                 label{"%base and %mine are the two sides compared: folders when a whole commit is\n"
                       "compared. %bname and %yname are their names. Without placeholders the two\n"
-                      "sides go at the end of the command."},
+                      "sides go at the end of the command."}
+                    .handle(st->custom_help)
+                    .visible(custom),
             }},
         spacer{},
     };
@@ -135,6 +217,8 @@ void show_settings(rap::ui& ui, rap::window* parent, const std::string& repo_dir
                    tabs{
                        // Weak: the window that keeps these is the state's own.
                        page{"General", lazy{[weak, build] { return build(weak, general_page); }}},
+                       page{"Context Menu",
+                            lazy{[weak, build] { return build(weak, context_menu_page); }}},
                        page{"Diff Viewer",
                             lazy{[weak, build] { return build(weak, diff_viewer_page); }}},
                    }
@@ -157,9 +241,26 @@ void show_settings(rap::ui& ui, rap::window* parent, const std::string& repo_dir
                     settings.set("log.actionIcons",
                                  std::to_string(int(
                                      k_icon_styles[std::clamp(keep->icon_style->current(), 0, 3)])));
-                if (keep->diff_mode_select)
-                    save_diff_settings(diff_mode(std::clamp(keep->diff_mode_select->current(), 0, 2)),
-                                     keep->diff_command->text());
+                if (!keep->top_entries.empty())
+                {
+                    std::string ids;
+                    for (auto& [id, box] : keep->top_entries)
+                        if (box && box->checked()) ids += (ids.empty() ? "" : ",") + id;
+                    settings.set(std::string(shell_menu::k_top_setting), ids);
+                }
+                if (keep->diff_tool_select)
+                {
+                    // A detected tool is saved as the custom command it stands for.
+                    const int choice = keep->diff_tool_select->current();
+                    if (choice >= 2 && choice < keep->custom_index())
+                        save_diff_settings(diff_mode::custom,
+                                           keep->tools[size_t(choice - 2)].command,
+                                           keep->tools[size_t(choice - 2)].folders);
+                    else
+                        save_diff_settings(choice >= 2 ? diff_mode::custom
+                                                       : diff_mode(std::max(choice, 0)),
+                                           keep->diff_command->text());
+                }
                 if (saved) saved();
             }
             if (closed) closed();

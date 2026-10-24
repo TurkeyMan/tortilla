@@ -26,28 +26,30 @@ enum class diff_mode
 // the user's git config) has one, else the built-in viewer.
 diff_mode saved_diff_mode(const std::string& repo_dir);
 std::string diff_command();
-void save_diff_settings(diff_mode, const std::string& command);
+// Whether the custom command compares folders (one comparison for a whole
+// commit) or only files (git opens it for each changed file in turn).
+bool diff_folders();
+void save_diff_settings(diff_mode, const std::string& command, bool folders = true);
 
 // git's diff.tool for `repo_dir`, or "" if unset.
 std::string git_diff_tool(const std::string& repo_dir);
 
 // Diff tools found on this machine, with command lines ready for the
-// Custom setting. Only tools that compare folders, since a commit's
-// changes open as one folder comparison.
+// Custom setting.
 struct detected_tool
 {
     std::string name, command;
+    bool folders = true;  // compares folders, so a commit opens as one comparison
 };
 std::vector<detected_tool> detect_diff_tools();
 
 // git arguments that run `command` (placeholders and all) as a one-off
 // difftool comparing `revisions` (as for git diff): folder to folder, or
 // file to file when `paths` names exactly one file.
-std::vector<std::string> custom_difftool_args(const std::string& command,
-                                            const std::vector<std::string>& revisions,
-                                            const std::string& base_name,
-                                            const std::string& mine_name,
-                                            const std::vector<std::string>& paths = {});
+std::vector<std::string>
+custom_difftool_args(const std::string& command, const std::vector<std::string>& revisions,
+                     const std::string& base_name, const std::string& mine_name,
+                     const std::vector<std::string>& paths = {}, bool folders = true);
 
 // `command` with its placeholders turned into the shell words git's
 // difftool runs it with ("$LOCAL" / "$REMOTE", the names quoted).

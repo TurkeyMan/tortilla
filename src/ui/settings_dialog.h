@@ -12,7 +12,9 @@ namespace tortilla
 
 enum class settings_page
 {
+    // In the order shown.
     general,
+    context_menu,
     diff_viewer,
 };
 

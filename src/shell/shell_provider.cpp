@@ -6,51 +6,32 @@
 // Until the status cache exists, an item inside a working tree counts as
 // tracked and unmodified: TortoiseGit's own fallback when status fails
 // [spec 4.3 step 3]. So IGN, CONFL, ADDED and DELETED are never set.
+#include "menu_table.h"
+
 #include <rapport/shell.h>
+
+#ifdef _WIN32
+#include <shlobj.h>
+#include <windows.h>
+#endif
 
 #include <array>
 #include <cctype>
 #include <cstdint>
+#include <cstdlib>
 #include <fstream>
 #include <optional>
+#include <set>
 #include <string>
 #include <system_error>
 
 namespace
 {
 
+using namespace tortilla::shell_menu;
 namespace fs = std::filesystem;
 using rap::shell::menu_item;
 using rap::shell::selection;
-
-// -- item states ----------------------------------------------------------------
-
-// TortoiseGit's ITEMIS_* flags [spec 4.2, 4.3]; only those it tests.
-enum : uint32_t
-{
-    ONE = 1u << 0,
-    TWO = 1u << 1,
-    EXT = 1u << 2,     // Shift held
-    GIT = 1u << 3,     // tracked (here: inside a working tree)
-    IVF = 1u << 4,     // the item's parent is inside a working tree
-    FOLD = 1u << 5,    // a directory
-    FIG = 1u << 6,     // a directory inside a working tree
-    ROOT = 1u << 7,    // the top of a working tree
-    SUB = 1u << 8,     // a submodule's top
-    SUBC = 1u << 9,    // the working tree has a .gitmodules
-    BARE = 1u << 10,   // a bare repository
-    MERGE = 1u << 11,  // a merge in progress
-    BISECT = 1u << 12,
-    STASH = 1u << 13,
-    SVN = 1u << 14,  // git-svn
-    CONFL = 1u << 15,
-    NORMAL = 1u << 16,
-    ADDED = 1u << 17,
-    DELETED = 1u << 18,
-    IGN = 1u << 19,
-    PATCH = 1u << 20,  // a .diff or .patch file
-    INACC = 1u << 21,  // a repository git can't open
-};
 
 bool is_dir(const fs::path& p)
 {
@@ -224,179 +205,6 @@ state compute(const selection& sel)
     return s;
 }
 
-// -- the menu table -------------------------------------------------------------
-
-// A condition pair: every `yes` bit set and every `no` bit clear; {0,0}
-// never matches [spec 4.2].
-struct when
-{
-    uint32_t yes = 0, no = 0;
-    bool matches(uint32_t f) const { return (yes || no) && (f & yes) == yes && (f & no) == 0; }
-};
-
-enum class place
-{
-    sub,
-    top,    // in TortoiseGit's default top-level mask
-    shift,  // in its default extended mask: only with Shift held
-};
-
-// What Tortilla runs for an entry; none yet means shown disabled.
-enum class run
-{
-    none,
-    log,       // tortilla log <first>
-    diff,      // tortilla diff <first>: the working tree against HEAD
-    rebase,    // tortilla rebase <folder>
-    settings,  // tortilla settings <first>
-};
-
-struct row
-{
-    const char* label;  // nullptr: a separator row
-    std::array<when, 4> conditions{};
-    place where = place::sub;
-    run command = run::none;
-    const char* id = "";
-};
-
-constexpr row separator{nullptr};
-
-// TortoiseGit's menuInfo[] in order, labels as its resources have them
-// [spec 4.2]. Rows it builds specially (Diff later, LFS, ignore) are listed
-// for their position and shown disabled.
-const row k_rows[] = {
-    {"Inaccessible...", {{{INACC, GIT | FIG | BARE}}}, place::top, run::none, "inaccessible"},
-    {"Clone...",
-     {{{FOLD, GIT | FIG | BARE | INACC}, {FOLD | IGN, 0}, {FOLD | EXT, 0}}},
-     place::top,
-     run::none,
-     "clone"},
-    {"&Pull...",
-     {{{FIG | ONE, BISECT | MERGE}, {ROOT, BISECT | MERGE}}},
-     place::sub,
-     run::none,
-     "pull"},
-    {"F&etch...", {{{FIG | ONE, 0}, {BARE, 0}, {ROOT, 0}}}, place::sub, run::none, "fetch"},
-    {"Pus&h...", {{{FIG | ONE, 0}, {BARE, 0}, {ROOT, 0}}}, place::sub, run::none, "push"},
-    {"Sync...", {{{FIG | ONE, BISECT | MERGE}}}, place::top, run::none, "sync"},
-    separator,
-    {"&Commit...", {{{GIT, 0}, {FIG, 0}}}, place::top, run::none, "commit"},
-    {"SVN DCommit...",
-     {{{GIT | SVN, BISECT | MERGE}, {FIG | SVN, BISECT | MERGE}}},
-     place::sub,
-     run::none,
-     "svndcommit"},
-    {"SVN Rebase", {{{FIG | SVN | ONE, BISECT | MERGE}}}, place::sub, run::none, "svnrebase"},
-    {"SVN Fetch", {{{FIG | SVN | ONE, 0}}}, place::sub, run::none, "svnfetch"},
-    {"Import SVN Ignore ...", {{{FIG | SVN | ONE, 0}}}, place::shift, run::none, "svnignore"},
-    separator,
-    {"&Diff", {{{GIT | ONE, 0}, {TWO, FOLD}}}, place::sub, run::diff, "diff"},
-    {"Diff later", {{{ONE, FOLD}}}, place::sub, run::none, "difflater"},
-    {"&Diff with previous version", {{{GIT | ONE, ADDED}}}, place::sub, run::none, "prevdiff"},
-    separator,
-    {"Show &log",
-     {{{GIT | ONE, ADDED}, {FOLD | FIG | ONE, ADDED}, {FIG | ONE, ADDED}, {BARE, 0}}},
-     place::sub,
-     run::log,
-     "log"},
-    {"Show log of this folder",
-     {{{FIG | ONE | ROOT | SUB, 0}}},
-     place::sub,
-     run::none,
-     "logsubmodule"},
-    {"Show &RefLog", {{{FIG | ONE, 0}, {BARE, 0}}}, place::sub, run::none, "reflog"},
-    {"Browse References", {{{FIG | ONE, 0}, {BARE, 0}}}, place::sub, run::none, "refbrowse"},
-    {"Daemon",
-     {{{GIT | ONE, ADDED}, {FOLD | FIG | ONE, ADDED}, {FIG | ONE, ADDED}, {BARE, 0}}},
-     place::sub,
-     run::none,
-     "daemon"},
-    {"Revision &graph",
-     {{{GIT | ONE, ADDED}, {FOLD | FIG | ONE, ADDED}, {FIG | ONE, ADDED}, {BARE, 0}}},
-     place::sub,
-     run::none,
-     "revisiongraph"},
-    {"&Repo-browser", {{{FIG | ONE, 0}, {BARE | ONE, 0}}}, place::sub, run::none, "repobrowser"},
-    {"Check for modi&fications",
-     {{{GIT, 0}, {FOLD | FIG, 0}}},
-     place::sub,
-     run::none,
-     "repostatus"},
-    {"Rebase...", {{{FIG | ONE, BISECT | MERGE}}}, place::sub, run::rebase, "rebase"},
-    {"Stash changes", {{{GIT | ONE, MERGE}}}, place::sub, run::none, "stashsave"},
-    {"Stash Apply", {{{FIG | ONE | STASH, 0}}}, place::shift, run::none, "stashapply"},
-    {"Stash Pop", {{{FIG | ONE | STASH, 0}}}, place::sub, run::none, "stashpop"},
-    {"Stash List", {{{FIG | ONE | STASH, 0}}}, place::sub, run::none, "stashlist"},
-    separator,
-    {"Bisect start", {{{FIG | ONE, BISECT | MERGE}}}, place::sub, run::none, "bisectstart"},
-    {"Bisect good", {{{FIG | ONE | BISECT, 0}}}, place::sub, run::none, "bisectgood"},
-    {"Bisect bad", {{{FIG | ONE | BISECT, 0}}}, place::sub, run::none, "bisectbad"},
-    {"Bisect skip", {{{FIG | ONE | BISECT, 0}}}, place::sub, run::none, "bisectskip"},
-    {"Bisect reset", {{{FIG | ONE | BISECT, 0}}}, place::sub, run::none, "bisectreset"},
-    separator,
-    {"&Edit conflicts", {{{GIT | CONFL, FOLD}}}, place::sub, run::none, "conflicteditor"},
-    {"Res&olve...",
-     {{{GIT | CONFL, 0}, {GIT | FOLD, 0}, {FIG, 0}}},
-     place::sub,
-     run::none,
-     "resolve"},
-    {"Abort &Merge", {{{GIT | MERGE, 0}, {FIG | MERGE, 0}}}, place::sub, run::none, "mergeabort"},
-    {"Re&name...", {{{GIT | ONE | IVF, ROOT}, {ROOT | SUB, 0}}}, place::sub, run::none, "rename"},
-    {"&Delete",
-     {{{GIT | IVF, ADDED | ROOT}, {FIG | ROOT | SUB, 0}}},
-     place::sub,
-     run::none,
-     "remove"},
-    {"&Delete (keep local)", {{{GIT | IVF, ADDED | ROOT}}}, place::sub, run::none, "removekeep"},
-    {"Re&vert...", {{{GIT, NORMAL}, {FIG, 0}}}, place::sub, run::none, "revert"},
-    {"&Clean up...", {{{FIG | FOLD, 0}}}, place::sub, run::none, "cleanup"},
-    separator,
-    // (LFS: a submenu only when the repository has <gitdir>/lfs [spec 4.4].)
-    separator,
-    {"S&witch/Checkout...", {{{FIG | ONE, 0}}}, place::sub, run::none, "switch"},
-    {"&Merge...", {{{FIG | ONE, BISECT | MERGE}}}, place::sub, run::none, "merge"},
-    {"Create &Branch...", {{{FIG | ONE, 0}}}, place::sub, run::none, "branch"},
-    {"Create &Tag...", {{{FIG | ONE, 0}}}, place::sub, run::none, "tag"},
-    {"E&xport...", {{{FIG | ONE, 0}, {BARE, 0}}}, place::sub, run::none, "export"},
-    separator,
-    {"Create repositor&y here...",
-     {{{FOLD, GIT | FIG | BARE | INACC}, {FOLD | IGN, 0}, {FOLD | EXT, GIT}}},
-     place::top,
-     run::none,
-     "repocreate"},
-    {"&Add...",
-     {{{IVF, GIT}, {GIT | FOLD, 0}, {IGN, 0}, {DELETED, FOLD | ONE}}},
-     place::sub,
-     run::none,
-     "add"},
-    {"&Blame", {{{GIT | ONE, FOLD | ADDED}}}, place::sub, run::none, "blame"},
-    {"Add to &ignore list", {{{IVF, IGN | GIT | ROOT}}}, place::sub, run::none, "ignore"},
-    {"Delete and add to &ignore list",
-     {{{IVF | GIT, IGN | ROOT}}},
-     place::sub,
-     run::none,
-     "deleteignore"},
-    separator,
-    {"Worktrees", {{{FIG | ONE, 0}, {BARE, 0}}}, place::sub, run::none, "worktreelist"},
-    {"Submodule Add...", {{{FIG | ONE, 0}}}, place::sub, run::none, "subadd"},
-    {"Submodule &Update...", {{{FIG | SUBC, 0}}}, place::sub, run::none, "subupdate"},
-    {"Submodule Sync", {{{FIG | SUBC, 0}}}, place::shift, run::none, "subsync"},
-    separator,
-    {"Create Patch Serial...", {{{FIG | ONE, 0}}}, place::sub, run::none, "formatpatch"},
-    {"Apply Patch Serial...", {{{PATCH, 0}, {FIG | ONE, 0}}}, place::sub, run::none, "importpatch"},
-    {"Review/apply single &patch...",
-     {{{PATCH | ONE, 0}, {EXT | ONE, FOLD}}},
-     place::sub,
-     run::none,
-     "patch"},
-    {"Send Mail...", {{{PATCH, 0}, {EXT, FOLD}}}, place::sub, run::none, "sendmail"},
-    separator,
-    {"&Settings", {{{FOLD, 0}, {0, FOLD}}}, place::sub, run::settings, "settings"},
-    {"&Help", {{{FOLD, 0}, {0, FOLD}}}, place::sub, run::none, "help"},
-    {"A&bout", {{{FOLD, 0}, {0, FOLD}}}, place::sub, run::none, "about"},
-};
-
 bool matches(const row& r, uint32_t flags)
 {
     for (const when& w : r.conditions)
@@ -434,6 +242,47 @@ std::string commit_label(const state& s)
     return label + " -> \"" + escaped + "\"...";
 }
 
+// Tortilla's settings file, where rap::sys::config_dir("tortilla") puts it;
+// read directly, since the extension links no rapport core.
+fs::path settings_file()
+{
+#ifdef _WIN32
+    PWSTR dir = nullptr;
+    fs::path p;
+    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_RoamingAppData, 0, nullptr, &dir))) p = dir;
+    CoTaskMemFree(dir);
+    return p.empty() ? p : p / "tortilla" / "settings";
+#else
+    const char* xdg = std::getenv("XDG_CONFIG_HOME");
+    const char* home = std::getenv("HOME");
+    fs::path base = xdg && *xdg ? fs::path(xdg) : home ? fs::path(home) / ".config" : fs::path();
+    return base.empty() ? base : base / "tortilla" / "settings";
+#endif
+}
+
+// The ids chosen for the top level in Settings, or nullopt for the default.
+// Read for every menu: it's one small file, and a change applies at once.
+std::optional<std::set<std::string, std::less<>>> top_entries()
+{
+    std::ifstream in(settings_file());
+    const std::string key = std::string(k_top_setting) + "=";
+    for (std::string line; std::getline(in, line);)
+    {
+        if (!line.starts_with(key)) continue;
+        std::set<std::string, std::less<>> ids;
+        line = trim(line.substr(key.size()));
+        for (size_t at = 0; at <= line.size();)
+        {
+            size_t comma = line.find(',', at);
+            if (comma == std::string::npos) comma = line.size();
+            if (comma > at) ids.insert(line.substr(at, comma - at));
+            at = comma + 1;
+        }
+        return ids;
+    }
+    return std::nullopt;
+}
+
 std::string top_label(std::string label)
 {
     return "Git " + label;
@@ -462,6 +311,12 @@ public:
         state_ = compute(sel);
         const uint32_t f = state_.flags;
 
+        const auto chosen = top_entries();
+        auto at_top = [&](const row& r)
+        {
+            if (std::string_view(r.id) == "inaccessible") return true;  // always [spec 4.2]
+            return chosen ? chosen->contains(std::string_view(r.id)) : r.where == place::top;
+        };
         std::vector<menu_item> top, sub;
         bool armed = false, added_since = false;
         for (const row& r : k_rows)
@@ -478,7 +333,7 @@ public:
             // Diff of two files isn't Tortilla's yet, only of one item.
             const bool runs = r.command != run::none && (r.command != run::diff || (f & ONE));
             menu_item item{.id = r.id, .label = label, .enabled = runs};
-            if (r.where == place::top || std::string_view(r.id) == "inaccessible")
+            if (at_top(r))
             {
                 item.label = top_label(item.label);
                 top.push_back(std::move(item));

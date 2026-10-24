@@ -81,7 +81,7 @@ compare_revisions(rap::ui& ui, rap::window* parent, const std::string& dir,
             offer_settings("No diff program is set.");
             return nullptr;
         }
-        args = custom_difftool_args(diff_command(), revisions, base, mine, paths);
+        args = custom_difftool_args(diff_command(), revisions, base, mine, paths, diff_folders());
         break;
     }
     auto output = std::make_shared<std::string>();

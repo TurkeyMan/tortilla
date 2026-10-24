@@ -3,7 +3,7 @@
 //   tortilla rebase [path] [upstream]   rebase dialog
 //   tortilla diff [path]              the working tree's changes under path, against HEAD
 //   tortilla diff [path] rev [rev2]   a commit, or rev..rev2, as a unified diff
-//   tortilla settings [path] [diff]     the Settings dialog (at Diff Viewer)
+//   tortilla settings [path] [diff|menu]  the Settings dialog (at Diff Viewer or Context Menu)
 //   tortilla --which-ui       show the detected desktop and backend order
 //   tortilla --register-shell / --unregister-shell [--all-users]
 //                             add or remove the file manager's context menu,
@@ -98,11 +98,13 @@ int main(int argc, char** argv)
 
     if (command == "settings")
     {
-        const bool diff = args.size() > 1 && args[1] == "diff";
+        // tortilla settings [path] [diff|menu]: the page to open on.
+        const std::string page = args.size() > 1 ? args[1] : "";
         tortilla::show_settings(**ui, nullptr, path,
-                               diff ? tortilla::settings_page::diff_viewer
-                                    : tortilla::settings_page::general,
-                               {}, [&] { (*ui)->quit(); });
+                                page == "diff"   ? tortilla::settings_page::diff_viewer
+                                : page == "menu" ? tortilla::settings_page::context_menu
+                                                 : tortilla::settings_page::general,
+                                {}, [&] { (*ui)->quit(); });
         return (*ui)->run();
     }
 

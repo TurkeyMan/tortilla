@@ -7,6 +7,7 @@
 
 #include <filesystem>
 #include <system_error>
+#include <tuple>
 
 namespace fs = std::filesystem;
 
@@ -35,13 +36,19 @@ std::string diff_command()
     return settings::get().value("diff.command");
 }
 
-void save_diff_settings(diff_mode mode, const std::string& command)
+bool diff_folders()
+{
+    return settings::get().value("diff.folders", "1") != "0";
+}
+
+void save_diff_settings(diff_mode mode, const std::string& command, bool folders)
 {
     settings& st = settings::get();
     st.set("diff.mode", mode == diff_mode::builtin ? "builtin"
                         : mode == diff_mode::git   ? "git"
                                                   : "custom");
     st.set("diff.command", command);
+    st.set("diff.folders", folders ? "1" : "0");
 }
 
 namespace
@@ -117,15 +124,16 @@ std::string expand_placeholders(const std::string& command, const std::string& b
 }
 
 std::vector<std::string> custom_difftool_args(const std::string& command,
-                                            const std::vector<std::string>& revisions,
-                                            const std::string& base_name,
-                                            const std::string& mine_name,
-                                            const std::vector<std::string>& paths)
+                                              const std::vector<std::string>& revisions,
+                                              const std::string& base_name,
+                                              const std::string& mine_name,
+                                              const std::vector<std::string>& paths, bool folders)
 {
     std::vector<std::string> args{"-c", "difftool.tortilla.cmd=" +
                                             expand_placeholders(command, base_name, mine_name),
                                   "difftool"};
-    if (paths.size() != 1)
+    // A tool that compares only files gets each changed file in turn.
+    if (paths.size() != 1 && folders)
     {
         args.push_back("--dir-diff");
 #ifdef _WIN32
@@ -147,63 +155,125 @@ std::vector<std::string> custom_difftool_args(const std::string& command,
 
 std::vector<detected_tool> detect_diff_tools()
 {
+    // Command lines from each tool's own documentation (and git's mergetools
+    // scripts). Each must wait until it's closed: git deletes the temporary
+    // copies as soon as it returns.
     struct known_tool
     {
         std::string name;
-        std::vector<std::string> programs;  // names on PATH, or paths
+        std::vector<std::string> programs;  // paths to try, then names on PATH
         std::string arguments;
+        bool folders = true;  // false: compares two files only
     };
     std::vector<known_tool> known;
 #ifdef _WIN32
     std::vector<std::string> roots;
-    for (const char* var : {"ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"})
+    for (const char* var : {"ProgramFiles", "ProgramFiles(x86)", "ProgramW6432", "LOCALAPPDATA"})
         if (auto v = rap::sys::env(var))
             roots.push_back(*v + (std::string(var) == "LOCALAPPDATA" ? "\\Programs" : ""));
-    auto under = [&](std::initializer_list<const char*> rel)
+    // The usual install folders, then PATH (installed elsewhere).
+    auto at = [&](std::initializer_list<const char*> rel, const char* on_path)
     {
         std::vector<std::string> out;
         for (const std::string& root : roots)
             for (const char* r : rel) out.push_back(root + "\\" + r);
-        return out;
-    };
-    // The usual install folders, then PATH (installed elsewhere).
-    auto at = [&](std::initializer_list<const char*> rel, const char* on_path)
-    {
-        std::vector<std::string> out = under(rel);
-        out.push_back(on_path);
+        if (on_path) out.push_back(on_path);
         return out;
     };
     known = {
         {"WinMerge", at({"WinMerge\\WinMergeU.exe"}, "WinMergeU"),
-         "-e -u -dl %bname -dr %yname %base %mine"},
+         "/e /u /s- /dl %bname /dr %yname %base %mine"},
+        // BComp waits; BCompare hands over to a running copy and returns.
         {"Beyond Compare",
-         at({"Beyond Compare 5\\BCompare.exe", "Beyond Compare 4\\BCompare.exe"}, "BCompare"),
+         at({"Beyond Compare 5\\BComp.exe", "Beyond Compare 4\\BComp.exe"}, "BComp"),
          "%base %mine /title1=%bname /title2=%yname"},
+        {"Araxis Merge", at({"Araxis\\Araxis Merge\\Compare.exe"}, nullptr),
+         "/wait /2 /title1:%bname /title2:%yname %base %mine"},
+        {"Code Compare", at({"Devart\\Code Compare\\CodeCompare.exe"}, nullptr),
+         "/W /T1=%bname /T2=%yname %base %mine"},
+        {"ExamDiff Pro", at({"ExamDiff Pro\\ExamDiff.com"}, nullptr),
+         "%base %mine /dn1:%bname /dn2:%yname /nh"},
+        {"DeltaWalker",
+         at({"Deltopia\\DeltaWalker\\DeltaWalker.exe",
+             "Deltopia\\DeltaWalker Classic\\DeltaWalker.exe"},
+            nullptr),
+         "-mi -title1=%bname -title2=%yname %base %mine"},
         {"Meld", at({"Meld\\Meld.exe"}, "meld"), "%base %mine --label=%bname --label=%yname"},
         {"KDiff3", at({"KDiff3\\kdiff3.exe", "KDiff3\\bin\\kdiff3.exe"}, "kdiff3"),
          "%base %mine --L1 %bname --L2 %yname"},
+        {"TortoiseGitMerge", at({"TortoiseGit\\bin\\TortoiseGitMerge.exe"}, nullptr),
+         "/base:%base /mine:%mine /basename:%bname /minename:%yname", false},
+        {"TortoiseMerge", at({"TortoiseSVN\\bin\\TortoiseMerge.exe"}, nullptr),
+         "/base:%base /mine:%mine /basename:%bname /minename:%yname", false},
+        {"P4Merge", at({"Perforce\\p4merge.exe"}, "p4merge"), "%base %mine", false},
+        // bin\code is a shell script, which git's sh runs (code.cmd it can't).
+        {"Visual Studio Code", at({"Microsoft VS Code\\bin\\code"}, nullptr),
+         "--wait --diff %base %mine", false},
     };
+    // JetBrains IDEs compare files in the IDE: `<launcher> diff a b`.
+    for (const std::string& root : roots)
+    {
+        std::error_code ec;
+        for (const auto& ide :
+             fs::directory_iterator(rap::sys::path_from_utf8(root + "\\JetBrains"), ec))
+            for (const char* launcher :
+                 {"idea64.exe", "clion64.exe", "rider64.exe", "pycharm64.exe", "webstorm64.exe",
+                  "goland64.exe", "phpstorm64.exe", "rustrover64.exe"})
+            {
+                const fs::path exe = ide.path() / "bin" / launcher;
+                if (fs::is_regular_file(exe, ec))
+                    known.push_back({rap::sys::path_to_utf8(ide.path().filename()),
+                                     {rap::sys::path_to_utf8(exe)},
+                                     "diff %base %mine",
+                                     false});
+            }
+    }
 #else
+    // A Flatpak app runs through flatpak, if it's installed for the user or
+    // the system.
+    auto flatpak = [](const char* app) -> std::string
+    {
+        std::error_code ec;
+        const std::string home = rap::sys::env("HOME").value_or("");
+        for (const std::string dir :
+             {home + "/.local/share/flatpak/app/", std::string("/var/lib/flatpak/app/")})
+            if (fs::is_directory(dir + app, ec)) return std::string("flatpak run ") + app;
+        return {};
+    };
     known = {
         {"Meld", {"meld"}, "%base %mine --label=%bname --label=%yname"},
         {"KDiff3", {"kdiff3"}, "%base %mine --L1 %bname --L2 %yname"},
-        {"Beyond Compare", {"bcompare"}, "%base %mine -title1=%bname -title2=%yname"},
-        {"Kompare", {"kompare"}, "%base %mine"},
-        {"Diffuse", {"diffuse"}, "%base %mine"},
+        {"Kompare", {"kompare"}, "-c %base %mine"},
+        // bcomp waits; bcompare may hand over to a running copy.
+        {"Beyond Compare", {"bcomp"}, "%base %mine -title1=%bname -title2=%yname"},
+        {"tkdiff", {"tkdiff"}, "-L %bname -L %yname %base %mine"},
+        {"xxdiff", {"xxdiff"}, "--title1 %bname --title2 %yname %base %mine"},
+        {"DeltaWalker", {"DeltaWalker"}, "-mi -title1=%bname -title2=%yname %base %mine"},
+        {"Diffuse", {"diffuse"}, "-L %bname %base -L %yname %mine", false},
+        {"P4Merge", {"p4merge"}, "%base %mine", false},
+        {"Visual Studio Code", {"code"}, "--wait --diff %base %mine", false},
     };
 #endif
     std::vector<detected_tool> found;
+    auto add = [&](const known_tool& k, const std::string& exe)
+    { found.push_back({k.name, exe + " " + k.arguments, k.folders}); };
     for (const known_tool& k : known)
         for (const std::string& program : k.programs)
             if (!find_program(program).empty())
             {
                 // A name found on PATH stays a name; a path is quoted if it
                 // has spaces ("C:\Program Files\...").
-                const std::string exe =
-                    program.find(' ') != std::string::npos ? "\"" + program + "\"" : program;
-                found.push_back({k.name, exe + " " + k.arguments});
+                add(k, program.find(' ') != std::string::npos ? "\"" + program + "\"" : program);
                 break;
             }
+#ifndef _WIN32
+    for (auto [name, app, arguments] :
+         {std::tuple{"Meld (Flatpak)", "org.gnome.meld",
+                     "%base %mine --label=%bname --label=%yname"},
+          std::tuple{"KDiff3 (Flatpak)", "org.kde.kdiff3", "%base %mine --L1 %bname --L2 %yname"},
+          std::tuple{"Kompare (Flatpak)", "org.kde.kompare", "-c %base %mine"}})
+        if (const std::string run = flatpak(app); !run.empty()) add({name, {}, arguments}, run);
+#endif
     return found;
 }
 
