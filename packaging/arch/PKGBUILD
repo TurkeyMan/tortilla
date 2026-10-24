@@ -1,0 +1,129 @@
+# Tortilla's Arch packages, built from this checkout: the same split as the
+# .deb and .rpm (see DESIGN.md, "Source layout and packaging"), each package
+# one CMake install component.
+#
+#   cd packaging/arch && makepkg -s
+#   sudo pacman -U tortilla-gtk4-*.pkg.tar.zst ...   (or tortilla-qt, tortilla-gtk3)
+#
+# Maintainer: Manu Evans <turkeyman@gmail.com>
+pkgbase=tortilla
+pkgname=(librapport librapport-dev librapport-gtk3 librapport-gtk4 librapport-qt6
+         tortilla-core tortilla-gtk3 tortilla-gtk4 tortilla-qt)
+pkgver=0.1
+pkgrel=1
+pkgdesc='A fast, native git client'
+arch=(x86_64 aarch64)
+url='https://github.com/TurkeyMan/tortilla'
+license=(GPL-3.0-only MIT)
+makedepends=(cmake ninja git libgit2 gtk3 gtk4 qt6-base)
+# rapport's shell-extension libraries are static, for librapport-dev.
+options=(staticlibs)
+
+_root=$(realpath "$startdir/../..")
+
+pkgver() {
+  cd "$_root"
+  local base
+  base=$(sed -n 's/^project(tortilla VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+  printf '%s.r%s.g%s' "$base" "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
+}
+
+build() {
+  cmake -S "$_root" -B build -G Ninja \
+    -DCMAKE_BUILD_TYPE=None \
+    -DCMAKE_INSTALL_PREFIX=/usr \
+    -DRAPPORT_EXAMPLES=OFF \
+    -DRAPPORT_REQUIRE_BACKENDS=ON \
+    -DRAPPORT_BACKEND_WIN32=OFF
+  cmake --build build
+}
+
+check() {
+  # The tests make their own repositories, so git needs an identity.
+  export GIT_AUTHOR_NAME=makepkg GIT_AUTHOR_EMAIL=makepkg@tortilla.invalid
+  export GIT_COMMITTER_NAME=makepkg GIT_COMMITTER_EMAIL=makepkg@tortilla.invalid
+  local t scratch
+  for t in tortilla-tests tortilla-rebase-tests; do
+    scratch=$(mktemp -d)
+    build/bin/$t "$scratch"
+    rm -rf "$scratch"
+  done
+}
+
+_install() {
+  DESTDIR="$pkgdir" cmake --install build --component "$1"
+}
+
+package_librapport() {
+  pkgdesc='Toolkit-neutral UI library Tortilla is built on: desktop detection and backend loading'
+  license=(MIT)
+  depends=(gcc-libs glibc)
+  # Loaded on first use: HTTP, and decoding images.
+  optdepends=('curl: HTTP (Gravatar pictures)'
+              'gdk-pixbuf2: decoding images (Gravatar pictures)'
+              'librapport-gtk4: GTK 4 user interface'
+              'librapport-qt6: Qt 6 user interface'
+              'librapport-gtk3: GTK 3 user interface')
+  _install core
+  install -Dm644 "$_root/rapport/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}
+
+package_librapport-dev() {
+  pkgdesc="rapport's headers and CMake package"
+  license=(MIT)
+  depends=("librapport=$pkgver-$pkgrel")
+  _install dev
+  install -Dm644 "$_root/rapport/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}
+
+_backend() {
+  license=(MIT)
+  _install "$1"
+  install -Dm644 "$_root/rapport/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}
+
+package_librapport-gtk3() {
+  pkgdesc="rapport's GTK 3 backend"
+  depends=("librapport=$pkgver-$pkgrel" gtk3 glib2 cairo pango gcc-libs glibc)
+  _backend gtk3
+}
+
+package_librapport-gtk4() {
+  pkgdesc="rapport's GTK 4 backend"
+  depends=("librapport=$pkgver-$pkgrel" gtk4 glib2 cairo pango graphene gcc-libs glibc)
+  _backend gtk4
+}
+
+package_librapport-qt6() {
+  pkgdesc="rapport's Qt 6 backend"
+  depends=("librapport=$pkgver-$pkgrel" qt6-base gcc-libs glibc)
+  _backend qt6
+}
+
+package_tortilla-core() {
+  pkgdesc='A fast, native git client (the application; install tortilla-gtk4, tortilla-qt or tortilla-gtk3)'
+  license=(GPL-3.0-only)
+  depends=("librapport=$pkgver-$pkgrel" libgit2 git hicolor-icon-theme gcc-libs glibc)
+  _install tortilla
+}
+
+_frontend() {
+  license=(GPL-3.0-only)
+  depends=("tortilla-core=$pkgver-$pkgrel" "librapport-$1=$pkgver-$pkgrel")
+  _install "tortilla_$1"
+}
+
+package_tortilla-gtk3() {
+  pkgdesc='A fast, native git client (GTK 3)'
+  _frontend gtk3
+}
+
+package_tortilla-gtk4() {
+  pkgdesc='A fast, native git client (GTK 4)'
+  _frontend gtk4
+}
+
+package_tortilla-qt() {
+  pkgdesc='A fast, native git client (Qt 6)'
+  _frontend qt6
+}

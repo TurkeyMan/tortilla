@@ -41,6 +41,12 @@ On Windows, run the installer from the
 to Explorer's context menu for every user. Tortilla runs git itself, so
 [Git for Windows](https://git-scm.com) needs to be installed too.
 
+On Linux, the releases carry .deb (Debian, Ubuntu), .rpm (Fedora) and Arch
+packages. Install the one for your desktop's toolkit, `tortilla-gtk4`,
+`tortilla-qt` or `tortilla-gtk3`, together with the `tortilla-core` and
+`librapport` packages beside it. On Arch you can also build them from a
+checkout: `cd packaging/arch && makepkg -si`.
+
 ## Running
 
 ```sh

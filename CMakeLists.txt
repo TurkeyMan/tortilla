@@ -163,12 +163,17 @@ endif()
 
 if(UNIX AND NOT APPLE)
     include(GNUInstallDirs)
-    install(TARGETS tortilla RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-    install(DIRECTORY data/icons/hicolor DESTINATION ${CMAKE_INSTALL_DATADIR}/icons)
-    install(FILES ${TORTILLA_TRANSLATIONS} DESTINATION ${CMAKE_INSTALL_DATADIR}/tortilla/translations)
+    install(TARGETS tortilla RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT tortilla)
+    install(DIRECTORY data/icons/hicolor DESTINATION ${CMAKE_INSTALL_DATADIR}/icons
+            COMPONENT tortilla)
+    install(FILES ${TORTILLA_TRANSLATIONS} DESTINATION ${CMAKE_INSTALL_DATADIR}/tortilla/translations
+            COMPONENT tortilla)
     # The welcome window's Licence and Third-party notices links open these.
-    install(FILES LICENSE NOTICES.md DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/tortilla)
-    install(FILES data/linux/tortilla.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+    install(FILES LICENSE NOTICES.md DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/tortilla
+            COMPONENT tortilla)
+    install(FILES data/linux/tortilla.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications
+            COMPONENT tortilla)
+    include(cmake/packaging.cmake)
 endif()
 
 add_executable(tortilla-graphdump tools/graphdump.cpp)

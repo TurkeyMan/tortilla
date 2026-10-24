@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  # Every toolkit backend, and the tests.
+  # Every toolkit backend, and the tests; then the .deb packages.
   linux:
     name: debian ${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
@@ -25,16 +25,89 @@ jobs:
         run: apt-get update && apt-get install -y --no-install-recommends ca-certificates git
 
       # rapport's URL is SSH; with no SSH key given, checkout fetches
-      # submodules over HTTPS with the job's token.
+      # submodules over HTTPS with the job's token. The whole history:
+      # untagged packages are versioned by commit count.
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+          fetch-depth: 0
 
       - name: Install library dependencies
         run: .github/ci/deps-debian.sh
 
       - name: Build and test
         run: .github/ci/build.sh
+
+      - name: Package
+        run: .github/ci/package.sh DEB
+
+      - name: Upload packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: tortilla-debian-${{ matrix.arch }}
+          path: dist/*.deb
+          if-no-files-found: error
+
+  # The same on Fedora, for the .rpm packages.
+  fedora:
+    name: fedora ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    container: 'fedora:44'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64, runner: ubuntu-24.04 }
+          - { arch: arm64,  runner: ubuntu-24.04-arm }
+    steps:
+      - name: Install build dependencies
+        run: dnf install -y git
+
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Install library dependencies
+        run: .github/ci/deps-fedora.sh
+
+      - name: Build and test
+        run: .github/ci/build.sh
+
+      - name: Package
+        run: .github/ci/package.sh RPM
+
+      - name: Upload packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: tortilla-fedora-${{ matrix.arch }}
+          path: dist/*.rpm
+          if-no-files-found: error
+
+  # The Arch packages, built and tested by makepkg from packaging/arch. The
+  # archlinux image is x86_64 only.
+  arch:
+    name: arch x86_64
+    runs-on: ubuntu-24.04
+    container: 'archlinux:latest'
+    steps:
+      - name: Install build dependencies
+        run: pacman -Syu --noconfirm --needed git
+
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Build, test and package
+        run: .github/ci/package-arch.sh
+
+      - name: Upload packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: tortilla-arch-x86_64
+          path: dist/*.pkg.tar.zst
+          if-no-files-found: error
 
   # MSVC with the static runtime and static libraries: a self-contained
   # tortilla.exe and the Explorer extension, as a zip and an NSIS installer
@@ -79,11 +152,11 @@ jobs:
           if-no-files-found: error
 
   # A pushed tag (v0.1, v0.2-beta, ...) becomes a GitHub release carrying the
-  # Windows installer and zip.
+  # Windows installer and zip, and the Linux packages.
   release:
     name: Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [linux, windows]
+    needs: [linux, fedora, arch, windows]
     runs-on: ubuntu-24.04
     permissions:
       contents: write

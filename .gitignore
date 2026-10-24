@@ -70,3 +70,8 @@ Testing/
 # CI output
 dist/
 libgit2-mingw/
+
+# makepkg output (packaging/arch)
+packaging/arch/src/
+packaging/arch/pkg/
+*.pkg.tar.zst
