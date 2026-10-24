@@ -872,8 +872,10 @@ void log_window::switch_to(const std::string& target, bool detach)
 
 // Runs a switch, then reloads and offers back a stash made at the new
 // commit. Bringing changes along tries a plain checkout first (git carries
-// changes over when both sides agree on those files) and only falls back to
-// --merge when git refuses.
+// changes over when both sides agree on those files) and falls back to
+// --merge when that fails. Not by git's message, which is in the user's
+// language: any other failure (no such ref) fails again the same way, and
+// that's what's shown.
 void log_window::run_switch(const std::string& target, bool detach, switch_mode mode)
 {
     auto checkout = [&](const char* flag)
@@ -892,20 +894,21 @@ void log_window::run_switch(const std::string& target, bool detach, switch_mode 
     const arg_list merge = checkout("--merge");
     run_quietly(
         _("Switch/Checkout"), std::move(commands),
-        [this, bring_along, merge](bool ok, const std::string& output)
+        [this, bring_along, merge](bool ok, const std::string&)
         {
-            if (!ok && bring_along && output.find("would be overwritten") != std::string::npos)
+            if (!ok && bring_along)
                 return run_quietly(_("Switch/Checkout"), {merge},
-                                   [this](bool ok2, const std::string&)
+                                   [this](bool ok2, const std::string& output)
                                    {
+                                       if (!ok2)
+                                           ui_.message(window_.get(),
+                                                       {.icon = rap::message_spec::icon::error,
+                                                        .title = _("Switch/Checkout"),
+                                                        .text = _("Switch/Checkout failed."),
+                                                        .detail = output});
                                        reload();
                                        if (ok2) offer_stash_pop();
                                    });
-            if (!ok && bring_along)
-                ui_.message(window_.get(), {.icon = rap::message_spec::icon::error,
-                                            .title = _("Switch/Checkout"),
-                                            .text = _("Switch/Checkout failed."),
-                                            .detail = output});
             reload();
             if (ok) offer_stash_pop();
         },
