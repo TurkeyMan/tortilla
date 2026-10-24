@@ -189,6 +189,26 @@ if(UNIX AND NOT APPLE)
             COMPONENT tortilla)
     install(FILES data/linux/tortilla.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications
             COMPONENT tortilla)
+
+    # PCManFM's and PCManFM-Qt's menu: file manager actions, written from the
+    # shell menu's labels and the catalogues (tools/make_fm_actions.cpp), and
+    # the script their conditions run.
+    add_executable(tortilla-fm-actions tools/make_fm_actions.cpp)
+    target_include_directories(tortilla-fm-actions PRIVATE src)
+    target_link_libraries(tortilla-fm-actions PRIVATE rapport::rapport)
+    set(fm_actions ${CMAKE_CURRENT_BINARY_DIR}/file-manager/actions)
+    set(fm_condition ${CMAKE_INSTALL_FULL_LIBEXECDIR}/tortilla/fm-condition)
+    add_custom_command(OUTPUT ${fm_actions}/tortilla.desktop
+        COMMAND ${CMAKE_COMMAND} -E rm -rf ${fm_actions}
+        COMMAND tortilla-fm-actions ${fm_actions} ${CMAKE_CURRENT_SOURCE_DIR}/data/translations
+                ${fm_condition} ${CMAKE_INSTALL_FULL_BINDIR}/tortilla
+        DEPENDS tortilla-fm-actions ${TORTILLA_TRANSLATIONS})
+    add_custom_target(tortilla-fm-actions-files ALL DEPENDS ${fm_actions}/tortilla.desktop)
+    install(DIRECTORY ${fm_actions} DESTINATION ${CMAKE_INSTALL_DATADIR}/file-manager
+            COMPONENT tortilla-shell-pcmanfm)
+    install(PROGRAMS data/linux/fm-condition DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/tortilla
+            COMPONENT tortilla-shell-pcmanfm)
+
     include(cmake/packaging.cmake)
 endif()
 

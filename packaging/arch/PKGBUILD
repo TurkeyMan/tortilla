@@ -9,7 +9,8 @@
 pkgbase=tortilla
 pkgname=(librapport librapport-dev librapport-gtk3 librapport-gtk4 librapport-qt6
          tortilla-core tortilla-gtk3 tortilla-gtk4 tortilla-qt
-         tortilla-nautilus tortilla-nemo tortilla-caja tortilla-thunar tortilla-dolphin)
+         tortilla-nautilus tortilla-nemo tortilla-caja tortilla-thunar tortilla-dolphin
+         tortilla-pcmanfm)
 pkgver=0.1
 pkgrel=1
 pkgdesc='A fast, native git client'
@@ -34,6 +35,7 @@ build() {
   cmake -S "$_root" -B build -G Ninja \
     -DCMAKE_BUILD_TYPE=None \
     -DCMAKE_INSTALL_PREFIX=/usr \
+    -DCMAKE_INSTALL_LIBEXECDIR=lib \
     -DRAPPORT_EXAMPLES=OFF \
     -DRAPPORT_REQUIRE_BACKENDS=ON \
     -DRAPPORT_REQUIRE_SHELL_EXTENSIONS=ON \
@@ -111,7 +113,8 @@ package_tortilla-core() {
               'tortilla-nemo: entries in the context menu of Nemo'
               'tortilla-caja: entries in the context menu of Caja'
               'tortilla-thunar: entries in the context menu of Thunar'
-              'tortilla-dolphin: entries in the context menu of Dolphin')
+              'tortilla-dolphin: entries in the context menu of Dolphin'
+              'tortilla-pcmanfm: entries in the context menu of PCManFM-Qt and PCManFM')
   _install tortilla
 }
 
@@ -173,4 +176,14 @@ package_tortilla-dolphin() {
   depends=(kio qt6-base)
   optdepends=('dolphin: the file manager')
   _shell dolphin
+}
+
+package_tortilla-pcmanfm() {
+  pkgdesc='Tortilla in the context menu of PCManFM-Qt and PCManFM (file manager actions; Caja shows them too with caja-actions)'
+  arch=(any)
+  license=(GPL-3.0-only)
+  depends=("tortilla-core=$pkgver-$pkgrel" git sh)
+  optdepends=('pcmanfm-qt: the LXQt file manager'
+              'pcmanfm: the LXDE file manager')
+  _install tortilla-shell-pcmanfm
 }
