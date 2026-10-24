@@ -13,6 +13,7 @@
 #include <rapport/rapport.h>
 
 #include <chrono>
+#include <filesystem>
 #include <memory>
 
 namespace tortilla
@@ -151,6 +152,12 @@ private:
     bool show_unversioned_ = true;
     std::optional<int64_t> since_, until_;  // explicit date limits
     rap::subscription filter_timer_, pulse_timer_;
+    // Reloading when something else changes the repository.
+    void watch_repository();
+    std::string repository_state() const;
+    std::filesystem::path git_dir_, common_dir_;
+    std::string state_;
+    rap::subscription watch_timer_;
     std::shared_ptr<git_process> difftool_;
     std::shared_ptr<git_process> ref_command_;
     std::vector<std::unique_ptr<rebase_window>> rebases_;

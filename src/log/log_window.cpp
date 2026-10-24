@@ -5,7 +5,10 @@
 #include "ui/settings_dialog.h"
 #include "util/calendar.h"
 
+#include <rapport/sys.h>
+
 #include <ctime>
+#include <filesystem>
 #include <numeric>
 #include <unordered_set>
 
@@ -82,8 +85,7 @@ rap::icon jump_arrow(bool up)
         });
 }
 
-rap::menu_item toggle(std::string label, bool on, std::function<void()> action,
-                       bool enabled = true)
+rap::menu_item toggle(std::string label, bool on, std::function<void()> action, bool enabled = true)
 {
     return {
         .label = std::move(label), .action = std::move(action), .enabled = enabled, .checked = on};
@@ -105,6 +107,7 @@ log_window::open(rap::ui& ui, const std::string& path, bool all_branches)
         w->update_ref_button();
     }
     w->reload();
+    w->watch_repository();
     return w;
 }
 
@@ -137,6 +140,7 @@ void log_window::build()
 
     std::string title = repo_.workdir();
     if (title.size() > 1 && title.back() == '/') title.pop_back();
+    title = rap::sys::path_to_utf8(rap::sys::path_from_utf8(title).make_preferred());
 
     window_ = ui_.create(window{
         title + " - Log Messages - Tortilla",
@@ -339,7 +343,7 @@ void log_window::restore_layout()
     walk_options_.first_parent = flag("log.walk.firstParent", false);
     walk_options_.no_merges = flag("log.walk.noMerges", false);
     all_branches_->set_state(walk_options_.all_branches ? rap::check_state::checked
-                                                    : rap::check_state::unchecked);
+                                                        : rap::check_state::unchecked);
     walk_->set_pushed(walk_options_.first_parent || walk_options_.no_merges);
     update_ref_button();
     log_.set_labels(unsigned(number("log.view.labels", label_all)) & label_all);
@@ -354,8 +358,61 @@ void log_window::restore_layout()
 
 // While loading, a progress bar replaces Statistics, Walk Behavior and View
 // [spec 1.2].
+// The repository as the log shows it: HEAD and every ref, by their files'
+// times and sizes (a merge, rebase or cherry-pick in progress too). Not the
+// index: the log's own git status touches it.
+std::string log_window::repository_state() const
+{
+    std::string state;
+    std::error_code ec;
+    auto add = [&](const std::filesystem::path& p)
+    {
+        const auto status = std::filesystem::status(p, ec);
+        if (!std::filesystem::exists(status)) return;
+        const auto time = std::filesystem::last_write_time(p, ec).time_since_epoch().count();
+        const auto size =
+            std::filesystem::is_regular_file(status) ? std::filesystem::file_size(p, ec) : 0;
+        state += rap::sys::path_to_utf8(p) + ':' + std::to_string(time) + ':' +
+                 std::to_string(size) + '\n';
+    };
+    for (const char* f :
+         {"HEAD", "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "tortilla-rebase-active"})
+        add(git_dir_ / f);
+    add(common_dir_ / "packed-refs");
+    for (auto it = std::filesystem::recursive_directory_iterator(common_dir_ / "refs", ec);
+         !ec && it != std::filesystem::recursive_directory_iterator(); it.increment(ec))
+        add(it->path());
+    return state;
+}
+
+// Another window or program may change the repository (a rebase, a pull,
+// git on the command line): checked every two seconds, by file times only.
+void log_window::watch_repository()
+{
+    git_dir_ = rap::sys::path_from_utf8(repo_.git_dir());
+    const git_result common = run_git(repo_.workdir().empty() ? repo_.git_dir() : repo_.workdir(),
+                                      {"rev-parse", "--git-common-dir"}, git_output::stdout_only);
+    std::string dir = common.ok() ? common.output : "";
+    while (!dir.empty() && (dir.back() == '\n' || dir.back() == '\r')) dir.pop_back();
+    // (Relative to where git ran; a worktree's refs are in the main one's.)
+    const std::filesystem::path common_dir = rap::sys::path_from_utf8(dir);
+    const std::string ran_in = repo_.workdir().empty() ? repo_.git_dir() : repo_.workdir();
+    common_dir_ = dir.empty()                ? git_dir_
+                  : common_dir.is_absolute() ? common_dir
+                                             : rap::sys::path_from_utf8(ran_in) / common_dir;
+    state_ = repository_state();
+    watch_timer_ = ui_.timer(2000, true,
+                             [this]
+                             {
+                                 if (repository_state() != state_) reload();
+                             });
+}
+
 void log_window::reload()
 {
+    // (The state as this reload sees it: the log's own changes don't reload
+    // it twice.)
+    if (!git_dir_.empty()) state_ = repository_state();
     if (log_.row_count())
     {
         kept_selection keep;
@@ -463,7 +520,7 @@ void log_window::show_commit(size_t row)
             return;
         }
         details_->set_text("Working tree changes\n\n" +
-                          std::to_string(log_.working_tree_files().size()) + " files changed");
+                           std::to_string(log_.working_tree_files().size()) + " files changed");
         files_.set_source({.what = changes_source::working_tree});
         files_.set_files(log_.working_tree_files(), show_unversioned_);
         return;
@@ -507,28 +564,27 @@ void log_window::show_commit(size_t row)
     files_worker_->submit(
         [this, id](repo& repo, const repo_worker::progress& progress) -> std::function<void()>
         {
-            (void)repo.changes(
-                id, {.listed =
-                         [&](const std::vector<file_change>& files)
-                     {
-                         progress.post(
-                             [this, files]
-                             {
-                                 files_.set_files(files);
-                                 update_status();
-                             });
-                     },
-                     .counted =
-                         [&](size_t first, const std::vector<file_change>& files)
-                     {
-                         progress.post(
-                             [this, first, files]
-                             {
-                                 files_.set_counts(first, files);
-                                 update_status();
-                             });
-                     },
-                     .stop = [&] { return progress.stale(); }});
+            (void)repo.changes(id, {.listed =
+                                        [&](const std::vector<file_change>& files)
+                                    {
+                                        progress.post(
+                                            [this, files]
+                                            {
+                                                files_.set_files(files);
+                                                update_status();
+                                            });
+                                    },
+                                    .counted =
+                                        [&](size_t first, const std::vector<file_change>& files)
+                                    {
+                                        progress.post(
+                                            [this, first, files]
+                                            {
+                                                files_.set_counts(first, files);
+                                                update_status();
+                                            });
+                                    },
+                                    .stop = [&] { return progress.stale(); }});
             return {};
         });
 }
@@ -783,13 +839,13 @@ rap::menu log_window::view_menu()
 void log_window::open_settings(settings_page page)
 {
     show_settings(ui_, window_.get(), repo_.workdir(), page,
-                 [this]
-                 {
-                     // What the pages change that's on show here.
-                     const int style =
-                         std::atoi(settings::get().value("log.actionIcons", "1").c_str());
-                     log_.set_action_icon_style(action_icon_style(std::clamp(style, 0, 3)));
-                 });
+                  [this]
+                  {
+                      // What the pages change that's on show here.
+                      const int style =
+                          std::atoi(settings::get().value("log.actionIcons", "1").c_str());
+                      log_.set_action_icon_style(action_icon_style(std::clamp(style, 0, 3)));
+                  });
 }
 
 // Header right-click: reset, then a check item per column [spec 1.4].
@@ -797,17 +853,17 @@ rap::menu log_window::header_menu()
 {
     auto columns = log_model::columns();
     rap::menu menu{{.label = "Reset columns",
-                      .action =
-                          [this]
-                      {
-                          auto defaults = log_model::columns();
-                          std::vector<size_t> order(defaults.size());
-                          std::iota(order.begin(), order.end(), size_t(0));
-                          commit_list_->set_column_order(order);
-                          for (size_t i = 0; i < defaults.size(); ++i)
-                              commit_list_->set_column_visible(i, defaults[i].visible);
-                      }},
-                     rap::menu_item::separator()};
+                    .action =
+                        [this]
+                    {
+                        auto defaults = log_model::columns();
+                        std::vector<size_t> order(defaults.size());
+                        std::iota(order.begin(), order.end(), size_t(0));
+                        commit_list_->set_column_order(order);
+                        for (size_t i = 0; i < defaults.size(); ++i)
+                            commit_list_->set_column_visible(i, defaults[i].visible);
+                    }},
+                   rap::menu_item::separator()};
     for (size_t i = 0; i < columns.size(); ++i)
         menu.push_back(
             toggle(columns[i].title, commit_list_->column_visible(i), [this, i]
