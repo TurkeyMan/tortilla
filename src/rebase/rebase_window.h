@@ -1,6 +1,7 @@
 // TortoiseGit's Rebase dialog (IDD_REBASE) [spec 2].
 #pragma once
 
+#include "changes/changes_view.h"
 #include "changes/file_model.h"
 #include "rebase/rebase_engine.h"
 #include "rebase/rebase_model.h"
@@ -45,11 +46,12 @@ private:
     rap::menu set_all_menu();
     void append_log(const std::string& text, bool command);
     void refresh_conflicts();
+    changes_view::host files_host();
 
     rap::ui& ui_;
     repo repo_;
     rebase_model model_;
-    file_model revision_files_, conflict_files_;
+    changes_view revision_files_, conflict_files_;
     std::unique_ptr<rebase_engine> engine_;
     std::unique_ptr<rap::window> window_;
     std::function<void()> closed_, show_log_;

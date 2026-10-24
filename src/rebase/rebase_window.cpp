@@ -1,6 +1,11 @@
 #include "rebase_window.h"
 
+#include "changes/working_tree.h"
 #include "git/command.h"
+#include "ui/progress_dialog.h"
+#include "ui/settings_dialog.h"
+
+#include <rapport/sys.h>
 
 #include <algorithm>
 
@@ -42,7 +47,28 @@ rebase_window::open(rap::ui& ui, const std::string& path, const std::string& ups
 rebase_window::rebase_window(rap::ui& ui, repo repo)
     : ui_(ui)
     , repo_(std::move(repo))
+    , revision_files_(files_host())
+    , conflict_files_(files_host())
 {
+}
+
+// The shared file lists' surroundings: their git commands (Resolved, using
+// theirs/mine...) run in the progress dialog, then the conflicts reload.
+changes_view::host rebase_window::files_host()
+{
+    return {.ui = ui_,
+            .window = [this] { return window_.get(); },
+            .workdir = repo_.workdir(),
+            .run =
+                [this](const std::string& title, std::vector<std::vector<std::string>> commands)
+            {
+                run_progress_dialog(ui_, window_.get(), title, repo_.workdir(), std::move(commands),
+                                    [this](bool) { refresh_conflicts(); });
+            },
+            .refresh = [this] { refresh_conflicts(); },
+            .open_settings = [this](settings_page page)
+            { show_settings(ui_, window_.get(), repo_.workdir(), page); },
+            .selection_changed = {}};
 }
 
 void rebase_window::build(const std::string& upstream)
@@ -65,6 +91,7 @@ void rebase_window::build(const std::string& upstream)
 
     std::string title = repo_.workdir();
     if (title.size() > 1 && title.back() == '/') title.pop_back();
+    title = rap::sys::path_to_utf8(rap::sys::path_from_utf8(title).make_preferred());
 
     auto swap_icon = rap::icon::drawn(
         [](rap::painter& p, rap::size_f s)
@@ -120,15 +147,16 @@ void rebase_window::build(const std::string& upstream)
                     .soft_selection()
                     .bind(list_)
                     .on_selection_changed([this] { selection_changed(); })
-                    .on_context_menu([this](std::optional<size_t> row) { return context_menu(row); })
+                    .on_context_menu([this](std::optional<size_t> row)
+                                     { return context_menu(row); })
                     .on_reorder([this](const std::vector<size_t>& rows, size_t dest)
-                               { return drop_rows(rows, dest); })
+                                { return drop_rows(rows, dest); })
                     .stretch(3),
                 vbox{
                     // Row under the list [spec 2.2]
                     hbox{
                         menu_button{"_Pick ALL"}.bind(set_all_).on_menu([this]
-                                                                     { return set_all_menu(); }),
+                                                                        { return set_all_menu(); }),
                         button{"_Up"}.bind(up_).on_click([this] { move_rows(true, false); }),
                         button{"_Down"}.bind(down_).on_click([this] { move_rows(false, false); }),
                         // TODO: Add (pick commits from a log).
@@ -145,12 +173,12 @@ void rebase_window::build(const std::string& upstream)
                                      "descendant of the commit you are rebasing onto."),
                     },
                     tabs{
-                        {"Revision Files", vbox{list{file_model::columns(), &revision_files_}
+                        {"Revision Files", vbox{revision_files_.list("rebase.revision")
                                                     .compact()
                                                     .soft_selection()
                                                     .stretch()}
                                                .handle(revision_page_)},
-                        {"Conflict Files", vbox{list{file_model::columns(), &conflict_files_}
+                        {"Conflict Files", vbox{conflict_files_.list("rebase.conflicts")
                                                     .compact()
                                                     .soft_selection()
                                                     .stretch()}
@@ -213,7 +241,7 @@ void rebase_window::build(const std::string& upstream)
         {
             progress_->set_fraction(total ? float(applied) / float(total) : 0);
             set_status("Rebasing... (" + std::to_string(applied) + "/" + std::to_string(total) +
-                      ")");
+                       ")");
             if (auto c = list_->current(); !c || *c != total - applied)
                 list_->scroll_to(total - applied);
         },
@@ -257,7 +285,7 @@ void rebase_window::reload_list()
     if (engine_ && engine_->started()) return;
     fast_forward_ = can_start_ = false;
     model_.set({}, {});
-    revision_files_.set({});
+    revision_files_.clear();
     message_->set_text("");
 
     std::string b = branches_.empty() ? "" : branches_[size_t(std::max(0, branch_->current()))];
@@ -274,12 +302,12 @@ void rebase_window::reload_list()
     else if (repo_.is_ancestor(*branch_head_, *upstream_head_))
     {
         set_status("Branch \"" + b + "\" is behind \"" + u + "\": \"" + b +
-                  "\" will fast-forward to \"" + u + "\"");
+                   "\" will fast-forward to \"" + u + "\"");
         fast_forward_ = can_start_ = true;
     }
     else if (repo_.is_ancestor(*upstream_head_, *branch_head_) && !force_->checked())
         set_status("Current branch \"" + b +
-                  "\" is up to date. To rebase anyway, check \"Force Rebase\" below.");
+                   "\" is up to date. To rebase anyway, check \"Force Rebase\" below.");
     else
     {
         auto commits = repo_.range(*upstream_head_, *branch_head_, preserve_merges_->checked());
@@ -322,14 +350,18 @@ void rebase_window::selection_changed()
     auto sel = list_->selection();
     if (sel.size() != 1)
     {
-        revision_files_.set({});
+        revision_files_.clear();
         message_->set_text("");
         return;
     }
     const commit& c = model_.rows()[sel.front()].commit;
     message_->set_text(c.message);
+    revision_files_.set_source(
+        {.what = changes_source::revision,
+         .hash = c.id.hex(),
+         .parent = c.parents.empty() ? k_empty_tree : c.parents.front().hex()});
     auto changes = repo_.changes(c.id);
-    revision_files_.set(changes ? std::move(*changes) : std::vector<file_change>{});
+    revision_files_.set_files(changes ? std::move(*changes) : std::vector<file_change>{});
 }
 
 // Button texts and enabled states by stage [spec 2.7].
@@ -340,8 +372,8 @@ void rebase_window::update_controls()
     bool before = stage == rebase_stage::choose;
     bool busy = engine_ && engine_->busy();
 
-    for (rap::widget* w : std::initializer_list<rap::widget*>{
-             branch_, upstream_, swap_, set_all_, up_, down_, preserve_merges_, force_})
+    for (rap::widget* w : std::initializer_list<rap::widget*>{branch_, upstream_, swap_, set_all_,
+                                                              up_, down_, preserve_merges_, force_})
         w->set_enabled(before);
     list_->set_reorderable(before);
 
@@ -378,8 +410,9 @@ void rebase_window::update_controls()
         else if (stage == rebase_stage::edit || stage == rebase_stage::squash_edit)
         {
             tabs_->set_current(page_message);
-            set_status(stage == rebase_stage::edit ? "Edit the commit, then press Amend"
-                                           : "Edit the squashed message, then press Commit");
+            set_status(stage == rebase_stage::edit
+                           ? "Edit the commit, then press Amend"
+                           : "Edit the squashed message, then press Commit");
         }
         else if (stage == rebase_stage::error)
             set_status("The rebase stopped with an error; see the Log tab, then Abort", true);
@@ -394,10 +427,13 @@ void rebase_window::update_controls()
     }
 }
 
+// The working tree while a step is stopped: the conflicted files (git
+// status marks them) and what else the step changed.
 void rebase_window::refresh_conflicts()
 {
-    auto files = repo_.working_tree_changes();
-    conflict_files_.set(files ? std::move(*files) : std::vector<file_change>{}, false);
+    working_tree_changes changes =
+        load_working_tree(repo_.workdir(), {.unversioned = false, .all_staged = true});
+    conflict_files_.set_files(std::move(changes.files), false);
 }
 
 void rebase_window::append_log(const std::string& text, bool command)
@@ -452,7 +488,7 @@ void rebase_window::start_rebase()
         return;
     }
     git_result dirty = run_git(repo_.workdir(), {"status", "--porcelain", "--untracked-files=no"},
-                             git_output::stdout_only);
+                               git_output::stdout_only);
     auto go = [this]
     {
         std::string branch = branches_[size_t(std::max(0, branch_->current()))];
@@ -486,7 +522,8 @@ void rebase_window::start_rebase()
 
 void rebase_window::abort_pressed()
 {
-    if (!engine_->started() || engine_->stage() == rebase_engine::rebase_stage::done) return close();
+    if (!engine_->started() || engine_->stage() == rebase_engine::rebase_stage::done)
+        return close();
     ui_.message(window_.get(),
                 {.icon = rap::message_spec::icon::question,
                  .title = "Rebase",
