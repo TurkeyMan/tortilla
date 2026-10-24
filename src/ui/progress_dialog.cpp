@@ -2,6 +2,7 @@
 
 #include "git/command.h"
 
+#include <cctype>
 #include <chrono>
 #include <ctime>
 
@@ -22,6 +23,8 @@ struct progress : std::enable_shared_from_this<progress>
     std::unique_ptr<rap::window> window;
     rap::text_view* output = nullptr;
     rap::progress_bar* bar = nullptr;
+    rap::label* status = nullptr;  // git's progress line as it's rewritten
+    std::string line;              // the output line not yet finished
     rap::button* close = nullptr;
     rap::button* abort = nullptr;
     rap::menu_button* more = nullptr;
@@ -47,12 +50,48 @@ struct progress : std::enable_shared_from_this<progress>
         output->append(command_line(args) + "\n", {.bold = true});
         auto self = shared_from_this();
         process = git_process::start(
-            ui, dir, args, [self](const std::string& chunk) { self->output->append(chunk); },
+            ui, dir, args, [self](const std::string& chunk) { self->received(chunk); },
             [self](int code)
             {
+                self->flush_line();
                 if (code != 0) self->ok = false;
                 self->run_next();
             });
+    }
+
+    // git rewrites its progress lines in place ("Receiving objects: 45%"
+    // ... "\r"): a line goes into the output once finished, and meanwhile
+    // shows below it, its percentage on the bar.
+    void received(const std::string& chunk)
+    {
+        std::string done;
+        for (char c : chunk)
+            if (c == '\n')
+                done += line + '\n', line.clear();
+            else if (c == '\r')
+                show_progress(), line.clear();
+            else
+                line += c;
+        if (!done.empty()) output->append(done);
+        show_progress();
+    }
+    void show_progress()
+    {
+        if (line.empty()) return;
+        status->set_text(line);
+        // "...: 45% (450/1000)..."
+        const size_t percent = line.find('%');
+        if (percent == std::string::npos || percent == 0) return;
+        size_t start = percent;
+        while (start > 0 && std::isdigit(static_cast<unsigned char>(line[start - 1]))) --start;
+        if (start == percent) return;
+        pulse.reset();
+        bar->set_fraction(std::stoi(line.substr(start, percent - start)) / 100.f);
+    }
+    void flush_line()
+    {
+        if (!line.empty()) output->append(line + '\n');
+        line.clear();
     }
 
     void finish()
@@ -60,6 +99,7 @@ struct progress : std::enable_shared_from_this<progress>
         pulse.reset();
         process.reset();
         bar->set_fraction(1);
+        status->set_text("");
         auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                       std::chrono::steady_clock::now() - started)
                       .count();
@@ -122,6 +162,7 @@ void run_progress_dialog(rap::ui& ui, rap::window* parent, const std::string& ti
     rap::nodes body;
     body.push_back(text_view{}.read_only().monospace().wrap(false).bind(p->output).stretch());
     body.push_back(progress_bar{}.bind(p->bar));
+    body.push_back(label{}.bind(p->status));
     // The follow-ups, under the output (shown after success).
     if (!p->follow_ups.empty())
         body.push_back(

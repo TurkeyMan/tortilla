@@ -1,5 +1,6 @@
 #include "command.h"
 
+#include "git/askpass_env.h"
 #include "git/ssh_client.h"
 
 #include <rapport/sys.h>
@@ -16,12 +17,14 @@ using rap::sys::process;
 
 // Prompts are disabled: a GUI has no terminal to answer them on, and
 // GIT_EDITOR=true never opens an editor (merge messages etc.). The SSH
-// client is the one chosen in Settings, if any.
+// client is the one chosen in Settings, if any; passwords, passphrases and
+// unknown hosts are asked in a window (askpass_env.h).
 process::options git_options(git_output output)
 {
     process::options o{.env = {{"GIT_TERMINAL_PROMPT", "0"}, {"GIT_EDITOR", "true"}},
                        .merge_stderr = output == git_output::all};
     for (auto& e : ssh_environment()) o.env.push_back(std::move(e));
+    for (const auto& e : askpass_environment()) o.env.push_back(e);
     return o;
 }
 

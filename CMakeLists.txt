@@ -58,6 +58,7 @@ add_library(tortilla_git STATIC
     src/git/repo_worker.cpp
     src/git/diff_tool.cpp
     src/git/ssh_client.cpp
+    src/git/askpass_env.cpp
     src/util/programs.cpp
     src/changes/working_tree.cpp)
 target_include_directories(tortilla_git PUBLIC src)
@@ -77,7 +78,8 @@ add_executable(tortilla
     src/ui/compare.cpp
     src/ui/progress_dialog.cpp
     src/ui/diff_window.cpp
-    src/ui/settings_dialog.cpp)
+    src/ui/settings_dialog.cpp
+    src/ui/askpass.cpp)
 target_link_libraries(tortilla PRIVATE rapport::rapport tortilla_git)
 if(WIN32)
     enable_language(RC)

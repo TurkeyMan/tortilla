@@ -22,6 +22,7 @@
 #include "rebase/rebase_window.h"
 #include "ui/compare.h"
 #include "ui/diff_window.h"
+#include "ui/askpass.h"
 #include "ui/settings_dialog.h"
 
 #include <rapport/rapport.h>
@@ -38,6 +39,14 @@
 
 int main(int argc, char** argv)
 {
+    // Started by git or ssh for an answer (a password, a passphrase): asked
+    // in a window, answered on our output, so before the console is taken.
+    if (tortilla::started_as_askpass(argc))
+    {
+        auto ui = rap::ui::load(argc, argv, {});
+        if (!ui) return 1;
+        return tortilla::run_askpass(**ui, argv[1]);
+    }
 #ifdef _WIN32
     // A GUI program has no console; started from one, write to it, so
     // --which-ui and --register-shell can be read.
