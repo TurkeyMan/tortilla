@@ -75,6 +75,7 @@ enum class run
     switch_to,   // tortilla switch <folder>
     merge,       // tortilla merge <folder>
     merge_abort,  // tortilla mergeabort <folder>
+    edit_conflicts,  // tortilla conflicteditor <file>
 };
 
 struct row
@@ -161,7 +162,7 @@ inline constexpr row k_rows[] = {
     {"Bisect skip", {{{FIG | ONE | BISECT, 0}}}, place::sub, run::none, "bisectskip"},
     {"Bisect reset", {{{FIG | ONE | BISECT, 0}}}, place::sub, run::none, "bisectreset"},
     separator,
-    {"&Edit conflicts", {{{GIT | CONFL, FOLD}}}, place::sub, run::none, "conflicteditor"},
+    {"&Edit conflicts", {{{GIT | CONFL, FOLD}}}, place::sub, run::edit_conflicts, "conflicteditor"},
     {"Res&olve...",
      {{{GIT | CONFL, 0}, {GIT | FOLD, 0}, {FIG, 0}}},
      place::sub,

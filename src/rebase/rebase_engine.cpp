@@ -24,10 +24,11 @@ bool has_conflict_markers(const std::string& path)
 }  // namespace
 
 rebase_engine::rebase_engine(rap::ui& ui, const std::string& workdir, const std::string& git_dir,
-                           rebase_model& model, hooks hooks)
+                             rebase_model& model, hooks hooks)
     : ui_(ui)
     , workdir_(workdir)
     , msg_file_(git_dir + "tortilla-rebase-msg")
+    , active_file_(git_dir + "tortilla-rebase-active")
     , model_(model)
     , hooks_(std::move(hooks))
 {
@@ -57,6 +58,11 @@ void rebase_engine::run(std::vector<std::string> args, done_fn done, bool quiet)
 void rebase_engine::start(const start_args& s)
 {
     start_ = s;
+    if (std::FILE* f = std::fopen(active_file_.c_str(), "w"))
+    {
+        std::fprintf(f, "onto=%s\nbranch=%s\n", s.onto_name.c_str(), s.branch.c_str());
+        std::fclose(f);
+    }
     stage_ = rebase_stage::running;
     hooks_.stage_changed();
     hooks_.log("Start Rebase\n", true);
@@ -170,24 +176,25 @@ void rebase_engine::picked(int code, const std::string& output, bool in_group)
             if (!u.empty())
             {
                 hooks_.message(in_group ? squash_.message
-                                       : model_.rows()[size_t(pos_)].commit.message);
+                                        : model_.rows()[size_t(pos_)].commit.message);
                 return stop(in_group ? rebase_stage::squash_conflict : rebase_stage::conflict);
             }
             hooks_.ask_skip(output,
-                           [this](bool skip)
-                           {
-                               if (!skip) return stop(rebase_stage::error);
-                               run({"reset", "--hard", "HEAD"},
-                                   [this](int, auto&)
-                                   {
-                                       run({"cherry-pick", "--quit"},
-                                           [this](int, auto&)
-                                           {
-                                               model_.row(size_t(pos_)).action = rebase_action::skip;
-                                               advance();
-                                           });
-                                   });
-                           });
+                            [this](bool skip)
+                            {
+                                if (!skip) return stop(rebase_stage::error);
+                                run({"reset", "--hard", "HEAD"},
+                                    [this](int, auto&)
+                                    {
+                                        run({"cherry-pick", "--quit"},
+                                            [this](int, auto&)
+                                            {
+                                                model_.row(size_t(pos_)).action =
+                                                    rebase_action::skip;
+                                                advance();
+                                            });
+                                    });
+                            });
         },
         true);
 }
@@ -219,7 +226,8 @@ std::string rebase_engine::author_arg(const commit& c) const
 std::string rebase_engine::date_arg(const commit& c) const
 {
     char tz[16];
-    std::snprintf(tz, sizeof tz, "%+03d%02d", c.offset_minutes / 60, std::abs(c.offset_minutes % 60));
+    std::snprintf(tz, sizeof tz, "%+03d%02d", c.offset_minutes / 60,
+                  std::abs(c.offset_minutes % 60));
     return "--date=" + std::to_string(c.time) + " " + tz;
 }
 
@@ -324,6 +332,7 @@ void rebase_engine::finish()
         {
             if (code != 0) return stop(rebase_stage::error);
             std::remove(msg_file_.c_str());
+            std::remove(active_file_.c_str());
             hooks_.log("Finished rebasing.\n", true);
             stop(rebase_stage::done);
         });
@@ -350,6 +359,7 @@ void rebase_engine::abort(std::function<void()> done)
                         [this, done](int, auto&)
                         {
                             std::remove(msg_file_.c_str());
+                            std::remove(active_file_.c_str());
                             hooks_.log("Rebase aborted.\n", true);
                             stage_ = rebase_stage::done;
                             hooks_.stage_changed();

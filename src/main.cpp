@@ -11,6 +11,7 @@
 //   tortilla branch|tag|switch|merge [path] [rev]  Create Branch/Tag, Switch/Checkout
 //                                     or Merge, rev preselected
 //   tortilla mergeabort [path]         the Abort Merge dialog
+//   tortilla conflicteditor file       a conflicted file in the merge tool
 //   tortilla diff [path] rev [rev2]   a commit, or rev..rev2, as a unified diff
 //   tortilla settings [path] [diff|menu|network]  the Settings dialog (at that page)
 //   tortilla --which-ui       show the detected desktop and backend order
@@ -23,6 +24,7 @@
 #include "branch/switch_dialog.h"
 #include "changes/changes_window.h"
 #include "changes/commit_window.h"
+#include "changes/conflict_editor.h"
 #include "changes/file_action_window.h"
 #include "git/repo.h"
 #include "git/ssh_client.h"
@@ -120,7 +122,8 @@ int main(int argc, char** argv)
                   std::strcmp(argv[i], "fetch") == 0 || std::strcmp(argv[i], "pull") == 0 ||
                   std::strcmp(argv[i], "push") == 0 || std::strcmp(argv[i], "branch") == 0 ||
                   std::strcmp(argv[i], "tag") == 0 || std::strcmp(argv[i], "switch") == 0 ||
-                  std::strcmp(argv[i], "merge") == 0 || std::strcmp(argv[i], "mergeabort") == 0))
+                  std::strcmp(argv[i], "merge") == 0 || std::strcmp(argv[i], "mergeabort") == 0 ||
+                  std::strcmp(argv[i], "conflicteditor") == 0))
             command = argv[i];
         else
             args.push_back(argv[i]);
@@ -220,6 +223,36 @@ int main(int argc, char** argv)
             }
             tortilla::windows::keep(std::move(*d));
         }
+        return (*ui)->run();
+    }
+
+    // A conflicted file in the merge tool [spec 9.3.1].
+    if (command == "conflicteditor")
+    {
+        auto repo = tortilla::repo::open(path);
+        if (!repo)
+        {
+            std::fprintf(stderr, "tortilla: %s\n", repo.error().c_str());
+            return 1;
+        }
+        std::error_code ec;
+        const auto root =
+            std::filesystem::weakly_canonical(rap::sys::path_from_utf8(repo->workdir()), ec);
+        const auto file = std::filesystem::weakly_canonical(
+            std::filesystem::absolute(rap::sys::path_from_utf8(path)), ec);
+        const std::string rel =
+            rap::sys::path_to_utf8(file.lexically_relative(root).generic_string());
+        tortilla::windows::init(**ui);
+        const size_t running = tortilla::windows::hold({});
+        const std::string workdir = repo->workdir();
+        tortilla::edit_conflict(
+            **ui, nullptr, workdir, rel, [running](bool) { tortilla::windows::release(running); },
+            [&ui, workdir](tortilla::settings_page page)
+            {
+                const size_t open = tortilla::windows::hold({});
+                tortilla::show_settings(**ui, nullptr, workdir, page, {},
+                                        [open] { tortilla::windows::release(open); });
+            });
         return (*ui)->run();
     }
 

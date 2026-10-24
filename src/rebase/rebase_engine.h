@@ -22,21 +22,22 @@ class rebase_engine
 public:
     enum class rebase_stage
     {
-        choose,          // not started
-        running,         // applying commits
-        conflict,        // a pick conflicted; Commit when resolved
-        edit,            // an Edit row is applied; Amend to go on
+        choose,           // not started
+        running,          // applying commits
+        conflict,         // a pick conflicted; Commit when resolved
+        edit,             // an Edit row is applied; Amend to go on
         squash_edit,      // a squash group is staged; Commit its message
         squash_conflict,  // a pick inside a squash group conflicted
-        error,           // a pick failed without conflicts; only Abort
+        error,            // a pick failed without conflicts; only Abort
         done,
     };
 
     struct start_args
     {
-        std::string branch;      // local branch being rebased
+        std::string branch;       // local branch being rebased
         oid branch_head;          // its tip before the rebase
-        oid onto;                // upstream (or --onto) commit
+        oid onto;                 // upstream (or --onto) commit
+        std::string onto_name;    // its name as chosen ("main", "origin/main"), for conflict titles
         std::string checked_out;  // what to return to on abort (branch name or hash)
         bool fast_forward = false;
     };
@@ -55,7 +56,7 @@ public:
     };
 
     rebase_engine(rap::ui&, const std::string& workdir, const std::string& git_dir, rebase_model&,
-                 hooks);
+                  hooks);
 
     void start(const start_args&);
     // Continue / Commit / Amend, with the message tab's text.
@@ -83,6 +84,9 @@ private:
 
     rap::ui& ui_;
     std::string workdir_, msg_file_;
+    // Present while a rebase runs: what it's onto and which branch (Edit
+    // conflicts' mine and theirs, as TortoiseGit's tgitrebase.active).
+    std::string active_file_;
     rebase_model& model_;
     hooks hooks_;
     start_args start_;

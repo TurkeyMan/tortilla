@@ -60,6 +60,7 @@ add_library(tortilla_git STATIC
     src/git/ssh_client.cpp
     src/git/askpass_env.cpp
     src/git/remotes.cpp
+    src/git/merge_tool.cpp
     src/util/programs.cpp
     src/changes/working_tree.cpp)
 target_include_directories(tortilla_git PUBLIC src)
@@ -74,6 +75,7 @@ add_executable(tortilla
     src/changes/changes_window.cpp
     src/changes/commit_window.cpp
     src/changes/file_action_window.cpp
+    src/changes/conflict_editor.cpp
     src/ui/stash_dialog.cpp
     src/rebase/rebase_window.cpp
     src/ui/compare.cpp

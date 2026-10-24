@@ -4,6 +4,7 @@
 // can't do yet is shown greyed out in its place.
 #include "changes_view.h"
 
+#include "changes/conflict_editor.h"
 #include "settings.h"
 #include "ui/compare.h"
 #include "ui/diff_window.h"
@@ -215,7 +216,9 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
                 if (f.status == 'U') conflicts.push_back(f.path);
             const std::string question =
                 "Are you sure you want to mark the conflicted file(s) as resolved?";
-            if (one) m.push_back(todo("_Edit conflicts"));
+            if (one)
+                m.push_back(item("_Edit conflicts",
+                                 [this, path = files.front().path] { edit_conflict(path); }));
             m.push_back(item(
                 "Resolved", [confirm_local, question, conflicts]
                 { confirm_local(question, "Resolve", {plus({"add", "-f", "--"}, conflicts)}); }));
@@ -496,13 +499,25 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
 
 // Double-click: compare the file with the commit's parent (or, for the
 // working tree, with HEAD).
+void changes_view::edit_conflict(const std::string& path)
+{
+    tortilla::edit_conflict(
+        host_.ui, host_.window(), host_.workdir, path,
+        [refresh = host_.refresh](bool changed)
+        {
+            if (changed && refresh) refresh();
+        },
+        host_.open_settings);
+}
+
 void changes_view::activated(size_t row)
 {
     if (row >= model_.files().size()) return;
     const file_change& f = model_.files()[row];
     // Nothing to compare an unversioned file with: it opens instead.
     if (f.status == '?' || f.status == '!') return open_file(f, false);
-    if (f.status == 'U') return;
+    // A conflict opens in the merge tool, as TortoiseGit's default [spec 9.3.2].
+    if (f.status == 'U') return edit_conflict(f.path);
     arg_list paths = paths_of({f});
     if (source_.what == changes_source::working_tree) return difftool({"HEAD"}, paths);
     difftool({source_.parent, source_.hash}, paths);

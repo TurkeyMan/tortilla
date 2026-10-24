@@ -497,6 +497,8 @@ void rebase_window::start_rebase()
             .branch = branch,
             .branch_head = *branch_head_,
             .onto = *upstream_head_,
+            .onto_name =
+                upstreams_.empty() ? "" : upstreams_[size_t(std::max(0, upstream_->current()))],
             .checked_out = head == "HEAD" ? repo_.head_id().value_or(oid{}).hex() : head,
             .fast_forward = fast_forward_,
         };

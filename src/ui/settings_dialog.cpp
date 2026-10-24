@@ -1,6 +1,7 @@
 #include "settings_dialog.h"
 
 #include "git/diff_tool.h"
+#include "git/merge_tool.h"
 #include "git/ssh_client.h"
 #include "log/action_icons.h"
 #include "settings.h"
@@ -34,6 +35,12 @@ struct state
     rap::entry* diff_command = nullptr;
     rap::widget* custom_help = nullptr;
     std::vector<detected_tool> tools;
+    // Resolving conflicts: each merge tool found, then Custom.
+    rap::drop_down* merge_select = nullptr;
+    rap::entry* merge_command = nullptr;
+    rap::widget* merge_help = nullptr;
+    std::vector<detected_merge_tool> merge_tools;
+    int merge_custom_index() const { return int(merge_tools.size()); }
     // Context Menu: an entry's id and its "at the top level" box.
     std::vector<std::pair<std::string, rap::check*>> top_entries;
     // SSH client: git's own, each detected client, then Custom (the command
@@ -181,6 +188,27 @@ rap::node diff_viewer_page(std::shared_ptr<state> st)
         // Custom starts from the last tool picked, to adjust.
         if (choice >= 2 && !custom) s->diff_command->set_text(s->tools[size_t(choice - 2)].command);
     };
+    // Resolving conflicts [spec 9.2]: the saved command shows as the tool it
+    // is, else Custom; with nothing saved, the first tool found.
+    st->merge_tools = detect_merge_tools();
+    std::vector<std::string> merge_choices;
+    for (const detected_merge_tool& t : st->merge_tools) merge_choices.push_back(t.name);
+    merge_choices.push_back("Custom...");
+    const std::string saved_merge = saved_merge_command();
+    int merge_current = saved_merge.empty() ? 0 : st->merge_custom_index();
+    for (size_t i = 0; i < st->merge_tools.size(); ++i)
+        if (st->merge_tools[i].command == saved_merge) merge_current = int(i);
+    const bool merge_custom = merge_current == st->merge_custom_index();
+    auto merge_chosen = [weak](int choice)
+    {
+        auto s = weak.lock();
+        if (!s || !s->merge_command) return;
+        const bool custom = choice == s->merge_custom_index();
+        s->merge_command->set_visible(custom);
+        if (s->merge_help) s->merge_help->set_visible(custom);
+        if (!custom && choice >= 0)
+            s->merge_command->set_text(s->merge_tools[size_t(choice)].command);
+    };
     return vbox{
         group{
             "Comparing revisions",
@@ -199,6 +227,27 @@ rap::node diff_viewer_page(std::shared_ptr<state> st)
                     .handle(st->custom_help)
                     .visible(custom),
             }},
+        group{"Resolving conflicts",
+              vbox{
+                  form{
+                      {"Merge with", drop_down{merge_choices, merge_current}
+                                         .bind(st->merge_select)
+                                         .on_changed(merge_chosen)},
+                      {"Command", entry{saved_merge.empty() && !st->merge_tools.empty()
+                                            ? st->merge_tools.front().command
+                                            : saved_merge}
+                                      .bind(st->merge_command)
+                                      .placeholder("program %base %theirs %mine %merged")
+                                      .visible(merge_custom)},
+                  },
+                  label{"%base, %theirs and %mine are the conflict's three sides and %merged the "
+                        "file to save;\n"
+                        "%bname, %tname, %yname and %mname their titles. Without placeholders the "
+                        "four\n"
+                        "files go at the end."}
+                      .handle(st->merge_help)
+                      .visible(merge_custom),
+              }},
         spacer{},
     };
 }
@@ -336,6 +385,13 @@ void show_settings(rap::ui& ui, rap::window* parent, const std::string& repo_dir
                         save_diff_settings(choice >= 2 ? diff_mode::custom
                                                        : diff_mode(std::max(choice, 0)),
                                            keep->diff_command->text());
+                }
+                if (keep->merge_select)
+                {
+                    const int choice = keep->merge_select->current();
+                    save_merge_command(choice >= 0 && choice < keep->merge_custom_index()
+                                           ? keep->merge_tools[size_t(choice)].command
+                                           : keep->merge_command->text());
                 }
                 if (keep->ssh_select)
                 {
