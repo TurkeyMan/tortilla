@@ -2885,3 +2885,776 @@ These are handled specially [GCOP:37-127, 141-267; PD:521-606]:
 - Where TortoiseGitPlink stores accepted host keys, and how pageant prompts for the passphrase (PuTTY code, not read).
 - The Help topics of the three dialogs.
 - Sync: only the command lines and menu entries above were read. Its tab contents, ahead/behind logic and post-command flow were not examined.
+
+## 8. Branches: Create Branch/Tag, Switch/Checkout, Merge, Abort Merge
+
+Four commands, three dialogs that share one ref chooser (`CChooseVersion`, 8.1), and one small reset dialog. Create Branch and Create Tag are the **same dialog** (`CCreateBranchTagDlg`) with a flag. Create Branch/Tag runs git synchronously with no progress window. Switch, Merge and Abort Merge run in the console-output progress dialog `CProgressDlg` (7.6), whose post-command buttons are listed per command below.
+
+New citation keys (same commit as section 0):
+
+| Key | File |
+|---|---|
+| **CV** | `src/TortoiseProc/ChooseVersion.h` (the shared HEAD/Branch/Tag/Commit chooser; all code is in the header) |
+| **CBTD** | `src/TortoiseProc/CreateBranchTagDlg.cpp` |
+| **GSWD** | `src/TortoiseProc/GitSwitchDlg.cpp` |
+| **MGD** | `src/TortoiseProc/MergeDlg.cpp` |
+| **MAD** | `src/TortoiseProc/MergeAbortDlg.cpp` |
+| **BRC** / **TGC** | `src/TortoiseProc/Commands/BranchCommand.cpp` / `TagCommand.cpp` (`.h` cited as **BRC.h** / **TGC.h**) |
+| **SWC** / **MGC** | `src/TortoiseProc/Commands/SwitchCommand.cpp` / `MergeCommand.cpp` |
+
+`<wd>` is the working directory. Quoting (`QuoteParameter`) is as in 7.0. `FixBranchName` replaces the literal `FETCH_HEAD` with the hash it points to and leaves every other name alone. [GIT:1561-1573]
+
+### 8.0 Entry points
+
+| TortoiseGitProc command | Calls | Path requirement |
+|---|---|---|
+| `branch [/rev:<ref>] [/name:<name>]` | `CreateBranchTag(isTag=false, ref=/rev or null, switch=false, name)` [BRC:26-31] | working tree **or bare repo** [BRC.h:32] |
+| `tag [/rev:<ref>] [/name:<name>]` | `CreateBranchTag(isTag=true, …)` [TGC:26-31] | working tree or bare repo [TGC.h:32] |
+| `switch [/rev:<ref>]` | `Switch(initialRef=/rev)` [SWC:26-28] | working tree (default, CMDH:96) |
+| `merge` | `Merge()` [MGC:29] | working tree |
+| `merge /abort` | `MergeAbort()` [MGC:26-27] | working tree |
+
+Explorer rows 35 and 42 to 45 (4.2) pass only `/path`, never `/rev`. Other in-process callers: the Log (8.6), Browse References (Merge, Switch, Create Branch/Tag) [BrowseRefsDlg.cpp:1207-1247], the Revision Graph (`PerformSwitch`/`Switch`) [RevisionGraphWnd.cpp:1086, 1267], the Check-for-modifications branch link (`Switch`) [CHD:323-328], the Commit dialog's detached-HEAD warning (Yes runs `CreateBranchTag(isTag=false, switchNewBranch=true)`) [CD:2960-2966], and the Pull success button "&Merge..." (`Merge(&mergeRev, showStashPop=true)`) [AU:148].
+
+### 8.1 The shared ref chooser (`CChooseVersion`)
+
+A mix-in class that the three dialogs inherit. Its controls are in each dialog's RC, with the same IDs, inside a group box `IDC_GROUP_BASEON`:
+
+| Control | Create Branch/Tag | Switch | Merge |
+|---|---|---|---|
+| Group caption | "Base On" [RC:1295] | "Switch To" [RC:1264] | "From" [RC:1377] |
+| `IDC_RADIO_HEAD` "&HEAD" | yes [RC:1296] | **absent** | **absent** |
+| `IDC_RADIO_BRANCH` "&Branch" + `IDC_COMBOBOXEX_BRANCH` (drop-list) + "..." `IDC_BUTTON_BROWSE_REF` | yes [RC:1297-1299] | yes [RC:1265-1267] | yes [RC:1378-1380] |
+| `IDC_RADIO_TAGS` "&Tag" + `IDC_COMBOBOXEX_TAGS` (drop-list) | yes [RC:1300-1301] | yes [RC:1268-1269] | yes [RC:1381-1382] |
+| `IDC_RADIO_VERSION` "&Commit" + `IDC_COMBOBOXEX_VERSION` (**editable** drop-down) + "..." `IDC_BUTTON_SHOW` | yes [RC:1302-1304] | yes [RC:1270-1272] | yes [RC:1383-1385] |
+
+- **Enabling.** Only the checked radio's combo is enabled. The branch "..." is enabled only with Branch, the commit "..." only with Commit. Every radio change calls the dialog's `OnVersionChanged` hook. [CV:63-92]
+- **Loading.** `InitChooseVersion` disables OK and the Branch and Tag radios, then loads refs on a worker thread. [CV:257-284] The thread gets:
+  - branches from `GetBranchList`, with `BRANCH_ALL_F` (local + remote + `FETCH_HEAD`) when `HKCU\Software\TortoiseGit\BranchesIncludeFetchHead` is set (default TRUE), else `BRANCH_ALL`; [CV:211]
+  - tags from `GetTagList`. [CV:216]
+
+  When the thread posts back, `UpdateGUI` fills both combos and re-enables the radios and OK. [CV:225-256]
+- **List contents and order.**
+  - Remote branches **are listed**, as `remotes/<remote>/<branch>`. Local branches are bare names. The CLI path skips `<remote>/HEAD -> …` lines and strips the `* ` and `+ ` markers. [GIT:1761-1797] `FETCH_HEAD` is appended only when it resolves. [GIT:1802-1803]
+  - Branches sort **local first, then remote** (unless `NoSortLocalBranchesFirst`), each group by `StrCmpLogicalW`. Logical sort is off when the Explorer policy `NoStrCmpLogical` is set, and plain case-insensitive comparison is used instead. [GIT:183-197, 201-226, 1805]
+  - Tags sort the same way, and descending when `SortTagsReversed` is set (HKLM or HKCU, default 0). [GIT:195-197, 1492, 1506]
+  - The RC also sets `CBS_SORT` on the ComboBoxEx controls. Whether that affects the order was not established; the code relies on its own sort.
+- **Default selection after load.**
+  - The branch combo selects the **current branch**, unless HEAD is detached or the dialog skips the current branch (Merge does, 8.4). Otherwise it has no selection.
+  - The tag combo selects its **first** entry. [CV:229-232; GIT:1807-1817]
+  - When the dialog has an `IDC_CURRENTBRANCH` control (Merge only), it shows `GetCurrentBranch()`, or "(no branch)" when detached. [CV:233-234; GIT:835-843]
+- **Preselection (`m_initialRefName`).** The caller sets it before `DoModal`; the TortoiseGitProc commands take it from `/rev`. After load, `SelectRef` applies it: [CV:165-205, 240-243, 269-270]
+  1. The name is resolved with `git rev-parse --symbolic-full-name --verify` (when that fails, the name is used as given). [GIT:895-910]
+  2. A leading `refs/` is dropped.
+  3. `heads/X` selects the **Branch** radio and branch `X`.
+  4. `remotes/…` selects the **Branch** radio and that `remotes/…` entry.
+  5. `tags/X` (with any `^{}` suffix removed) selects the **Tag** radio and tag `X`.
+  6. Anything else (a hash, say) selects **Commit** and adds the string to the commit combo.
+
+  `FindStringExact` returning -1 leaves the combo with no selection.
+- **Branch "..."** opens Browse References as a picker (`CBrowseRefsDlg::PickRef(false, current, gPickRef_All)`). The picked full ref, or the old value on cancel, becomes the pending ref, and the lists are **reloaded** (`InitChooseVersion(true, true)`). [CV:148-163]
+- **Commit "..."** opens the Log dialog in select mode:
+  - single selection, no working-tree row, starting at the text already in the combo;
+  - the selected hash is written into the commit combo;
+  - it refuses with "This operation cannot be started while the log dialog is still loading commits." [POT:9557] if a log dialog thread is already running. [CV:94-117]
+- **Resulting revision (`m_VersionName`)**, computed by `UpdateRevsionName` on OK: [CV:119-141]
+  - HEAD gives `HEAD`.
+  - Branch gives the combo text. If both `refs/heads/X` and `refs/tags/X` exist (`IsBranchTagNameUnique` false), it is prefixed with `refs/heads/`. [GIT:1575-1613]
+  - Tag gives the combo text, prefixed with `refs/tags/` in the same ambiguous case.
+  - Commit gives the combo text as typed.
+  - `m_bIsBranch` is true only for the Branch radio. [CV:70-79]
+- **Initial focus.** When `InitChooseVersion(true)` was used (Switch, Merge), the first enabled combo of branch, tag, version gets focus. [CV:245-254]
+- **Anchors.** The combos and the group stretch horizontally, and the two "..." buttons stay at the top right. [CV:327-337]
+
+### 8.2 Create Branch / Create Tag (`CCreateBranchTagDlg`, `IDD_NEW_BRANCH_TAG`)
+
+#### 8.2.1 Window and layout
+
+- **Template.** Caption "New Branch/Tag", 296×212 DLU, `WS_THICKFRAME`. [RC:1287-1289]
+- **Class.** `CResizableStandAloneDialog`, so it resizes in both directions. Placement is saved as "BranchTagDlg". [CBTD:30-33, 149]
+- **Title.** The title becomes `<wd> - Create Branch - TortoiseGit` or `… - Create Tag - …` [POT:3186, 3198], formatted as in 6.1. [CBTD:86-113]
+
+Layout, top to bottom:
+
+1. **"&Name" group.** [RC:1292-1294]
+   - Label "Branch:", replaced at run time by "Branch" [POT:2137] or "Tag" [POT:9183] (no colon). [CBTD:90, 102]
+   - Edit `IDC_BRANCH_TAG`, pre-filled from `/name` if given. [AU:1133-1134]
+2. **"Base On" group** (8.1).
+   - The HEAD radio text gets ` (<current branch>)` appended, for example `HEAD (master)`. [CBTD:119-122]
+   - **Default radio: HEAD.** [CBTD:80]
+3. **"Options" group**, one row. [RC:1305-1310]
+   - "Trac&k": tri-state, default **indeterminate**, initially disabled.
+   - "&Force"
+   - "&Switch to new branch": branch mode only; hidden in tag mode **and in bare repositories**. [CBTD:115-118]
+   - "Si&gn" and "&Push": tag mode only; hidden for branches. They sit at the same position as Switch.
+4. **"&Message" group** [RC:1311-1312] with a multi-line plain edit (`ES_WANTRETURN`).
+   - In branch mode the group caption becomes "Description" [POT:3506]. [CBTD:105]
+   - The group and the edit stretch both ways. The Name and Options groups stretch horizontally. [CBTD:136-145]
+5. **Buttons.** OK, Cancel, Help, bottom right. [RC:1313-1315]
+
+**Tooltips.** [CBTD:151-153]
+- Force: "Force creation of branch/tag - even if one with same name already exists." [POT:4683]
+- Sign: "GPG signs the tag, see manual for details" [POT:4808]
+- Track: "If checked --track is passed to git, if unchecked --no-track is passed to git, else neither --track nor --no-track is passed to git (see help)." [POT:5394]
+
+#### 8.2.2 Option behaviour and auto-fill
+
+- **Track** is enabled only in branch mode, with the Branch radio on, when the selected branch starts with `remotes/`. In every other case it is disabled (tag mode, HEAD, Tag, Commit). [CBTD:212-245, 260-267] Disabling does not reset its state. `DDX_Check` still reads a disabled box, so a state the user set earlier is passed on (inferred from MFC behaviour, not tested).
+- **Name auto-fill from a remote branch.** Selecting `remotes/<remote>/<path>` fills the name with `<path>`, the text after the first `/` that follows `remotes/` (`Find('/', 9)`). It does so only when the name is empty, or still equals the last segment of the previously selected remote branch, so it never overwrites a name the user typed. [CBTD:214-236, 244]
+- **Track auto-uncheck.** While the Branch radio is on, editing the name so that the remote branch no longer ends with `/<name>` sets Track to **unchecked**, which passes `--no-track`. [CBTD:247-258]
+- **Sign** is enabled only when `git config user.signingkey` is non-empty. [CBTD:91]
+- **Remembered between runs.**
+  - "Switch to new branch" is pre-checked when `HKCU\Software\TortoiseGit\NewBranchSwitchTo` is set (default FALSE). It is also checked when the caller passes `switchNewBranch=true`. [CBTD:37, 106-110; AU:1128]
+  - "Push" is pre-checked from `…\PushTag` (default FALSE). [CBTD:38, 93-97]
+  - Both are written back on a successful OK. [CBTD:203-206]
+  - The name, base and message are not remembered.
+
+#### 8.2.3 Validation on OK (in order) [CBTD:162-210]
+
+1. **Sign without a message.** A message box: "You must enter a log message for the commit" [POT:10589].
+2. **Invalid name.** The name is trimmed first.
+   - It is invalid when it contains any of `"|<>`, or when `git_branch_name_is_valid` rejects it. [GIT:263-270]
+   - Error balloon on the edit, title "Error" [POT:4225]: "Branch/Tag name must not be empty or is invalid." [POT:2162]
+3. **Name exists** (same kind: `refs/heads/` for a branch, `refs/tags/` for a tag) and Force is off. A warning balloon, title "Warning" [POT:10354]:
+   - branch equal to the current branch: "Cannot force updating current branch. Use reset command if you want to do so." [POT:2312];
+   - otherwise "A branch with this name already exists." [POT:1441] or "A tag with this name already exists." [POT:1473], plus " Use a different name or use the "Force" option to overwrite it." [POT:10019].
+
+   With Force on, the current-branch check is skipped, and git itself reports any error.
+4. **Name exists as the other kind.** A Continue / A&bort box [POT:2936, 1481]. Abort returns to the dialog.
+   - For a branch: "A tag with the same name as your entered branch name already exists (so the short ref is ambiguous).\nThis can cause problems so you should avoid it." [POT:1469]
+   - For a tag: the mirror text, "A branch with the same name as your entered tag name already exists…" [POT:1437]
+
+#### 8.2.4 Commands run (`CAppUtils::CreateBranchTag`) [AU:1124-1211]
+
+The command runs synchronously through `g_Git.Run`, with **no progress dialog**. On a non-zero exit, git's output is shown in an error message box. A temp file that cannot be written gives "Could not save tag message".
+
+- **Tag:** `git.exe tag[ -f][ -s][ -F "<tmpfile>"] -- "<name>" "<base>"`
+  - `-F` is used only when the trimmed message is non-empty, so a message makes an **annotated** tag and no message a **lightweight** one.
+  - The message is saved with `SaveCommitUnicodeFile`.
+  - `<base>` is `FixBranchName(m_VersionName)`, which is `HEAD` for the HEAD radio.
+- **Branch:** `git.exe branch[ -f][ --track| --no-track] -- "<name>" "<base>"`
+  - Track checked gives `--track`, unchecked gives `--no-track`, indeterminate passes neither (git's `branch.autoSetupMerge` default then applies).
+
+Follow-ups, in this order:
+
+1. If branch mode and Switch is checked: `PerformSwitch(name)` (8.3.4) with default options, so it runs `git.exe checkout --end-of-options "<name>" --` in the progress dialog.
+2. If branch mode and the message is non-empty: `UpdateBranchDescription`.
+   - It removes `\r` and trims.
+   - It writes `branch.<name>.description`, or **unsets** that key when the text is now empty. [AU:1107-1122]
+   - The description is written *after* the switch.
+3. If tag mode and Push is checked: the Push dialog (7.3), called with `Push(hWnd, "refs/tags/<name>")`.
+
+### 8.3 Switch/Checkout (`CGitSwitchDlg`, `IDD_GITSWITCH`)
+
+#### 8.3.1 Window and layout
+
+- **Template.** Caption "Switch/Checkout", 296×185 DLU. [RC:1259-1261]
+- **Class.** `CHorizontalResizableStandAloneDialog`, so it resizes **horizontally only**. Placement is saved as "SwitchDlg". [GSWD:31-34, 102]
+- **Title.** `<wd> - Switch/Checkout - TortoiseGit`. [GSWD:104]
+
+Layout:
+
+1. **"Switch To" group** (8.1, no HEAD radio). **Default radio: Branch**, which selects the current branch. [GSWD:106-108]
+2. **"Option" group.** [RC:1273-1281]
+   - row 1: "Create &New Branch" checkbox, with an edit `IDC_EDIT_BRANCH` (stretches) to its right
+   - row 2: "Overwrite working tree changes (&force)"; on the right, "&Merge"
+   - row 3: "T&rack" (tri-state)
+   - row 4: "&Override branch if exists"
+3. **Buttons.** OK, Cancel, Help, bottom right. [RC:1282-1284]
+
+Initial focus is on "Create New Branch". [GSWD:109]
+
+**Tooltips.** [GSWD:113-115]
+- Override: the Force text [POT:4683].
+- Merge: "Merge between original branch, working tree contents, and the branch to switch to" [POT:6140].
+- Track: the Track text [POT:5394].
+
+#### 8.3.2 Auto-fill (`SetDefaultName`)
+
+`SetDefaultName` runs on every radio click, branch or tag selection change, commit-combo edit, and after the refs load. [GSWD:124-128, 173-223, 231-234, 249-252] It recomputes `m_VersionName` (8.1), then:
+
+- **Remote branch.**
+  - Applies when the name starts with `remotes/`; the new name is the text after the `/` that follows the remote name.
+  - The code also has an `origin/` branch: it searches for a `/` from index 8, so `origin/x` does not match and `origin/a/b` gives `b`. This looks like a quirk.
+  - Effect: the new branch name is set to the remote branch's path, "Create New Branch" is checked, and Track is enabled and set to **indeterminate**. [GSWD:181-196]
+- **Otherwise.**
+  - The new name becomes `Branch_<x>`, where `<x>` is:
+    - the local branch name (a `refs/heads/` prefix is stripped);
+    - or the tag name as resolved, which can be `refs/tags/…` when ambiguous;
+    - or, for Commit, the first `GetShortHASHLength()` characters.
+  - "Create New Branch" is **unchecked**.
+  - Track is disabled and set to **unchecked**, so `--no-track` is passed if the user then checks "Create New Branch". [GSWD:197-209]
+- **Remembered "new branch" defaults.** For Commit and Tag, "Create New Branch" is forced on when `HKCU\Software\TortoiseGit\SwitchToCommitNewBranch` or `…\SwitchToTagNewBranch` is set (both default TRUE). [GSWD:41-42, 211-212] On OK, the box's state is written back to the key of the selected radio. [GSWD:164-167]
+- **Enabling.**
+  - The edit and "Override branch if exists" are enabled only while "Create New Branch" is checked.
+  - When "Create New Branch" is unchecked, Override and Track are cleared and Track is disabled. [GSWD:214-222]
+  - Clicking the checkbox itself only toggles the edit. [GSWD:253-257]
+- **Track auto-uncheck** on name edit works as in 8.2.2. [GSWD:236-247]
+- Nothing else is remembered. Force and Merge default to unchecked. [GSWD:36-40]
+
+#### 8.3.3 Validation on OK (only when "Create New Branch" is checked) [GSWD:135-172]
+
+1. **Invalid name** (after trimming): error balloon "Branch/Tag name must not be empty or is invalid." [POT:2162]
+2. **Branch exists** and Override is off: warning balloon "A branch with this name already exists." [POT:1441] + " Use a different name or use the "Override branch" option." [POT:10023]
+3. **Tag with the same name exists:** the Continue/Abort box [POT:1469].
+
+There is no check that a branch is actually selected. What happens with an empty selection was not established.
+
+#### 8.3.4 Command (`CAppUtils::Switch` → `PerformSwitch`) [AU:1266-1378]
+
+- `refs/heads/` is stripped from the target unless Override is checked. Without stripping, checkout would detach HEAD; git prefers branches over tags on name clashes. [AU:1278-1281]
+- The new-branch name is passed only when "Create New Branch" is checked.
+- The command line, run in `CProgressDlg`:
+
+  `git.exe checkout[ -f][ --track| --no-track][ -B "<new>"| -b "<new>"][ --merge] --end-of-options "<ref>" --`
+
+  - Track and `-b`/`-B` appear only with a new branch.
+  - Track checked gives `--track`, unchecked gives `--no-track`, indeterminate gives neither.
+  - `-B` is used when Override is checked. [AU:1293-1310]
+
+**Post-exec rule.** With `--merge`, a zero exit while conflicts remain is turned into exit code 1 with the extra message "Has merge conflict". [AU:1368-1375]
+
+**Post-command buttons.** [AU:1320-1367]
+- On success:
+  - "Update Submodules" [POT:9979], if the repository has submodules (`/command:subupdate /bkpath:<wd>`).
+  - "&Merge..." [POT:842], if HEAD was on a branch before the switch. It opens the Merge dialog preselecting **that previous branch**.
+  - "&Pull..." [POT:994], if HEAD is now on a branch.
+  - "&Commit..." [POT:431].
+- On failure:
+  - "Resolve" [POT:7771], only with `--merge` and conflicts. Note that it runs `/command:commit`.
+  - "Stash changes" [POT:8924], without `--merge`.
+  - "&Retry" [POT:1082].
+  - "Checkout with merge" [POT:2460], without `--merge`. It re-runs the same command with `--merge`.
+
+### 8.4 Merge (`CMergeDlg`, `IDD_MERGE`)
+
+#### 8.4.1 Pre-checks (`CAppUtils::Merge`) [AU:3378-3394]
+
+- **User data.** `CheckUserData` loops while the user or committer name/email is empty: "User name and email must be set before commit.\nDo you want to set these now?" [POT:10213]. Yes opens Settings on `gitconfig`; No cancels. [AU:3039-3060]
+- **Rebase lock.** The `tgitrebase.active` lock check (7.0, [POT:4724]). [AU:3771-3786]
+
+#### 8.4.2 Window and layout
+
+- **Template.** Caption "Merge", 328×274 DLU. [RC:1370-1372]
+- **Class.** `CResizableStandAloneDialog`, both directions. Placement is saved as "MergeDlg". [MGD:32-35, 148]
+- **Title.** `<wd> - Merge - TortoiseGit`. [MGD:118]
+
+Layout:
+
+1. **"Current branch:"** label with a read-only borderless edit `IDC_CURRENTBRANCH`. [RC:1375-1376]
+2. **"From" group** (8.1, no HEAD radio).
+   - **Default radio: Branch.** [MGD:115-116]
+   - The branch list **omits the current branch** (`m_bSkipCurrentBranch`). [MGD:47]
+3. **"Option" group.** [RC:1386-1396]
+   - row 1: "&Squash"; "Messages" checkbox with a number edit (disabled until Messages is checked)
+   - row 2: "No &Fast Forward"; "Fast Forward O&nly"
+   - row 3: "No Co&mmit"
+   - row 4: "Strategy" label, strategy drop-list, strategy-option drop-list (disabled), parameter edit (disabled)
+4. **"Merge &Message" group** [RC:1397-1398] with a Scintilla editor (`CSciEdit`, initialised with the project properties and the log font). The group and editor stretch both ways. [MGD:105-107, 120-124]
+5. **Buttons.** OK, Cancel, Help. [RC:1399-1401] Initial focus: OK. [MGD:149]
+
+#### 8.4.3 Defaults and option interplay
+
+- **Default "From".** With no initial ref, the dialog preselects the current branch's **push** target, `remotes/<pushremote>/<pushbranch>`. [MGD:151-161]
+  - The push remote is `branch.<b>.pushremote`, else `remote.pushdefault`, else `branch.<b>.remote`.
+  - The push branch is `branch.<b>.pushbranch` (not stripped), else `branch.<b>.merge` with `refs/heads/` stripped. [GIT:867-893]
+  - If that entry is not in the list, the branch combo has no selection.
+- **Message editor.**
+  - It starts with "<Auto Generated by Git>" [POT:1409]. On OK that text counts as **empty**. [MGD:126-128, 185-189]
+  - Its context menu adds "Paste &last commit message" and "Paste r&ecent message..." [POT:6947, 6951] when history exists. [MGD:226-271]
+  - History: `HKCU\Software\TortoiseGit\History\merge\logmsgs*`, at most `MaxHistoryItems` entries (default 25). A non-empty, non-default message is saved on **OK and on Cancel**, unless No Commit is checked. [MGD:85-88, 130-131, 191-196, 206-217]
+- **Messages (`--log`)** count: `git config merge.log` when it parses to an integer > 0, else **20**. [MGD:44-46] Checking Messages enables the count edit. [MGD:280-284]
+- **Mutual exclusion.** [MGD:273-278, 299-306]
+  - Squash disables the message editor and No Fast Forward.
+  - No Fast Forward disables Fast Forward Only and Squash.
+  - Fast Forward Only disables No Fast Forward.
+- **Strategy.** [MGD:133-146, 286-297]
+  - Strategies: `resolve`, `recursive`, `ours`, `subtree`. There is no empty entry; the initial state is no selection.
+  - Options: `ours`, `theirs`, `patience`, `ignore-space-change`, `ignore-all-space`, `ignore-space-at-eol`, `renormalize`, `no-renormalize`, `rename-threshold`, `subtree`.
+  - The option list is enabled only for `recursive`. The parameter edit is enabled only for `rename-threshold` and `subtree`.
+  - On OK, an option is dropped unless the strategy is `recursive`, and a parameter is dropped unless the option takes one. [MGD:198-201]
+- **Remembered between runs.** Only the message history. All checkboxes start unchecked. [MGD:38-42]
+- **Validation.** If the Branch radio is on with no branch selected, a message box says "Branch/Tag name must not be empty or is invalid." [POT:2162]. [MGD:179-183]
+
+#### 8.4.4 Command (`DoMerge`) [AU:3231-3376]
+
+`git.exe merge[ --no-ff| --ff-only][ --squash][ --no-commit][ --allow-unrelated-histories][ --log=<N>][ --strategy=<s>[ --strategy-option=<o>[=<p>]]][ -F "<tmpfile>"] -- "<rev>"`
+
+- `<rev>` is `FixBranchName(m_VersionName)`.
+- `-F` is used only for a non-empty message ("Could not save merge message" on a temp-file failure).
+- The dialog never sets `--allow-unrelated-histories` itself; only the post-command button below adds it.
+- The command runs in `CProgressDlg`.
+
+**On failure:**
+- If conflicts exist:
+  - An information box: "While merging, … a conflict in at least one file occurred. … After resolving all files, you need to perform a commit in order to complete the merge. If you want to abort the merge, do a hard reset on HEAD or select abort merge on the context menu. …" [POT:10419]. It has a "do not show again" check stored as `MergeConflictsNeedsCommit`.
+  - Buttons "Resolve" (`/command:resolve /path:<wd>`) and "&Commit..." (`/command:commit`).
+  - If the conflict check itself fails: "Checking for conflicts failed."
+- If HEAD and `<rev>` have no merge base: "&Merge unrelated history" [POT:838] re-runs the same merge with `--allow-unrelated-histories`.
+- Always: "Stash changes", which calls `StashSave` with `<rev>` passed along. What StashSave does with it was not traced.
+
+**On success:**
+- "Stash Pop" [POT:8916], if the caller asked for it (Pull's follow-up).
+- With No Commit or Squash: only "&Commit...", and nothing else.
+- Otherwise:
+  - If the Branch radio was used and the name does not start with `remotes/`: "Remove &branch" [POT:7619]. It confirms with `Do you really want to delete "%s"?` [POT:3743] (&Delete / A&bort), then runs `git.exe branch -D -- "<rev>"` synchronously.
+  - If the Branch radio was used: "Pus&h..." [POT:7277].
+  - For git-svn repositories: "SVN DCommit..." [POT:8010].
+
+**Closing.** If the progress dialog is closed with Cancel (Abort) and conflicts exist (`HasWorkingTreeConflicts() == 1`), the **Abort Merge dialog** opens immediately. [AU:3370-3374]
+
+### 8.5 Abort Merge (`CMergeAbortDlg`, `IDD_MERGEABORT`)
+
+#### 8.5.1 Window and layout
+
+- **Template.** Caption "Abort Merge", 299×124 DLU, `DS_MODALFRAME`, **not resizable**. [RC:2020-2022]
+- **Class.** `CStateStandAloneDialog`. Placement is saved as "MergeAbortDlg". [MAD:31-34, 66]
+- **Title.** `<wd> - Abort Merge - TortoiseGit`. [MAD:60]
+
+Layout:
+
+1. Text: "In order to abort a merge progress a reset (to HEAD) is needed." [RC:2036]
+2. **"Reset Type" group** with three radios: [RC:2025-2031]
+   - "M&erge: Resets the index and try to reconstruct the pre-merge state"
+   - "&Mixed: Leave working tree untouched, reset index"
+   - "&Hard: Reset working tree and index (discard all local changes)"
+3. **"Show modified files in &working tree"** button, full width. It opens `CFileDiffDlg` comparing HEAD with the working tree. [RC:2032; MAD:81-86]
+4. **Buttons.** OK, Cancel, Help. [RC:2033-2035]
+
+**Default: Merge**, every time; the choice is not remembered (`m_ResetType` starts at 0). [MAD:35, 69, 74-79] There is no further confirmation: OK runs the reset, even for Hard.
+
+#### 8.5.2 Command (`CAppUtils::MergeAbort` → `Reset("HEAD", type)`) [AU:3396-3403, 1544-1653]
+
+It does **not** use `git merge --abort`. The radio index maps Merge to reset type 3, Mixed to 1 and Hard to 2.
+
+| Choice | Command | Notes |
+|---|---|---|
+| Merge | `git.exe reset --merge` | `CProgressDlg`. On failure the only button is "&Retry", which reopens the Abort Merge dialog. [AU:1558-1582] |
+| Mixed | `git.exe reset --mixed --end-of-options "HEAD" --` | `CProgressDlg`, or the libgit2 `ResetProgressCommand` in `CGitProgressDlg` (6.4) when `UsingLibGit2(GIT_CMD_RESET)`. [AU:1590-1593, 1638-1650] |
+| Hard | `git.exe reset --hard --end-of-options "HEAD" --` | Same runner as Mixed. |
+
+Post-command buttons for Mixed and Hard: [AU:1601-1636]
+- On failure: "&Retry", which re-runs the same reset.
+- On success:
+  - "Update Submodules" (Hard only, and only if the repository has submodules);
+  - the four Bisect items, if a bisect is active;
+  - "&Clean up..." [POT:403] (Hard only).
+
+The Log refreshes after a successful Abort Merge. [GLLA:181-185]
+
+### 8.6 Invocation from the Log context menu
+
+The menu items and their visibility conditions are listed in 1.11. This section covers what each item passes. Ref labels are full ref names (`refs/heads/…`, `refs/remotes/…`, `refs/tags/…`).
+
+**Clicked label.** Several items look at whether the right-click landed on a ref label of the row (`IsMouseOnRefLabelFromPopupMenu`, using `m_RefLabelPosMap`). If it did, a pointer to that label's ref is stored as the item's menu data. [GLLB:3751-3787] An item can require a ref type; then a label of another type does not count.
+
+**Fallback.** When there is no label data, the handler uses either the row's first ref that starts with a given prefix (`GetFirstEntryStartingWith`) [GLLA:41-48] or the commit hash.
+
+| Log item | Label used (type filter) | Fallback | Calls | Effect in the dialog |
+|---|---|---|---|---|
+| "Create Br&anch at this version..." | clicked label, **remote branches only** [GLLB:2038-2046] | first `refs/remotes/` ref of the row, else the hash [GLLA:531-536] | `CreateBranchTag(isTag=false, &ref)` [GLLA:538] | remote: Branch radio, name auto-filled, Track enabled; hash: Commit radio |
+| "Create &Tag at this version..." | none (no menu data is set) [GLLB:2048-2049] | same: first `refs/remotes/` ref, else the hash | `CreateBranchTag(isTag=true, &ref)` | Branch radio on the remote branch, or Commit radio |
+| "Sw&itch/Checkout to this..." | clicked label, any type [GLLB:2029-2036] | first `refs/remotes/` ref, else the hash [GLLA:546-555] | `Switch(ref)` | remote: new branch with track (8.3.2); hash: Commit radio with `Branch_<short>` |
+| `&Switch/Checkout to "name"` / submenu | the clicked local branch, or all local branches of the row except the current one [GLLB:1982-2027] | none | `PerformSwitch(shortname)`: **no dialog**, plain `git.exe checkout --end-of-options "<name>" --` [GLLA:561-575] | none |
+| `&Merge to "<current>"...` | clicked label, any type [GLLB:1964-1974] | the row's **first ref of any kind**, else the hash [GLLA:1104-1117] | `Merge(&ref)` | radio chosen by 8.1 `SelectRef`; overrides the push-branch default |
+| "Abort &Merge" (working-tree row, merge in progress) | none | none | `MergeAbort()` [GLLA:181-185; GLLB:1760-1763] | none |
+
+After Create Branch/Tag and Switch, the Log reloads its ref map and repaints, then posts `MSG_REFLOG_CHANGED`. After Merge it calls `Refresh()`. [GLLA:539-543, 557-559, 1113-1116]
+
+**Shared implementation.** All entry points (Explorer via `/rev`, the Log, Browse References, the Revision Graph) reduce to one input: an optional **initial ref string**, which is a full ref, a short ref or a hash. The dialog's `SelectRef` turns it into the radio and combo state. Only the Log's direct "Switch/Checkout to <branch>" bypasses the dialog.
+
+### 8.7 Not established from source
+
+- Whether `CBS_SORT` on the ComboBoxEx controls changes the order produced by `GetBranchList`/`GetTagList`.
+- Whether the libgit2 branch listing includes `<remote>/HEAD` (the CLI path skips it).
+- What happens in Switch when the Branch radio is on but no branch is selected, and in Create Branch when a disabled Track box keeps a checked state.
+- What `StashSave(..., mergeVersion)` does after stashing (the Merge failure button).
+- The Help topics of the four dialogs.
+
+## 9. Conflicts: Edit conflicts and merge tools
+
+"Edit conflicts" is a single routine, `CAppUtils::ConflictEdit`. It reads the index stages of one conflicted path, chooses one of three UIs, and starts it:
+
+- the configured three-way merge tool, for a normal content conflict;
+- the "Conflict" dialog, for a delete/modify conflict;
+- the "Resolve Submodule Conflict" dialog, for any conflict that involves a gitlink.
+
+Marking a file as resolved is a separate step. Usually it is TortoiseGitMerge's "Mark as resolved", which calls the Resolve command (6.5.1), or the list's "Resolved" item. TortoiseGit never uses git's `mergetool` machinery. This section covers the routine, the Merge Tool settings, and where the command is offered. The Merge dialog and Abort Merge are in section 8.
+
+New citation keys (same commit as section 0):
+
+| Key | File |
+|---|---|
+| **AU.h** | `src/TortoiseProc/AppUtils.h` |
+| **CEC** | `src/TortoiseProc/Commands/ConflictEditorCommand.cpp` |
+| **DCD** | `src/TortoiseProc/DeleteConflictDlg.cpp` (`IDD_RESOLVE_CONFLICT`) |
+| **SRCD** | `src/TortoiseProc/SubmoduleResolveConflictDlg.cpp` |
+| **SPM** / **SPM.h** | `src/TortoiseProc/Settings/SettingsProgsMerge.cpp` / `.h` |
+| **SPAD** | `src/TortoiseProc/Settings/SetProgsAdvDlg.cpp` |
+| **TAD** | `src/TortoiseProc/Settings/ToolAssocDlg.cpp` |
+| **SET** | `src/TortoiseProc/Settings/Settings.cpp` |
+| **SADV** | `src/TortoiseProc/Settings/SettingsAdvanced.cpp` |
+| **STRU** | `src/Utils/StringUtils.cpp` |
+| **CLP** | `src/Utils/CmdLineParser.cpp` |
+| **TMA** | `src/TortoiseMerge/TortoiseMerge.cpp` (command-line parsing, exit code) |
+| **TMDD** | `src/TortoiseMerge/DiffData.cpp` |
+| **FTL** | `src/TortoiseMerge/FileTextLines.cpp` |
+| **TMRC** | `src/Resources/TortoiseMergeENG.rc` (TortoiseGitMerge strings; these are not in POT) |
+| **SSDP** | `src/TortoiseProc/Settings/SetSavedDataPage.cpp` |
+| **TIDM** | `src/TortoiseIDiff/MainWindow.cpp` |
+| **DSCR** | `contrib/diff-scripts/` (installed as `Diff-Scripts` next to `bin`) |
+| **MAN-CONF** | `doc/source/en/TortoiseGit/tgit_dug/dug_conflicts.xml` |
+| **MAN-PROGS** | `doc/source/en/TortoiseGit/tgit_dug/dug_settings_progs.xml` |
+| **MAN-ADV** | `doc/source/en/TortoiseGit/tgit_dug/dug_settings_advanced.xml` |
+
+### 9.1 Edit conflicts (`CAppUtils::ConflictEdit`)
+
+The signature is `ConflictEdit(HWND, CTGitPath& file, bool bAlternativeTool = false, bool isRebase = false, HWND resolveMsgHwnd = nullptr)`. [AU.h:172; AU:1755]
+
+#### 9.1.1 Reading the stages
+
+1. The routine runs `git.exe ls-files -u -t -z -- <path>`. It returns FALSE silently if git fails. [AU:1773-1775]
+2. `CGit::ParseConflictHashesFromLsFile` reads the stage-1, 2 and 3 hashes into `baseHash`, `localHash` and `remoteHash`. A stage with no entry keeps an empty hash. Each stage is also flagged "is file", which means mode ≠ `160000`. Symlinks (`120000`) therefore count as files. Empty or malformed output makes the routine return FALSE. [GIT:3948-4013; AU:1781-1784]
+3. The titles come from `GetConflictTitles` (9.1.6), computed before anything else. [AU:1777-1779]
+
+#### 9.1.2 Choosing the UI
+
+| Stage situation | UI |
+|---|---|
+| Any stage is a gitlink (`160000`) | "Resolve Submodule Conflict" dialog (9.1.5) [AU:1786-1893] |
+| Stage 2 **and** stage 3 both present (both modified; also **added by both**, where stage 1 is absent) | Merge tool (9.1.3) [AU:1943-1950] |
+| Stage 2 or stage 3 absent (deleted on one side, or on both) | "Conflict" (delete/modify) dialog (9.1.4) [AU:1951-2006] |
+
+#### 9.1.3 Temp files and launching the tool
+
+**Naming.** `GetMergeTempFile(type, path)` builds `<path as written>.<TYPE><ext>`. `<ext>` is the extension *including the dot*, or empty when there is none. The result is made absolute against the working-tree root. [AU:1689-1695; TGP:490-501]
+
+- `src/a.txt` gives `src/a.txt.BASE.txt`, `src/a.txt.LOCAL.txt` and `src/a.txt.REMOTE.txt`.
+- `Makefile` gives `Makefile.BASE`, and so on.
+
+The files sit **next to the conflicted file in the working tree**. The manual's `filename.ext.BASE.ext` matches this [MAN-CONF:40-69]. The settings page's wording `CONFLICTED.BASE.EXT` [MAN-PROGS:294] is looser.
+
+**Which stage goes where** [AU:1900-1941]:
+
+| | Not a rebase | Rebase (`isRebase`) |
+|---|---|---|
+| `mine` variable | `.LOCAL` file | `.REMOTE` file |
+| `theirs` variable | `.REMOTE` file | `.LOCAL` file |
+| stage 1 is written to | `.BASE` | `.BASE` |
+| stage 2 is written to | `mine` = `.LOCAL` | `mine` = `.REMOTE` |
+| stage 3 is written to | `theirs` = `.REMOTE` | `theirs` = `.LOCAL` |
+
+During a rebase, `.LOCAL` therefore holds stage 3 (the commit being replayed) and `.REMOTE` holds stage 2 (the onto side). That matches the manual: "mine" is the branch being rebased. [MAN-CONF:57, 69]
+
+**Extraction steps:**
+
+1. All three files are first created **empty** ("in case stage is not three"). [AU:1912-1919]
+2. Each present stage N runs `git.exe checkout-index --temp --stage=N -- <path>`. The temp name is the text before the first tab in git's output, and it is moved over the target with `MoveFileEx(REPLACE_EXISTING | COPY_ALLOWED)`. A git error shows `output + "\n" + err` in a message box, and launching continues anyway. [AU:1921-1941]
+3. A **missing base** (added by both) therefore leaves an empty `.BASE` file, and the tool does a two-way-plus-empty-base merge. [AU:1913-1941]
+4. There is no special handling of **binary** content or **symlinks** in this routine. For what TortoiseGitMerge does with binaries, see 9.1.3a. What `checkout-index --temp` writes for a symlink stage (a link, or a text file holding the target) was not verified.
+
+**Launch** [AU:1943-1950]. The merged path is made absolute, and then:
+
+- Not a rebase: `StartExtMerge(alt, base, theirs=.REMOTE, mine=.LOCAL, merged, "Base", theirsTitle, mineTitle, mergedname="", readonly=false, resolveMsgHwnd, deleteBaseTheirsMineOnClose=true)`
+- Rebase: `StartExtMerge(alt, base, theirs=<stage-2 file>, mine=<stage-3 file>, merged, "Base", mineTitle, theirsTitle, …)`
+
+So the tool's "theirs" pane always shows stage 2 during a rebase, labelled with the onto name, and "mine" shows the replayed commit, labelled with the branch name.
+
+**Picking the command (`StartExtMerge`)** [AU:264-400]:
+
+1. `com` is read from the following, each later step overriding the earlier ones when non-empty [AU:280-295]:
+   - `HKCU\Software\TortoiseGit\Merge`
+   - `MergeTools\<.ext lowercased>` (the extension-specific value)
+   - `MergeTools\.<filename lowercased>` (a whole-filename value, e.g. `MergeTools\.makefile`)
+2. **Alternative** (Shift, or `/alternative`) with a non-empty `com` [AU:297-303]:
+   - A leading `#` is stripped. `#` marks a "disabled" external command (9.2), so Shift then **uses** it.
+   - Otherwise `com` is emptied, so Shift falls back to the **built-in** tool.
+3. If `com` is empty or still starts with `#`, the built-in tool is used [AU:305-346]:
+   - For `.jpg .jpeg .bmp .gif .png .ico .tif .tiff .dib .emf .cur .webp .svg .svgz` the tool is **TortoiseGitIDiff**:
+     `"<bin>\TortoiseGitIDiff.exe" /base:%base /theirs:%theirs /mine:%mine /result:%merged /basetitle:%bname /theirstitle:%tname /minetitle:%yname [/resolvemsghwnd:<n>] [/deletebasetheirsmineonclose]`
+   - Otherwise the default tool is **TortoiseGitMerge**:
+     `"<bin>\TortoiseGitMerge.exe" /base:%base /theirs:%theirs /mine:%mine /merged:%merged /basename:%bname /theirsname:%tname /minename:%yname /mergedname:%mname /saverequired [/resolvemsghwnd:<n>] [/deletebasetheirsmineonclose]`
+   - Both get ` /groupuuid:"<uuid>"` when a grouping UUID is set.
+   - `ConflictEdit` always passes `deleteBaseTheirsMineOnClose=true`. `/resolvemsghwnd` is passed only when the caller has a window to refresh. The Explorer command has none [CEC:24-29].
+4. An external command that contains none of `%base`, `%theirs`, `%mine` or `%merged` gets ` %base %theirs %mine %merged` appended. [AU:347-349]
+5. **Placeholders** are `%base %theirs %mine %merged %bname %tname %yname %mname %wtroot` [AU:351-362]:
+   - An empty title falls back to the file's name (`GetUIFileOrDirectoryName`). `%mname` is always the merged file's name here, and `%wtroot` is the working-tree root. [TGP:484-488]
+   - Every value is quoted. If the template already has `"` immediately around a placeholder, those quotes are dropped, so nothing is quoted twice. [STRU:821-863]
+   - For the built-in tools a `"` inside a value is doubled (`CCmdLineParser::EscapeValue`). For external tools it becomes `%22` and trailing backslashes are trimmed. [CLP:243-264; AU:255-261]
+   - Example of the default for a plain merge (inferred from the code above; the path is illustrative): `"…\TortoiseGitMerge.exe" /base:"C:\r\a.txt.BASE.txt" /theirs:"C:\r\a.txt.REMOTE.txt" /mine:"C:\r\a.txt.LOCAL.txt" /merged:"C:\r\a.txt" /basename:"Base" /theirsname:"MERGE_HEAD (feature, 1a2b3c4)" /minename:"HEAD" /mergedname:"a.txt" /saverequired /resolvemsghwnd:… /deletebasetheirsmineonclose`
+6. **Launch.** The process is started with `IDS_ERR_EXTMERGESTART` "Could not start external merge program!\n\n%s" [POT:3119] as its failure message. [AU:364-370]
+7. **Waiting.** Only for an **external** tool, and only if `MergeBlockTrustBehavior` ≥ 1 (default 0). The built-in tools are **never** waited for. [AU:367-373]
+
+**After a blocking external tool exits** [AU:375-398]:
+
+1. The three temp files are **always** deleted.
+2. Then:
+   - `MergeBlockTrustBehavior = 2` and exit code 0: `git.exe add -f -- <path>` runs silently.
+   - `MergeBlockTrustBehavior = 2` and any other exit code: nothing happens and there is no prompt. The file stays conflicted.
+   - `MergeBlockTrustBehavior = 1`: a question box "Was the merge of\n%s\nsuccessful?" [POT:10362] with buttons "&Resolved" [POT:1070] / "&No" [POT:894]. Resolved runs `git add -f`.
+   - A failing `add` shows git's output in a message box.
+3. After a successful add, `GITSLNM_NEEDSREFRESH` is posted to `resolveMsgHwnd` if `RefreshFileListAfterResolvingConflict` is TRUE (the default).
+
+**Non-blocking external tools** return immediately. The temp files remain until the conflict is marked resolved through TortoiseGit; the Resolve command deletes them (6.5.4). [AU:371-373; MAN-PROGS:294-299]
+
+**Conflict markers are never checked by TortoiseGit itself.** No code in TortoiseProc scans a resolved file for `<<<<<<<`. The only guards are the index-based ones:
+
+- `HasWorkingTreeConflicts`, used by the Rebase dialog (9.3.3);
+- TortoiseGitMerge's own view state (9.1.3a);
+- the commit-message "# Conflicts:" hint check (9.3.3).
+
+This was established by searching the source for the marker strings: the only hits are TortoiseGitMerge's own writer.
+
+#### 9.1.3a What TortoiseGitMerge does with these arguments (brief)
+
+- **Flags.** `/saverequired` sets `m_bSaveRequired`. `/deletebasetheirsmineonclose` and `/resolvemsghwnd` are stored. [TMA:195-200, 383]
+- **Initial content.** The bottom (merged) view is computed by a three-way diff of base, theirs and mine. `Load()` reads only those three files, so whatever text the working-tree file has, conflict markers included, is not the starting content. [TMDD:183-240]
+- **Save required.** After loading, "save required" is cleared again if the automatic merge left conflicts and `/saverequiredonconflicts` was not given. [TMF:1114-1116]
+- **Binary files.** A file whose content has an aligned all-zero DWORD is treated as binary. Loading then fails with "The file\n%s\nis not a valid text file!" [FTL:70-77, 282-284; TMRC:933]
+  - The manual's advice for binaries is to use Resolve with "mine" or "theirs" instead. [MAN-CONF:92-100]
+- **Saving with conflicts left.** A task dialog appears: "Unresolved conflicts!" / "There are still unresolved conflicts in line %d! …". Its command links are "Save" ("Save the file with the conflict markers.") and "Cancel" ("Resolve the conflicts first."), and Cancel is the default. [TMF:3078-3103; TMRC:857-859, 1120-1124]
+- **Saving with no conflicts left.** If the index still has stage 1 or stage 2 for the path (checked with libgit2), it asks "Do you want to mark the file\n%s\nas resolved?" ("File has no conflicts"). The command links are "Mark as resolved" (default) and "Leave as conflicted". [TMF:1737-1786; TMRC:1172-1176]
+- **Mark as resolved** (the prompt above, or the menu item) runs `TortoiseGitProc /command:resolve /path:<merged> /closeonend:1 /noquestion /skipcheck /silent [/resolvemsghwnd:…]`. That stages the file, deletes the temp files and refreshes the caller (6.5.1). It runs once per session. [TMF:2244-2284]
+- **Closing.** When the window is closed, or another file is opened (and the save prompt was not cancelled), the base, theirs and mine files are deleted because of `/deletebasetheirsmineonclose`. [TMF:2695-2799]
+- **Exit code.** The process returns 1 if conflicts remain at close and 0 otherwise. TortoiseGit does not wait for it, so the exit code is unused here. [TMA:435-445; AU:368]
+- **TortoiseGitIDiff** has its own resolve path: it asks with the `IDS_MARKASRESOLVED` text and runs the same `/command:resolve … /silent` line. [TIDM:800-815]
+
+#### 9.1.4 Delete/modify conflicts ("Conflict" dialog, `IDD_RESOLVE_CONFLICT`)
+
+This dialog is used when stage 2 or stage 3 is missing. [AU:1951-2006]
+
+**Temp files.** `.LOCAL` and `.REMOTE` are deleted at once. `.BASE` is kept while the dialog is open, for "Show changes", and deleted on exit. Without a base it is deleted at once. [AU:1953-1961]
+
+**Window** [RC:1533-1552]:
+
+- 315×129 DLU, caption **"Conflict"**; the window title is the file's full path [DCD:98].
+- Group box "Delete/modify merge conflict"; an info label shows the git path [DCD:100].
+- Two rows. Each has:
+  - a read-only ref box showing the side's title;
+  - a status text: "Deleted" [POT:3454] if that side lacks the file, "Modified" [POT:6208] if it has the file and a base exists, otherwise "Created" [POT:3222]. [AU:1667-1680]
+  - "Show log" (`/command:log /path:<file> /endrev:<hash> /rev:<hash>`; hidden when the ref text is empty) [DCD:87-96, 132-137];
+  - "Show &changes", hidden and disabled by default.
+- During a rebase the two rows are swapped, so the top row shows the theirs-title side. [AU:1964-1982]
+- Buttons:
+  - **"OK"**, relabelled "Modified" when a base exists and "Created" otherwise [DCD:71-86]. It keeps the file.
+  - **"Delete"**
+  - **"Abort"**, the default, which cancels
+  - "Help"
+- "Show changes" appears only when a base exists, on the side that still has the file. It diffs `.BASE` against the working file (Shift: alternative diff tool). [DCD:71-83, 139-151]
+
+**Results** [AU:1983-2005]:
+
+- Keep runs `git.exe add -- <path>` (no `-f`). The list entry becomes ADDED instead of UNMERGED.
+- Delete runs `git.exe rm -- <path>`.
+- A git failure shows its output in a message box.
+
+#### 9.1.5 Submodule conflicts ("Resolve Submodule Conflict", `IDD_RESOLVESUBMODULECONFLICT`)
+
+**Before the dialog** [AU:1786-1882]:
+
+- If the path is an initialized submodule (a working-tree root), its `HEAD` replaces the base hash. The change type of each side (Identical, New, Delete, Fast-forward, Rewind, Newer/Older/Same time) and the commit subjects are computed inside the submodule.
+- Otherwise the subjects are fixed strings: "not initialized" [POT:10963], "no submodule" [POT:10943] or "file, not a submodule" [POT:10824], depending on which stages exist.
+- An unmatched combination returns FALSE.
+
+**Window** [RC:2153-2184; SRCD:66-122]:
+
+- 381×209 DLU, resizable horizontally; window title from the repository root.
+- Header: `Submodule "<path>"`.
+- Three groups titled with the Base, Mine and Theirs titles. Each shows Revision, Subject and "Show log"; Mine and Theirs also show Type and a **"Use this"** button.
+- Invalid subjects get the "invalid" brush, and non-identical types get a change-type colour.
+- During a rebase Mine and Theirs are swapped. [SRCD:160-195]
+
+**"Use this"** [SRCD:223-253]:
+
+1. Confirm with "Are you sure you want to mark the conflicted file(s) as resolved?" [POT:1838].
+2. Run `ResolveProgressCommand` with Mine or Theirs (6.5.5) in an auto-closing progress dialog.
+3. On success, the dialog closes. `ConflictEdit` then posts `GITSLNM_NEEDSREFRESH` to its caller. [AU:1884-1892]
+
+The manual notes that an **uninitialized** submodule cannot be resolved automatically. [MAN-CONF:157-162]
+
+#### 9.1.6 Conflict titles (`GetConflictTitles`)
+
+- **Base** is always "Base" [POT:2033].
+- **Rebase** (`rebaseActive`) [AU:1697-1726]:
+  - mine = the contents of `.git/tgitrebase.active/onto`. If that file is missing, the default is "Branch being rebased onto", or the ref guessed for `rebase-apply/onto` plus `, <short hash>`.
+  - theirs = `tgitrebase.active/head-name`. If that is missing, the default is "Branch being rebased", or `rebase-apply/head-name` with `refs/heads/` stripped.
+  - These English strings are hard-coded.
+- **Otherwise** mine = **"HEAD"**, and theirs comes from the first of these refs that exists [AU:1728-1752; POT:173, 6914, 10787]:
+
+| Ref present | Theirs label | Situation |
+|---|---|---|
+| `MERGE_HEAD` | `MERGE_HEAD (<guessed ref>, <short hash>)`, or `MERGE_HEAD (<short hash>)` | merge, pull |
+| `CHERRY_PICK_HEAD` | `CHERRY_PICK_HEAD (<short hash>)` (no ref guessing) | cherry-pick, including the Rebase dialog in cherry-pick mode |
+| `REVERT_HEAD` | `Parent of <short hash>` | revert |
+| none | "changes to-be-integrated" | **stash apply/pop**, and anything else |
+
+- **Ref guessing** can be turned off with `ConflictDontGuessBranchNames` (Advanced settings, default false). The value is read once per process. [AU:1700; SADV:38; MAN-ADV:95-101]
+- **"Rebase active"** means that `.git/rebase-apply` or `.git/tgitrebase.active` exists [TGP:857-866]:
+  - The Explorer command [CEC:24-29] and the shared file list (`m_bIsRevertTheirMy`, set on every `GetStatus`) [GSLC:385-387] both use this test.
+  - git's default `rebase-merge` backend directory is **not** checked. A conflict from a command-line `git rebase` (merge backend) is therefore treated as non-rebase: no swap, and theirs is "changes to-be-integrated" unless `CHERRY_PICK_HEAD` exists. This is inferred from the code and was not tested.
+
+### 9.2 Merge tool settings (Settings > Diff Viewer > Merge Tool)
+
+**The page.** `CSettingsProgsMerge` is a child page of the Diff Viewer page. [SET:137-138]
+
+`IDD_SETTINGSPROGSMERGE` (300×217 DLU), caption **"Merge Tool"** [RC:683-698]:
+
+| Control | Label | Behaviour |
+|---|---|---|
+| static | "Configure the program used to resolve conflicted files." | – |
+| radio `IDC_EXTMERGE_OFF` | "&TortoiseGitMerge" | – |
+| radio `IDC_EXTMERGE_ON` | "&External" | enables the edit box and "..." |
+| edit `IDC_EXTMERGE` | command line | filesystem autocomplete; tooltip lists `%merged %theirs %mine %base` [RC:3728-3729] |
+| "..." | file picker | – |
+| check `IDC_MERGEBLOCK` | "Block TortoiseGit while executing the external merge tool" | enabled only with External |
+| check `IDC_TRUSTEXITCODE` | "Trust the exitcode of the external merge tool for auto resolving" | enabled only with External and Block checked; unchecking Block also unchecks it |
+| static and "&Advanced..." | "Click on "Advanced" to specify alternate merge programs based on file extension" | opens the per-extension dialog |
+
+[SPM:42-55, 166-186]
+
+**Registry storage** [SPM:27-35, 70-110, 156-164; SPM.h:57]:
+
+- **`Merge`** (REG_SZ, default empty) holds the command:
+  - The External radio is selected iff the value is non-empty and does not start with `#`.
+  - Choosing TortoiseGitMerge with a non-empty command **keeps** the command and prefixes it with `#`. Choosing External strips the `#`.
+  - The `#` command is what Shift ("alternative") launches (9.1.3).
+- **`MergeBlockTrustBehavior`** (DWORD, default 0):
+  - 0 means don't wait; 1 means Block; 2 means Block and trust the exit code.
+  - Unchecking both writes 0 only if the value already exists.
+
+**Advanced dialog** [RC:508-519, 534-544; SPAD:27-31, 275-282; TAD:36-47]:
+
+- `IDD_SETTINGSPROGSADV`, titled "Advanced merge settings" [RC:3676]:
+  - a group "Extension specific programs" holding a list with columns "Extension" / "Program" [RC:3565-3566];
+  - buttons "&Add...", "&Edit...", "&Remove", "Re&store defaults", OK, Cancel.
+- Entries are stored as values under `HKCU\Software\TortoiseGit\MergeTools`: the name is the extension (e.g. `.bmp`), the data is the command.
+- Add and Edit open `IDD_TOOLASSOC`, titled "Add/Edit extension specific merge program" [RC:3672-3674]:
+  - fields "Extension:" (lower-cased) and "External Program:" with "...";
+  - a leading `*` is trimmed from the extension unless it contains `/`.
+- A filename key such as `.makefile` also works, because of the lookup in 9.1.3.
+
+**Shipped defaults (diff scripts)** [AU:971-1053; TP:456, 546, 587; DSCR]:
+
+- `SetupDiffScripts` scans `<install>\Diff-Scripts\merge-*.js|vbs`. The extensions come from the file name suffix plus a first line `// extensions: a;b;c`.
+- For each extension it writes `MergeTools\<.ext>` = `wscript.exe "<script>" %merged %theirs %mine %base` (+ ` //E:javascript` or ` //E:vbscript`).
+- It runs only when the value is empty or already points at that script, on every version upgrade, and always (forced) on "Restore defaults".
+- Shipped merge scripts:
+  - `merge-doc.js` for `doc;docx;docm`
+  - `merge-odt.js` for `ods;odt;sxw`
+
+**git's `merge.tool` / `mergetool.*` config is not used.** The only "mergetool" identifiers in the source are TortoiseGit's own registry keys (search of `src/`).
+
+**Documented placeholders.** The manual lists `%base %bname %mine %yname %theirs %tname %merged %mname %wtroot`. [MAN-PROGS:196-270]
+
+**Documented example command lines** (exact text) [MAN-PROGS:276-291]:
+
+```
+C:\Path-To\P4Merge.exe %base %theirs %mine %merged
+C:\Path-To\kdiff3.exe %base %mine %theirs -o %merged --L1 %bname --L2 %yname --L3 %tname
+C:\Path-To\compare.exe /max /wait /3 /title1:%tname /title2:%bname /title3:%yname %theirs %base %mine %merged /a2
+C:\Path-To\WinMergeU.exe /e /ub /fr /wl /wm /dl %bname /dm %tname /dr %yname  %base %theirs %mine /o %merged /ar
+```
+
+These are, in order, Perforce Merge, KDiff3, Araxis, and WinMerge 2.12 or later. The WinMerge line contains a double space in the original.
+
+- No merge example is given for Beyond Compare, Meld or SemanticMerge.
+- The Diff Viewer section gives only *diff* examples (ExamDiff, KDiff3, WinMerge, Araxis). [MAN-PROGS:118-130]
+
+**Manual on temp files and blocking.** The temp files are removed when the conflict is marked resolved through TortoiseGit, TortoiseGitMerge or TortoiseGitIDiff. With an external tool the file must be marked resolved manually, unless Block or Trust is used. "The temporary files are removed in any case" when blocking. [MAN-PROGS:294-299]
+
+### 9.3 Where Edit conflicts is offered
+
+#### 9.3.1 Explorer and the command line
+
+- **Explorer menu.** "&Edit conflicts" (`IDS_MENUCONFLICT` [POT:571]) appears for a conflicted non-folder (table 4.2 row 33). It runs `/command:conflicteditor /path:<file>`, adding `/alternative` when Shift is held. [CTX:1422-1423]
+- **The command.** It calls `ConflictEdit(explorer hwnd, path, /alternative, IsRebaseActive())` with no refresh window. [CEC:24-29]
+- **Neighbouring commands.** Explorer also has "Resolve..." (6.5); the manual describes it as the multi-file route. [MAN-CONF:101-110]
+
+#### 9.3.2 The shared file list (`CGitStatusListCtrl`)
+
+This list is used in Commit, Check for modifications, Resolve, Rebase and Sync.
+
+- **Context menu.** For an UNMERGED selection the first group is:
+  - "&Edit conflicts": single selection only, mask `GITSLC_POPCONFLICT`, and the **default item**;
+  - "Resolved";
+  - two `Resolve conflict using "%s"` items, titled from `GetConflictTitles` (5.2.8).
+
+  [GSLC:1691-1719]
+- **Running it.** Choosing it (Shift: alternative tool) calls `ConflictEdit(..., m_bIsRevertTheirMy, logical parent hwnd)`. When that returns TRUE:
+  - if the file no longer exists, the parent refreshes;
+  - otherwise the list re-shows, which picks up an entry the delete/modify dialog changed from UNMERGED to ADDED.
+
+  [GSLC:2448-2461]
+- **Double-click and Enter.** On a conflicted row these run the same `ConflictEdit` (Shift: alternative) instead of a diff, with the same refresh rules. [GSLC:2953-2965, 3639-3666]
+- **Refresh after the tool.** For TortoiseGitMerge the list is refreshed later, when the Resolve command posts `GITSLNM_NEEDSREFRESH` to the parent (6.5.1). The dialogs that handle it are Add, Changed, Commit, Log, Rebase, Resolve and Revert. [GSLC:57-58; RD:84]
+
+#### 9.3.3 Rebase dialog, conflicted step
+
+This complements 2.7, steps 3 and 5.
+
+**Entering the conflict state** [RD:2336-2345]:
+
+- A cherry-pick that fails with conflicts sets the stage to `Conclict`, or `Squash_Conclict` for a squash row.
+- The taskbar turns red.
+
+**`ListConflictFile`** [RD:2449-2496]:
+
+1. In rebase mode (not cherry-pick mode) it first creates `.git/tgitrebase.active/` with `head-name` (branch combo text) and `onto` (Onto, else upstream combo text). `IsRebaseActive()` is therefore true from here on, and Edit conflicts, Resolve-using and the submodule dialog all swap mine and theirs (9.1.6).
+2. It loads the status and shows UNMERGED, MODIFIED, ADDED, DELETED and REPLACED rows, with only UNMERGED pre-checked, then checks all files.
+3. If any row is a directory (a submodule), it adds ", take care of submodule changes" [POT:11029] in red to the status text.
+
+The folder is removed by `CleanUpRebaseActiveFolder` [RD:106-117].
+
+**The list.** Its context menu is `POPALL` minus Commit, Restore and Changelists [RD:243], so Edit conflicts, Resolved and Resolve-using are all available.
+
+**Refreshing.** `GITSLNM_NEEDSREFRESH` and F5 call `Refresh()`, which in a conflict stage re-runs `ListConflictFile`. [RD:2733-2745]
+
+**UI in the conflict state** [RD:2521-2545, 1810-1822]:
+
+- The "Conflict Files" tab is activated and the message box becomes editable. In cherry-pick mode it is pre-filled from `MERGE_MSG`; otherwise, or if that is empty, it uses the commit's subject and body.
+- The button reads **"Commit"** in `Conclict` and **"Continue"** in `Squash_Conclict`.
+
+**What Commit/Continue requires** [RD:1096-1121, 1350-1376; AU:2181-2206]:
+
+1. **No unmerged index entries** (`g_Git.HasWorkingTreeConflicts()`, not a marker scan):
+   - Otherwise the box "One or more files are in a conflicted state." [POT:6690] appears, the selection is cleared, and the first UNMERGED row is selected, scrolled into view and focused.
+   - If the check itself fails, "Checking for conflicts failed." is logged.
+2. **No "# Conflicts:" hint in the message**:
+   - The hint is the text `\n<commentchar> Conflicts:\n<commentchar>\t`.
+   - The check is skipped when `StripCommentedLines` is on or when `core.cleanup` is verbatim, whitespace or scissors.
+   - It shows `IDS_CONFLICT_HINT_IN_COMMIT_MESSAGE` [POT:5683] with buttons "&Ignore" / "A&bort" and a "do not show again" checkbox. Abort returns to editing.
+3. **Then:**
+   - `Conclict` stages the checked rows and unstages the unchecked ones, then runs `git commit --allow-empty-message -C <orig>` (plus `--amend -F` if the message was edited). If the row's action was Edit it moves to Edit; otherwise it continues (2.7 step 3).
+   - `Squash_Conclict` does no staging. It moves to `Squash_Edit` if the next row is not a squash, else marks the row done and continues.
+
+**Skip.** There is no Skip button. Changing the current row's action to **Skip** (context menu or the `S` key) while in `Conclict` or `Error` runs `git reset --hard` and continues (2.5). [RD:2955-2972]
+
+**Abort.** As in 2.7 step 8 (confirmation, then restore). The manual tells users to commit rebase and cherry-pick conflicts from the Rebase or cherry-pick dialog, not from the Commit dialog. [MAN-CONF:81, 124]
+
+#### 9.3.4 Resolve dialog and progress-dialog post-commands
+
+- **Resolve dialog (6.5).** Its list keeps "&Edit conflicts" in the context menu, and double-clicking a row edits the conflict. OK marks every checked row as resolved (`git add -f`) without opening a tool. [RSD:60, 145]
+- **"Resolve" post-command button** (`IDS_PROGRS_CMD_RESOLVE` "Resolve" [POT:7771]):
+  - After a **pull** (`DoPull` [AU:2326-2350]) or **merge** (`DoMerge` [AU:3289-3312]) that leaves conflicts, it runs `/command:resolve /path:"<root>"`. A "&Commit..." button next to it runs `/command:commit`.
+  - The same label in three other places runs **`/command:commit`**, not resolve (quirk):
+    - switch-with-merge (`PerformSwitch` [AU:1351-1359]);
+    - pull's `--ff-only` merge after fetch (`RebaseAfterFetch` [AU:2701-2712]);
+    - the Sync dialog's ff-only merge [SYD:648-658].
+  - There is no "Edit conflicts" post-command anywhere.
+
+### 9.4 Merge-conflict info message (brief)
+
+After a pull or merge that leaves unmerged entries, an information box is shown. `CMessageBox::ShowCheck` uses the registry value name `MergeConflictsNeedsCommit` for its "do not show again" checkbox. That setting can be reset on the Saved Data page. The box is shown by `DoPull` and `DoMerge` [AU:2335, 3299], and by the Sync dialog [SYD:292, 572; SSDP:377]. Its text is `IDS_NEED_TO_RESOLVE_CONFLICTS_HINT` [POT:10419]:
+
+> "While merging, i.e. integrating changes of another (remote) branch into your local branch, a conflict in at least one file occurred. This means that you need to resolve this manually (i.e., you need to integrate your changes into a file which was also modified on another branch).\n\nAfter resolving all files, you need to perform a commit in order to complete the merge.\n\nIf you want to abort the merge, do a hard reset on HEAD or select abort merge on the context menu.\n\nSee help for more information."
+
+In Sync, the "In conflict" tab is also filled with only UNMERGED rows and activated. [SYD:284-292]
+
+### 9.5 Not established from source
+
+- What `git checkout-index --temp` produces for a **symlink** stage on Windows (a link or a text file with the target), and so what the merge tool sees.
+- How Edit conflicts behaves during a command-line `git rebase` using the `rebase-merge` backend (labels and swap). This is inferred in 9.1.6, not tested.
+- Where git creates the intermediate `.merge_file_*` temp file before the move. It was assumed to be git's working directory (the repository root).
+- How TortoiseGitMerge behaves when the base file is empty (added-by-both). Only the file preparation was traced.
+- `DeleteConflictDlg`'s "Show log" button in a non-rebase merge uses `mineHash`, which `GetConflictTitles` sets only in the rebase branch. The log then probably opens with an empty revision; this was not verified.
+- The Help topics (`HIDD_RESOLVE_CONFLICT`, `HIDD_RESOLVESUBMODULECONFLICT`, `HIDD_SETTINGSPROGSMERGE`) were not examined beyond the manual text cited.

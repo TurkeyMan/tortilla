@@ -376,6 +376,11 @@ public:
         case run::fetch: rap::shell::launch(tortilla_exe(), {"fetch", folder}); return;
         case run::pull: rap::shell::launch(tortilla_exe(), {"pull", folder}); return;
         case run::push: rap::shell::launch(tortilla_exe(), {"push", folder}); return;
+        case run::branch: rap::shell::launch(tortilla_exe(), {"branch", folder}); return;
+        case run::tag: rap::shell::launch(tortilla_exe(), {"tag", folder}); return;
+        case run::switch_to: rap::shell::launch(tortilla_exe(), {"switch", folder}); return;
+        case run::merge: rap::shell::launch(tortilla_exe(), {"merge", folder}); return;
+        case run::merge_abort: rap::shell::launch(tortilla_exe(), {"mergeabort", folder}); return;
         case run::commit:
         case run::repostatus:
         case run::add:

@@ -17,14 +17,15 @@ namespace tortilla
 class push_dialog
 {
 public:
-    static std::expected<std::unique_ptr<push_dialog>, std::string> open(rap::ui&,
-                                                                         const std::string& path);
+    // `local` preselects what's pushed (a branch, refs/tags/<tag>).
+    static std::expected<std::unique_ptr<push_dialog>, std::string>
+    open(rap::ui&, const std::string& path, const std::string& local = {});
     void show() { window_->show(); }
     void on_closed(std::function<void()> f) { closed_ = std::move(f); }
 
 private:
     push_dialog(rap::ui&, std::string workdir);
-    void build();
+    void build(const std::string& local);
     void local_changed();  // the remote and branch it pushes to
     void update_state();
     int first_remote() const;

@@ -70,6 +70,11 @@ enum class run
     fetch,       // tortilla fetch <folder>
     pull,        // tortilla pull <folder>
     push,        // tortilla push <folder>
+    branch,      // tortilla branch <folder>
+    tag,         // tortilla tag <folder>
+    switch_to,   // tortilla switch <folder>
+    merge,       // tortilla merge <folder>
+    merge_abort,  // tortilla mergeabort <folder>
 };
 
 struct row
@@ -162,7 +167,7 @@ inline constexpr row k_rows[] = {
      place::sub,
      run::resolve,
      "resolve"},
-    {"Abort &Merge", {{{GIT | MERGE, 0}, {FIG | MERGE, 0}}}, place::sub, run::none, "mergeabort"},
+    {"Abort &Merge", {{{GIT | MERGE, 0}, {FIG | MERGE, 0}}}, place::sub, run::merge_abort, "mergeabort"},
     {"Re&name...", {{{GIT | ONE | IVF, ROOT}, {ROOT | SUB, 0}}}, place::sub, run::none, "rename"},
     {"&Delete",
      {{{GIT | IVF, ADDED | ROOT}, {FIG | ROOT | SUB, 0}}},
@@ -175,10 +180,10 @@ inline constexpr row k_rows[] = {
     separator,
     // (LFS: a submenu only when the repository has <gitdir>/lfs [spec 4.4].)
     separator,
-    {"S&witch/Checkout...", {{{FIG | ONE, 0}}}, place::sub, run::none, "switch"},
-    {"&Merge...", {{{FIG | ONE, BISECT | MERGE}}}, place::sub, run::none, "merge"},
-    {"Create &Branch...", {{{FIG | ONE, 0}}}, place::sub, run::none, "branch"},
-    {"Create &Tag...", {{{FIG | ONE, 0}}}, place::sub, run::none, "tag"},
+    {"S&witch/Checkout...", {{{FIG | ONE, 0}}}, place::sub, run::switch_to, "switch"},
+    {"&Merge...", {{{FIG | ONE, BISECT | MERGE}}}, place::sub, run::merge, "merge"},
+    {"Create &Branch...", {{{FIG | ONE, 0}}}, place::sub, run::branch, "branch"},
+    {"Create &Tag...", {{{FIG | ONE, 0}}}, place::sub, run::tag, "tag"},
     {"E&xport...", {{{FIG | ONE, 0}, {BARE, 0}}}, place::sub, run::none, "export"},
     separator,
     {"Create repositor&y here...",

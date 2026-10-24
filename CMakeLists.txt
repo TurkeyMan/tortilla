@@ -84,7 +84,11 @@ add_executable(tortilla
     src/ui/windows.cpp
     src/remote/pull_fetch_dialog.cpp
     src/remote/push_dialog.cpp
-    src/remote/clone_dialog.cpp)
+    src/remote/clone_dialog.cpp
+    src/branch/ref_chooser.cpp
+    src/branch/create_ref_dialog.cpp
+    src/branch/switch_dialog.cpp
+    src/branch/merge_dialog.cpp)
 target_link_libraries(tortilla PRIVATE rapport::rapport tortilla_git)
 if(WIN32)
     enable_language(RC)

@@ -57,15 +57,15 @@ private:
     // succeeded and their output. A failure is shown unless `show_failure`
     // is false (the caller handles it).
     void run_quietly(const std::string& title, std::vector<std::vector<std::string>> commands,
-                    std::function<void(bool ok, const std::string& output)> after,
-                    bool show_failure = true);
+                     std::function<void(bool ok, const std::string& output)> after,
+                     bool show_failure = true);
     void refs_changed();
     void open_settings(settings_page);
     void difftool(std::vector<std::string> revisions, std::vector<std::string> paths = {});
     void confirm_then_run(const std::string& question, const std::string& title,
-                        std::vector<std::vector<std::string>> commands);
+                          std::vector<std::vector<std::string>> commands);
     void create_branch(const commit&, const std::string& name = {}, bool switch_to = false,
-                      const std::string& start_point = {});
+                       const std::string& start_point = {});
     void create_tag(const commit&);
     void stash_changes();
     void reset_to(const commit&);
@@ -104,6 +104,9 @@ private:
     rap::menu cell_menu(size_t row, size_t column, rap::point_f at);
     std::optional<std::string> clicked_ref_;  // while building a label's context menu
     void merge_from(const commit&, const std::string& what);
+    std::string remote_or_hash(const commit&);
+    template <class Dialog>
+    void keep_dialog(std::expected<std::unique_ptr<Dialog>, std::string>);
 
     void copy_to_clipboard(const std::vector<size_t>& rows, int format);
     void show_branches_containing(const commit&);
@@ -116,6 +119,8 @@ private:
     std::string filter_cue() const;
 
     rap::ui& ui_;
+    // Expires with the log, for dialogs that outlive it (their reload).
+    std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
     repo repo_;  // UI-thread repository for details and file lists
     std::string path_;
     log_model log_;

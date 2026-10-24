@@ -8,6 +8,9 @@
 //   tortilla add|revert|resolve [path...]  the Add, Revert or Resolve dialog
 //   tortilla clone [folder] [url]      the Clone dialog, cloning into folder
 //   tortilla fetch|pull|push [path]    the Fetch, Pull or Push dialog
+//   tortilla branch|tag|switch|merge [path] [rev]  Create Branch/Tag, Switch/Checkout
+//                                     or Merge, rev preselected
+//   tortilla mergeabort [path]         the Abort Merge dialog
 //   tortilla diff [path] rev [rev2]   a commit, or rev..rev2, as a unified diff
 //   tortilla settings [path] [diff|menu|network]  the Settings dialog (at that page)
 //   tortilla --which-ui       show the detected desktop and backend order
@@ -15,6 +18,9 @@
 //                             add or remove the file manager's context menu,
 //                             for this user or (elevated, as the installer
 //                             does) every user
+#include "branch/create_ref_dialog.h"
+#include "branch/merge_dialog.h"
+#include "branch/switch_dialog.h"
 #include "changes/changes_window.h"
 #include "changes/commit_window.h"
 #include "changes/file_action_window.h"
@@ -22,14 +28,14 @@
 #include "git/ssh_client.h"
 #include "log/log_window.h"
 #include "rebase/rebase_window.h"
-#include "ui/compare.h"
-#include "ui/diff_window.h"
 #include "remote/clone_dialog.h"
 #include "remote/pull_fetch_dialog.h"
 #include "remote/push_dialog.h"
 #include "ui/askpass.h"
-#include "ui/windows.h"
+#include "ui/compare.h"
+#include "ui/diff_window.h"
 #include "ui/settings_dialog.h"
+#include "ui/windows.h"
 
 #include <rapport/rapport.h>
 #include <rapport/shell.h>
@@ -112,7 +118,9 @@ int main(int argc, char** argv)
                   std::strcmp(argv[i], "add") == 0 || std::strcmp(argv[i], "revert") == 0 ||
                   std::strcmp(argv[i], "resolve") == 0 || std::strcmp(argv[i], "clone") == 0 ||
                   std::strcmp(argv[i], "fetch") == 0 || std::strcmp(argv[i], "pull") == 0 ||
-                  std::strcmp(argv[i], "push") == 0))
+                  std::strcmp(argv[i], "push") == 0 || std::strcmp(argv[i], "branch") == 0 ||
+                  std::strcmp(argv[i], "tag") == 0 || std::strcmp(argv[i], "switch") == 0 ||
+                  std::strcmp(argv[i], "merge") == 0 || std::strcmp(argv[i], "mergeabort") == 0))
             command = argv[i];
         else
             args.push_back(argv[i]);
@@ -162,12 +170,36 @@ int main(int argc, char** argv)
 
     // The remote dialogs, and the windows their follow-ups open: the program
     // runs until the last of them closes.
-    if (command == "clone" || command == "fetch" || command == "pull" || command == "push")
+    if (command == "clone" || command == "fetch" || command == "pull" || command == "push" ||
+        command == "branch" || command == "tag" || command == "switch" || command == "merge" ||
+        command == "mergeabort")
     {
         tortilla::windows::init(**ui);
+        // The branch dialogs: the second argument preselects a ref or hash.
+        auto keep = [](auto d)
+        {
+            if (!d)
+            {
+                std::fprintf(stderr, "tortilla: %s\n", d.error().c_str());
+                return false;
+            }
+            tortilla::windows::keep(std::move(*d));
+            return true;
+        };
+        const std::string rev = args.size() > 1 ? args[1] : "";
+        if (command == "branch" || command == "tag")
+            return keep(tortilla::create_ref_dialog::open(**ui, path, command == "tag", rev))
+                       ? (*ui)->run()
+                       : 1;
+        if (command == "switch")
+            return keep(tortilla::switch_dialog::open(**ui, path, rev)) ? (*ui)->run() : 1;
+        if (command == "merge")
+            return keep(tortilla::merge_dialog::open(**ui, path, rev)) ? (*ui)->run() : 1;
+        if (command == "mergeabort")
+            return keep(tortilla::abort_merge_dialog::open(**ui, path)) ? (*ui)->run() : 1;
         if (command == "clone")
-            tortilla::windows::keep(
-                tortilla::clone_dialog::open(**ui, args.empty() ? "" : args[0], args.size() > 1 ? args[1] : ""));
+            tortilla::windows::keep(tortilla::clone_dialog::open(**ui, args.empty() ? "" : args[0],
+                                                                 args.size() > 1 ? args[1] : ""));
         else if (command == "push")
         {
             auto d = tortilla::push_dialog::open(**ui, path);
@@ -196,8 +228,8 @@ int main(int argc, char** argv)
         const auto action = command == "add"      ? tortilla::file_action::add
                             : command == "revert" ? tortilla::file_action::revert
                                                   : tortilla::file_action::resolve;
-        auto w = tortilla::file_action_window::open(**ui, action,
-                                                    args.empty() ? std::vector<std::string>{path} : args);
+        auto w = tortilla::file_action_window::open(
+            **ui, action, args.empty() ? std::vector<std::string>{path} : args);
         if (!w)
         {
             std::fprintf(stderr, "tortilla: %s\n", w.error().c_str());
@@ -300,7 +332,8 @@ int main(int argc, char** argv)
         std::fprintf(stderr, "tortilla: %s\n", log.error().c_str());
         return 1;
     }
-    (*log)->on_closed([&] { (*ui)->quit(); });
-    (*log)->show();
+    // The log, and the dialogs it opens: until the last closes.
+    tortilla::windows::init(**ui);
+    tortilla::windows::keep(std::move(*log));
     return (*ui)->run();
 }

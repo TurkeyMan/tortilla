@@ -7,6 +7,7 @@
 #include <rapport/rapport.h>
 
 #include <cstddef>
+#include <functional>
 #include <memory>
 
 namespace tortilla::windows
@@ -22,13 +23,18 @@ size_t hold(std::shared_ptr<void> owner);
 void release(size_t id);
 
 // Keeps and shows a window (log_window, commit_window...: anything with
-// show() and on_closed()).
+// show() and on_closed()); `closed` runs too when it closes.
 template <class W>
-W* keep(std::unique_ptr<W> window)
+W* keep(std::unique_ptr<W> window, std::function<void()> closed = {})
 {
     W* raw = window.get();
     const size_t id = hold(std::shared_ptr<W>(std::move(window)));
-    raw->on_closed([id](auto&&...) { release(id); });
+    raw->on_closed(
+        [id, closed](auto&&...)
+        {
+            if (closed) closed();
+            release(id);
+        });
     raw->show();
     return raw;
 }

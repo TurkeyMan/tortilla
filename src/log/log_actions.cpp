@@ -3,6 +3,14 @@
 // progress dialog, as TortoiseGit does, then reload the log.
 #include "log_window.h"
 
+#include "branch/create_ref_dialog.h"
+#include "branch/merge_dialog.h"
+#include "branch/switch_dialog.h"
+#include "changes/commit_window.h"
+#include "remote/pull_fetch_dialog.h"
+#include "remote/push_dialog.h"
+#include "ui/windows.h"
+
 #include "git/command.h"
 #include "git/diff_tool.h"
 #include "ui/compare.h"
@@ -53,8 +61,8 @@ std::string format_time(int64_t time, int offset_minutes)
 
 // A modal dialog that owns its widgets' state until it closes.
 template <class state>
-void run_dialog(rap::ui& ui, rap::window* parent, std::shared_ptr<state> st,
-               rap::window_spec spec, std::function<void(state&)> on_ok)
+void run_dialog(rap::ui& ui, rap::window* parent, std::shared_ptr<state> st, rap::window_spec spec,
+                std::function<void(state&)> on_ok)
 {
     st->window = ui.create(spec, parent);
     st->window->on_finished(
@@ -72,7 +80,7 @@ void run_dialog(rap::ui& ui, rap::window* parent, std::shared_ptr<state> st,
 void log_window::run_git_commands(const std::string& title, std::vector<arg_list> commands)
 {
     run_progress_dialog(ui_, window_.get(), title, repo_.workdir(), std::move(commands),
-                      [this](bool) { reload(); });
+                        [this](bool) { reload(); });
 }
 
 void log_window::run_ref_commands(const std::string& title, std::vector<arg_list> commands)
@@ -81,8 +89,8 @@ void log_window::run_ref_commands(const std::string& title, std::vector<arg_list
 }
 
 void log_window::run_quietly(const std::string& title, std::vector<arg_list> commands,
-                           std::function<void(bool ok, const std::string& output)> after,
-                           bool show_failure)
+                             std::function<void(bool ok, const std::string& output)> after,
+                             bool show_failure)
 {
     // One after another; the first failure stops the rest.
     struct command_run
@@ -134,7 +142,7 @@ void log_window::refs_changed()
 }
 
 void log_window::confirm_then_run(const std::string& question, const std::string& title,
-                               std::vector<arg_list> commands)
+                                  std::vector<arg_list> commands)
 {
     ui_.message(window_.get(),
                 {.icon = rap::message_spec::icon::question,
@@ -210,19 +218,16 @@ menu log_window::context_menu(std::optional<size_t> clicked)
         // Group A: diffs
         if (wc)
         {
-            m.push_back(todo("C_ommit..."));
+            m.push_back(item("C_ommit...",
+                             [this] { keep_dialog(commit_window::open(ui_, {repo_.workdir()})); }));
             if (merging)
-                m.push_back(item("Abort _Merge",
-                                 [this]
-                                 {
-                                     confirm_then_run("Abort the merge and discard its changes?",
-                                                    "Abort Merge", {{"merge", "--abort"}});
-                                 }));
+                m.push_back(item("Abort _Merge", [this]
+                                 { keep_dialog(abort_merge_dialog::open(ui_, repo_.workdir())); }));
             m.push_back(item("Show changes as _unified diff",
                              [this]
                              {
                                  show_unified_diff(ui_, "Working tree changes", repo_.workdir(),
-                                                 {"diff", "HEAD"});
+                                                   {"diff", "HEAD"});
                              }));
             m.push_back(item("_Compare with previous revision", [this] { difftool({"HEAD"}); }));
         }
@@ -245,8 +250,8 @@ menu log_window::context_menu(std::optional<size_t> clicked)
                                                   [this, p, hash]
                                                   {
                                                       show_unified_diff(ui_, hash.substr(0, 8),
-                                                                      repo_.workdir(),
-                                                                      {"diff", p, hash});
+                                                                        repo_.workdir(),
+                                                                        {"diff", p, hash});
                                                   }));
                     compare.children.push_back(
                         item(label, [this, p, hash] { difftool({p, hash}); }));
@@ -261,7 +266,7 @@ menu log_window::context_menu(std::optional<size_t> clicked)
                                      [this, hash]
                                      {
                                          show_unified_diff(ui_, hash.substr(0, 8), repo_.workdir(),
-                                                         {"show", "--format=fuller", hash});
+                                                           {"show", "--format=fuller", hash});
                                      }));
                 if (!c->parents.empty())
                     m.push_back(item("_Compare with previous revision",
@@ -271,9 +276,7 @@ menu log_window::context_menu(std::optional<size_t> clicked)
         separator(m);
 
         // Group B: stash
-        if (wc && !merging)
-            m.push_back(
-                item("Stash changes...", [this] { stash_changes(); }));
+        if (wc && !merging) m.push_back(item("Stash changes...", [this] { stash_changes(); }));
         if ((wc || is_stash) && has_stash)
         {
             m.push_back(
@@ -285,8 +288,13 @@ menu log_window::context_menu(std::optional<size_t> clicked)
         // Group D: working tree row
         if (wc)
         {
-            if (!merging) m.push_back(todo("_Pull..."));
-            m.push_back(todo("F_etch..."));
+            if (!merging)
+                m.push_back(
+                    item("_Pull...", [this]
+                         { keep_dialog(pull_fetch_dialog::open(ui_, repo_.workdir(), true)); }));
+            m.push_back(
+                item("F_etch...", [this]
+                     { keep_dialog(pull_fetch_dialog::open(ui_, repo_.workdir(), false)); }));
             separator(m);
             m.push_back(todo("_Clean up..."));
             separator(m);
@@ -303,9 +311,10 @@ menu log_window::context_menu(std::optional<size_t> clicked)
                 std::string what = hash;
                 if (refs)
                     for (auto& r : *refs)
-                        if (r.kind == ref_kind::local_branch || r.kind == ref_kind::remote_branch)
+                        if (r.kind == ref_kind::local_branch || r.kind == ref_kind::remote_branch ||
+                            r.kind == ref_kind::tag)
                         {
-                            what = r.name;
+                            what = r.full_name;
                             break;
                         }
                 m.push_back(
@@ -335,12 +344,10 @@ menu log_window::context_menu(std::optional<size_t> clicked)
             }
             if (!head && has_wc && !is_stash)
                 m.push_back(item("Sw_itch/Checkout to this...",
-                                 [this, hash]
+                                 [this, c]
                                  {
-                                     confirm_then_run(
-                                         "Check out " + hash.substr(0, 8) +
-                                             "?\n\nThis leaves HEAD detached from any branch.",
-                                         "Switch/Checkout", {{"checkout", "--detach", hash}});
+                                     keep_dialog(switch_dialog::open(ui_, repo_.workdir(),
+                                                                     remote_or_hash(*c)));
                                  }));
             if (!is_stash)
             {
@@ -360,7 +367,7 @@ menu log_window::context_menu(std::optional<size_t> clicked)
                     if (parent) args.insert(args.end(), {"-m", std::to_string(*parent + 1)});
                     args.push_back(hash);
                     confirm_then_run("Revert the changes made by " + hash.substr(0, 8) + "?",
-                                   "Revert", {args});
+                                     "Revert", {args});
                 };
                 if (c->parents.size() > 1)
                 {
@@ -397,8 +404,8 @@ menu log_window::context_menu(std::optional<size_t> clicked)
                                      [this, a, b]
                                      {
                                          show_unified_diff(ui_,
-                                                         a.substr(0, 8) + ".." + b.substr(0, 8),
-                                                         repo_.workdir(), {"diff", a, b});
+                                                           a.substr(0, 8) + ".." + b.substr(0, 8),
+                                                           repo_.workdir(), {"diff", a, b});
                                      }));
                 m.push_back(todo("Show log of " + a.substr(0, 8) + ".." + b.substr(0, 8)));
                 m.push_back(todo("Show log of " + b.substr(0, 8) + ".." + a.substr(0, 8)));
@@ -416,9 +423,9 @@ menu log_window::context_menu(std::optional<size_t> clicked)
                                  [this, args]
                                  {
                                      confirm_then_run("Revert the changes made by " +
-                                                        std::to_string(args.size() - 2) +
-                                                        " commits?",
-                                                    "Revert", {args});
+                                                          std::to_string(args.size() - 2) +
+                                                          " commits?",
+                                                      "Revert", {args});
                                  }));
             }
             separator(m);
@@ -448,8 +455,8 @@ menu log_window::context_menu(std::optional<size_t> clicked)
                                  [this, args, n = picks.size()]
                                  {
                                      confirm_then_run("Cherry-pick " + std::to_string(n) +
-                                                        " commit(s) onto the current branch?",
-                                                    "Cherry Pick", {args});
+                                                          " commit(s) onto the current branch?",
+                                                      "Cherry Pick", {args});
                                  }));
             }
             m.push_back(todo("_Format Patch..."));
@@ -472,8 +479,19 @@ menu log_window::context_menu(std::optional<size_t> clicked)
                     refs = &clicked_only;
                     break;
                 }
-        if (refs) m.push_back(todo("Pus_h..."));
-        if (log_.is_head(row) && has_wc && !merging) m.push_back(todo("_Pull..."));
+        if (refs)
+        {
+            // The row's local branch, if it has one, is what's pushed.
+            std::string local;
+            for (const auto& r : *refs)
+                if (r.kind == ref_kind::local_branch && local.empty()) local = r.name;
+            m.push_back(item("Pus_h...", [this, local]
+                             { keep_dialog(push_dialog::open(ui_, repo_.workdir(), local)); }));
+        }
+        if (log_.is_head(row) && has_wc && !merging)
+            m.push_back(
+                item("_Pull...",
+                     [this] { keep_dialog(pull_fetch_dialog::open(ui_, repo_.workdir(), true)); }));
 
         std::vector<const ref*> deletable;
         if (refs)
@@ -497,9 +515,9 @@ menu log_window::context_menu(std::optional<size_t> clicked)
         if (deletable.size() == 1)
         {
             const ref r = *deletable.front();  // a copy: `refs` may be this call's own
-            m.push_back(
-                item("_Delete " + menu_text(r.full_name), [this, r, delete_args]
-                     { confirm_then_run("Delete " + r.full_name + "?", "Delete", {delete_args(r)}); }));
+            m.push_back(item(
+                "_Delete " + menu_text(r.full_name), [this, r, delete_args]
+                { confirm_then_run("Delete " + r.full_name + "?", "Delete", {delete_args(r)}); }));
         }
         else if (deletable.size() > 1)
         {
@@ -516,9 +534,9 @@ menu log_window::context_menu(std::optional<size_t> clicked)
             sub.children.push_back(item("All",
                                         [this, all]
                                         {
-                                            confirm_then_run("Delete " + std::to_string(all.size()) +
-                                                               " refs?",
-                                                           "Delete", all);
+                                            confirm_then_run(
+                                                "Delete " + std::to_string(all.size()) + " refs?",
+                                                "Delete", all);
                                         }));
             m.push_back(std::move(sub));
         }
@@ -600,8 +618,8 @@ void log_window::copy_to_clipboard(const std::vector<size_t>& rows, int format)
 
 void log_window::show_branches_containing(const commit& c)
 {
-    git_result r =
-        run_git(repo_.workdir(), {"branch", "-a", "--contains", c.id.hex()}, git_output::stdout_only);
+    git_result r = run_git(repo_.workdir(), {"branch", "-a", "--contains", c.id.hex()},
+                           git_output::stdout_only);
     ui_.message(window_.get(), {.icon = rap::message_spec::icon::info,
                                 .title = "Branches",
                                 .text = "Branches containing " + c.id.hex(8) + ":",
@@ -613,54 +631,11 @@ void log_window::show_branches_containing(const commit& c)
 // double-clicked: its local name, switch ticked, the remote branch as the
 // start point so the new branch tracks it).
 void log_window::create_branch(const commit& c, const std::string& name, bool switch_to,
-                             const std::string& start_point)
+                               const std::string& start_point)
 {
-    struct state
-    {
-        std::unique_ptr<rap::window> window;
-        rap::entry* name = nullptr;
-        rap::check* force = nullptr;
-        rap::check* switch_to = nullptr;
-    };
-    auto st = std::make_shared<state>();
-    const std::string hash = c.id.hex();
-    const std::string base = start_point.empty() ? hash : start_point;
-    const std::string shown =
-        (start_point.empty() ? "" : start_point + " ") + hash.substr(0, 8) + " " + c.summary;
-
-    using namespace rap::layout;
-    run_dialog<state>(
-        ui_, window_.get(), st,
-        dialog{"Create Branch",
-               {vbox{
-                   form{
-                       {"Branch", entry{name}.bind(st->name).width(40_ch)},
-                       {"Base On", label{shown}.selectable()},
-                       {"", check{"_Force"}.bind(st->force)},
-                       {"", check{"Switch to new branch", switch_to}.bind(st->switch_to)},
-                   },
-                   buttons{ok, cancel},
-               }}}
-            .resizable(false),
-        [this, base](state& s)
-        {
-            std::string name = s.name->text();
-            if (name.empty()) return;
-            std::vector<arg_list> cmds;
-            arg_list args{"branch"};
-            if (s.force->checked()) args.push_back("--force");
-            args.insert(args.end(), {name, base});
-            cmds.push_back(args);
-            // Switching moves HEAD (and can fail on local changes): that
-            // one shows its progress and reloads.
-            if (s.switch_to->checked())
-            {
-                cmds.push_back({"checkout", name});
-                run_git_commands("Create Branch", cmds);
-            }
-            else
-                run_ref_commands("Create Branch", cmds);
-        });
+    keep_dialog(create_ref_dialog::open(ui_, repo_.workdir(), false,
+                                        start_point.empty() ? remote_or_hash(c) : start_point, name,
+                                        switch_to));
 }
 
 // TortoiseGit's Stash Save: a message, and whether untracked files go too
@@ -673,48 +648,46 @@ void log_window::stash_changes()
 
 void log_window::create_tag(const commit& c)
 {
-    struct state
-    {
-        std::unique_ptr<rap::window> window;
-        rap::entry* name = nullptr;
-        rap::text_view* message = nullptr;
-        rap::check* force = nullptr;
-    };
-    auto st = std::make_shared<state>();
-    std::string hash = c.id.hex();
-
-    using namespace rap::layout;
-    run_dialog<state>(
-        ui_, window_.get(), st,
-        dialog{"Create Tag",
-               {vbox{
-                   form{
-                       {"Tag", entry{}.bind(st->name).width(40_ch)},
-                       {"Base On", label{hash.substr(0, 8) + " " + c.summary}.selectable()},
-                       {"", check{"_Force"}.bind(st->force)},
-                   },
-                   label{"Message (makes an annotated tag):"},
-                   text_view{}.bind(st->message).height(5_lines).stretch(),
-                   buttons{ok, cancel},
-               }}}
-            .size(60_ch, 18_lines),
-        [this, hash](state& s)
-        {
-            std::string name = s.name->text();
-            if (name.empty()) return;
-            arg_list args{"tag"};
-            if (s.force->checked()) args.push_back("--force");
-            std::string msg = s.message->text();
-            if (!msg.empty()) args.insert(args.end(), {"-a", "-m", msg});
-            args.insert(args.end(), {name, hash});
-            run_ref_commands("Create Tag", {args});
-        });
+    keep_dialog(create_ref_dialog::open(ui_, repo_.workdir(), true, remote_or_hash(c)));
 }
 
-// Dragging a label onto another commit. The confirmation says what will
-// happen: a fast-forward, or which commits the branch stops containing. The
-// checked-out branch can't be moved under the working tree, so for it the
-// drop opens Reset instead.
+// The base the log's Create Branch, Create Tag and Switch/Checkout to this
+// start from: the row's first remote branch, else the commit [spec 8.6].
+std::string log_window::remote_or_hash(const commit& c)
+{
+    if (auto row = log_.row_of(c.id))
+        if (const auto* refs = log_.refs_of(*row))
+            for (const auto& r : *refs)
+                if (r.kind == ref_kind::remote_branch) return r.full_name;
+    return c.id.hex();
+}
+
+// A shared dialog opened from the log: the log reloads after it acts, if
+// it's still open.
+template <class Dialog>
+void log_window::keep_dialog(std::expected<std::unique_ptr<Dialog>, std::string> d)
+{
+    if (!d)
+    {
+        ui_.message(
+            window_.get(),
+            {.icon = rap::message_spec::icon::error, .title = "Tortilla", .text = d.error()});
+        return;
+    }
+    auto reload_if_open = [this, alive = std::weak_ptr<bool>(alive_)]
+    {
+        if (alive.lock()) reload();
+    };
+    // After the dialog acts, or (one that doesn't say) when it closes.
+    if constexpr (requires { (*d)->on_done(reload_if_open); })
+    {
+        (*d)->on_done(reload_if_open);
+        windows::keep(std::move(*d));
+    }
+    else
+        windows::keep(std::move(*d), reload_if_open);
+}
+
 void log_window::move_ref(const ref& ref, const commit& target)
 {
     if (ref.current) return reset_to(target);
@@ -738,10 +711,10 @@ void log_window::move_ref(const ref& ref, const commit& target)
     else
     {
         git_result lost = run_git(repo_.workdir(), {"rev-list", "--count", to + ".." + from->hex()},
-                                git_output::stdout_only);
-        git_result some = run_git(repo_.workdir(),
-                                {"log", "--format=%h %s", "--max-count=6", to + ".." + from->hex()},
-                                git_output::stdout_only);
+                                  git_output::stdout_only);
+        git_result some = run_git(
+            repo_.workdir(), {"log", "--format=%h %s", "--max-count=6", to + ".." + from->hex()},
+            git_output::stdout_only);
         detail = ref.name + " will no longer contain " +
                  (lost.ok() ? lost.output.substr(0, lost.output.find('\n')) : "some") +
                  " commit(s):\n" + some.output +
@@ -755,7 +728,7 @@ void log_window::move_ref(const ref& ref, const commit& target)
     {
         // Keeping it annotated: same message on the new commit.
         git_result msg = run_git(repo_.workdir(), {"tag", "-l", "--format=%(contents)", ref.name},
-                               git_output::stdout_only);
+                                 git_output::stdout_only);
         args = {"tag", "--force", "-a", ref.name, to, "-m", msg.ok() ? msg.output : ref.name};
     }
     else
@@ -832,7 +805,7 @@ void log_window::row_activated(size_t row)
 // A dialog of choices, each a button with a line saying what it does:
 // choosing one closes the dialog, then acts.
 void log_window::choose(const std::string& title, const std::string& question,
-                       std::vector<choice> choices)
+                        std::vector<choice> choices)
 {
     struct state
     {
@@ -874,7 +847,7 @@ void log_window::choose(const std::string& title, const std::string& question,
 void log_window::switch_to(const std::string& target, bool detach)
 {
     git_result dirty = run_git(repo_.workdir(), {"status", "--porcelain", "--untracked-files=no"},
-                             git_output::stdout_only);
+                               git_output::stdout_only);
     if (dirty.ok() && dirty.output.empty()) return run_switch(target, detach, switch_mode::plain);
     const std::string t = "\u201c" + target + "\u201d";
     choose(
@@ -916,11 +889,11 @@ void log_window::run_switch(const std::string& target, bool detach, switch_mode 
         {
             if (!ok && bring_along && output.find("would be overwritten") != std::string::npos)
                 return run_quietly("Switch/Checkout", {merge},
-                                  [this](bool ok2, const std::string&)
-                                  {
-                                      reload();
-                                      if (ok2) offer_stash_pop();
-                                  });
+                                   [this](bool ok2, const std::string&)
+                                   {
+                                       reload();
+                                       if (ok2) offer_stash_pop();
+                                   });
             if (!ok && bring_along)
                 ui_.message(window_.get(), {.icon = rap::message_spec::icon::error,
                                             .title = "Switch/Checkout",
@@ -937,8 +910,8 @@ void log_window::offer_stash_pop()
 {
     auto head = repo_.resolve("HEAD");
     if (!head) return;
-    git_result list =
-        run_git(repo_.workdir(), {"stash", "list", "--format=%gd%x09%P%x09%gs"}, git_output::stdout_only);
+    git_result list = run_git(repo_.workdir(), {"stash", "list", "--format=%gd%x09%P%x09%gs"},
+                              git_output::stdout_only);
     if (!list.ok()) return;
     for (size_t at = 0; at < list.output.size();)
     {
@@ -955,8 +928,9 @@ void log_window::offer_stash_pop()
         // On the commit it was made on, with nothing else changed, a stash
         // applies cleanly by construction. Only changes already here (ones
         // brought along by the switch) can stand in its way.
-        git_result dirty = run_git(repo_.workdir(), {"status", "--porcelain", "--untracked-files=no"},
-                                 git_output::stdout_only);
+        git_result dirty =
+            run_git(repo_.workdir(), {"status", "--porcelain", "--untracked-files=no"},
+                    git_output::stdout_only);
         const bool clean = dirty.ok() && dirty.output.empty();
         ui_.message(
             window_.get(),
@@ -971,7 +945,7 @@ void log_window::offer_stash_pop()
             {
                 if (r == rap::dialog_role::yes)
                     run_quietly("Stash Pop", {{"stash", "pop", ref}},
-                               [this](bool, const std::string&) { reload(); });
+                                [this](bool, const std::string&) { reload(); });
             });
         return;  // the newest only
     }
@@ -987,7 +961,8 @@ rap::list::cell_drag log_window::label_drag()
             if (column != log_model::message) return std::nullopt;
             auto ref = log_.label_at(row, at.x);
             if (ref)
-                last_label_press_ = label_press{row, ref->full_name, std::chrono::steady_clock::now()};
+                last_label_press_ =
+                    label_press{row, ref->full_name, std::chrono::steady_clock::now()};
             // Remote branches would need a force push: not by dragging.
             if (!ref || (ref->kind != ref_kind::local_branch && ref->kind != ref_kind::tag))
                 return std::nullopt;
@@ -1021,20 +996,21 @@ void log_window::reset_to(const commit& c)
     using namespace rap::layout;
     run_dialog<state>(
         ui_, window_.get(), st,
-        dialog{"Reset",
-               {vbox{
-                   label{"Reset \"" + repo_.head_name() + "\" to " + hash.substr(0, 8) + " " +
-                         c.summary},
-                   form{
-                       {"Reset Type",
-                        drop_down{{"Soft: Leave working tree and index untouched",
+        dialog{
+            "Reset",
+            {vbox{
+                label{"Reset \"" + repo_.head_name() + "\" to " + hash.substr(0, 8) + " " +
+                      c.summary},
+                form{
+                    {"Reset Type",
+                     drop_down{{"Soft: Leave working tree and index untouched",
                                 "Mixed: Leave working tree untouched, reset index",
                                 "Hard: Reset working tree and index (discard all local changes)"},
                                1}
-                            .bind(st->type)},
-                   },
-                   buttons{ok, cancel},
-               }}}
+                         .bind(st->type)},
+                },
+                buttons{ok, cancel},
+            }}}
             .resizable(false),
         [this, hash](state& s)
         {
@@ -1047,49 +1023,16 @@ void log_window::reset_to(const commit& c)
 // TortoiseGit's Merge dialog, reduced to its main options.
 void log_window::merge_from(const commit&, const std::string& what)
 {
-    struct state
-    {
-        std::unique_ptr<rap::window> window;
-        rap::check* no_ff = nullptr;
-        rap::check* squash = nullptr;
-        rap::check* no_commit = nullptr;
-    };
-    auto st = std::make_shared<state>();
-
-    using namespace rap::layout;
-    run_dialog<state>(ui_, window_.get(), st,
-                     dialog{"Merge",
-                            {vbox{
-                                label{"Merge " + what + " into \"" + repo_.head_name() + "\""},
-                                group{"Options",
-                                      vbox{
-                                          check{"No _Fast Forward"}.bind(st->no_ff),
-                                          check{"S_quash"}.bind(st->squash),
-                                          check{"No _Commit"}.bind(st->no_commit),
-                                      }},
-                                buttons{ok, cancel},
-                            }}}
-                         .resizable(false),
-                     [this, what](state& s)
-                     {
-                         arg_list args{"merge"};
-                         if (s.no_ff->checked()) args.push_back("--no-ff");
-                         if (s.squash->checked()) args.push_back("--squash");
-                         if (s.no_commit->checked()) args.push_back("--no-commit");
-                         args.insert(args.end(), {"--no-edit", what});
-                         run_git_commands("Merge", {args});
-                     });
+    keep_dialog(merge_dialog::open(ui_, repo_.workdir(), what));
 }
 
-// Opens the Rebase dialog onto `upstream`; the log reloads when it closes.
 void log_window::open_rebase(const std::string& upstream)
 {
     auto w = rebase_window::open(ui_, repo_.workdir(), upstream);
     if (!w)
     {
-        ui_.message(
-            window_.get(),
-            {.icon = rap::message_spec::icon::error, .title = "Rebase", .text = w.error()});
+        ui_.message(window_.get(),
+                    {.icon = rap::message_spec::icon::error, .title = "Rebase", .text = w.error()});
         return;
     }
     rebase_window* raw = w->get();

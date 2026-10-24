@@ -27,14 +27,14 @@ std::string title(const std::string& workdir, const std::string& what)
 
 }  // namespace
 
-std::expected<std::unique_ptr<push_dialog>, std::string> push_dialog::open(rap::ui& ui,
-                                                                           const std::string& path)
+std::expected<std::unique_ptr<push_dialog>, std::string>
+push_dialog::open(rap::ui& ui, const std::string& path, const std::string& local)
 {
     auto repo = repo::open(path.empty() ? "." : path);
     if (!repo) return std::unexpected(repo.error());
     std::unique_ptr<push_dialog> d(
         new push_dialog(ui, repo->workdir().empty() ? repo->git_dir() : repo->workdir()));
-    d->build();
+    d->build(local);
     return d;
 }
 
@@ -62,7 +62,7 @@ bool push_dialog::all_remotes() const
     return first_remote() == 1 && remote_->current() == 0;
 }
 
-void push_dialog::build()
+void push_dialog::build(const std::string& preselected)
 {
     using namespace rap::layout;
     using namespace rap::literals;
@@ -81,7 +81,7 @@ void push_dialog::build()
         if (items[i] == "origin") current = int(i);
     for (size_t i = 0; i < items.size(); ++i)
         if (items[i] == last) current = int(i);
-    const std::string branch = current_branch(workdir_);
+    const std::string branch = !preselected.empty() ? preselected : current_branch(workdir_);
 
     std::string recurse_config = config_value(workdir_, "push.recurseSubmodules");
     window_ = ui_.create(dialog{
