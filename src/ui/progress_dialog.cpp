@@ -1,6 +1,7 @@
 #include "progress_dialog.h"
 
 #include "git/command.h"
+#include "i18n.h"
 
 #include <cctype>
 #include <chrono>
@@ -111,8 +112,10 @@ struct progress : std::enable_shared_from_this<progress>
         std::strftime(when, sizeof when, "%Y-%m-%d %H:%M:%S", std::localtime(&now));
         rap::text_style s{.bold = true};
         s.fg = ok ? rap::paint{rap::theme_color::positive} : rap::paint{rap::theme_color::negative};
-        output->append(std::string("\n") + (ok ? "Success" : "Failed") + " (" + std::to_string(ms) +
-                           " ms @ " + when + ")\n",
+        output->append("\n" +
+                           rap::i18n::format(ok ? _("Success ({0} ms @ {1})") : _("Failed ({0} ms @ {1})"),
+                                             ms, when) +
+                           "\n",
                        s);
         close->set_enabled(true);
         abort->set_enabled(false);
@@ -196,7 +199,7 @@ void run_progress_dialog(rap::ui& ui, rap::window* parent, const std::string& ti
     body.push_back(buttons{
         // Qualified: POSIX close() is in scope through <unistd.h>.
         rap::layout::close().bind(p->close),
-        dialog_button{rap::dialog_role::none, "_Abort"}.bind(p->abort).on_click(
+        dialog_button{rap::dialog_role::none, _("_Abort")}.bind(p->abort).on_click(
             [raw = p.get()]
             {
                 if (raw->process) raw->process->kill();
@@ -204,7 +207,7 @@ void run_progress_dialog(rap::ui& ui, rap::window* parent, const std::string& ti
     });
 
     p->window = ui.create(
-        dialog{title + " - Tortilla", {rap::node{rap::spec::box{vertical, std::move(body), false, {}}, {}}}}
+        dialog{rap::i18n::format(_("{0} - Tortilla"), title), {rap::node{rap::spec::box{vertical, std::move(body), false, {}}, {}}}}
             .size(90_ch, 24_lines),
         parent);
 

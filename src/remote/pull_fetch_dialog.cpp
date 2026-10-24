@@ -5,6 +5,7 @@
 #include "git/command.h"
 #include "git/remotes.h"
 #include "git/repo.h"
+#include "i18n.h"
 #include "log/log_window.h"
 #include "rebase/rebase_window.h"
 #include "settings.h"
@@ -24,8 +25,9 @@ namespace
 
 namespace fs = std::filesystem;
 
-constexpr const char* k_url_item = "Arbitrary URL...";
-constexpr const char* k_all = "- all -";
+// Shown translated; k_all is also what the settings remember for "all".
+constexpr const char* k_url_item = T_("Arbitrary URL...");
+constexpr const char* k_all = T_("- all -");
 
 bool has_conflicts(const std::string& workdir)
 {
@@ -34,12 +36,12 @@ bool has_conflicts(const std::string& workdir)
     return r.ok() && r.output.find_first_not_of(" \r\n") != std::string::npos;
 }
 
-// "<path> - Pull - Tortilla".
-std::string title(const std::string& workdir, const std::string& what)
+// "<path> - Pull - Tortilla": `what` with the path for {0}.
+std::string title(const std::string& workdir, const char* what)
 {
     std::string root = workdir;
     while (root.size() > 1 && (root.back() == '/' || root.back() == '\\')) root.pop_back();
-    return rap::sys::path_to_utf8(rap::sys::path_from_utf8(root).make_preferred()) + " - " + what;
+    return rap::i18n::format(what, rap::sys::path_to_utf8(rap::sys::path_from_utf8(root).make_preferred()));
 }
 
 // The URLs typed before, newest first (TortoiseGit's History\PullURLS).
@@ -75,7 +77,7 @@ pull_fetch_dialog::open(rap::ui& ui, const std::string& path, bool pull)
 {
     auto repo = repo::open(path.empty() ? "." : path);
     if (!repo) return std::unexpected(repo.error());
-    if (pull && repo->bare()) return std::unexpected("Pull needs a working tree.");
+    if (pull && repo->bare()) return std::unexpected(std::string(_("Pull needs a working tree.")));
     std::unique_ptr<pull_fetch_dialog> d(new pull_fetch_dialog(
         ui, repo->workdir().empty() ? repo->git_dir() : repo->workdir(), pull));
     d->build();
@@ -124,14 +126,15 @@ void pull_fetch_dialog::build()
     // The remote: the branch's own, else the last used here [spec 7.2.2];
     // Fetch with several remotes offers (and defaults to) all of them.
     std::vector<std::string> items;
-    if (!pull_ && remotes_.size() > 1) items.push_back(k_all);
+    if (!pull_ && remotes_.size() > 1) items.push_back(_(k_all));
     items.insert(items.end(), remotes_.begin(), remotes_.end());
-    items.push_back(k_url_item);
+    items.push_back(_(k_url_item));
     const upstream up = upstream_of(workdir_, branch_);
     std::string chosen = up.remote.empty() ? settings::get().value(key + ".remote") : up.remote;
     int current = 0;
-    for (size_t i = 0; i < items.size(); ++i)
-        if (items[i] == chosen) current = int(i);
+    for (size_t i = 0; i < remotes_.size(); ++i)
+        if (remotes_[i] == chosen) current = first_remote() + int(i);
+    if (chosen == k_all && first_remote() == 1) current = 0;
     if (remotes_.empty()) current = int(items.size()) - 1;  // only a URL makes sense
 
     // The branch: the upstream's, else this branch's own name.
@@ -147,27 +150,27 @@ void pull_fetch_dialog::build()
     const bool shallow = is_shallow(workdir_);
 
     window_ = ui_.create(dialog{
-        title(workdir_, pull_ ? "Pull - Tortilla" : "Fetch - Tortilla"),
+        title(workdir_, pull_ ? _("{0} - Pull - Tortilla") : _("{0} - Fetch - Tortilla")),
         {vbox{
-            group{"Remote",
+            group{_("Remote"),
                   form{
-                      {"Remote", drop_down{items, current}.bind(remote_).on_changed(
+                      {_("Remote"), drop_down{items, current}.bind(remote_).on_changed(
                                      [this](int) { remote_changed(); })},
-                      {"URL", combo{url_history()}.bind(url_)},
-                      {"Remote branch", combo{{}, remote_branch}.bind(remote_branch_).width(40_ch)},
+                      {_("URL"), combo{url_history()}.bind(url_)},
+                      {_("Remote branch"), combo{{}, remote_branch}.bind(remote_branch_).width(40_ch)},
                   }},
-            group{"Options",
+            group{_("Options"),
                   vbox{
                       hbox{
-                          check{"_Squash"}.bind(squash_).enabled(pull_),
-                          check{"No _Fast Forward"}.bind(no_ff_).enabled(pull_).on_toggled(
+                          check{_("_Squash")}.bind(squash_).enabled(pull_),
+                          check{_("No _Fast Forward")}.bind(no_ff_).enabled(pull_).on_toggled(
                               [this](bool on)
                               {
                                   ff_only_->set_enabled(!on);
                                   if (on) ff_only_->set_checked(false);
                               }),
-                          check{"No Co_mmit"}.bind(no_commit_).enabled(pull_),
-                          check{"Fast Forward O_nly",
+                          check{_("No Co_mmit")}.bind(no_commit_).enabled(pull_),
+                          check{_("Fast Forward O_nly"),
                                 pull_ && settings::get().value(key + ".ffonly") == "1"}
                               .bind(ff_only_)
                               .enabled(pull_)
@@ -180,15 +183,15 @@ void pull_fetch_dialog::build()
                           spacer{},
                       },
                       hbox{
-                          check{"Depth", shallow}.bind(depth_).visible(shallow),
+                          check{_("Depth"), shallow}.bind(depth_).visible(shallow),
                           spin{1, 1e9, 1}.bind(depth_value_).visible(shallow),
                           spacer{},
                       },
                       form{
-                          {"Tags", drop_down{{"Default"}, 0}.bind(tags_)},
-                          {"Prune", drop_down{{"Default"}, 0}.bind(prune_)},
+                          {_("Tags"), drop_down{{_("Default")}, 0}.bind(tags_)},
+                          {_("Prune"), drop_down{{_("Default")}, 0}.bind(prune_)},
                       },
-                      check{"_Launch Rebase After Fetch", rebase}.bind(rebase_),
+                      check{_("_Launch Rebase After Fetch"), rebase}.bind(rebase_),
                   }},
             // OK checks before the dialog goes.
             buttons{dialog_button{rap::dialog_role::ok, ""}.on_click([this] { ok(); }), cancel},
@@ -210,16 +213,15 @@ void pull_fetch_dialog::remote_changed()
 
     const std::string r = url || all_remotes() ? "" : remote();
     const std::string tagopt = r.empty() ? "" : config_value(workdir_, "remote." + r + ".tagopt");
-    tags_->set_items({"Default (" +
-                          std::string(tagopt == "--no-tags" ? "none"
-                                      : tagopt == "--tags"  ? "all"
-                                                            : "reachable") +
-                          ")",
-                      "All (--tags)", "None (--no-tags)"});
+    tags_->set_items({tagopt == "--no-tags" ? _("Default (none)")
+                      : tagopt == "--tags"  ? _("Default (all)")
+                                            : _("Default (reachable)"),
+                      _("All (--tags)"), _("None (--no-tags)")});
     std::string prune = r.empty() ? "" : config_value(workdir_, "remote." + r + ".prune");
     if (prune.empty()) prune = config_value(workdir_, "fetch.prune");
-    prune_->set_items({prune.empty() ? "Default" : "Default (" + prune + ")", "Prune (--prune)",
-                       "Don't prune (--no-prune)"});
+    prune_->set_items({prune.empty() ? std::string(_("Default"))
+                                     : rap::i18n::format(_("Default ({0})"), prune),
+                       _("Prune (--prune)"), _("Don't prune (--no-prune)")});
 }
 
 void pull_fetch_dialog::show()
@@ -237,8 +239,8 @@ void pull_fetch_dialog::ok()
     {
         ui_.message(window_.get(),
                     {.icon = rap::message_spec::icon::warning,
-                     .title = pull_ ? "Pull" : "Fetch",
-                     .text = url ? "Enter the URL to pull from." : "Choose a remote."});
+                     .title = pull_ ? _("Pull") : _("Fetch"),
+                     .text = url ? _("Enter the URL to pull from.") : _("Choose a remote.")});
         return;
     }
     const bool rebase = rebase_->checked() && !url && !all;
@@ -247,8 +249,8 @@ void pull_fetch_dialog::ok()
     {
         ui_.message(window_.get(),
                     {.icon = rap::message_spec::icon::warning,
-                     .title = "Pull",
-                     .text = "You asked to pull, but did not specify a remote branch."});
+                     .title = _("Pull"),
+                     .text = _("You asked to pull, but did not specify a remote branch.")});
         return;
     }
 
@@ -314,7 +316,7 @@ void pull_fetch_dialog::ok()
     if (pulling)
     {
         follow_ups.push_back(
-            {.label = "Pulled _Diff",
+            {.label = _("Pulled _Diff"),
              .after_close =
                  [&ui, workdir, before]
              {
@@ -326,9 +328,9 @@ void pull_fetch_dialog::ok()
              },
              .offered = [workdir, before](bool ok)
              { return ok && !before.empty() && resolve(workdir, "HEAD") != before; }});
-        follow_ups.push_back({.label = "Pulled _Log", .after_close = keep_log});
+        follow_ups.push_back({.label = _("Pulled _Log"), .after_close = keep_log});
         follow_ups.push_back(
-            {.label = "_Resolve...",
+            {.label = _("_Resolve..."),
              .after_close =
                  [&ui, workdir]
              {
@@ -337,7 +339,7 @@ void pull_fetch_dialog::ok()
              },
              .offered = [workdir](bool ok) { return !ok && has_conflicts(workdir); }});
         follow_ups.push_back(
-            {.label = "_Commit...",
+            {.label = _("_Commit..."),
              .after_close =
                  [&ui, workdir]
              {
@@ -348,8 +350,8 @@ void pull_fetch_dialog::ok()
     else
     {
         follow_ups.push_back(
-            {.label = "Show _log", .after_close = keep_log, .offered = [](bool) { return true; }});
-        follow_ups.push_back({.label = "_Rebase...",
+            {.label = _("Show _log"), .after_close = keep_log, .offered = [](bool) { return true; }});
+        follow_ups.push_back({.label = _("_Rebase..."),
                               .after_close =
                                   [&ui, workdir]
                               {
@@ -358,7 +360,7 @@ void pull_fetch_dialog::ok()
                               },
                               .offered = [rebase](bool ok) { return ok && !rebase; }});
     }
-    follow_ups.push_back({.label = pulling ? "_Pull..." : "F_etch...",
+    follow_ups.push_back({.label = pulling ? _("_Pull...") : _("F_etch..."),
                           .after_close =
                               [&ui, workdir, pull = pull_]
                           {
@@ -370,7 +372,7 @@ void pull_fetch_dialog::ok()
     // The progress dialog keeps the program going while it runs.
     const size_t running = windows::hold({});
     run_progress_dialog(
-        ui_, nullptr, title(workdir_, pull_ ? "Pull" : "Fetch"), workdir_, {command},
+        ui_, nullptr, title(workdir_, pull_ ? _("{0} - Pull") : _("{0} - Fetch")), workdir_, {command},
         [&ui, workdir, rebase_onto, before, forced = rebase_from_config_, running](bool ok)
         {
             if (ok && !rebase_onto.empty())
@@ -383,9 +385,9 @@ void pull_fetch_dialog::ok()
                     const size_t asking = windows::hold({});
                     ui.message(nullptr,
                                {.icon = rap::message_spec::icon::question,
-                                .title = "Rebase",
-                                .text = "Current branch is up to date or newer than the fetched "
-                                        "branch. Open rebase anyway?",
+                                .title = _("Rebase"),
+                                .text = _("Current branch is up to date or newer than the fetched "
+                                          "branch. Open rebase anyway?"),
                                 .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
                                [&ui, workdir, rebase_onto, asking](rap::dialog_role r)
                                {

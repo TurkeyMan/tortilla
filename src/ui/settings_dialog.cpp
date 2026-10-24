@@ -124,11 +124,11 @@ rap::node general_page(std::shared_ptr<state> st)
                   {"", label{_("Applies the next time Tortilla starts.")}},
               }},
         group{
-            "Log",
+            _("Log"),
             form{
-                {"Action icons",
+                {_("Action icons"),
                  hbox{
-                     drop_down{{"Classic", "Glyphs", "Bevelled", "Line"}, current}
+                     drop_down{{_("Classic"), _("Glyphs"), _("Bevelled"), _("Line")}, current}
                          .bind(st->icon_style)
                          .on_changed(
                              [weak](int)
@@ -207,8 +207,9 @@ public:
     std::string text(size_t row, size_t column) const override
     {
         const entry& e = entries_[row];
-        if (column == 0) return e.runs ? e.label : e.label + " (not yet in Tortilla)";
-        return k_shows_titles[size_t(e.where)];
+        if (column == 0)
+            return e.runs ? e.label : rap::i18n::format(_("{0} (not yet in Tortilla)"), e.label);
+        return _(k_shows_titles[size_t(e.where)]);
     }
     void paint(size_t row, size_t, rap::painter& p, const rap::cell_info& cell) const override
     {
@@ -230,14 +231,15 @@ public:
     }
 
     // In the order of shell_menu::shows.
-    static constexpr const char* k_shows_titles[] = {"Top level", "Submenu", "With Shift",
-                                                     "Hidden"};
+    // Marked here, translated where shown.
+    static constexpr const char* k_shows_titles[] = {T_("Top level"), T_("Submenu"),
+                                                     T_("With Shift"), T_("Hidden")};
 
 private:
     static std::string label_of(const shell_menu::row& r, std::string_view group)
     {
-        if (group == "bisect") return "Bisect";
-        if (group == "merge") return "Merge, Abort Merge";
+        if (group == "bisect") return _("Bisect");
+        if (group == "merge") return _("Merge, Abort Merge");
         std::string text;
         for (const char* c = r.label; *c; ++c)
             if (*c != '&') text += *c;
@@ -283,18 +285,18 @@ rap::node context_menu_page(std::shared_ptr<state> st)
         s->menu_shows->set_enabled(!rows.empty());
         s->menu_shows->set_current(std::max(common, -1));
     };
-    std::vector<std::string> shows_choices(std::begin(menu_entries::k_shows_titles),
-                                           std::end(menu_entries::k_shows_titles));
+    std::vector<std::string> shows_choices;
+    for (const char* title : menu_entries::k_shows_titles) shows_choices.push_back(_(title));
     std::string no_menu = settings::get().value(std::string(k_no_menu_setting));
     std::replace(no_menu.begin(), no_menu.end(), '\t', '\n');
     return vbox{
-        label{"Top-level entries appear directly in the file manager's context menu, with\n"
-              "\"Git\" before them; the rest are in its Tortilla submenu. Greyed entries\n"
-              "aren't in Tortilla yet."},
+        label{_("Top-level entries appear directly in the file manager's context menu, with\n"
+                "\"Git\" before them; the rest are in its Tortilla submenu. Greyed entries\n"
+                "aren't in Tortilla yet.")},
         // The last column stretches: it keeps the right edge as the page
         // (built when first shown) takes its size.
-        list{{{.title = "Entry", .width = 44_ch, .painted = true},
-              {.title = "Shows", .width = 14_ch, .stretch = true}},
+        list{{{.title = _("Entry"), .width = 44_ch, .painted = true},
+              {.title = _("Shows"), .width = 14_ch, .stretch = true}},
              st->menu_entries.get()}
             .compact()
             .soft_selection()
@@ -302,7 +304,7 @@ rap::node context_menu_page(std::shared_ptr<state> st)
             .bind(st->menu_list)
             .stretch(),
         hbox{
-            label{"Selected entries show:"},
+            label{_("Selected entries show:")},
             drop_down{shows_choices, -1}
                 .enabled(false)
                 .on_changed(
@@ -314,7 +316,7 @@ rap::node context_menu_page(std::shared_ptr<state> st)
                     })
                 .bind(st->menu_shows),
             spacer{},
-            button{"Restore defaults"}.on_click(
+            button{_("Restore defaults")}.on_click(
                 [weak, selection_changed]
                 {
                     auto s = weak.lock();
@@ -325,11 +327,11 @@ rap::node context_menu_page(std::shared_ptr<state> st)
                     selection_changed();
                 }),
         },
-        check{"Hide the menu outside repositories (Shift shows it)",
+        check{_("Hide the menu outside repositories (Shift shows it)"),
               settings::get().value(std::string(k_hide_outside_setting)) == "1"}
             .bind(st->hide_outside),
-        label{"No menu for these paths, one a line (end one with \\ for a folder and all in "
-              "it,\nor with * for every path that starts so):"},
+        label{_("No menu for these paths, one a line (end one with \\ for a folder and all in "
+                "it,\nor with * for every path that starts so):")},
         text_view{no_menu}.bind(st->no_menu).height(3_lines),
     };
 }
@@ -340,12 +342,12 @@ rap::node diff_viewer_page(std::shared_ptr<state> st)
     const std::string git_tool = git_diff_tool(st->repo_dir);
     st->tools = detect_diff_tools();
 
-    std::vector<std::string> choices{"Tortilla's unified diff viewer",
-                                     git_tool.empty()
-                                         ? "git difftool (no diff.tool configured)"
-                                         : "git difftool (diff.tool: " + git_tool + ")"};
+    std::vector<std::string> choices{
+        _("Tortilla's unified diff viewer"),
+        git_tool.empty() ? std::string(_("git difftool (no diff.tool configured)"))
+                         : rap::i18n::format(_("git difftool (diff.tool: {0})"), git_tool)};
     for (const detected_tool& t : st->tools) choices.push_back(t.name);
-    choices.push_back("Custom...");
+    choices.push_back(_("Custom..."));
 
     // What's saved: a custom command that's a detected tool's shows as that tool.
     int current = int(saved_diff_mode(st->repo_dir));
@@ -374,7 +376,7 @@ rap::node diff_viewer_page(std::shared_ptr<state> st)
     st->merge_tools = detect_merge_tools();
     std::vector<std::string> merge_choices;
     for (const detected_merge_tool& t : st->merge_tools) merge_choices.push_back(t.name);
-    merge_choices.push_back("Custom...");
+    merge_choices.push_back(_("Custom..."));
     const std::string saved_merge = saved_merge_command();
     int merge_current = saved_merge.empty() ? 0 : st->merge_custom_index();
     for (size_t i = 0; i < st->merge_tools.size(); ++i)
@@ -392,40 +394,40 @@ rap::node diff_viewer_page(std::shared_ptr<state> st)
     };
     return vbox{
         group{
-            "Comparing revisions",
+            _("Comparing revisions"),
             vbox{
                 form{
-                    {"Compare with",
+                    {_("Compare with"),
                      drop_down{choices, current}.bind(st->diff_tool_select).on_changed(chosen)},
-                    {"Command", entry{command}
+                    {_("Command"), entry{command}
                                     .bind(st->diff_command)
-                                    .placeholder("program %base %mine")
+                                    .placeholder(_("program %base %mine"))
                                     .visible(custom)},
                 },
-                label{"%base and %mine are the two sides compared: folders when a whole commit is\n"
-                      "compared. %bname and %yname are their names. Without placeholders the two\n"
-                      "sides go at the end of the command."}
+                label{_("%base and %mine are the two sides compared: folders when a whole commit is\n"
+                        "compared. %bname and %yname are their names. Without placeholders the two\n"
+                        "sides go at the end of the command.")}
                     .handle(st->custom_help)
                     .visible(custom),
             }},
-        group{"Resolving conflicts",
+        group{_("Resolving conflicts"),
               vbox{
                   form{
-                      {"Merge with", drop_down{merge_choices, merge_current}
+                      {_("Merge with"), drop_down{merge_choices, merge_current}
                                          .bind(st->merge_select)
                                          .on_changed(merge_chosen)},
-                      {"Command", entry{saved_merge.empty() && !st->merge_tools.empty()
+                      {_("Command"), entry{saved_merge.empty() && !st->merge_tools.empty()
                                             ? st->merge_tools.front().command
                                             : saved_merge}
                                       .bind(st->merge_command)
-                                      .placeholder("program %base %theirs %mine %merged")
+                                      .placeholder(_("program %base %theirs %mine %merged"))
                                       .visible(merge_custom)},
                   },
-                  label{"%base, %theirs and %mine are the conflict's three sides and %merged the "
-                        "file to save;\n"
-                        "%bname, %tname, %yname and %mname their titles. Without placeholders the "
-                        "four\n"
-                        "files go at the end."}
+                  label{_("%base, %theirs and %mine are the conflict's three sides and %merged the "
+                          "file to save;\n"
+                          "%bname, %tname, %yname and %mname their titles. Without placeholders the "
+                          "four\n"
+                          "files go at the end.")}
                       .handle(st->merge_help)
                       .visible(merge_custom),
               }},
@@ -440,10 +442,11 @@ rap::node network_page(std::shared_ptr<state> st)
     const std::string git_command = git_ssh_command(st->repo_dir);
     st->ssh_clients = detect_ssh_clients();
 
-    std::vector<std::string> choices{git_command.empty() ? "git's own (ssh)"
-                                                         : "git's own (" + git_command + ")"};
+    std::vector<std::string> choices{git_command.empty()
+                                         ? std::string(_("git's own (ssh)"))
+                                         : rap::i18n::format(_("git's own ({0})"), git_command)};
     for (const ssh_client& c : st->ssh_clients) choices.push_back(c.name);
-    choices.push_back("Custom...");
+    choices.push_back(_("Custom..."));
 
     // What's saved: a command that's a detected client's shows as that client.
     const ssh_client saved = saved_ssh_client();
@@ -470,30 +473,31 @@ rap::node network_page(std::shared_ptr<state> st)
     };
     return vbox{
         group{
-            "SSH client",
+            _("SSH client"),
             vbox{
                 form{
-                    {"SSH client",
+                    {_("SSH client"),
                      drop_down{choices, current}.bind(st->ssh_select).on_changed(chosen)},
-                    {"Command", entry{saved.command}
+                    {_("Command"), entry{saved.command}
                                     .bind(st->ssh_command)
                                     .placeholder("ssh -i ~/.ssh/key")
                                     .visible(custom)},
                 },
-                label{"Run for each remote as git's GIT_SSH_COMMAND: git adds the host and the\n"
-                      "command to run there. plink and TortoiseGitPlink are known by their names."
+                label{std::string(_("Run for each remote as git's GIT_SSH_COMMAND: git adds the "
+                                    "host and the\ncommand to run there. plink and "
+                                    "TortoiseGitPlink are known by their names."))
 #ifdef _WIN32
                       // Git for Windows runs it through its MSYS shell, which
                       // turns /tmp/key into C:/.../Temp/key before WSL sees it.
-                      "\nGit for Windows rewrites absolute Linux paths (/...) in it: for WSL ssh,\n"
-                      "write them from home (~/...)."
+                      + _("\nGit for Windows rewrites absolute Linux paths (/...) in it: for WSL "
+                          "ssh,\nwrite them from home (~/...).")
 #endif
                 }
                     .handle(st->ssh_help)
                     .visible(custom),
             }},
-        label{"Used by the git Tortilla runs (fetch, pull, push, clone); the repository's\n"
-              "core.sshCommand applies only with git's own."},
+        label{_("Used by the git Tortilla runs (fetch, pull, push, clone); the repository's\n"
+                "core.sshCommand applies only with git's own.")},
         spacer{},
     };
 }
@@ -516,16 +520,16 @@ void show_settings(rap::ui& ui, rap::window* parent, const std::string& repo_dir
     using namespace rap::layout;
     // Lazy pages don't size the dialog, so it has a size of its own.
     st->window = ui.create(
-        dialog{"Settings - Tortilla",
+        dialog{_("Settings - Tortilla"),
                {vbox{
                    tabs{
                        // Weak: the window that keeps these is the state's own.
-                       page{"General", lazy{[weak, build] { return build(weak, general_page); }}},
-                       page{"Context Menu",
+                       page{_("General"), lazy{[weak, build] { return build(weak, general_page); }}},
+                       page{_("Context Menu"),
                             lazy{[weak, build] { return build(weak, context_menu_page); }}},
-                       page{"Diff Viewer",
+                       page{_("Diff Viewer"),
                             lazy{[weak, build] { return build(weak, diff_viewer_page); }}},
-                       page{"Network", lazy{[weak, build] { return build(weak, network_page); }}},
+                       page{_("Network"), lazy{[weak, build] { return build(weak, network_page); }}},
                    }
                        .sidebar()
                        .bind(page_tabs)

@@ -1,6 +1,7 @@
 #include "ssh_client.h"
 
 #include "git/command.h"
+#include "i18n.h"
 #include "settings.h"
 #include "util/programs.h"
 
@@ -124,7 +125,7 @@ std::vector<ssh_client> detect_ssh_clients()
     add("TortoiseGitPlink", first(tortoise), "", "tortoiseplink");
     // The ssh of the default WSL distribution, its keys and known hosts:
     // -e runs it without a shell, so git's arguments arrive as they are.
-    add("WSL ssh (experimental)", first({system + "\\wsl.exe"}), " -e ssh", "ssh");
+    add(_("WSL ssh (experimental)"), first({system + "\\wsl.exe"}), " -e ssh", "ssh");
 #else
     add("OpenSSH", first({"ssh"}), "", "ssh");
     add("PuTTY plink", first({"plink"}), " -batch", "plink");

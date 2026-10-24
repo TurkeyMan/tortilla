@@ -6,6 +6,7 @@
 #include "git/command.h"
 #include "git/remotes.h"
 #include "git/repo.h"
+#include "i18n.h"
 #include "remote/push_dialog.h"
 #include "ui/progress_dialog.h"
 #include "ui/windows.h"
@@ -67,12 +68,12 @@ merge_dialog::open(rap::ui& ui, const std::string& path, const std::string& from
 {
     auto repo = repo::open(path.empty() ? "." : path);
     if (!repo) return std::unexpected(repo.error());
-    if (repo->bare()) return std::unexpected("Merge needs a working tree.");
+    if (repo->bare()) return std::unexpected(std::string(_("Merge needs a working tree.")));
     const std::string workdir = repo->workdir();
     if (config_value(workdir, "user.name").empty() || config_value(workdir, "user.email").empty())
         return std::unexpected(
-            "User name and email must be set before commit (git config --global user.name, "
-            "user.email).");
+            std::string(_("User name and email must be set before commit (git config --global "
+                          "user.name, user.email).")));
     std::unique_ptr<merge_dialog> d(new merge_dialog(ui, workdir));
     d->build(from);
     return d;
@@ -93,36 +94,36 @@ void merge_dialog::build(const std::string& from)
     int log_count = std::atoi(config_value(workdir_, "merge.log").c_str());
     if (log_count <= 0) log_count = 20;
     std::vector<std::string> strategies(std::begin(k_strategies), std::end(k_strategies));
-    strategies.front() = "(default)";
+    strategies.front() = _("(default)");
     std::vector<std::string> options(std::begin(k_strategy_options), std::end(k_strategy_options));
-    options.front() = "(none)";
+    options.front() = _("(none)");
     const std::string current = current_branch(workdir_);
 
     window_ = ui_.create(dialog{
-        root_of(workdir_) + " - Merge - Tortilla",
+        rap::i18n::format(_("{0} - Merge - Tortilla"), root_of(workdir_)),
         {vbox{
-            hbox{label{"Current branch:"}, label{current.empty() ? "(no branch)" : current},
+            hbox{label{_("Current branch:")}, label{current.empty() ? _("(no branch)") : current},
                  spacer{}},
-            from_.layout({.caption = "From", .skip_current = true}),
+            from_.layout({.caption = _("From"), .skip_current = true}),
             group{
-                "Option",
+                _("Option"),
                 vbox{
                     hbox{
-                        check{"_Squash"}.bind(squash_).on_toggled([this](bool) { update_state(); }),
-                        check{"Messages"}.bind(log_).on_toggled([this](bool) { update_state(); }),
+                        check{_("_Squash")}.bind(squash_).on_toggled([this](bool) { update_state(); }),
+                        check{_("Messages")}.bind(log_).on_toggled([this](bool) { update_state(); }),
                         spin{1, 100000, double(log_count)}.bind(log_count_),
                         spacer{},
                     },
                     hbox{
-                        check{"No _Fast Forward"}.bind(no_ff_).on_toggled([this](bool)
+                        check{_("No _Fast Forward")}.bind(no_ff_).on_toggled([this](bool)
                                                                           { update_state(); }),
-                        check{"Fast Forward O_nly"}.bind(ff_only_).on_toggled([this](bool)
+                        check{_("Fast Forward O_nly")}.bind(ff_only_).on_toggled([this](bool)
                                                                               { update_state(); }),
                         spacer{},
                     },
-                    check{"No Co_mmit"}.bind(no_commit_),
+                    check{_("No Co_mmit")}.bind(no_commit_),
                     hbox{
-                        label{"Strategy"},
+                        label{_("Strategy")},
                         drop_down{strategies, 0}.bind(strategy_).on_changed([this](int)
                                                                             { update_state(); }),
                         drop_down{options, 0}
@@ -132,7 +133,7 @@ void merge_dialog::build(const std::string& from)
                         spacer{},
                     },
                 }},
-            group{"Merge Message", text_view{}.bind(message_).height(6_lines).stretch()}.stretch(),
+            group{_("Merge Message"), text_view{}.bind(message_).height(6_lines).stretch()}.stretch(),
             buttons{dialog_button{rap::dialog_role::ok, ""}.on_click([this] { ok(); }), cancel},
         }}}.size(70_ch, 30_lines));
     window_->on_finished(
@@ -176,8 +177,8 @@ void merge_dialog::ok()
     if (rev.empty())
     {
         ui_.message(window_.get(), {.icon = rap::message_spec::icon::warning,
-                                    .title = "Merge",
-                                    .text = "Branch/Tag name must not be empty or is invalid."});
+                                    .title = _("Merge"),
+                                    .text = _("Branch/Tag name must not be empty or is invalid.")});
         return;
     }
     // [spec 8.4.4]
@@ -218,8 +219,8 @@ void merge_dialog::ok()
         {
             if (f) std::fclose(f);
             ui_.message(window_.get(), {.icon = rap::message_spec::icon::error,
-                                        .title = "Merge",
-                                        .text = "Could not save merge message"});
+                                        .title = _("Merge"),
+                                        .text = _("Could not save merge message")});
             return;
         }
         std::fclose(f);
@@ -234,7 +235,7 @@ void merge_dialog::ok()
     const bool no_commit = no_commit_->checked() || squash_->checked();
     auto conflicted = [workdir](bool ok) { return !ok && has_conflicts(workdir); };
     std::vector<progress_follow_up> follow_ups{
-        {.label = "_Resolve...",
+        {.label = _("_Resolve..."),
          .after_close =
              [&ui, workdir]
          {
@@ -242,7 +243,7 @@ void merge_dialog::ok()
                  windows::keep(std::move(*w));
          },
          .offered = conflicted},
-        {.label = "_Commit...",
+        {.label = _("_Commit..."),
          .after_close =
              [&ui, workdir]
          {
@@ -250,7 +251,7 @@ void merge_dialog::ok()
          },
          .offered = [conflicted, no_commit](bool ok)
          { return conflicted(ok) || (ok && no_commit); }},
-        {.label = "_Abort Merge...",
+        {.label = _("_Abort Merge..."),
          .after_close =
              [&ui, workdir]
          {
@@ -258,7 +259,7 @@ void merge_dialog::ok()
          },
          .offered = conflicted},
         // Unrelated histories: the same merge, allowed [spec 8.4.4].
-        {.label = "_Merge unrelated history",
+        {.label = _("_Merge unrelated history"),
          .commands =
              [c]
          {
@@ -272,15 +273,15 @@ void merge_dialog::ok()
              return !ok &&
                     !run_git(workdir, {"merge-base", "HEAD", rev}, git_output::stdout_only).ok();
          }},
-        {.label = "Remove _branch",
+        {.label = _("Remove _branch"),
          .after_close =
              [&ui, workdir, rev]
          {
              const size_t asking = windows::hold({});
              ui.message(nullptr,
                         {.icon = rap::message_spec::icon::question,
-                         .title = "Merge",
-                         .text = "Do you really want to delete \"" + rev + "\"?",
+                         .title = _("Merge"),
+                         .text = rap::i18n::format(_("Do you really want to delete \"{0}\"?"), rev),
                          .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
                         [&ui, workdir, rev, asking](rap::dialog_role r)
                         {
@@ -288,14 +289,14 @@ void merge_dialog::ok()
                                 if (git_result d = run_git(workdir, {"branch", "-D", "--", rev});
                                     !d.ok())
                                     ui.message(nullptr, {.icon = rap::message_spec::icon::error,
-                                                         .title = "Merge",
+                                                         .title = _("Merge"),
                                                          .text = d.output});
                             windows::release(asking);
                         });
          },
          .offered = [local_branch, no_commit](bool ok)
          { return ok && !no_commit && local_branch; }},
-        {.label = "Pus_h...",
+        {.label = _("Pus_h..."),
          .after_close =
              [&ui, workdir]
          {
@@ -305,19 +306,19 @@ void merge_dialog::ok()
     };
     const size_t running = windows::hold({});
     run_progress_dialog(
-        ui_, nullptr, root_of(workdir_) + " - Merge", workdir_, {c},
+        ui_, nullptr, rap::i18n::format(_("{0} - Merge"), root_of(workdir_)), workdir_, {c},
         [&ui, workdir, done = done_, message_file, running](bool ok)
         {
             std::error_code ec;
             if (!message_file->empty()) fs::remove(*message_file, ec);
             if (!ok && has_conflicts(workdir))
                 ui.message(nullptr, {.icon = rap::message_spec::icon::info,
-                                     .title = "Merge",
-                                     .text = "While merging, a conflict in at least one file "
-                                             "occurred. After resolving all "
-                                             "files, you need to perform a commit in order to "
-                                             "complete the merge. If you want "
-                                             "to abort the merge, use Abort Merge."});
+                                     .title = _("Merge"),
+                                     .text = _("While merging, a conflict in at least one file "
+                                               "occurred. After resolving all "
+                                               "files, you need to perform a commit in order to "
+                                               "complete the merge. If you want "
+                                               "to abort the merge, use Abort Merge.")});
             if (done) done();
             windows::release(running);
         },
@@ -348,16 +349,16 @@ void abort_merge_dialog::build()
 {
     using namespace rap::layout;
     window_ = ui_.create(dialog{
-        root_of(workdir_) + " - Abort Merge - Tortilla",
+        rap::i18n::format(_("{0} - Abort Merge - Tortilla"), root_of(workdir_)),
         {vbox{
-            label{"In order to abort a merge progress a reset (to HEAD) is needed."},
-            group{"Reset Type",
-                  drop_down{{"Merge: Resets the index and try to reconstruct the pre-merge state",
-                             "Mixed: Leave working tree untouched, reset index",
-                             "Hard: Reset working tree and index (discard all local changes)"},
+            label{_("In order to abort a merge progress a reset (to HEAD) is needed.")},
+            group{_("Reset Type"),
+                  drop_down{{_("Merge: Resets the index and try to reconstruct the pre-merge state"),
+                             _("Mixed: Leave working tree untouched, reset index"),
+                             _("Hard: Reset working tree and index (discard all local changes)")},
                             0}
                       .bind(type_)},
-            button{"Show modified files in _working tree"}.on_click(
+            button{_("Show modified files in _working tree")}.on_click(
                 [this]
                 {
                     if (auto w = changes_window::open(ui_, {workdir_}))
@@ -379,13 +380,14 @@ void abort_merge_dialog::ok()
                               : git_command{"reset", type == 1 ? "--mixed" : "--hard",
                                             "--end-of-options", "HEAD", "--"};
     const size_t running = windows::hold({});
-    run_progress_dialog(ui_, nullptr, root_of(workdir_) + " - Abort Merge", workdir_, {c},
+    run_progress_dialog(ui_, nullptr, rap::i18n::format(_("{0} - Abort Merge"), root_of(workdir_)),
+                        workdir_, {c},
                         [done = done_, running](bool)
                         {
                             if (done) done();
                             windows::release(running);
                         },
-                        {{.label = "_Retry",
+                        {{.label = _("_Retry"),
                           .commands = [c] { return std::vector<git_command>{c}; },
                           .offered = [](bool ok) { return !ok; }}});
     // close() only hides it: what closing means (its release) is ours.

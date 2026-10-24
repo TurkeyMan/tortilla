@@ -1,6 +1,7 @@
 #include "changes_window.h"
 
 #include "changes/commit_window.h"
+#include "i18n.h"
 #include "settings.h"
 #include "ui/diff_window.h"
 #include "ui/progress_dialog.h"
@@ -47,7 +48,7 @@ changes_window::open(rap::ui& ui, const std::vector<std::string>& paths)
     const std::string first = paths.empty() ? "." : paths.front();
     auto repo = repo::open(first);
     if (!repo) return std::unexpected(repo.error());
-    if (repo->bare()) return std::unexpected("No working directory found.");
+    if (repo->bare()) return std::unexpected(_("No working directory found."));
     // Repository-relative; the root itself becomes "" (the whole project).
     std::error_code ec;
     const fs::path root = fs::weakly_canonical(rap::sys::path_from_utf8(repo->workdir()), ec);
@@ -111,14 +112,14 @@ void changes_window::build()
         if (closed_) closed_();
     };
     window_ = ui_.create(window{
-        "Working Tree",
+        _("Working Tree"),
         {vbox{
             label{}.ellipsize().bind(branch_),
             files_.list("changes.files").stretch(),
             label{}.bind(note_),
             hbox{
                 vbox{
-                    check{"Show un_versioned files", flag(k_unversioned, true)}
+                    check{_("Show un_versioned files"), flag(k_unversioned, true)}
                         .bind(unversioned_)
                         .enabled(one_folder)
                         .on_toggled(
@@ -127,14 +128,14 @@ void changes_window::build()
                                 set_flag(k_unversioned, on);
                                 reload();
                             }),
-                    check{"Show ignore local changes flagged files"}
+                    check{_("Show ignore local changes flagged files")}
                         .bind(local_ignored_)
                         .on_toggled([this](bool) { reload(); }),
-                    check{"Show i_gnored files"}
+                    check{_("Show i_gnored files")}
                         .bind(ignored_)
                         .enabled(one_folder)
                         .on_toggled([this](bool) { reload(); }),
-                    check{"Show all _staged files", flag(k_all_staged, true)}
+                    check{_("Show all _staged files"), flag(k_all_staged, true)}
                         .bind(all_staged_)
                         .on_toggled(
                             [this](bool on)
@@ -143,7 +144,7 @@ void changes_window::build()
                                 reload();
                             }),
                     // At the repository's root it's the whole project anyway.
-                    check{"Show _Whole Project", root_ || flag(whole_project_key(workdir_), false)}
+                    check{_("Show _Whole Project"), root_ || flag(whole_project_key(workdir_), false)}
                         .bind(whole_project_)
                         .enabled(!root_)
                         .on_toggled(
@@ -158,13 +159,13 @@ void changes_window::build()
             },
             hbox{
                 spacer{},
-                button{"Save unified diff"}.on_click([this] { show_unified_diff_of_paths(); }),
-                menu_button{"Stash"}.on_menu([this] { return stash_menu(); }),
-                button{"Commit"}.on_click([this] { open_commit(); }),
-                button{"_Refresh"}.bind(refresh_).on_click([this] { reload(); }),
+                button{_("Save unified diff")}.on_click([this] { show_unified_diff_of_paths(); }),
+                menu_button{_("Stash")}.on_menu([this] { return stash_menu(); }),
+                button{_("Commit")}.on_click([this] { open_commit(); }),
+                button{_("_Refresh")}.bind(refresh_).on_click([this] { reload(); }),
                 // Always OK, closing even mid-load (TortoiseGit relabels it
                 // Cancel while loading, which only flickers).
-                button{"OK"}.on_click(
+                button{_("OK")}.on_click(
                     [this, close]
                     {
                         close();
@@ -209,8 +210,8 @@ void changes_window::update_title()
                     common = common.parent_path();
         shown /= common;
     }
-    window_->set_title(rap::sys::path_to_utf8(shown.make_preferred()) +
-                       " - Working Tree - Tortilla");
+    window_->set_title(rap::i18n::format(_("{0} - Working Tree - Tortilla"),
+                                         rap::sys::path_to_utf8(shown.make_preferred())));
 }
 
 // The loading state (controls greyed, "Please wait...") only for a load
@@ -227,7 +228,7 @@ void changes_window::set_loading(bool on)
         ignored_->set_enabled(!busy && one_folder_);
         local_ignored_->set_enabled(!busy);
         all_staged_->set_enabled(!busy);
-        if (busy) note_->set_text("Please wait...");
+        if (busy) note_->set_text(_("Please wait..."));
     };
     if (on)
         loading_delay_ = ui_.timer(250, false, [show] { show(true); });
@@ -274,8 +275,8 @@ void changes_window::loaded(working_tree_changes changes)
         note_->set_text(changes.error);
     else if (loaded_.empty())
         note_->set_text(
-            "No files to show with the current setting. Check one or more settings below to see "
-            "unversioned, ignored and/or unmodified files.");
+            _("No files to show with the current setting. Check one or more settings below to see "
+              "unversioned, ignored and/or unmodified files."));
     else
         note_->set_text("");
     update_stats();
@@ -302,12 +303,10 @@ void changes_window::update_stats()
         case 'U': ++conflicted; break;
         }
     }
-    auto n = [](size_t v) { return std::to_string(v); };
     // Two lines where TortoiseGit's box wraps it.
-    stats_->set_text("line: " + n(added) + "(+) " + n(removed) +
-                     "(-)\nfiles: normal=0, non-versioned=" + n(unversioned) +
-                     ", modified=" + n(modified) + ", added=" + n(add) + ", deleted=" + n(del) +
-                     ", conflicted=" + n(conflicted));
+    stats_->set_text(rap::i18n::format(_("line: {0}(+) {1}(-)\nfiles: normal=0, non-versioned={2}, "
+                                         "modified={3}, added={4}, deleted={5}, conflicted={6}"),
+                                       added, removed, unversioned, modified, add, del, conflicted));
 }
 
 // Commit, for the same paths; this list reloads when it closes [spec 5.3.4].
@@ -324,7 +323,7 @@ void changes_window::open_commit()
     if (!w)
     {
         ui_.message(window_.get(),
-                    {.icon = rap::message_spec::icon::error, .title = "Commit", .text = w.error()});
+                    {.icon = rap::message_spec::icon::error, .title = _("Commit"), .text = w.error()});
         return;
     }
     commit_window_ = std::move(*w);
@@ -345,25 +344,25 @@ void changes_window::open_commit()
 rap::menu changes_window::stash_menu()
 {
     auto after = [this](bool) { reload(); };
-    rap::menu m{{.label = "Stash changes",
+    rap::menu m{{.label = _("Stash changes"),
                  .action = [this, after] { stash_changes(ui_, window_.get(), workdir_, after); }}};
     git_result has = run_git(workdir_, {"rev-parse", "--verify", "--quiet", "refs/stash"},
                              git_output::stdout_only);
     if (has.ok())
     {
-        m.push_back({.label = "Stash Pop",
+        m.push_back({.label = _("Stash Pop"),
                      .action = [this, after]
                      {
-                         run_progress_dialog(ui_, window_.get(), "Stash Pop", workdir_,
+                         run_progress_dialog(ui_, window_.get(), _("Stash Pop"), workdir_,
                                              {{"stash", "pop"}}, after);
                      }});
-        m.push_back({.label = "Stash Apply",
+        m.push_back({.label = _("Stash Apply"),
                      .action = [this, after]
                      {
-                         run_progress_dialog(ui_, window_.get(), "Stash Apply", workdir_,
+                         run_progress_dialog(ui_, window_.get(), _("Stash Apply"), workdir_,
                                              {{"stash", "apply"}}, after);
                      }});
-        m.push_back({.label = "Stash List", .enabled = false});
+        m.push_back({.label = _("Stash List"), .enabled = false});
     }
     return m;
 }
@@ -378,7 +377,7 @@ void changes_window::show_unified_diff_of_paths()
         args.push_back("--");
         args.insert(args.end(), paths_.begin(), paths_.end());
     }
-    show_unified_diff(ui_, "HEAD..working tree", workdir_, args);
+    show_unified_diff(ui_, _("HEAD..working tree"), workdir_, args);
 }
 
 }  // namespace tortilla

@@ -5,6 +5,7 @@
 #include "git/command.h"
 #include "git/remotes.h"
 #include "git/repo.h"
+#include "i18n.h"
 #include "remote/pull_fetch_dialog.h"
 #include "settings.h"
 #include "ui/progress_dialog.h"
@@ -39,7 +40,7 @@ switch_dialog::open(rap::ui& ui, const std::string& path, const std::string& tar
 {
     auto repo = repo::open(path.empty() ? "." : path);
     if (!repo) return std::unexpected(repo.error());
-    if (repo->bare()) return std::unexpected("Switch/Checkout needs a working tree.");
+    if (repo->bare()) return std::unexpected(std::string(_("Switch/Checkout needs a working tree.")));
     std::unique_ptr<switch_dialog> d(new switch_dialog(ui, repo->workdir()));
     d->build(target);
     return d;
@@ -60,13 +61,13 @@ void switch_dialog::build(const std::string& target)
     while (root.size() > 1 && (root.back() == '/' || root.back() == '\\')) root.pop_back();
     root = rap::sys::path_to_utf8(rap::sys::path_from_utf8(root).make_preferred());
     window_ = ui_.create(dialog{
-        root + " - Switch/Checkout - Tortilla",
+        rap::i18n::format(_("{0} - Switch/Checkout - Tortilla"), root),
         {vbox{
-            target_.layout({.caption = "Switch To"}),
-            group{"Option",
+            target_.layout({.caption = _("Switch To")}),
+            group{_("Option"),
                   vbox{
                       hbox{
-                          check{"Create _New Branch"}
+                          check{_("Create _New Branch")}
                               .bind(new_branch_)
                               .on_toggled([this](bool) { update_state(); }),
                           entry{}.bind(name_).stretch().on_changed(
@@ -79,12 +80,12 @@ void switch_dialog::build(const std::string& target)
                               }),
                       },
                       hbox{
-                          check{"Overwrite working tree changes (_force)"}.bind(force_),
-                          check{"_Merge"}.bind(merge_),
+                          check{_("Overwrite working tree changes (_force)")}.bind(force_),
+                          check{_("_Merge")}.bind(merge_),
                           spacer{},
                       },
-                      check{"T_rack"}.bind(track_),
-                      check{"_Override branch if exists"}.bind(override_),
+                      check{_("T_rack")}.bind(track_),
+                      check{_("_Override branch if exists")}.bind(override_),
                   }},
             buttons{dialog_button{rap::dialog_role::ok, ""}.on_click([this] { ok(); }), cancel},
         }}});
@@ -148,7 +149,7 @@ void switch_dialog::ok()
     {
         ui_.message(
             window_.get(),
-            {.icon = rap::message_spec::icon::warning, .title = "Switch/Checkout", .text = text});
+            {.icon = rap::message_spec::icon::warning, .title = _("Switch/Checkout"), .text = text});
     };
     if (make)
     {
@@ -156,16 +157,16 @@ void switch_dialog::ok()
         if (name.empty() ||
             !run_git(workdir_, {"check-ref-format", "--branch", name}, git_output::stdout_only)
                  .ok())
-            return refuse("Branch/Tag name must not be empty or is invalid.");
+            return refuse(_("Branch/Tag name must not be empty or is invalid."));
         if (!override_->checked() &&
             run_git(workdir_, {"show-ref", "--verify", "--quiet", "refs/heads/" + name},
                     git_output::stdout_only)
                 .ok())
-            return refuse("A branch with this name already exists. Use a different name or use the "
-                          "\"Override branch\" "
-                          "option.");
+            return refuse(_("A branch with this name already exists. Use a different name or use the "
+                            "\"Override branch\" "
+                            "option."));
     }
-    if (target_.name().empty()) return refuse("Choose what to switch to.");
+    if (target_.name().empty()) return refuse(_("Choose what to switch to."));
     const ref_chooser::kind kind = target_.chosen();
     if (kind == ref_chooser::kind::tag || kind == ref_chooser::kind::commit)
         settings::get().set(kind == ref_chooser::kind::tag ? "switch.tagNewBranch"
@@ -189,21 +190,21 @@ void switch_dialog::ok()
     const std::string before = current_branch(workdir_);
     const bool merging = merge_->checked();
     std::vector<progress_follow_up> follow_ups{
-        {.label = "_Merge...",
+        {.label = _("_Merge..."),
          .after_close =
              [&ui, workdir, before]
          {
              if (auto d = merge_dialog::open(ui, workdir, before)) windows::keep(std::move(*d));
          },
          .offered = [before](bool ok) { return ok && !before.empty(); }},
-        {.label = "_Pull...",
+        {.label = _("_Pull..."),
          .after_close =
              [&ui, workdir]
          {
              if (auto d = pull_fetch_dialog::open(ui, workdir, true)) windows::keep(std::move(*d));
          },
          .offered = [workdir](bool ok) { return ok && !current_branch(workdir).empty(); }},
-        {.label = "_Commit...",
+        {.label = _("_Commit..."),
          .after_close =
              [&ui, workdir]
          {
@@ -211,7 +212,7 @@ void switch_dialog::ok()
          },
          .offered = [merging, workdir](bool ok)
          { return ok || (merging && has_conflicts(workdir)); }},
-        {.label = "Checkout with merge",
+        {.label = _("Checkout with merge"),
          .commands =
              [c]
          {
@@ -220,7 +221,7 @@ void switch_dialog::ok()
              return std::vector<git_command>{m};
          },
          .offered = [merging](bool ok) { return !ok && !merging; }},
-        {.label = "_Retry",
+        {.label = _("_Retry"),
          .commands = [c] { return std::vector<git_command>{c}; },
          .offered = [](bool ok) { return !ok; }},
     };
@@ -229,7 +230,7 @@ void switch_dialog::ok()
     while (root.size() > 1 && (root.back() == '/' || root.back() == '\\')) root.pop_back();
     root = rap::sys::path_to_utf8(rap::sys::path_from_utf8(root).make_preferred());
     run_progress_dialog(
-        ui_, nullptr, root + " - Switch/Checkout", workdir_, {c},
+        ui_, nullptr, rap::i18n::format(_("{0} - Switch/Checkout"), root), workdir_, {c},
         [done = done_, running](bool)
         {
             if (done) done();

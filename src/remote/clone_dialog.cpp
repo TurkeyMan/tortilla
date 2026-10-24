@@ -2,6 +2,7 @@
 
 #include "git/command.h"
 #include "git/remotes.h"
+#include "i18n.h"
 #include "log/log_window.h"
 #include "settings.h"
 #include "ui/progress_dialog.h"
@@ -71,23 +72,23 @@ void clone_dialog::build(const std::string& folder, const std::string& url)
     const std::string first_url = !url.empty() ? url : history.empty() ? "" : history.front();
 
     window_ = ui_.create(dialog{
-        "Git clone - Tortilla",
+        _("Git clone - Tortilla"),
         {vbox{
             group{
-                "Clone Existing Repository",
+                _("Clone Existing Repository"),
                 vbox{
                     form{
-                        {"URL", combo{history, first_url}.bind(url_).width(60_ch).on_changed(
+                        {_("URL"), combo{history, first_url}.bind(url_).width(60_ch).on_changed(
                                     [this](const std::string& u) { url_changed(u); })},
-                        {"Directory",
+                        {_("Directory"),
                          hbox{
                              entry{dir}.bind(directory_).stretch(),
-                             button{"Bro_wse..."}.on_click(
+                             button{_("Bro_wse...")}.on_click(
                                  [this]
                                  {
                                      ui_.choose_files(window_.get(),
                                                       {.mode = rap::file_dialog_spec::mode::folder,
-                                                       .title = "Clone into",
+                                                       .title = _("Clone into"),
                                                        .initial_path = directory_->text()},
                                                       [this](std::vector<std::string> chosen)
                                                       {
@@ -100,22 +101,22 @@ void clone_dialog::build(const std::string& folder, const std::string& url)
                          }},
                     },
                     hbox{
-                        check{"Depth"}.bind(depth_).on_toggled([this](bool) { update_state(); }),
+                        check{_("Depth")}.bind(depth_).on_toggled([this](bool) { update_state(); }),
                         spin{1, 1e9, 1}.bind(depth_value_),
-                        check{"Recursive", settings::get().value("clone.recursive") == "1"}
+                        check{_("Recursive"), settings::get().value("clone.recursive") == "1"}
                             .bind(recursive_)
                             .on_toggled([this](bool) { update_state(); }),
-                        check{"Clone into Bare Repo"}.bind(bare_).on_toggled([this](bool)
+                        check{_("Clone into Bare Repo")}.bind(bare_).on_toggled([this](bool)
                                                                              { update_state(); }),
-                        check{"No Checkout"}
+                        check{_("No Checkout")}
                             .bind(no_checkout_)
                             .on_toggled([this](bool) { update_state(); }),
                         spacer{},
                     },
                     hbox{
-                        check{"Branch"}.bind(branch_).on_toggled([this](bool) { update_state(); }),
+                        check{_("Branch")}.bind(branch_).on_toggled([this](bool) { update_state(); }),
                         entry{}.bind(branch_name_).width(20_ch),
-                        check{"Origin Name"}.bind(origin_).on_toggled([this](bool)
+                        check{_("Origin Name")}.bind(origin_).on_toggled([this](bool)
                                                                       { update_state(); }),
                         entry{}.bind(origin_name_).width(16_ch),
                         spacer{},
@@ -171,14 +172,14 @@ void clone_dialog::ok()
     auto refuse = [this](const std::string& text)
     {
         ui_.message(window_.get(),
-                    {.icon = rap::message_spec::icon::warning, .title = "Clone", .text = text});
+                    {.icon = rap::message_spec::icon::warning, .title = _("Clone"), .text = text});
     };
-    if (url.empty() || dir.empty()) return refuse("URL and directory must not be empty.");
+    if (url.empty() || dir.empty()) return refuse(_("URL and directory must not be empty."));
     if (branch_->checked() &&
         !run_git(".", {"check-ref-format", "--branch", branch_name_->text()}).ok())
-        return refuse("“" + branch_name_->text() + "” isn't a valid branch name.");
+        return refuse(rap::i18n::format(_("“{0}” isn't a valid branch name."), branch_name_->text()));
     if (origin_->checked() && !bare_->checked() && origin_name_->text().empty())
-        return refuse("Enter the origin's name.");
+        return refuse(_("Enter the origin's name."));
     remember_url(url);
     settings::get().set("clone.recursive", recursive_->checked() ? "1" : "0");
 
@@ -202,21 +203,21 @@ void clone_dialog::ok()
 
     rap::ui& ui = ui_;
     std::vector<progress_follow_up> follow_ups{
-        {.label = "Show _log",
+        {.label = _("Show _log"),
          .after_close =
              [&ui, dir]
          {
              if (auto w = log_window::open(ui, dir)) windows::keep(std::move(*w));
          }},
-        {.label = "E_xplore to",
+        {.label = _("E_xplore to"),
          .after_close = [dir] { rap::sys::open_path(rap::sys::path_from_utf8(dir)); }},
-        {.label = "_Retry",
+        {.label = _("_Retry"),
          .commands = [c] { return std::vector<git_command>{c}; },
          .offered = [](bool ok) { return !ok; }},
     };
     const size_t running = windows::hold({});
     run_progress_dialog(
-        ui_, nullptr, "Clone", rap::sys::path_to_utf8(where), {c},
+        ui_, nullptr, _("Clone"), rap::sys::path_to_utf8(where), {c},
         [running](bool) { windows::release(running); }, std::move(follow_ups));
     // close() only hides it: what closing means (its release) is ours.
     window_->close();

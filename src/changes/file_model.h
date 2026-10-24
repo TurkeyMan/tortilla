@@ -2,6 +2,7 @@
 #pragma once
 
 #include "git/repo.h"
+#include "i18n.h"
 
 #include <rapport/rapport.h>
 
@@ -27,11 +28,11 @@ public:
     static std::vector<rap::column> columns()
     {
         using namespace rap::literals;
-        return {{.title = "Path", .stretch = true},
-                {.title = "Extension", .width = 10_ch},
-                {.title = "Status", .width = 12_ch},
-                {.title = "Added", .width = 8_ch, .align = rap::align::end},
-                {.title = "Removed", .width = 9_ch, .align = rap::align::end}};
+        return {{.title = _("Path"), .stretch = true},
+                {.title = _("Extension"), .width = 10_ch},
+                {.title = _("Status"), .width = 12_ch},
+                {.title = _("Added"), .width = 8_ch, .align = rap::align::end},
+                {.title = _("Removed"), .width = 9_ch, .align = rap::align::end}};
     }
 
     void set(std::vector<file_change> files, bool show_unversioned = true)
@@ -115,7 +116,9 @@ public:
         const auto& f = files_[row];
         switch (column)
         {
-        case path: return f.old_path.empty() ? f.path : f.path + " (from " + f.old_path + ")";
+        case path:
+            return f.old_path.empty() ? f.path
+                                      : rap::i18n::format(_("{0} (from {1})"), f.path, f.old_path);
         case extension:
         {
             auto slash = f.path.rfind('/');
@@ -154,17 +157,17 @@ public:
     {
         switch (s)
         {
-        case 'A': return "Added";
-        case 'D': return "Deleted";
-        case 'M': return "Modified";
-        case 'R': return "Renamed";
-        case 'C': return "Copied";
-        case 'T': return "Type change";
-        case '?': return "Unversioned";
-        case 'U': return "Conflicted";
-        case '!': return "Ignored";
-        case 'S': return "Skip worktree";
-        case 'h': return "Assume unchanged";
+        case 'A': return C_("status", "Added");
+        case 'D': return C_("status", "Deleted");
+        case 'M': return C_("status", "Modified");
+        case 'R': return C_("status", "Renamed");
+        case 'C': return C_("status", "Copied");
+        case 'T': return C_("status", "Type change");
+        case '?': return C_("status", "Unversioned");
+        case 'U': return C_("status", "Conflicted");
+        case '!': return C_("status", "Ignored");
+        case 'S': return C_("status", "Skip worktree");
+        case 'h': return C_("status", "Assume unchanged");
         }
         return std::string(1, s);
     }

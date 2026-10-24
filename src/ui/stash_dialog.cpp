@@ -1,5 +1,6 @@
 #include "stash_dialog.h"
 
+#include "i18n.h"
 #include "ui/progress_dialog.h"
 
 #include <memory>
@@ -21,11 +22,11 @@ void stash_changes(rap::ui& ui, rap::window* parent, const std::string& workdir,
     using namespace rap::layout;
     using namespace rap::literals;
     st->window = ui.create(
-        dialog{"Stash",
+        dialog{_("Stash"),
                {vbox{
                    form{
-                       {"Message", entry{}.bind(st->message).placeholder("optional").width(40_ch)},
-                       {"", check{"Include _untracked files"}.bind(st->untracked)},
+                       {_("Message"), entry{}.bind(st->message).placeholder(_("optional")).width(40_ch)},
+                       {"", check{_("Include _untracked files")}.bind(st->untracked)},
                    },
                    buttons{ok, cancel},
                }}}
@@ -41,7 +42,7 @@ void stash_changes(rap::ui& ui, rap::window* parent, const std::string& workdir,
                 if (keep->untracked->checked()) args.push_back("--include-untracked");
                 if (std::string msg = keep->message->text(); !msg.empty())
                     args.insert(args.end(), {"-m", msg});
-                run_progress_dialog(ui, parent, "Stash", workdir, {args}, done);
+                run_progress_dialog(ui, parent, _("Stash"), workdir, {args}, done);
             }
             ui.post([keep] {});  // destroy after this callback returns
         });

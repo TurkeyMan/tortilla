@@ -2,6 +2,7 @@
 
 #include "git/askpass_env.h"
 #include "git/ssh_client.h"
+#include "i18n.h"
 
 #include <rapport/sys.h>
 
@@ -55,7 +56,7 @@ git_result run_git(const std::string& dir, const std::vector<std::string>& args,
     auto run = process::run("git", git_command_line(dir, args), git_options(output));
     if (!run)
     {
-        r.output = "could not start git: " + run.error();
+        r.output = rap::i18n::format(_("could not start git: {0}"), run.error());
         return r;
     }
     r.exit_code = run->exit_code;
@@ -91,7 +92,7 @@ git_result run_git(const std::string& dir, const std::vector<std::string>& args,
         auto started = process::start("git", git_command_line(dir, args), git_options(output));
         if (!started)
         {
-            r.output = "could not start git: " + started.error();
+            r.output = rap::i18n::format(_("could not start git: {0}"), started.error());
             return r;
         }
         p = canceller.current_ = std::move(*started);
@@ -128,7 +129,7 @@ std::shared_ptr<git_process> git_process::start(rap::ui& ui, const std::string& 
         ui.post(
             [output, done, error = started.error()]
             {
-                if (output) output("could not start git: " + error + "\n");
+                if (output) output(rap::i18n::format(_("could not start git: {0}"), error) + "\n");
                 if (done) done(-1);
             });
         return p;

@@ -2,6 +2,7 @@
 
 #include "git/command.h"
 #include "git/merge_tool.h"
+#include "i18n.h"
 
 #include <rapport/sys.h>
 
@@ -24,7 +25,7 @@ void edit_conflict(rap::ui& ui, rap::window* parent, const std::string& workdir,
     {
         ui.message(parent,
                    {.icon = rap::message_spec::icon::error,
-                    .title = "Edit conflicts",
+                    .title = _("Edit conflicts"),
                     .text = sides.error()},
                    [finish](rap::dialog_role) { finish(false); });
         return;
@@ -34,10 +35,10 @@ void edit_conflict(rap::ui& ui, rap::window* parent, const std::string& workdir,
         ui.message(
             parent,
             {.icon = rap::message_spec::icon::info,
-             .title = "Edit conflicts",
-             .text =
-                 "“" + path +
-                 "” is a submodule: choose a side with Resolve conflict using “mine” or “theirs”."},
+             .title = _("Edit conflicts"),
+             .text = rap::i18n::format(_("“{0}” is a submodule: choose a side with Resolve conflict "
+                                         "using “mine” or “theirs”."),
+                                       path)},
             [finish](rap::dialog_role) { finish(false); });
         return;
     }
@@ -51,10 +52,10 @@ void edit_conflict(rap::ui& ui, rap::window* parent, const std::string& workdir,
         ui.message(
             parent,
             {.icon = rap::message_spec::icon::question,
-             .title = "Conflict",
-             .text = "“" + path + "” was deleted in " + deleted_by + " and changed in " +
-                     changed_by + ".",
-             .detail = "Keep the changed file? (No deletes it.)",
+             .title = _("Conflict"),
+             .text = rap::i18n::format(_("“{0}” was deleted in {1} and changed in {2}."), path,
+                                       deleted_by, changed_by),
+             .detail = _("Keep the changed file? (No deletes it.)"),
              .buttons = {rap::dialog_role::yes, rap::dialog_role::no, rap::dialog_role::cancel}},
             [&ui, parent, workdir, path, finish](rap::dialog_role r)
             {
@@ -65,7 +66,7 @@ void edit_conflict(rap::ui& ui, rap::window* parent, const std::string& workdir,
                                          : std::vector<std::string>{"rm", "-f", "--", path});
                 if (!g.ok())
                     ui.message(parent, {.icon = rap::message_spec::icon::error,
-                                        .title = "Conflict",
+                                        .title = _("Conflict"),
                                         .text = g.output});
                 finish(true);
             });
@@ -78,8 +79,8 @@ void edit_conflict(rap::ui& ui, rap::window* parent, const std::string& workdir,
         remove_conflict_sides(*sides);
         ui.message(parent,
                    {.icon = rap::message_spec::icon::question,
-                    .title = "Edit conflicts",
-                    .text = "No merge tool was found. Choose one in Settings (Diff Viewer)?",
+                    .title = _("Edit conflicts"),
+                    .text = _("No merge tool was found. Choose one in Settings (Diff Viewer)?"),
                     .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
                    [open_settings, finish](rap::dialog_role r)
                    {
@@ -110,17 +111,19 @@ void edit_conflict(rap::ui& ui, rap::window* parent, const std::string& workdir,
                     {
                         ui.message(nullptr,
                                    {.icon = rap::message_spec::icon::error,
-                                    .title = "Edit conflicts",
-                                    .text = "Could not start " + program + ": " + error},
+                                    .title = _("Edit conflicts"),
+                                    .text = rap::i18n::format(_("Could not start {0}: {1}"),
+                                                              program, error)},
                                    [finish](rap::dialog_role) { finish(false); });
                         return;
                     }
                     if (!still_conflicted(workdir, path)) return finish(true);
                     ui.message(nullptr,
                                {.icon = rap::message_spec::icon::question,
-                                .title = "Edit conflicts",
-                                .text = "Was the merge of “" + path + "” successful?",
-                                .detail = "Yes marks it resolved.",
+                                .title = _("Edit conflicts"),
+                                .text = rap::i18n::format(_("Was the merge of “{0}” successful?"),
+                                                          path),
+                                .detail = _("Yes marks it resolved."),
                                 .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
                                [&ui, workdir, path, finish](rap::dialog_role r)
                                {
@@ -128,7 +131,7 @@ void edit_conflict(rap::ui& ui, rap::window* parent, const std::string& workdir,
                                    const git_result g = run_git(workdir, {"add", "-f", "--", path});
                                    if (!g.ok())
                                        ui.message(nullptr, {.icon = rap::message_spec::icon::error,
-                                                            .title = "Resolve",
+                                                            .title = _("Resolve"),
                                                             .text = g.output});
                                    finish(true);
                                });

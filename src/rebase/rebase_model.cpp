@@ -1,5 +1,6 @@
 #include "rebase_model.h"
 
+#include "i18n.h"
 #include "log/ref_labels.h"
 #include "util/calendar.h"
 
@@ -26,10 +27,10 @@ const char* action_name(rebase_action a)
 {
     switch (a)
     {
-    case rebase_action::pick: return "Pick";
-    case rebase_action::squash: return "Squash";
-    case rebase_action::edit: return "Edit";
-    case rebase_action::skip: return "Skip";
+    case rebase_action::pick: return _("Pick");
+    case rebase_action::squash: return _("Squash");
+    case rebase_action::edit: return _("Edit");
+    case rebase_action::skip: return _("Skip");
     }
     return "";
 }
@@ -39,12 +40,12 @@ std::vector<rap::column> rebase_model::columns()
 {
     using namespace rap::literals;
     std::vector<rap::column> c(column_count);
-    c[action] = {.title = "REBASE", .width = 9_ch};
-    c[id] = {.title = "ID", .width = 5_ch, .align = rap::align::end};
-    c[hash] = {.title = "SHA-1", .width = 42_ch};
-    c[message] = {.title = "Message", .stretch = true, .painted = true};
-    c[author] = {.title = "Author", .width = 18_ch};
-    c[date] = {.title = "Date", .width = 17_ch};
+    c[action] = {.title = _("REBASE"), .width = 9_ch};
+    c[id] = {.title = _("ID"), .width = 5_ch, .align = rap::align::end};
+    c[hash] = {.title = _("SHA-1"), .width = 42_ch};
+    c[message] = {.title = _("Message"), .stretch = true, .painted = true};
+    c[author] = {.title = _("Author"), .width = 18_ch};
+    c[date] = {.title = _("Date"), .width = 17_ch};
     return c;
 }
 

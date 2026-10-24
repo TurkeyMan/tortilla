@@ -2,6 +2,7 @@
 
 #include "changes/working_tree.h"
 #include "git/command.h"
+#include "i18n.h"
 #include "ui/progress_dialog.h"
 #include "ui/settings_dialog.h"
 
@@ -38,7 +39,7 @@ rebase_window::open(rap::ui& ui, const std::string& path, const std::string& ups
 {
     auto repo = repo::open(path);
     if (!repo) return std::unexpected(repo.error());
-    if (repo->bare()) return std::unexpected("cannot rebase in a bare repository");
+    if (repo->bare()) return std::unexpected(std::string(_("cannot rebase in a bare repository")));
     std::unique_ptr<rebase_window> w(new rebase_window(ui, std::move(*repo)));
     w->build(upstream);
     return w;
@@ -107,16 +108,16 @@ void rebase_window::build(const std::string& upstream)
         });
 
     window_ = ui_.create(window{
-        title + " - Rebase - Tortilla",
+        rap::i18n::format(_("{0} - Rebase - Tortilla"), title),
         {vbox{
             // Row 1 [spec 2.2]
             hbox{
-                label{"Branch:"},
+                label{_("Branch:")},
                 drop_down{branches_, index_of(branches_, current)}
                     .bind(branch_)
                     .on_changed([this](int) { reload_list(); })
                     .width(30_ch),
-                button{"Swap branch and upstream"}.icon(swap_icon).icon_only().bind(swap_).on_click(
+                button{_("Swap branch and upstream")}.icon(swap_icon).icon_only().bind(swap_).on_click(
                     [this]
                     {
                         // Swap only when both names exist on both sides.
@@ -130,14 +131,14 @@ void rebase_window::build(const std::string& upstream)
                             upstream_->set_current(int(ui - upstreams_.begin()));
                         reload_list();
                     }),
-                label{"Upstream:"},
+                label{_("Upstream:")},
                 drop_down{upstreams_, index_of(upstreams_, wanted)}
                     .bind(upstream_)
                     .on_changed([this](int) { reload_list(); })
                     .width(30_ch),
                 // TODO: Browse References and --onto.
                 button{"..."}.enabled(false),
-                button{"_Onto"}.enabled(false),
+                button{_("_Onto")}.enabled(false),
                 spacer{},
             },
             splitter{
@@ -155,38 +156,38 @@ void rebase_window::build(const std::string& upstream)
                 vbox{
                     // Row under the list [spec 2.2]
                     hbox{
-                        menu_button{"_Pick ALL"}.bind(set_all_).on_menu([this]
+                        menu_button{_("_Pick ALL")}.bind(set_all_).on_menu([this]
                                                                         { return set_all_menu(); }),
-                        button{"_Up"}.bind(up_).on_click([this] { move_rows(true, false); }),
-                        button{"_Down"}.bind(down_).on_click([this] { move_rows(false, false); }),
+                        button{_("_Up")}.bind(up_).on_click([this] { move_rows(true, false); }),
+                        button{_("_Down")}.bind(down_).on_click([this] { move_rows(false, false); }),
                         // TODO: Add (pick commits from a log).
-                        button{"_Add"}.enabled(false),
-                        check{"_Preserve merges"}
+                        button{_("_Add")}.enabled(false),
+                        check{_("_Preserve merges")}
                             .bind(preserve_merges_)
                             .on_toggled([this](bool) { reload_list(); })
-                            .tooltip("Include merge commits. Reordering commits with merges "
-                                     "does not work properly."),
-                        check{"_Force Rebase"}
+                            .tooltip(_("Include merge commits. Reordering commits with merges "
+                                       "does not work properly.")),
+                        check{_("_Force Rebase")}
                             .bind(force_)
                             .on_toggled([this](bool) { reload_list(); })
-                            .tooltip("Force the rebase even if the current branch is a "
-                                     "descendant of the commit you are rebasing onto."),
+                            .tooltip(_("Force the rebase even if the current branch is a "
+                                       "descendant of the commit you are rebasing onto.")),
                     },
                     tabs{
-                        {"Revision Files", vbox{revision_files_.list("rebase.revision")
+                        {_("Revision Files"), vbox{revision_files_.list("rebase.revision")
                                                     .compact()
                                                     .soft_selection()
                                                     .stretch()}
                                                .handle(revision_page_)},
-                        {"Conflict Files", vbox{conflict_files_.list("rebase.conflicts")
+                        {_("Conflict Files"), vbox{conflict_files_.list("rebase.conflicts")
                                                     .compact()
                                                     .soft_selection()
                                                     .stretch()}
                                                .handle(conflict_page_)},
-                        {"Commit Message",
+                        {_("Commit Message"),
                          vbox{text_view{}.compact().read_only().bind(message_).stretch()}.handle(
                              message_page_)},
-                        {"Log", vbox{text_view{}
+                        {_("Log"), vbox{text_view{}
                                          .compact()
                                          .monospace()
                                          .read_only()
@@ -205,22 +206,22 @@ void rebase_window::build(const std::string& upstream)
             progress_bar{}.bind(progress_),
             hbox{
                 label{}.ellipsize().bind(status_).stretch(),
-                menu_button{"Show log"}.bind(post_).on_menu(
+                menu_button{_("Show log")}.bind(post_).on_menu(
                     [this]() -> rap::menu
                     {
-                        return {item("Show _log",
+                        return {item(_("Show _log"),
                                      [this]
                                      {
                                          if (show_log_) show_log_();
                                          close();
                                      })};
                     }),
-                button{"Start Rebase"}.bind(continue_).on_click([this] { continue_pressed(); }),
-                button{"Abort"}
+                button{_("Start Rebase")}.bind(continue_).on_click([this] { continue_pressed(); }),
+                button{_("Abort")}
                     .bind(abort_)
-                    .tooltip("Recover to the status before rebase")
+                    .tooltip(_("Recover to the status before rebase"))
                     .on_click([this] { abort_pressed(); }),
-                button{"Help"}.enabled(false),
+                button{_("Help")}.enabled(false),
             },
         }}}.size(120_ch, 40_lines));
 
@@ -240,8 +241,7 @@ void rebase_window::build(const std::string& upstream)
             [this](size_t applied, size_t total)
         {
             progress_->set_fraction(total ? float(applied) / float(total) : 0);
-            set_status("Rebasing... (" + std::to_string(applied) + "/" + std::to_string(total) +
-                       ")");
+            set_status(rap::i18n::format(_("Rebasing... ({0}/{1})"), applied, total));
             if (auto c = list_->current(); !c || *c != total - applied)
                 list_->scroll_to(total - applied);
         },
@@ -250,15 +250,15 @@ void rebase_window::build(const std::string& upstream)
             [this](const std::string& m)
         {
             ui_.message(window_.get(),
-                        {.icon = rap::message_spec::icon::warning, .title = "Rebase", .text = m});
+                        {.icon = rap::message_spec::icon::warning, .title = _("Rebase"), .text = m});
         },
         .ask_skip =
             [this](const std::string& output, std::function<void(bool)> answer)
         {
             ui_.message(window_.get(),
                         {.icon = rap::message_spec::icon::question,
-                         .title = "Rebase",
-                         .text = "Cherry-pick failed. Skip this commit?",
+                         .title = _("Rebase"),
+                         .text = _("Cherry-pick failed. Skip this commit?"),
                          .detail = output,
                          .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
                         [answer](rap::dialog_role r) { answer(r == rap::dialog_role::yes); });
@@ -294,25 +294,26 @@ void rebase_window::reload_list()
     upstream_head_ = u.empty() ? std::nullopt : repo_.resolve(u);
 
     if (!branch_head_)
-        set_status("Please select branch");
+        set_status(_("Please select branch"));
     else if (!upstream_head_)
-        set_status("Please select upstream");
+        set_status(_("Please select upstream"));
     else if (*branch_head_ == *upstream_head_)
-        set_status("No need to rebase: \"" + b + "\" equals \"" + u + "\"");
+        set_status(rap::i18n::format(_("No need to rebase: \"{0}\" equals \"{1}\""), b, u));
     else if (repo_.is_ancestor(*branch_head_, *upstream_head_))
     {
-        set_status("Branch \"" + b + "\" is behind \"" + u + "\": \"" + b +
-                   "\" will fast-forward to \"" + u + "\"");
+        set_status(rap::i18n::format(
+            _("Branch \"{0}\" is behind \"{1}\": \"{0}\" will fast-forward to \"{1}\""), b, u));
         fast_forward_ = can_start_ = true;
     }
     else if (repo_.is_ancestor(*upstream_head_, *branch_head_) && !force_->checked())
-        set_status("Current branch \"" + b +
-                   "\" is up to date. To rebase anyway, check \"Force Rebase\" below.");
+        set_status(rap::i18n::format(
+            _("Current branch \"{0}\" is up to date. To rebase anyway, check \"Force Rebase\" below."),
+            b));
     else
     {
         auto commits = repo_.range(*upstream_head_, *branch_head_, preserve_merges_->checked());
         if (!commits || commits->empty())
-            set_status(commits ? "Nothing to Rebase" : commits.error());
+            set_status(commits ? std::string(_("Nothing to Rebase")) : commits.error());
         else
         {
             // Commits already upstream (git cherry "-") start as Skip.
@@ -333,9 +334,11 @@ void rebase_window::reload_list()
             model_.set(std::move(rows), repo_.refs());
             can_start_ = true;
             if (skipped)
-                set_status("Please take a look at the skipped commits", true);
+                set_status(_("Please take a look at the skipped commits"), true);
             else
-                set_status(std::to_string(model_.size()) + " commit(s) to rebase onto " + u);
+                set_status(rap::i18n::format(N_("{0} commit to rebase onto {1}",
+                                                "{0} commits to rebase onto {1}", model_.size()),
+                                             model_.size(), u));
             list_->set_current(0);
         }
     }
@@ -377,14 +380,14 @@ void rebase_window::update_controls()
         w->set_enabled(before);
     list_->set_reorderable(before);
 
-    const char* text = "Continue";
+    const char* text = _("Continue");
     switch (stage)
     {
-    case rebase_stage::choose: text = fast_forward_ ? "Start (FastFwd)" : "Start Rebase"; break;
+    case rebase_stage::choose: text = fast_forward_ ? _("Start (FastFwd)") : _("Start Rebase"); break;
     case rebase_stage::conflict:
-    case rebase_stage::squash_edit: text = "Commit"; break;
-    case rebase_stage::edit: text = "Amend"; break;
-    case rebase_stage::done: text = "Done"; break;
+    case rebase_stage::squash_edit: text = _("Commit"); break;
+    case rebase_stage::edit: text = _("Amend"); break;
+    case rebase_stage::done: text = _("Done"); break;
     default: break;
     }
     continue_->set_text(text);
@@ -405,22 +408,22 @@ void rebase_window::update_controls()
         {
             refresh_conflicts();
             tabs_->set_current(page_conflict);
-            set_status("Conflict: resolve the files, then press Commit", true);
+            set_status(_("Conflict: resolve the files, then press Commit"), true);
         }
         else if (stage == rebase_stage::edit || stage == rebase_stage::squash_edit)
         {
             tabs_->set_current(page_message);
             set_status(stage == rebase_stage::edit
-                           ? "Edit the commit, then press Amend"
-                           : "Edit the squashed message, then press Commit");
+                           ? _("Edit the commit, then press Amend")
+                           : _("Edit the squashed message, then press Commit"));
         }
         else if (stage == rebase_stage::error)
-            set_status("The rebase stopped with an error; see the Log tab, then Abort", true);
+            set_status(_("The rebase stopped with an error; see the Log tab, then Abort"), true);
         else if (done)
         {
             tabs_->set_current(page_log);
             progress_->set_fraction(1);
-            set_status("Finished rebasing.");
+            set_status(_("Finished rebasing."));
             status_->set_visible(false);
             post_->set_visible(true);
         }
@@ -454,8 +457,8 @@ void rebase_window::continue_pressed()
         {
             ui_.message(window_.get(),
                         {.icon = rap::message_spec::icon::question,
-                         .title = "Rebase",
-                         .text = "Your changes were stashed before the rebase. Pop the stash now?",
+                         .title = _("Rebase"),
+                         .text = _("Your changes were stashed before the rebase. Pop the stash now?"),
                          .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
                         [this](rap::dialog_role r)
                         {
@@ -480,11 +483,11 @@ void rebase_window::start_rebase()
     {
         ui_.message(window_.get(),
                     {.icon = rap::message_spec::icon::error,
-                     .title = "Rebase",
-                     .text = "Git doesn't know who you are, so it can't create commits.",
-                     .detail = "Set your name and email, for example:\n"
-                               "git config --global user.name \"Your Name\"\n"
-                               "git config --global user.email you@example.com"});
+                     .title = _("Rebase"),
+                     .text = _("Git doesn't know who you are, so it can't create commits."),
+                     .detail = _("Set your name and email, for example:\n"
+                                 "git config --global user.name \"Your Name\"\n"
+                                 "git config --global user.email you@example.com")});
         return;
     }
     git_result dirty = run_git(repo_.workdir(), {"status", "--porcelain", "--untracked-files=no"},
@@ -509,8 +512,8 @@ void rebase_window::start_rebase()
 
     ui_.message(window_.get(),
                 {.icon = rap::message_spec::icon::question,
-                 .title = "Rebase",
-                 .text = "The working tree has local changes. Stash them and start the rebase?",
+                 .title = _("Rebase"),
+                 .text = _("The working tree has local changes. Stash them and start the rebase?"),
                  .detail = dirty.output,
                  .buttons = {rap::dialog_role::yes, rap::dialog_role::cancel}},
                 [this, go](rap::dialog_role r)
@@ -528,8 +531,8 @@ void rebase_window::abort_pressed()
         return close();
     ui_.message(window_.get(),
                 {.icon = rap::message_spec::icon::question,
-                 .title = "Rebase",
-                 .text = "Are you sure you want to abort the rebase process?",
+                 .title = _("Rebase"),
+                 .text = _("Are you sure you want to abort the rebase process?"),
                  .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
                 [this](rap::dialog_role r)
                 {
@@ -628,20 +631,20 @@ rap::menu rebase_window::context_menu(std::optional<size_t> row)
     { return std::ranges::any_of(sel, [&](size_t r) { return model_.can_set(r, a); }); };
     rap::menu m{
         item(
-            "_Pick", [this] { set_action(rebase_action::pick); }, allowed(rebase_action::pick)),
+            _("_Pick"), [this] { set_action(rebase_action::pick); }, allowed(rebase_action::pick)),
         item(
-            "_Squash (with commit below)", [this] { set_action(rebase_action::squash); },
+            _("_Squash (with commit below)"), [this] { set_action(rebase_action::squash); },
             allowed(rebase_action::squash)),
         item(
-            "_Edit", [this] { set_action(rebase_action::edit); }, allowed(rebase_action::edit)),
+            _("_Edit"), [this] { set_action(rebase_action::edit); }, allowed(rebase_action::edit)),
         item(
-            "S_kip", [this] { set_action(rebase_action::skip); }, allowed(rebase_action::skip)),
+            _("S_kip"), [this] { set_action(rebase_action::skip); }, allowed(rebase_action::skip)),
         rap::menu_item::separator(),
     };
     if (sel.size() == 1)
     {
         std::string hash = model_.rows()[sel.front()].commit.id.hex();
-        m.push_back(item("Copy SHA-1 to clipboard", [this, hash] { ui_.set_clipboard(hash); }));
+        m.push_back(item(_("Copy SHA-1 to clipboard"), [this, hash] { ui_.set_clipboard(hash); }));
     }
     return m;
 }
@@ -663,12 +666,12 @@ rap::menu rebase_window::set_all_menu()
                     });
     };
     return {
-        entry("_Pick ALL", rebase_action::pick, false),
-        entry("_Squash ALL", rebase_action::squash, false),
-        entry("_Edit ALL", rebase_action::edit, false),
-        entry("S_kip unselected", rebase_action::skip, true),
-        entry("S_quash unselected", rebase_action::squash, true),
-        entry("E_dit unselected", rebase_action::edit, true),
+        entry(_("_Pick ALL"), rebase_action::pick, false),
+        entry(_("_Squash ALL"), rebase_action::squash, false),
+        entry(_("_Edit ALL"), rebase_action::edit, false),
+        entry(_("S_kip unselected"), rebase_action::skip, true),
+        entry(_("S_quash unselected"), rebase_action::squash, true),
+        entry(_("E_dit unselected"), rebase_action::edit, true),
     };
 }
 

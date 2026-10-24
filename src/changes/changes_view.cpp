@@ -5,6 +5,7 @@
 #include "changes_view.h"
 
 #include "changes/conflict_editor.h"
+#include "i18n.h"
 #include "settings.h"
 #include "ui/compare.h"
 #include "ui/diff_window.h"
@@ -204,7 +205,8 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
                          });
     };
     const std::string count =
-        one ? "“" + files.front().path + "”" : std::to_string(files.size()) + " files";
+        one ? rap::i18n::format(_("“{0}”"), files.front().path)
+            : rap::i18n::format(N_("{0} file", "{0} files", files.size()), files.size());
 
     if (wc)
     {
@@ -215,13 +217,13 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
             for (const file_change& f : files)
                 if (f.status == 'U') conflicts.push_back(f.path);
             const std::string question =
-                "Are you sure you want to mark the conflicted file(s) as resolved?";
+                _("Are you sure you want to mark the conflicted file(s) as resolved?");
             if (one)
-                m.push_back(item("_Edit conflicts",
+                m.push_back(item(_("_Edit conflicts"),
                                  [this, path = files.front().path] { edit_conflict(path); }));
             m.push_back(item(
-                "Resolved", [confirm_local, question, conflicts]
-                { confirm_local(question, "Resolve", {plus({"add", "-f", "--"}, conflicts)}); }));
+                _("Resolved"), [confirm_local, question, conflicts]
+                { confirm_local(question, _("Resolve"), {plus({"add", "-f", "--"}, conflicts)}); }));
             // During a rebase git's "ours" is the branch being rebased onto
             // and "theirs" the commit being replayed: mine is then theirs.
             const bool rebasing = std::ranges::any_of(
@@ -271,34 +273,35 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
                                  present));
                         commands.push_back(plus({"add", "-f", "--"}, present));
                     }
-                    confirm_local(question, "Resolve", commands);
+                    confirm_local(question, _("Resolve"), commands);
                 };
             };
-            m.push_back(item("Resolve conflict using “theirs”", take(rebasing ? 2 : 3)));
-            m.push_back(item("Resolve conflict using “mine”", take(rebasing ? 3 : 2)));
+            m.push_back(item(_("Resolve conflict using “theirs”"), take(rebasing ? 2 : 3)));
+            m.push_back(item(_("Resolve conflict using “mine”"), take(rebasing ? 3 : 2)));
             separator(m);
         }
         if (unversioned)
         {
             m.push_back(
-                item("Add", [local, paths] { local("Add", {plus({"add", "--"}, paths)}); }));
-            m.push_back(todo("Commit..."));
+                item(_("Add"), [local, paths] { local(_("Add"), {plus({"add", "--"}, paths)}); }));
+            m.push_back(todo(_("Commit...")));
         }
         else if (!conflicted)
         {
-            m.push_back(item("Compare with b_ase", [this, paths] { difftool({"HEAD"}, paths); }));
-            m.push_back(item("Show changes as _unified diff",
+            m.push_back(item(_("Compare with b_ase"), [this, paths] { difftool({"HEAD"}, paths); }));
+            m.push_back(item(_("Show changes as _unified diff"),
                              [this, paths, dir, count]
                              {
-                                 show_unified_diff(host_.ui, count + " HEAD..working tree", dir,
+                                 show_unified_diff(host_.ui,
+                                                   rap::i18n::format(_("{0} HEAD..working tree"), count), dir,
                                                    plus({"diff", "HEAD", "--"}, paths));
                              }));
             separator(m);
-            m.push_back(todo("Commit..."));
+            m.push_back(todo(_("Commit...")));
             // New files leave the index (the file stays); the rest go
             // back to HEAD, in the index and the working tree.
             m.push_back(item(
-                "Re_vert...",
+                _("Re_vert..."),
                 [confirm_local, files, count]
                 {
                     arg_list added, changed;
@@ -313,26 +316,27 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
                     if (!changed.empty())
                         commands.push_back(plus(
                             {"restore", "--source=HEAD", "--staged", "--worktree", "--"}, changed));
-                    confirm_local("Revert " + count + "? Their local changes will be lost.",
-                                  "Revert", commands);
+                    confirm_local(
+                        rap::i18n::format(_("Revert {0}? Their local changes will be lost."), count),
+                        _("Revert"), commands);
                 }));
-            m.push_back(item("Skip worktree",
+            m.push_back(item(_("Skip worktree"),
                              [local, paths]
                              {
-                                 local("Skip worktree",
+                                 local(_("Skip worktree"),
                                        {plus({"update-index", "--skip-worktree", "--"}, paths)});
                              }));
-            m.push_back(item("Assume Unchanged",
+            m.push_back(item(_("Assume Unchanged"),
                              [local, paths]
                              {
-                                 local("Assume Unchanged",
+                                 local(_("Assume Unchanged"),
                                        {plus({"update-index", "--assume-unchanged", "--"}, paths)});
                              }));
             m.push_back(item(
-                "Unflag as skip-worktree and assume-unchanged",
+                _("Unflag as skip-worktree and assume-unchanged"),
                 [local, paths]
                 {
-                    local("Unflag", {plus({"update-index", "--no-skip-worktree", "--"}, paths),
+                    local(_("Unflag"), {plus({"update-index", "--no-skip-worktree", "--"}, paths),
                                      plus({"update-index", "--no-assume-unchanged", "--"}, paths)});
                 }));
         }
@@ -343,31 +347,33 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
         const std::string& parent = source_.parent;
         const std::string& parent_title = source_.parent_title;
 
-        m.push_back(item("Compare with b_ase",
+        m.push_back(item(_("Compare with b_ase"),
                          [this, parent, hash, paths] { difftool({parent, hash}, paths); }));
-        m.push_back(item("Show changes as _unified diff",
+        m.push_back(item(_("Show changes as _unified diff"),
                          [this, parent, hash, paths, dir, count]
                          {
                              show_unified_diff(host_.ui, count + " " + hash.substr(0, 8), dir,
                                                plus({"diff", parent, hash, "--"}, paths));
                          }));
         m.push_back(
-            item("Compare with _working tree", [this, hash, paths] { difftool({hash}, paths); }));
+            item(_("Compare with _working tree"), [this, hash, paths] { difftool({hash}, paths); }));
         if (!parent_title.empty())
-            m.push_back(item("Compare parent with working tree: " + menu_text(parent_title),
+            m.push_back(item(rap::i18n::format(_("Compare parent with working tree: {0}"),
+                                               menu_text(parent_title)),
                              [this, parent, paths] { difftool({parent}, paths); }));
         separator(m);
-        if (files.size() == 2) m.push_back(todo("Compare two files"));
+        if (files.size() == 2) m.push_back(todo(_("Compare two files")));
         // The working tree's files replaced with this commit's (or its
         // parent's) versions, as TortoiseGit's Revert to revision.
         if (!deleted)
             m.push_back(item(
-                "R_evert to this revision",
+                _("R_evert to this revision"),
                 [confirm_local, hash, files, count]
                 {
-                    confirm_local("Replace " + count + " in the working tree with the version in " +
-                                      hash.substr(0, 8) + "?",
-                                  "Revert to this revision",
+                    confirm_local(rap::i18n::format(_("Replace {0} in the working tree with the "
+                                                      "version in {1}?"),
+                                                    count, hash.substr(0, 8)),
+                                  _("Revert to this revision"),
                                   {plus({"checkout", hash, "--"}, paths_of(files, false))});
                 }));
         if (!parent_title.empty())
@@ -377,12 +383,13 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
             const bool in_parent = std::ranges::none_of(
                 files, [](const file_change& f) { return f.status == 'A' || !f.old_path.empty(); });
             m.push_back(item(
-                "Revert to parent revision: " + menu_text(parent_title),
+                rap::i18n::format(_("Revert to parent revision: {0}"), menu_text(parent_title)),
                 [confirm_local, parent, files, count]
                 {
-                    confirm_local("Replace " + count + " in the working tree with the version in " +
-                                      parent.substr(0, 8) + "?",
-                                  "Revert to parent revision",
+                    confirm_local(rap::i18n::format(_("Replace {0} in the working tree with the "
+                                                      "version in {1}?"),
+                                                    count, parent.substr(0, 8)),
+                                  _("Revert to parent revision"),
                                   {plus({"checkout", parent, "--"}, paths_of(files, false))});
                 },
                 in_parent));
@@ -392,34 +399,34 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
     separator(m);
     if (one)
     {
-        m.push_back(todo("Show _log"));
-        if (renamed) m.push_back(todo("Show log _before rename/copy"));
-        m.push_back(todo("_Blame"));
+        m.push_back(todo(_("Show _log")));
+        if (renamed) m.push_back(todo(_("Show log _before rename/copy")));
+        m.push_back(todo(_("_Blame")));
     }
     if (!wc && !deleted)
     {
-        m.push_back(item("Export selection to...",
+        m.push_back(item(_("Export selection to..."),
                          [this, hash = source_.hash, files] { save_revisions(hash, files); }));
     }
     if (one)
     {
         if (!wc && !deleted)
         {
-            m.push_back(item("Save revision _to...", [this, hash = source_.hash, f = files.front()]
+            m.push_back(item(_("Save revision _to..."), [this, hash = source_.hash, f = files.front()]
                              { save_revision(hash, f); }));
         }
-        m.push_back(todo("View revision in alternative editor"));
+        m.push_back(todo(_("View revision in alternative editor")));
         const file_change& f = files.front();
         // A deleted file has nothing to open in the working tree, nor in
         // the revision that deleted it.
         const bool openable = f.status != 'D';
-        m.push_back(item("_Open", [this, f] { open_file(f, false); }, openable));
+        m.push_back(item(_("_Open"), [this, f] { open_file(f, false); }, openable));
 #ifdef _WIN32
-        m.push_back(item("Open with...", [this, f] { open_file(f, true); }, openable));
+        m.push_back(item(_("Open with..."), [this, f] { open_file(f, true); }, openable));
 #else
-        m.push_back(todo("Open with..."));  // no common chooser on Linux desktops
+        m.push_back(todo(_("Open with...")));  // no common chooser on Linux desktops
 #endif
-        m.push_back(item("Explore to",
+        m.push_back(item(_("Explore to"),
                          [this, f]
                          {
                              const auto path = rap::sys::path_from_utf8(host_.workdir) /
@@ -429,16 +436,18 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
                                  std::filesystem::exists(path, ec) ? path : path.parent_path());
                          }));
         separator(m);
-        m.push_back(todo("Mark for comparison"));
+        m.push_back(todo(_("Mark for comparison")));
     }
     if (wc && unversioned)
     {
         m.push_back(item(
-            "_Delete",
+            _("_Delete"),
             [confirm_local, paths, count]
             {
-                confirm_local("Delete " + count + "? They aren't in git, so this can't be undone.",
-                              "Delete", {plus({"clean", "-f", "-d", "-q", "--"}, paths)});
+                confirm_local(rap::i18n::format(_("Delete {0}? They aren't in git, so this can't "
+                                                  "be undone."),
+                                                count),
+                              _("Delete"), {plus({"clean", "-f", "-d", "-q", "--"}, paths)});
             }));
         // Patterns appended to the repository's top-level .gitignore.
         auto ignore = [this](std::vector<std::string> patterns)
@@ -452,8 +461,9 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
             if (!ok)
                 host_.ui.message(host_.window(),
                                  {.icon = rap::message_spec::icon::error,
-                                  .title = "Add to ignore list",
-                                  .text = "Could not write " + rap::sys::path_to_utf8(path) + "."});
+                                  .title = _("Add to ignore list"),
+                                  .text = rap::i18n::format(_("Could not write {0}."),
+                                                            rap::sys::path_to_utf8(path))});
             host_.refresh();
         };
         std::vector<std::string> by_name, by_extension;
@@ -468,7 +478,7 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
                     by_extension.push_back(ext);
         }
         menu sub;
-        sub.push_back(item(one ? menu_text(by_name.front()) : "Ignore item(s) by name",
+        sub.push_back(item(one ? menu_text(by_name.front()) : std::string(_("Ignore item(s) by name")),
                            [ignore, by_name] { ignore(by_name); }));
         if (!by_extension.empty())
         {
@@ -476,24 +486,24 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
             for (const std::string& e : by_extension) label += (label.empty() ? "" : ", ") + e;
             sub.push_back(item(menu_text(label), [ignore, by_extension] { ignore(by_extension); }));
         }
-        m.push_back({.label = "Add to _ignore list", .children = std::move(sub)});
+        m.push_back({.label = _("Add to _ignore list"), .children = std::move(sub)});
     }
 
     separator(m);
     menu copy{
-        item("full paths", [this] { copy_files(copy_full_paths, std::nullopt); }),
-        item("relative paths", [this] { copy_files(copy_relative_paths, std::nullopt); }),
-        item("file/foldernames", [this] { copy_files(copy_names, std::nullopt); }),
-        item("Copy all information to clipboard", [this] { copy_files(copy_all, std::nullopt); }),
+        item(_("full paths"), [this] { copy_files(copy_full_paths, std::nullopt); }),
+        item(_("relative paths"), [this] { copy_files(copy_relative_paths, std::nullopt); }),
+        item(_("file/foldernames"), [this] { copy_files(copy_names, std::nullopt); }),
+        item(_("Copy all information to clipboard"), [this] { copy_files(copy_all, std::nullopt); }),
     };
     if (column)
     {
         const auto columns = file_model::columns();
         if (*column < columns.size())
-            copy.push_back(item("column ‘" + menu_text(columns[*column].title) + "’",
+            copy.push_back(item(rap::i18n::format(_("column ‘{0}’"), menu_text(columns[*column].title)),
                                 [this, column] { copy_files(copy_column, column); }));
     }
-    m.push_back({.label = "Copy to clipboard", .children = std::move(copy)});
+    m.push_back({.label = _("Copy to clipboard"), .children = std::move(copy)});
     return m;
 }
 
@@ -540,9 +550,9 @@ void changes_view::open_file(const file_change& f, bool choose)
         if (!r.ok() || !write_file(path, r.output))
         {
             host_.ui.message(host_.window(), {.icon = rap::message_spec::icon::error,
-                                              .title = "Open",
-                                              .text = "Could not get " + f.path + " at " +
-                                                      source_.hash.substr(0, 8) + ".",
+                                              .title = _("Open"),
+                                              .text = rap::i18n::format(_("Could not get {0} at {1}."),
+                                                                        f.path, source_.hash.substr(0, 8)),
                                               .detail = r.ok() ? "" : r.output});
             return;
         }
@@ -550,8 +560,8 @@ void changes_view::open_file(const file_change& f, bool choose)
     if (!(choose ? rap::sys::open_with(path) : rap::sys::open_path(path)))
         host_.ui.message(host_.window(),
                          {.icon = rap::message_spec::icon::error,
-                          .title = "Open",
-                          .text = "Could not open " + rap::sys::path_to_utf8(path) + "."});
+                          .title = _("Open"),
+                          .text = rap::i18n::format(_("Could not open {0}."), rap::sys::path_to_utf8(path))});
 }
 
 // With the tool the Diff Viewer page chose (compare.h).
@@ -601,7 +611,7 @@ void changes_view::save_revisions(const std::string& rev, std::vector<file_chang
 {
     rap::file_dialog_spec spec;
     spec.mode = rap::file_dialog_spec::mode::folder;
-    spec.title = "Export selection to";
+    spec.title = _("Export selection to");
     host_.ui.choose_files(
         host_.window(), spec,
         [this, rev, files](std::vector<std::string> picked)
@@ -618,8 +628,8 @@ void changes_view::save_revisions(const std::string& rev, std::vector<file_chang
             }
             if (!failed.empty())
                 host_.ui.message(host_.window(), {.icon = rap::message_spec::icon::error,
-                                                  .title = "Export selection to",
-                                                  .text = "Some files could not be exported.",
+                                                  .title = _("Export selection to"),
+                                                  .text = _("Some files could not be exported."),
                                                   .detail = failed});
         });
 }
@@ -629,7 +639,7 @@ void changes_view::save_revision(const std::string& rev, const file_change& file
 {
     rap::file_dialog_spec spec;
     spec.mode = rap::file_dialog_spec::mode::save;
-    spec.title = "Save revision to";
+    spec.title = _("Save revision to");
     // TortoiseGit's suggestion: the name with the revision before the extension.
     std::string name = file_name(file.path);
     const auto dot = name.rfind('.');
@@ -645,8 +655,8 @@ void changes_view::save_revision(const std::string& rev, const file_change& file
                 run_git(host_.workdir, {"show", rev + ":" + path}, git_output::stdout_only);
             if (!r.ok() || !write_file(rap::sys::path_from_utf8(picked.front()), r.output))
                 host_.ui.message(host_.window(), {.icon = rap::message_spec::icon::error,
-                                                  .title = "Save revision to",
-                                                  .text = "Could not save " + picked.front() + ".",
+                                                  .title = _("Save revision to"),
+                                                  .text = rap::i18n::format(_("Could not save {0}."), picked.front()),
                                                   .detail = r.ok() ? "" : r.output});
         });
 }

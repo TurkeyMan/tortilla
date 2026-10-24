@@ -1,6 +1,7 @@
 #include "file_action_window.h"
 
 #include "changes/commit_window.h"
+#include "i18n.h"
 #include "settings.h"
 #include "ui/progress_dialog.h"
 #include "ui/settings_dialog.h"
@@ -75,7 +76,7 @@ file_action_window::open(rap::ui& ui, file_action action, const std::vector<std:
     const std::string first = paths.empty() ? "." : paths.front();
     auto repo = repo::open(first);
     if (!repo) return std::unexpected(repo.error());
-    if (repo->bare()) return std::unexpected("No working directory found.");
+    if (repo->bare()) return std::unexpected(_("No working directory found."));
     std::error_code ec;
     const fs::path root = fs::weakly_canonical(rap::sys::path_from_utf8(repo->workdir()), ec);
     std::vector<std::string> relative;
@@ -130,11 +131,16 @@ std::string file_action_window::name() const
 {
     switch (action_)
     {
-    case file_action::add: return "Add";
-    case file_action::revert: return "Revert";
-    case file_action::resolve: return "Resolve";
+    case file_action::add: return T_("Add");
+    case file_action::revert: return T_("Revert");
+    case file_action::resolve: return T_("Resolve");
     }
     return {};
+}
+
+std::string file_action_window::title() const
+{
+    return _(name().c_str());
 }
 
 // Which rows the list shows [spec 6.2.3, 6.3.3, 6.5.3].
@@ -177,7 +183,7 @@ void file_action_window::build()
     using namespace rap::layout;
     using namespace rap::literals;
     rap::nodes options;
-    options.push_back(check{"Select/deselect _all"}
+    options.push_back(check{_("Select/deselect _all")}
                           .bind(select_all_)
                           .on_toggled(
                               [this](bool on)
@@ -189,22 +195,22 @@ void file_action_window::build()
                               }));
     if (action_ == file_action::add)
         options.push_back(
-            check{"Include _ignored files"}.bind(ignored_).on_toggled([this](bool) { reload(); }));
+            check{_("Include _ignored files")}.bind(ignored_).on_toggled([this](bool) { reload(); }));
     if (action_ == file_action::resolve)
-        options.push_back(label{"Reminder: Commit your change after resolve"});
+        options.push_back(label{_("Reminder: Commit your change after resolve")});
     options.push_back(spacer{});
     options.push_back(label{}.bind(note_));
 
     window_ = ui_.create(window{
-        name(),
+        title(),
         {vbox{
             files_.list(settings_key() + ".files", true).stretch(),
             rap::node{rap::spec::box{rap::layout::horizontal, std::move(options), false, {}}, {}},
             hbox{
                 spacer{},
-                button{"OK"}.bind(ok_).enabled(false).on_click([this]
+                button{_("OK")}.bind(ok_).enabled(false).on_click([this]
                                                                { run(files_.checked_files()); }),
-                button{"Cancel"}.on_click([this] { close(false); }),
+                button{_("Cancel")}.on_click([this] { close(false); }),
             },
         }}}.size(action_ == file_action::revert ? 90_ch : 80_ch,
                  action_ == file_action::revert ? 32_lines : 24_lines));
@@ -243,8 +249,8 @@ void file_action_window::build()
     fs::path shown = rap::sys::path_from_utf8(root);
     if (action_ != file_action::resolve && paths_.size() == 1)
         shown /= rap::sys::path_from_utf8(paths_.front());
-    window_->set_title(rap::sys::path_to_utf8(shown.make_preferred()) + " - " + name() +
-                       " - Tortilla");
+    window_->set_title(rap::i18n::format(_("{0} - {1} - Tortilla"),
+                                         rap::sys::path_to_utf8(shown.make_preferred()), title()));
 }
 
 void file_action_window::show()
@@ -271,7 +277,7 @@ void file_action_window::reload()
         .ignored = action_ == file_action::add && ignored_->checked(),
         .all_staged = false,
     };
-    note_->set_text("Please wait...");
+    note_->set_text(_("Please wait..."));
     if (load_) load_->cancel();
     load_ = std::make_shared<git_canceller>();
     const std::string workdir = workdir_;
@@ -304,9 +310,9 @@ void file_action_window::loaded(working_tree_changes changes)
     files_.check_where([&](const file_change& f) { return fresh_checked.contains(f.path); }, true);
     note_->set_text(!changes.error.empty()           ? changes.error
                     : !files_.files().empty()        ? ""
-                    : action_ == file_action::add    ? "There is nothing to add."
-                    : action_ == file_action::revert ? "There is nothing to revert."
-                                                     : "There are no conflicts.");
+                    : action_ == file_action::add    ? _("There is nothing to add.")
+                    : action_ == file_action::revert ? _("There is nothing to revert.")
+                                                     : _("There are no conflicts."));
     update_state();
 }
 
@@ -361,10 +367,11 @@ void file_action_window::run(const std::vector<file_change>& files)
                 if (fs::is_directory(old_path, ec))
                 {
                     ui_.message(window_.get(), {.icon = rap::message_spec::icon::error,
-                                                .title = "Revert",
-                                                .text = "Cannot revert renaming of “" + f.path +
-                                                        "”. A directory with the old name “" +
-                                                        f.old_path + "” exists."});
+                                                .title = _("Revert"),
+                                                .text = rap::i18n::format(
+                                                    _("Cannot revert renaming of “{0}”. A directory "
+                                                      "with the old name “{1}” exists."),
+                                                    f.path, f.old_path)});
                     return;
                 }
                 const bool there = fs::exists(
@@ -388,8 +395,8 @@ void file_action_window::run(const std::vector<file_change>& files)
     {
         ui_.message(window_.get(),
                     {.icon = rap::message_spec::icon::error,
-                     .title = name(),
-                     .text = "Could not write the list of files to the temporary folder."});
+                     .title = title(),
+                     .text = _("Could not write the list of files to the temporary folder.")});
         return;
     }
 
@@ -397,7 +404,7 @@ void file_action_window::run(const std::vector<file_change>& files)
     // offers [spec 6.2.4, 6.5.4].
     std::vector<progress_follow_up> follow_ups;
     if (action_ != file_action::revert)
-        follow_ups.push_back({.label = "_Commit...", .after_close = [this] { open_commit(); }});
+        follow_ups.push_back({.label = _("_Commit..."), .after_close = [this] { open_commit(); }});
     if (action_ == file_action::add)
     {
         std::vector<std::string> paths;
@@ -406,7 +413,7 @@ void file_action_window::run(const std::vector<file_change>& files)
             if (!fs::is_directory(rap::sys::path_from_utf8(workdir_) / rap::sys::path_from_utf8(p),
                                   ec))
                 paths.push_back(p);
-        follow_ups.push_back({.label = "Add as _Executable (+x)",
+        follow_ups.push_back({.label = _("Add as _Executable (+x)"),
                               .commands = [paths]
                               {
                                   std::vector<std::string> c{"update-index", "--chmod=+x", "--"};
@@ -416,7 +423,7 @@ void file_action_window::run(const std::vector<file_change>& files)
         // A symlink's blob is its target: the file as added, with the mode
         // of a link.
         follow_ups.push_back(
-            {.label = "Add as _Symlink",
+            {.label = _("Add as _Symlink"),
              .commands = [paths, workdir = workdir_]
              {
                  std::vector<std::string> ls{"ls-files", "-s", "-z", "--"};
@@ -449,7 +456,7 @@ void file_action_window::run(const std::vector<file_change>& files)
         if (load_) load_->cancel();
         update_state();
         run_progress_dialog(
-            ui_, shown_ ? window_.get() : nullptr, name(), workdir_, std::move(commands),
+            ui_, shown_ ? window_.get() : nullptr, title(), workdir_, std::move(commands),
             [this, lists](bool ok)
             {
                 running_ = false;
@@ -483,10 +490,9 @@ void file_action_window::run(const std::vector<file_change>& files)
     if (auto kept = rap::sys::move_to_trash(keep); !kept)
         ui_.message(window_.get(),
                     {.icon = rap::message_spec::icon::warning,
-                     .title = "Revert",
-                     .text = "The files couldn't be moved to the Recycle Bin first, so reverting "
-                             "can't be undone. "
-                             "Revert anyway?",
+                     .title = _("Revert"),
+                     .text = _("The files couldn't be moved to the Recycle Bin first, so reverting "
+                               "can't be undone. Revert anyway?"),
                      .detail = kept.error(),
                      .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
                     [start](rap::dialog_role r) mutable
@@ -505,7 +511,7 @@ void file_action_window::open_commit()
     if (!w)
     {
         ui_.message(nullptr,
-                    {.icon = rap::message_spec::icon::error, .title = "Commit", .text = w.error()});
+                    {.icon = rap::message_spec::icon::error, .title = _("Commit"), .text = w.error()});
         return;
     }
     commit_ = std::move(*w);

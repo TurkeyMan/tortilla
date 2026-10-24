@@ -1,5 +1,7 @@
 #include "rebase_engine.h"
 
+#include "i18n.h"
+
 #include <cstdio>
 #include <cstring>
 
@@ -65,7 +67,7 @@ void rebase_engine::start(const start_args& s)
     }
     stage_ = rebase_stage::running;
     hooks_.stage_changed();
-    hooks_.log("Start Rebase\n", true);
+    hooks_.log(std::string(_("Start Rebase")) + "\n", true);
 
     // Fast-forward: move the branch to the upstream and stop [spec 2.7.9].
     if (s.fast_forward)
@@ -79,7 +81,8 @@ void rebase_engine::start(const start_args& s)
                     [this](int code, auto&)
                     {
                         if (code != 0) return stop(rebase_stage::error);
-                        hooks_.log("Fast forward to \"" + start_.onto.hex(8) + "\"\n", true);
+                        hooks_.log(rap::i18n::format(_("Fast forward to \"{0}\""), start_.onto.hex(8)) + "\n",
+                                   true);
                         stop(rebase_stage::done);
                     });
             });
@@ -279,7 +282,8 @@ void rebase_engine::resume(const std::string& message)
                 {
                     std::string list;
                     for (auto& f : marked) list += f + "\n";
-                    hooks_.warn("One or more files are in a conflicted state.\n\n" + list);
+                    hooks_.warn(std::string(_("One or more files are in a conflicted state.")) + "\n\n" +
+                                list);
                     return;
                 }
                 std::vector<std::string> add{"add", "-u", "--"};
@@ -333,7 +337,7 @@ void rebase_engine::finish()
             if (code != 0) return stop(rebase_stage::error);
             std::remove(msg_file_.c_str());
             std::remove(active_file_.c_str());
-            hooks_.log("Finished rebasing.\n", true);
+            hooks_.log(std::string(_("Finished rebasing.")) + "\n", true);
             stop(rebase_stage::done);
         });
 }
@@ -348,7 +352,7 @@ void rebase_engine::abort(std::function<void()> done)
         if (done) done();
         return;
     }
-    hooks_.log("Abort\n", true);
+    hooks_.log(std::string(_("Abort")) + "\n", true);
     run({"cherry-pick", "--abort"},
         [this, done](int, auto&)
         {
@@ -360,7 +364,7 @@ void rebase_engine::abort(std::function<void()> done)
                         {
                             std::remove(msg_file_.c_str());
                             std::remove(active_file_.c_str());
-                            hooks_.log("Rebase aborted.\n", true);
+                            hooks_.log(std::string(_("Rebase aborted.")) + "\n", true);
                             stage_ = rebase_stage::done;
                             hooks_.stage_changed();
                             if (done) done();

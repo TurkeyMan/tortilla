@@ -1,11 +1,15 @@
 // Tortilla's translations: rapport's i18n with the "tortilla" domain. The
 // markers below are what tools/update-pot.sh extracts into
-// data/translations/tortilla.pot.
+// data/translations/tortilla.pot. _() with a variable translates at run
+// time what a T_() marked.
 //
 //   _("Commit")                         a string to translate
 //   C_("verb", "Open")                  one that reads differently in places
 //   N_("{0} file", "{0} files", n)      by count (then rap::i18n::format)
 //   rap::i18n::format(_("{0} of {1}"), a, b)
+//   T_("Classic")                       marked only: for a table built before
+//                                       the language is chosen; translated
+//                                       where it's shown, with _(variable)
 //
 // Not for what git or the settings file reads: arguments, config keys,
 // file names.
@@ -19,6 +23,7 @@
 #define _(text) ::rap::i18n::tr("tortilla", text)
 #define C_(context, text) ::rap::i18n::tr_ctx("tortilla", context, text)
 #define N_(one, many, n) ::rap::i18n::tr_n("tortilla", one, many, n)
+#define T_(text) text
 
 namespace tortilla
 {

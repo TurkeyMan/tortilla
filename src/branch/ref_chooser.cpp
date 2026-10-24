@@ -2,6 +2,7 @@
 
 #include "git/command.h"
 #include "git/remotes.h"
+#include "i18n.h"
 
 #include <algorithm>
 
@@ -67,7 +68,7 @@ rap::node ref_chooser::layout(const options& o)
 
     std::vector<std::string> kinds;
     if (o.head) kinds.push_back("HEAD");
-    kinds.insert(kinds.end(), {"Branch", "Tag", "Commit"});
+    kinds.insert(kinds.end(), {_("Branch"), _("Tag"), _("Commit")});
     return group{o.caption,
                  hbox{
                      drop_down{kinds, 0}.bind(kind_).on_changed([this](int) { kind_changed(); }),

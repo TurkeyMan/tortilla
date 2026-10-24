@@ -1,6 +1,7 @@
 #include "compare.h"
 
 #include "git/diff_tool.h"
+#include "i18n.h"
 #include "ui/diff_window.h"
 
 namespace tortilla
@@ -21,7 +22,7 @@ compare_revisions(rap::ui& ui, rap::window* parent, const std::string& dir,
     // One file: its name too, as TortoiseGit titles a file comparison.
     const std::string file = paths.size() == 1 ? paths.front() + " : " : "";
     const std::string base = file + name(revisions.front());
-    const std::string mine = file + (revisions.size() > 1 ? name(revisions[1]) : "working tree");
+    const std::string mine = file + (revisions.size() > 1 ? name(revisions[1]) : std::string(_("working tree")));
     // Renames are only found with both paths given (rename detection is
     // on by default in git diff).
     std::vector<std::string> limit;
@@ -36,7 +37,7 @@ compare_revisions(rap::ui& ui, rap::window* parent, const std::string& dir,
                    {.icon = rap::message_spec::icon::question,
                     .title = "Tortilla",
                     .text = text,
-                    .detail = "Choose one on the Diff Viewer page of the Settings.",
+                    .detail = _("Choose one on the Diff Viewer page of the Settings."),
                     .buttons = {rap::dialog_role::ok, rap::dialog_role::cancel}},
                    [open_settings, done](rap::dialog_role r)
                    {
@@ -61,7 +62,7 @@ compare_revisions(rap::ui& ui, rap::window* parent, const std::string& dir,
     case diff_mode::git:
         if (git_diff_tool(dir).empty())
         {
-            offer_settings("git has no diff tool configured (diff.tool).");
+            offer_settings(_("git has no diff tool configured (diff.tool)."));
             return nullptr;
         }
         args = {"difftool", "--no-prompt"};
@@ -78,7 +79,7 @@ compare_revisions(rap::ui& ui, rap::window* parent, const std::string& dir,
     case diff_mode::custom:
         if (diff_command().empty())
         {
-            offer_settings("No diff program is set.");
+            offer_settings(_("No diff program is set."));
             return nullptr;
         }
         args = custom_difftool_args(diff_command(), revisions, base, mine, paths, diff_folders());
@@ -93,7 +94,7 @@ compare_revisions(rap::ui& ui, rap::window* parent, const std::string& dir,
             ui.message(parent,
                        {.icon = rap::message_spec::icon::error,
                         .title = "Tortilla",
-                        .text = "The diff tool failed.",
+                        .text = _("The diff tool failed."),
                         .detail = *output},
                        [done](rap::dialog_role) { done(); });
         });

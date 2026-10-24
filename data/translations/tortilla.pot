@@ -1,0 +1,2626 @@
+# SOME DESCRIPTIVE TITLE.
+# Copyright (C) YEAR THE PACKAGE'S COPYRIGHT HOLDER
+# This file is distributed under the same license as the tortilla package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: tortilla\n"
+"Report-Msgid-Bugs-To: https://github.com/TurkeyMan/tortilla/issues\n"
+"POT-Creation-Date: 2026-10-24 14:54+0000\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"Language: \n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=INTEGER; plural=EXPRESSION;\n"
+
+#: src/branch/create_ref_dialog.cpp:69 src/branch/create_ref_dialog.cpp:140
+#: src/branch/create_ref_dialog.cpp:167 src/branch/create_ref_dialog.cpp:232
+msgid "Create Branch"
+msgstr ""
+
+#: src/branch/create_ref_dialog.cpp:69 src/branch/create_ref_dialog.cpp:140
+#: src/branch/create_ref_dialog.cpp:167 src/branch/create_ref_dialog.cpp:232
+msgid "Create Tag"
+msgstr ""
+
+#: src/branch/create_ref_dialog.cpp:71
+msgid "Name"
+msgstr ""
+
+#: src/branch/create_ref_dialog.cpp:73
+msgid "Base On"
+msgstr ""
+
+#: src/branch/create_ref_dialog.cpp:74 src/remote/pull_fetch_dialog.cpp:162
+#: src/remote/push_dialog.cpp:114
+msgid "Options"
+msgstr ""
+
+#: src/branch/create_ref_dialog.cpp:76
+msgid "Trac_k"
+msgstr ""
+
+#: src/branch/create_ref_dialog.cpp:77 src/remote/push_dialog.cpp:120
+msgid "_Force"
+msgstr ""
+
+#: src/branch/create_ref_dialog.cpp:78
+msgid "_Switch to new branch"
+msgstr ""
+
+#: src/branch/create_ref_dialog.cpp:82
+msgid "Si_gn"
+msgstr ""
+
+#: src/branch/create_ref_dialog.cpp:83
+msgid "_Push"
+msgstr ""
+
+#: src/branch/create_ref_dialog.cpp:87
+msgid "Description"
+msgstr ""
+
+#: src/branch/create_ref_dialog.cpp:87
+msgid "Message (makes an annotated tag)"
+msgstr ""
+
+#: src/branch/create_ref_dialog.cpp:144
+msgid "You must enter a log message for the commit"
+msgstr ""
+
+#: src/branch/create_ref_dialog.cpp:151 src/branch/merge_dialog.cpp:181
+#: src/branch/switch_dialog.cpp:160
+msgid "Branch/Tag name must not be empty or is invalid."
+msgstr ""
+
+#: src/branch/create_ref_dialog.cpp:156
+msgid ""
+"Cannot force updating current branch. Use reset command if you want to do so."
+msgstr ""
+
+#: src/branch/create_ref_dialog.cpp:157
+msgid ""
+"A tag with this name already exists. Use a different name or use the "
+"\"Force\" option to overwrite it."
+msgstr ""
+
+#: src/branch/create_ref_dialog.cpp:159
+msgid ""
+"A branch with this name already exists. Use a different name or use the "
+"\"Force\" option to overwrite it."
+msgstr ""
+
+#: src/branch/create_ref_dialog.cpp:168
+msgid ""
+"A branch with the same name as your entered tag name already exists (so the "
+"short ref is ambiguous).\n"
+"This can cause problems so you should avoid it."
+msgstr ""
+
+#: src/branch/create_ref_dialog.cpp:171
+msgid ""
+"A tag with the same name as your entered branch name already exists (so the "
+"short ref is ambiguous).\n"
+"This can cause problems so you should avoid it."
+msgstr ""
+
+#: src/branch/create_ref_dialog.cpp:174
+msgid "Continue anyway?"
+msgstr ""
+
+#: src/branch/create_ref_dialog.cpp:245 src/branch/switch_dialog.cpp:152
+#: src/log/log_actions.cpp:334 src/log/log_actions.cpp:896
+#: src/log/log_actions.cpp:900 src/log/log_actions.cpp:906
+msgid "Switch/Checkout"
+msgstr ""
+
+#: src/branch/merge_dialog.cpp:71
+msgid "Merge needs a working tree."
+msgstr ""
+
+#: src/branch/merge_dialog.cpp:75
+msgid ""
+"User name and email must be set before commit (git config --global "
+"user.name, user.email)."
+msgstr ""
+
+#: src/branch/merge_dialog.cpp:97
+msgid "(default)"
+msgstr ""
+
+#: src/branch/merge_dialog.cpp:99
+msgid "(none)"
+msgstr ""
+
+#: src/branch/merge_dialog.cpp:103
+#, c++-format
+msgid "{0} - Merge - Tortilla"
+msgstr ""
+
+#: src/branch/merge_dialog.cpp:105
+msgid "(no branch)"
+msgstr ""
+
+#: src/branch/merge_dialog.cpp:105
+msgid "Current branch:"
+msgstr ""
+
+#: src/branch/merge_dialog.cpp:107
+msgid "From"
+msgstr ""
+
+#: src/branch/merge_dialog.cpp:109 src/branch/switch_dialog.cpp:67
+msgid "Option"
+msgstr ""
+
+#: src/branch/merge_dialog.cpp:112 src/remote/pull_fetch_dialog.cpp:165
+msgid "_Squash"
+msgstr ""
+
+#: src/branch/merge_dialog.cpp:113 src/log/log_actions.cpp:568
+#: src/log/log_window.cpp:744 src/log/log_window.cpp:769
+msgid "Messages"
+msgstr ""
+
+#: src/branch/merge_dialog.cpp:118 src/remote/pull_fetch_dialog.cpp:166
+msgid "No _Fast Forward"
+msgstr ""
+
+#: src/branch/merge_dialog.cpp:120 src/remote/pull_fetch_dialog.cpp:173
+msgid "Fast Forward O_nly"
+msgstr ""
+
+#: src/branch/merge_dialog.cpp:124 src/remote/pull_fetch_dialog.cpp:172
+msgid "No Co_mmit"
+msgstr ""
+
+#: src/branch/merge_dialog.cpp:126
+msgid "Strategy"
+msgstr ""
+
+#: src/branch/merge_dialog.cpp:136
+msgid "Merge Message"
+msgstr ""
+
+#: src/branch/merge_dialog.cpp:180 src/branch/merge_dialog.cpp:222
+#: src/branch/merge_dialog.cpp:283 src/branch/merge_dialog.cpp:292
+#: src/branch/merge_dialog.cpp:316
+msgid "Merge"
+msgstr ""
+
+#: src/branch/merge_dialog.cpp:223
+msgid "Could not save merge message"
+msgstr ""
+
+#: src/branch/merge_dialog.cpp:238 src/remote/pull_fetch_dialog.cpp:333
+msgid "_Resolve..."
+msgstr ""
+
+#: src/branch/merge_dialog.cpp:246 src/branch/switch_dialog.cpp:207
+#: src/changes/file_action_window.cpp:407 src/remote/pull_fetch_dialog.cpp:342
+msgid "_Commit..."
+msgstr ""
+
+#: src/branch/merge_dialog.cpp:254
+msgid "_Abort Merge..."
+msgstr ""
+
+#: src/branch/merge_dialog.cpp:262
+msgid "_Merge unrelated history"
+msgstr ""
+
+#: src/branch/merge_dialog.cpp:276
+msgid "Remove _branch"
+msgstr ""
+
+#: src/branch/merge_dialog.cpp:284
+#, c++-format
+msgid "Do you really want to delete \"{0}\"?"
+msgstr ""
+
+#: src/branch/merge_dialog.cpp:299 src/log/log_actions.cpp:491
+#: src/remote/push_dialog.cpp:278
+msgid "Pus_h..."
+msgstr ""
+
+#: src/branch/merge_dialog.cpp:309
+#, c++-format
+msgid "{0} - Merge"
+msgstr ""
+
+#: src/branch/merge_dialog.cpp:317
+msgid ""
+"While merging, a conflict in at least one file occurred. After resolving all "
+"files, you need to perform a commit in order to complete the merge. If you "
+"want to abort the merge, use Abort Merge."
+msgstr ""
+
+#: src/branch/merge_dialog.cpp:352
+#, c++-format
+msgid "{0} - Abort Merge - Tortilla"
+msgstr ""
+
+#: src/branch/merge_dialog.cpp:354
+msgid "In order to abort a merge progress a reset (to HEAD) is needed."
+msgstr ""
+
+#: src/branch/merge_dialog.cpp:355 src/log/log_actions.cpp:1014
+msgid "Reset Type"
+msgstr ""
+
+#: src/branch/merge_dialog.cpp:356
+msgid "Merge: Resets the index and try to reconstruct the pre-merge state"
+msgstr ""
+
+#: src/branch/merge_dialog.cpp:357 src/log/log_actions.cpp:1016
+msgid "Mixed: Leave working tree untouched, reset index"
+msgstr ""
+
+#: src/branch/merge_dialog.cpp:358 src/log/log_actions.cpp:1017
+msgid "Hard: Reset working tree and index (discard all local changes)"
+msgstr ""
+
+#: src/branch/merge_dialog.cpp:361
+msgid "Show modified files in _working tree"
+msgstr ""
+
+#: src/branch/merge_dialog.cpp:383
+#, c++-format
+msgid "{0} - Abort Merge"
+msgstr ""
+
+#: src/branch/merge_dialog.cpp:390 src/branch/switch_dialog.cpp:224
+#: src/remote/clone_dialog.cpp:214
+msgid "_Retry"
+msgstr ""
+
+#: src/branch/ref_chooser.cpp:71 src/log/log_window.cpp:170
+#: src/remote/clone_dialog.cpp:117
+msgid "Branch"
+msgstr ""
+
+#: src/branch/ref_chooser.cpp:71 src/changes/changes_window.cpp:164
+#: src/changes/changes_window.cpp:326 src/changes/commit_window.cpp:122
+#: src/changes/commit_window.cpp:388 src/changes/commit_window.cpp:399
+#: src/changes/commit_window.cpp:431 src/changes/commit_window.cpp:466
+#: src/changes/file_action_window.cpp:514 src/rebase/rebase_window.cpp:388
+msgid "Commit"
+msgstr ""
+
+#: src/branch/ref_chooser.cpp:71 src/log/log_window.cpp:170
+msgid "Tag"
+msgstr ""
+
+#: src/branch/switch_dialog.cpp:43
+msgid "Switch/Checkout needs a working tree."
+msgstr ""
+
+#: src/branch/switch_dialog.cpp:64
+#, c++-format
+msgid "{0} - Switch/Checkout - Tortilla"
+msgstr ""
+
+#: src/branch/switch_dialog.cpp:66
+msgid "Switch To"
+msgstr ""
+
+#: src/branch/switch_dialog.cpp:70
+msgid "Create _New Branch"
+msgstr ""
+
+#: src/branch/switch_dialog.cpp:83
+msgid "Overwrite working tree changes (_force)"
+msgstr ""
+
+#: src/branch/switch_dialog.cpp:84
+msgid "_Merge"
+msgstr ""
+
+#: src/branch/switch_dialog.cpp:87
+msgid "T_rack"
+msgstr ""
+
+#: src/branch/switch_dialog.cpp:88
+msgid "_Override branch if exists"
+msgstr ""
+
+#: src/branch/switch_dialog.cpp:165
+msgid ""
+"A branch with this name already exists. Use a different name or use the "
+"\"Override branch\" option."
+msgstr ""
+
+#: src/branch/switch_dialog.cpp:169
+msgid "Choose what to switch to."
+msgstr ""
+
+#: src/branch/switch_dialog.cpp:193
+msgid "_Merge..."
+msgstr ""
+
+#: src/branch/switch_dialog.cpp:200 src/log/log_actions.cpp:294
+#: src/log/log_actions.cpp:496 src/remote/pull_fetch_dialog.cpp:363
+#: src/remote/push_dialog.cpp:276
+msgid "_Pull..."
+msgstr ""
+
+#: src/branch/switch_dialog.cpp:215
+msgid "Checkout with merge"
+msgstr ""
+
+#: src/branch/switch_dialog.cpp:233
+#, c++-format
+msgid "{0} - Switch/Checkout"
+msgstr ""
+
+#: src/changes/changes_view.cpp:208
+#, c++-format
+msgid "“{0}”"
+msgstr ""
+
+#: src/changes/changes_view.cpp:209
+#, c++-format
+msgid "{0} file"
+msgid_plural "{0} files"
+msgstr[0] ""
+msgstr[1] ""
+
+#: src/changes/changes_view.cpp:220
+msgid "Are you sure you want to mark the conflicted file(s) as resolved?"
+msgstr ""
+
+#: src/changes/changes_view.cpp:222
+msgid "_Edit conflicts"
+msgstr ""
+
+#: src/changes/changes_view.cpp:225
+msgid "Resolved"
+msgstr ""
+
+#: src/changes/changes_view.cpp:226 src/changes/changes_view.cpp:276
+#: src/changes/conflict_editor.cpp:134 src/changes/file_action_window.cpp:136
+msgid "Resolve"
+msgstr ""
+
+#: src/changes/changes_view.cpp:279
+msgid "Resolve conflict using “theirs”"
+msgstr ""
+
+#: src/changes/changes_view.cpp:280
+msgid "Resolve conflict using “mine”"
+msgstr ""
+
+#: src/changes/changes_view.cpp:286 src/changes/file_action_window.cpp:134
+msgid "Add"
+msgstr ""
+
+#: src/changes/changes_view.cpp:287 src/changes/changes_view.cpp:300
+msgid "Commit..."
+msgstr ""
+
+#: src/changes/changes_view.cpp:291 src/changes/changes_view.cpp:350
+msgid "Compare with b_ase"
+msgstr ""
+
+#: src/changes/changes_view.cpp:292 src/changes/changes_view.cpp:352
+#: src/log/log_actions.cpp:227 src/log/log_actions.cpp:266
+#: src/log/log_actions.cpp:404
+msgid "Show changes as _unified diff"
+msgstr ""
+
+#: src/changes/changes_view.cpp:296
+#, c++-format
+msgid "{0} HEAD..working tree"
+msgstr ""
+
+#: src/changes/changes_view.cpp:304
+msgid "Re_vert..."
+msgstr ""
+
+#: src/changes/changes_view.cpp:320
+#, c++-format
+msgid "Revert {0}? Their local changes will be lost."
+msgstr ""
+
+#: src/changes/changes_view.cpp:321 src/changes/file_action_window.cpp:135
+#: src/changes/file_action_window.cpp:370
+#: src/changes/file_action_window.cpp:493 src/log/log_actions.cpp:371
+#: src/log/log_actions.cpp:431
+msgid "Revert"
+msgstr ""
+
+#: src/changes/changes_view.cpp:323 src/changes/changes_view.cpp:326
+msgid "Skip worktree"
+msgstr ""
+
+#: src/changes/changes_view.cpp:329 src/changes/changes_view.cpp:332
+msgid "Assume Unchanged"
+msgstr ""
+
+#: src/changes/changes_view.cpp:336
+msgid "Unflag as skip-worktree and assume-unchanged"
+msgstr ""
+
+#: src/changes/changes_view.cpp:339
+msgid "Unflag"
+msgstr ""
+
+#: src/changes/changes_view.cpp:359 src/log/log_actions.cpp:238
+msgid "Compare with _working tree"
+msgstr ""
+
+#: src/changes/changes_view.cpp:361
+#, c++-format
+msgid "Compare parent with working tree: {0}"
+msgstr ""
+
+#: src/changes/changes_view.cpp:365
+msgid "Compare two files"
+msgstr ""
+
+#: src/changes/changes_view.cpp:370
+msgid "R_evert to this revision"
+msgstr ""
+
+#: src/changes/changes_view.cpp:373 src/changes/changes_view.cpp:389
+#, c++-format
+msgid "Replace {0} in the working tree with the version in {1}?"
+msgstr ""
+
+#: src/changes/changes_view.cpp:376
+msgid "Revert to this revision"
+msgstr ""
+
+#: src/changes/changes_view.cpp:386
+#, c++-format
+msgid "Revert to parent revision: {0}"
+msgstr ""
+
+#: src/changes/changes_view.cpp:392
+msgid "Revert to parent revision"
+msgstr ""
+
+#: src/changes/changes_view.cpp:402 src/rebase/rebase_window.cpp:212
+#: src/remote/clone_dialog.cpp:206 src/remote/pull_fetch_dialog.cpp:353
+msgid "Show _log"
+msgstr ""
+
+#: src/changes/changes_view.cpp:403
+msgid "Show log _before rename/copy"
+msgstr ""
+
+#: src/changes/changes_view.cpp:404
+msgid "_Blame"
+msgstr ""
+
+#: src/changes/changes_view.cpp:408
+msgid "Export selection to..."
+msgstr ""
+
+#: src/changes/changes_view.cpp:415
+msgid "Save revision _to..."
+msgstr ""
+
+#: src/changes/changes_view.cpp:418
+msgid "View revision in alternative editor"
+msgstr ""
+
+#: src/changes/changes_view.cpp:423
+msgid "_Open"
+msgstr ""
+
+#: src/changes/changes_view.cpp:425 src/changes/changes_view.cpp:427
+msgid "Open with..."
+msgstr ""
+
+#: src/changes/changes_view.cpp:429
+msgid "Explore to"
+msgstr ""
+
+#: src/changes/changes_view.cpp:439
+msgid "Mark for comparison"
+msgstr ""
+
+#: src/changes/changes_view.cpp:444
+msgid "_Delete"
+msgstr ""
+
+#: src/changes/changes_view.cpp:447
+#, c++-format
+msgid "Delete {0}? They aren't in git, so this can't be undone."
+msgstr ""
+
+#: src/changes/changes_view.cpp:450 src/log/log_actions.cpp:523
+#: src/log/log_actions.cpp:537 src/log/log_actions.cpp:545
+msgid "Delete"
+msgstr ""
+
+#: src/changes/changes_view.cpp:464
+msgid "Add to ignore list"
+msgstr ""
+
+#: src/changes/changes_view.cpp:465
+#, c++-format
+msgid "Could not write {0}."
+msgstr ""
+
+#: src/changes/changes_view.cpp:481
+msgid "Ignore item(s) by name"
+msgstr ""
+
+#: src/changes/changes_view.cpp:489
+msgid "Add to _ignore list"
+msgstr ""
+
+#: src/changes/changes_view.cpp:494
+msgid "full paths"
+msgstr ""
+
+#: src/changes/changes_view.cpp:495
+msgid "relative paths"
+msgstr ""
+
+#: src/changes/changes_view.cpp:496
+msgid "file/foldernames"
+msgstr ""
+
+#: src/changes/changes_view.cpp:497
+msgid "Copy all information to clipboard"
+msgstr ""
+
+#: src/changes/changes_view.cpp:503
+#, c++-format
+msgid "column ‘{0}’"
+msgstr ""
+
+#: src/changes/changes_view.cpp:506 src/log/log_actions.cpp:558
+msgid "Copy to clipboard"
+msgstr ""
+
+#: src/changes/changes_view.cpp:553 src/changes/changes_view.cpp:563
+msgid "Open"
+msgstr ""
+
+#: src/changes/changes_view.cpp:554
+#, c++-format
+msgid "Could not get {0} at {1}."
+msgstr ""
+
+#: src/changes/changes_view.cpp:564
+#, c++-format
+msgid "Could not open {0}."
+msgstr ""
+
+#: src/changes/changes_view.cpp:614 src/changes/changes_view.cpp:631
+msgid "Export selection to"
+msgstr ""
+
+#: src/changes/changes_view.cpp:632
+msgid "Some files could not be exported."
+msgstr ""
+
+#: src/changes/changes_view.cpp:642 src/changes/changes_view.cpp:658
+msgid "Save revision to"
+msgstr ""
+
+#: src/changes/changes_view.cpp:659 src/ui/diff_window.cpp:297
+#, c++-format
+msgid "Could not save {0}."
+msgstr ""
+
+#: src/changes/changes_window.cpp:51 src/changes/commit_window.cpp:57
+#: src/changes/file_action_window.cpp:79
+msgid "No working directory found."
+msgstr ""
+
+#: src/changes/changes_window.cpp:115
+msgid "Working Tree"
+msgstr ""
+
+#: src/changes/changes_window.cpp:122
+msgid "Show un_versioned files"
+msgstr ""
+
+#: src/changes/changes_window.cpp:131
+msgid "Show ignore local changes flagged files"
+msgstr ""
+
+#: src/changes/changes_window.cpp:134
+msgid "Show i_gnored files"
+msgstr ""
+
+#: src/changes/changes_window.cpp:138
+msgid "Show all _staged files"
+msgstr ""
+
+#: src/changes/changes_window.cpp:147 src/changes/commit_window.cpp:204
+#: src/log/log_window.cpp:236
+msgid "Show _Whole Project"
+msgstr ""
+
+#: src/changes/changes_window.cpp:162
+msgid "Save unified diff"
+msgstr ""
+
+#: src/changes/changes_window.cpp:163 src/log/log_actions.cpp:948
+#: src/ui/stash_dialog.cpp:25 src/ui/stash_dialog.cpp:45
+msgid "Stash"
+msgstr ""
+
+#: src/changes/changes_window.cpp:165
+msgid "_Refresh"
+msgstr ""
+
+#: src/changes/changes_window.cpp:168 src/changes/file_action_window.cpp:211
+#: src/log/log_window.cpp:257
+msgid "OK"
+msgstr ""
+
+#: src/changes/changes_window.cpp:213
+#, c++-format
+msgid "{0} - Working Tree - Tortilla"
+msgstr ""
+
+#: src/changes/changes_window.cpp:231 src/changes/file_action_window.cpp:280
+msgid "Please wait..."
+msgstr ""
+
+#: src/changes/changes_window.cpp:278
+msgid ""
+"No files to show with the current setting. Check one or more settings below "
+"to see unversioned, ignored and/or unmodified files."
+msgstr ""
+
+#: src/changes/changes_window.cpp:307
+#, c++-format
+msgid ""
+"line: {0}(+) {1}(-)\n"
+"files: normal=0, non-versioned={2}, modified={3}, added={4}, deleted={5}, "
+"conflicted={6}"
+msgstr ""
+
+#: src/changes/changes_window.cpp:347
+msgid "Stash changes"
+msgstr ""
+
+#: src/changes/changes_window.cpp:353 src/changes/changes_window.cpp:356
+#: src/log/log_actions.cpp:284 src/log/log_actions.cpp:957
+msgid "Stash Pop"
+msgstr ""
+
+#: src/changes/changes_window.cpp:359 src/changes/changes_window.cpp:362
+msgid "Stash Apply"
+msgstr ""
+
+#: src/changes/changes_window.cpp:365 src/log/log_actions.cpp:285
+msgid "Stash List"
+msgstr ""
+
+#: src/changes/changes_window.cpp:380
+msgid "HEAD..working tree"
+msgstr ""
+
+#: src/changes/commit_window.cpp:72
+msgid ""
+"git doesn't know who you are: set user.name and user.email (git config --"
+"global)."
+msgstr ""
+
+#: src/changes/commit_window.cpp:125
+msgid "Commit to:"
+msgstr ""
+
+#: src/changes/commit_window.cpp:127
+msgid "new branch"
+msgstr ""
+
+#: src/changes/commit_window.cpp:133
+msgid "new branch name"
+msgstr ""
+
+#: src/changes/commit_window.cpp:142 src/log/log_actions.cpp:596
+msgid "Message:"
+msgstr ""
+
+#: src/changes/commit_window.cpp:145
+msgid "Amend _Last Commit"
+msgstr ""
+
+#: src/changes/commit_window.cpp:150
+msgid "Set author _date"
+msgstr ""
+
+#: src/changes/commit_window.cpp:161
+msgid "Set au_thor"
+msgstr ""
+
+#: src/changes/commit_window.cpp:166
+msgid "Add _Signed-off-by"
+msgstr ""
+
+#: src/changes/commit_window.cpp:170
+msgid "Changes made (F5: refresh, double-click on file for diff):"
+msgstr ""
+
+#: src/changes/commit_window.cpp:173
+msgid "Check:"
+msgstr ""
+
+#: src/changes/commit_window.cpp:174 src/log/log_actions.cpp:539
+#: src/log/log_window.cpp:726 src/log/log_window.cpp:784
+msgid "All"
+msgstr ""
+
+#: src/changes/commit_window.cpp:176 src/remote/push_dialog.cpp:131
+msgid "None"
+msgstr ""
+
+#: src/changes/commit_window.cpp:177
+msgid "Unversioned"
+msgstr ""
+
+#: src/changes/commit_window.cpp:179
+msgid "Versioned"
+msgstr ""
+
+#: src/changes/commit_window.cpp:180 src/changes/file_model.h:34
+msgid "Added"
+msgstr ""
+
+#: src/changes/commit_window.cpp:182
+msgid "Deleted"
+msgstr ""
+
+#: src/changes/commit_window.cpp:185
+msgid "Modified"
+msgstr ""
+
+#: src/changes/commit_window.cpp:187
+msgid "Files"
+msgstr ""
+
+#: src/changes/commit_window.cpp:189
+msgid "Submodules"
+msgstr ""
+
+#: src/changes/commit_window.cpp:196 src/log/log_window.cpp:874
+msgid "Show _Unversioned Files"
+msgstr ""
+
+#: src/changes/commit_window.cpp:215
+msgid "Message onl_y"
+msgstr ""
+
+#: src/changes/commit_window.cpp:228
+msgid "C_ommit"
+msgstr ""
+
+#: src/changes/commit_window.cpp:229 src/changes/file_action_window.cpp:213
+msgid "Cancel"
+msgstr ""
+
+#: src/changes/commit_window.cpp:294
+#, c++-format
+msgid "{0} - Commit - Tortilla"
+msgstr ""
+
+#: src/changes/commit_window.cpp:335
+#, c++-format
+msgid "{0} files selected, {1} files total"
+msgstr ""
+
+#: src/changes/commit_window.cpp:389 src/rebase/rebase_engine.cpp:285
+msgid "One or more files are in a conflicted state."
+msgstr ""
+
+#: src/changes/commit_window.cpp:400 src/remote/clone_dialog.cpp:180
+#, c++-format
+msgid "“{0}” isn't a valid branch name."
+msgstr ""
+
+#: src/changes/commit_window.cpp:432
+#, c++-format
+msgid "Could not write the commit message to {0}."
+msgstr ""
+
+#: src/changes/conflict_editor.cpp:28 src/changes/conflict_editor.cpp:38
+#: src/changes/conflict_editor.cpp:82 src/changes/conflict_editor.cpp:114
+#: src/changes/conflict_editor.cpp:123
+msgid "Edit conflicts"
+msgstr ""
+
+#: src/changes/conflict_editor.cpp:39
+#, c++-format
+msgid ""
+"“{0}” is a submodule: choose a side with Resolve conflict using “mine” or "
+"“theirs”."
+msgstr ""
+
+#: src/changes/conflict_editor.cpp:55 src/changes/conflict_editor.cpp:69
+msgid "Conflict"
+msgstr ""
+
+#: src/changes/conflict_editor.cpp:56
+#, c++-format
+msgid "“{0}” was deleted in {1} and changed in {2}."
+msgstr ""
+
+#: src/changes/conflict_editor.cpp:58
+msgid "Keep the changed file? (No deletes it.)"
+msgstr ""
+
+#: src/changes/conflict_editor.cpp:83
+msgid "No merge tool was found. Choose one in Settings (Diff Viewer)?"
+msgstr ""
+
+#: src/changes/conflict_editor.cpp:115
+#, c++-format
+msgid "Could not start {0}: {1}"
+msgstr ""
+
+#: src/changes/conflict_editor.cpp:124
+#, c++-format
+msgid "Was the merge of “{0}” successful?"
+msgstr ""
+
+#: src/changes/conflict_editor.cpp:126
+msgid "Yes marks it resolved."
+msgstr ""
+
+#: src/changes/file_action_window.cpp:186
+msgid "Select/deselect _all"
+msgstr ""
+
+#: src/changes/file_action_window.cpp:198
+msgid "Include _ignored files"
+msgstr ""
+
+#: src/changes/file_action_window.cpp:200
+msgid "Reminder: Commit your change after resolve"
+msgstr ""
+
+#: src/changes/file_action_window.cpp:252
+#, c++-format
+msgid "{0} - {1} - Tortilla"
+msgstr ""
+
+#: src/changes/file_action_window.cpp:313
+msgid "There is nothing to add."
+msgstr ""
+
+#: src/changes/file_action_window.cpp:314
+msgid "There is nothing to revert."
+msgstr ""
+
+#: src/changes/file_action_window.cpp:315
+msgid "There are no conflicts."
+msgstr ""
+
+#: src/changes/file_action_window.cpp:372
+#, c++-format
+msgid ""
+"Cannot revert renaming of “{0}”. A directory with the old name “{1}” exists."
+msgstr ""
+
+#: src/changes/file_action_window.cpp:399
+msgid "Could not write the list of files to the temporary folder."
+msgstr ""
+
+#: src/changes/file_action_window.cpp:416
+msgid "Add as _Executable (+x)"
+msgstr ""
+
+#: src/changes/file_action_window.cpp:426
+msgid "Add as _Symlink"
+msgstr ""
+
+#: src/changes/file_action_window.cpp:494
+msgid ""
+"The files couldn't be moved to the Recycle Bin first, so reverting can't be "
+"undone. Revert anyway?"
+msgstr ""
+
+#: src/changes/file_model.h:31
+msgid "Path"
+msgstr ""
+
+#: src/changes/file_model.h:32
+msgid "Extension"
+msgstr ""
+
+#: src/changes/file_model.h:33
+msgid "Status"
+msgstr ""
+
+#: src/changes/file_model.h:35
+msgid "Removed"
+msgstr ""
+
+#: src/changes/file_model.h:121
+#, c++-format
+msgid "{0} (from {1})"
+msgstr ""
+
+#: src/changes/file_model.h:160
+msgctxt "status"
+msgid "Added"
+msgstr ""
+
+#: src/changes/file_model.h:161
+msgctxt "status"
+msgid "Deleted"
+msgstr ""
+
+#: src/changes/file_model.h:162
+msgctxt "status"
+msgid "Modified"
+msgstr ""
+
+#: src/changes/file_model.h:163
+msgctxt "status"
+msgid "Renamed"
+msgstr ""
+
+#: src/changes/file_model.h:164
+msgctxt "status"
+msgid "Copied"
+msgstr ""
+
+#: src/changes/file_model.h:165
+msgctxt "status"
+msgid "Type change"
+msgstr ""
+
+#: src/changes/file_model.h:166
+msgctxt "status"
+msgid "Unversioned"
+msgstr ""
+
+#: src/changes/file_model.h:167
+msgctxt "status"
+msgid "Conflicted"
+msgstr ""
+
+#: src/changes/file_model.h:168
+msgctxt "status"
+msgid "Ignored"
+msgstr ""
+
+#: src/changes/file_model.h:169
+msgctxt "status"
+msgid "Skip worktree"
+msgstr ""
+
+#: src/changes/file_model.h:170
+msgctxt "status"
+msgid "Assume unchanged"
+msgstr ""
+
+#: src/git/command.cpp:59 src/git/command.cpp:95 src/git/command.cpp:132
+#, c++-format
+msgid "could not start git: {0}"
+msgstr ""
+
+#: src/git/merge_tool.cpp:173
+#, c++-format
+msgid "“{0}” isn't in conflict."
+msgstr ""
+
+#: src/git/merge_tool.cpp:188
+msgid "Base"
+msgstr ""
+
+#: src/git/merge_tool.cpp:191
+msgid "upstream"
+msgstr ""
+
+#: src/git/merge_tool.cpp:191
+msgid "your branch"
+msgstr ""
+
+#: src/git/merge_tool.cpp:210
+#, c++-format
+msgid "Parent of {0}"
+msgstr ""
+
+#: src/git/merge_tool.cpp:212
+msgid "Theirs"
+msgstr ""
+
+#: src/git/merge_tool.cpp:248 src/git/merge_tool.cpp:257
+#, c++-format
+msgid "Could not write {0}: {1}"
+msgstr ""
+
+#: src/git/ssh_client.cpp:128
+msgid "WSL ssh (experimental)"
+msgstr ""
+
+#: src/log/log_actions.cpp:126
+#, c++-format
+msgid "{0} failed."
+msgstr ""
+
+#: src/log/log_actions.cpp:222
+msgid "C_ommit..."
+msgstr ""
+
+#: src/log/log_actions.cpp:225
+msgid "Abort _Merge"
+msgstr ""
+
+#: src/log/log_actions.cpp:230 src/log/log_model.cpp:638
+#: src/log/log_model.cpp:807 src/log/log_window.cpp:581
+#: src/log/log_window.cpp:587
+msgid "Working tree changes"
+msgstr ""
+
+#: src/log/log_actions.cpp:233 src/log/log_actions.cpp:242
+#: src/log/log_actions.cpp:273
+msgid "_Compare with previous revision"
+msgstr ""
+
+#: src/log/log_actions.cpp:241
+msgid "_Unified diff with"
+msgstr ""
+
+#: src/log/log_actions.cpp:246
+#, c++-format
+msgid "Parent {0}: "
+msgstr ""
+
+#: src/log/log_actions.cpp:280
+msgid "Stash changes..."
+msgstr ""
+
+#: src/log/log_actions.cpp:297 src/remote/pull_fetch_dialog.cpp:363
+#: src/remote/push_dialog.cpp:277
+msgid "F_etch..."
+msgstr ""
+
+#: src/log/log_actions.cpp:300
+msgid "_Clean up..."
+msgstr ""
+
+#: src/log/log_actions.cpp:307
+msgid "Show log..."
+msgstr ""
+
+#: src/log/log_actions.cpp:308
+msgid "_Browse repository"
+msgstr ""
+
+#: src/log/log_actions.cpp:322
+#, c++-format
+msgid "_Merge to {0}..."
+msgstr ""
+
+#: src/log/log_actions.cpp:325
+#, c++-format
+msgid "R_eset {0} to this..."
+msgstr ""
+
+#: src/log/log_actions.cpp:336
+#, c++-format
+msgid "_Switch/Checkout to \"{0}\""
+msgstr ""
+
+#: src/log/log_actions.cpp:340
+msgid "_Switch/Checkout to"
+msgstr ""
+
+#: src/log/log_actions.cpp:347
+msgid "Sw_itch/Checkout to this..."
+msgstr ""
+
+#: src/log/log_actions.cpp:356
+msgid "Create Br_anch at this version..."
+msgstr ""
+
+#: src/log/log_actions.cpp:357
+msgid "Create _Tag at this version..."
+msgstr ""
+
+#: src/log/log_actions.cpp:360
+#, c++-format
+msgid "Rebase {0} onto this...(_G)"
+msgstr ""
+
+#: src/log/log_actions.cpp:362
+msgid "E_xport this version..."
+msgstr ""
+
+#: src/log/log_actions.cpp:370
+#, c++-format
+msgid "Revert the changes made by {0}?"
+msgstr ""
+
+#: src/log/log_actions.cpp:375 src/log/log_actions.cpp:383
+msgid "_Revert change by this commit"
+msgstr ""
+
+#: src/log/log_actions.cpp:377
+#, c++-format
+msgid "Parent {0} ({1})"
+msgstr ""
+
+#: src/log/log_actions.cpp:385
+msgid "Edit _Notes"
+msgstr ""
+
+#: src/log/log_actions.cpp:400
+msgid "_Compare revisions"
+msgstr ""
+
+#: src/log/log_actions.cpp:411 src/log/log_actions.cpp:412
+#: src/log/log_actions.cpp:413
+#, c++-format
+msgid "Show log of {0}"
+msgstr ""
+
+#: src/log/log_actions.cpp:414
+msgid "Comp_are change sets"
+msgstr ""
+
+#: src/log/log_actions.cpp:423
+msgid "_Revert changes by these commits"
+msgstr ""
+
+#: src/log/log_actions.cpp:428
+#, c++-format
+msgid "Revert the changes made by {0} commit?"
+msgid_plural "Revert the changes made by {0} commits?"
+msgstr[0] ""
+msgstr[1] ""
+
+#: src/log/log_actions.cpp:450
+msgid "Com_bine to one commit"
+msgstr ""
+
+#: src/log/log_actions.cpp:455
+msgid "Cherr_y Pick this commit..."
+msgstr ""
+
+#: src/log/log_actions.cpp:456
+msgid "Cherr_y Pick selected commits..."
+msgstr ""
+
+#: src/log/log_actions.cpp:461
+#, c++-format
+msgid "Cherry-pick {0} commit(s) onto the current branch?"
+msgstr ""
+
+#: src/log/log_actions.cpp:462
+msgid "Cherry Pick"
+msgstr ""
+
+#: src/log/log_actions.cpp:465
+msgid "_Format Patch..."
+msgstr ""
+
+#: src/log/log_actions.cpp:521
+#, c++-format
+msgid "_Delete {0}"
+msgstr ""
+
+#: src/log/log_actions.cpp:523 src/log/log_actions.cpp:537
+#, c++-format
+msgid "Delete {0}?"
+msgstr ""
+
+#: src/log/log_actions.cpp:529
+msgid "_Delete branch/tag"
+msgstr ""
+
+#: src/log/log_actions.cpp:543
+#, c++-format
+msgid "Delete {0} ref?"
+msgid_plural "Delete {0} refs?"
+msgstr[0] ""
+msgstr[1] ""
+
+#: src/log/log_actions.cpp:552
+msgid "Collapse revisions"
+msgstr ""
+
+#: src/log/log_actions.cpp:561
+msgid "Full data"
+msgstr ""
+
+#: src/log/log_actions.cpp:562
+msgid "Full commit data without changed paths"
+msgstr ""
+
+#: src/log/log_actions.cpp:563 src/log/log_model.cpp:136
+#: src/log/log_window.cpp:745 src/log/log_window.cpp:773
+#: src/rebase/rebase_model.cpp:45
+msgid "SHA-1"
+msgstr ""
+
+#: src/log/log_actions.cpp:564
+msgid "Authors (full)"
+msgstr ""
+
+#: src/log/log_actions.cpp:565
+msgid "Author names"
+msgstr ""
+
+#: src/log/log_actions.cpp:566
+msgid "Author email addresses"
+msgstr ""
+
+#: src/log/log_actions.cpp:567
+msgid "Subjects"
+msgstr ""
+
+#: src/log/log_actions.cpp:570
+msgid "Tag/branch names"
+msgstr ""
+
+#: src/log/log_actions.cpp:572
+msgid "Search _log messages..."
+msgstr ""
+
+#: src/log/log_actions.cpp:575
+msgid "Show branches this commit is _on"
+msgstr ""
+
+#: src/log/log_actions.cpp:593
+#, c++-format
+msgid "Revision: {0}"
+msgstr ""
+
+#: src/log/log_actions.cpp:594
+#, c++-format
+msgid "Author: {0}"
+msgstr ""
+
+#: src/log/log_actions.cpp:595
+#, c++-format
+msgid "Date: {0}"
+msgstr ""
+
+#: src/log/log_actions.cpp:604
+#, c++-format
+msgid "(from {0})"
+msgstr ""
+
+#: src/log/log_actions.cpp:630
+msgid "Branches"
+msgstr ""
+
+#: src/log/log_actions.cpp:631
+#, c++-format
+msgid "Branches containing {0}:"
+msgstr ""
+
+#: src/log/log_actions.cpp:710
+#, c++-format
+msgid ""
+"Move branch {0}\n"
+"from {1}\n"
+"to {2}?"
+msgstr ""
+
+#: src/log/log_actions.cpp:710
+#, c++-format
+msgid ""
+"Move tag {0}\n"
+"from {1}\n"
+"to {2}?"
+msgstr ""
+
+#: src/log/log_actions.cpp:714
+msgid "Anyone who already fetched the tag keeps the old one."
+msgstr ""
+
+#: src/log/log_actions.cpp:716
+#, c++-format
+msgid "A fast-forward: {0} gains commits and loses none."
+msgstr ""
+
+#: src/log/log_actions.cpp:724
+#, c++-format
+msgid ""
+"{0} will no longer contain {1} commit(s):\n"
+"{2}(They stay reachable from the reflog for a while.)"
+msgstr ""
+
+#: src/log/log_actions.cpp:727
+msgid "some"
+msgstr ""
+
+#: src/log/log_actions.cpp:744
+msgid "Move Branch"
+msgstr ""
+
+#: src/log/log_actions.cpp:744
+msgid "Move Tag"
+msgstr ""
+
+#: src/log/log_actions.cpp:787 src/log/log_actions.cpp:862
+#, c++-format
+msgid "Switch to {0}"
+msgstr ""
+
+#: src/log/log_actions.cpp:788
+#, c++-format
+msgid "What would you like to do with the tag {0}?"
+msgstr ""
+
+#: src/log/log_actions.cpp:789
+#, c++-format
+msgid "_Check out {0} (detached)"
+msgstr ""
+
+#: src/log/log_actions.cpp:790
+msgid ""
+"To look at or build that version; new commits there aren't on any branch."
+msgstr ""
+
+#: src/log/log_actions.cpp:792
+msgid "Create a _branch there and switch to it..."
+msgstr ""
+
+#: src/log/log_actions.cpp:793
+msgid "For working from that version: the new branch starts at the tag."
+msgstr ""
+
+#: src/log/log_actions.cpp:863
+#, c++-format
+msgid ""
+"You have uncommitted changes. What should happen to them when switching to "
+"{0}?"
+msgstr ""
+
+#: src/log/log_actions.cpp:864
+msgid "The stash stays with this commit, ready when you come back."
+msgstr ""
+
+#: src/log/log_actions.cpp:864
+msgid "_Stash them, then switch"
+msgstr ""
+
+#: src/log/log_actions.cpp:866
+msgid "_Bring them along"
+msgstr ""
+
+#: src/log/log_actions.cpp:867
+#, c++-format
+msgid ""
+"Merged into {0} where it differs; conflicts, if any, are left marked in the "
+"files."
+msgstr ""
+
+#: src/log/log_actions.cpp:869
+msgid "Your uncommitted changes are lost. This can't be undone."
+msgstr ""
+
+#: src/log/log_actions.cpp:869
+msgid "_Discard them and switch"
+msgstr ""
+
+#: src/log/log_actions.cpp:907
+msgid "Switch/Checkout failed."
+msgstr ""
+
+#: src/log/log_actions.cpp:949
+#, c++-format
+msgid ""
+"A stash was made here:\n"
+"“{0}”\n"
+"\n"
+"Apply it now?"
+msgstr ""
+
+#: src/log/log_actions.cpp:951
+msgid ""
+"You have uncommitted changes. If the stash changes the same files, git won't "
+"apply it and it stays in the stash list."
+msgstr ""
+
+#: src/log/log_actions.cpp:1010 src/log/log_actions.cpp:1028
+msgid "Reset"
+msgstr ""
+
+#: src/log/log_actions.cpp:1012
+#, c++-format
+msgid "Reset \"{0}\" to {1} {2}"
+msgstr ""
+
+#: src/log/log_actions.cpp:1015
+msgid "Soft: Leave working tree and index untouched"
+msgstr ""
+
+#: src/log/log_actions.cpp:1044 src/rebase/rebase_window.cpp:253
+#: src/rebase/rebase_window.cpp:260 src/rebase/rebase_window.cpp:460
+#: src/rebase/rebase_window.cpp:486 src/rebase/rebase_window.cpp:515
+#: src/rebase/rebase_window.cpp:534 src/remote/pull_fetch_dialog.cpp:388
+msgid "Rebase"
+msgstr ""
+
+#: src/log/log_model.cpp:131
+msgid "Graph"
+msgstr ""
+
+#: src/log/log_model.cpp:132
+msgid "Actions"
+msgstr ""
+
+#: src/log/log_model.cpp:133 src/rebase/rebase_model.cpp:46
+#: src/ui/stash_dialog.cpp:28
+msgid "Message"
+msgstr ""
+
+#: src/log/log_model.cpp:134 src/rebase/rebase_model.cpp:47
+msgid "Author"
+msgstr ""
+
+#: src/log/log_model.cpp:135 src/rebase/rebase_model.cpp:48
+msgid "Date"
+msgstr ""
+
+#: src/log/log_model.cpp:137
+msgid "Email"
+msgstr ""
+
+#: src/log/log_model.cpp:138
+msgid "Commit Name"
+msgstr ""
+
+#: src/log/log_model.cpp:139
+msgid "Commit Email"
+msgstr ""
+
+#: src/log/log_model.cpp:140
+msgid "Commit Date"
+msgstr ""
+
+#: src/log/log_window.cpp:147
+#, c++-format
+msgid "{0} - Log Messages - Tortilla"
+msgstr ""
+
+#: src/log/log_window.cpp:155
+msgid "From:"
+msgstr ""
+
+#: src/log/log_window.cpp:157
+msgid "To:"
+msgstr ""
+
+#: src/log/log_window.cpp:168
+msgid "Filter options"
+msgstr ""
+
+#: src/log/log_window.cpp:169
+msgid "Author Email"
+msgstr ""
+
+#: src/log/log_window.cpp:169
+msgid "Committer Email"
+msgstr ""
+
+#: src/log/log_window.cpp:169
+msgid "Merge Point"
+msgstr ""
+
+#: src/log/log_window.cpp:169
+msgid "Parent 1"
+msgstr ""
+
+#: src/log/log_window.cpp:170
+msgid "Branch (FF)"
+msgstr ""
+
+#: src/log/log_window.cpp:170
+msgid "Parent 2"
+msgstr ""
+
+#: src/log/log_window.cpp:170
+msgid "Tag (FF)"
+msgstr ""
+
+#: src/log/log_window.cpp:171
+msgid "Selection History"
+msgstr ""
+
+#: src/log/log_window.cpp:174
+msgid "Jump up (Alt+Up)"
+msgstr ""
+
+#: src/log/log_window.cpp:178
+msgid "Jump down (Alt+Down)"
+msgstr ""
+
+#: src/log/log_window.cpp:237
+msgid "_All Branches"
+msgstr ""
+
+#: src/log/log_window.cpp:248
+msgid "Filter paths"
+msgstr ""
+
+#: src/log/log_window.cpp:251
+msgid "Refresh"
+msgstr ""
+
+#: src/log/log_window.cpp:251
+msgid "Reload the log (F5)"
+msgstr ""
+
+#: src/log/log_window.cpp:252
+msgid "S_tatistics"
+msgstr ""
+
+#: src/log/log_window.cpp:254
+msgid "Walk Be_havior"
+msgstr ""
+
+#: src/log/log_window.cpp:255
+msgid "_View"
+msgstr ""
+
+#: src/log/log_window.cpp:473
+msgid "Loading…"
+msgstr ""
+
+#: src/log/log_window.cpp:491
+#, c++-format
+msgid "Error: {0}"
+msgstr ""
+
+#: src/log/log_window.cpp:581
+msgid "Fetching status..."
+msgstr ""
+
+#: src/log/log_window.cpp:588
+#, c++-format
+msgid "{0} file changed"
+msgid_plural "{0} files changed"
+msgstr[0] ""
+msgstr[1] ""
+
+#: src/log/log_window.cpp:602
+msgid "SHA-1: "
+msgstr ""
+
+#: src/log/log_window.cpp:603
+msgid "Author: "
+msgstr ""
+
+#: src/log/log_window.cpp:604
+msgid "Date: "
+msgstr ""
+
+#: src/log/log_window.cpp:606
+msgid "Committer: "
+msgstr ""
+
+#: src/log/log_window.cpp:608
+msgid "Parent: "
+msgstr ""
+
+#: src/log/log_window.cpp:665
+#, c++-format
+msgid "Showing {0} revision(s)"
+msgstr ""
+
+#: src/log/log_window.cpp:669
+#, c++-format
+msgid "Showing {0} revision(s), from revision {1} to revision {2}"
+msgstr ""
+
+#: src/log/log_window.cpp:673
+#, c++-format
+msgid "{0} - {1} revision(s) selected, {2} file(s) selected"
+msgstr ""
+
+#: src/log/log_window.cpp:692
+#, c++-format
+msgid ""
+"{0}; line: {1}(+) {2}(-) files: modified = {3} added = {4} deleted = {5} "
+"replaced = {6}"
+msgstr ""
+
+#: src/log/log_window.cpp:702
+msgid "<All Branches>"
+msgstr ""
+
+#: src/log/log_window.cpp:706
+msgid "<No branch>"
+msgstr ""
+
+#: src/log/log_window.cpp:716
+msgid "Browse References"
+msgstr ""
+
+#: src/log/log_window.cpp:735
+msgid "All basic refs"
+msgstr ""
+
+#: src/log/log_window.cpp:736
+msgid "All local branches"
+msgstr ""
+
+#: src/log/log_window.cpp:744 src/log/log_window.cpp:770
+msgid "Paths"
+msgstr ""
+
+#: src/log/log_window.cpp:744 src/log/log_window.cpp:768
+msgid "Subject"
+msgstr ""
+
+#: src/log/log_window.cpp:745 src/log/log_window.cpp:771
+msgid "Authors"
+msgstr ""
+
+#: src/log/log_window.cpp:745 src/log/log_window.cpp:772
+msgid "Emails"
+msgstr ""
+
+#: src/log/log_window.cpp:746 src/log/log_window.cpp:774
+msgid "Refname"
+msgstr ""
+
+#: src/log/log_window.cpp:750
+#, c++-format
+msgid "Filter by {0}"
+msgstr ""
+
+#: src/log/log_window.cpp:776
+msgid "Toggle filters"
+msgstr ""
+
+#: src/log/log_window.cpp:793
+msgid "Use regular expression"
+msgstr ""
+
+#: src/log/log_window.cpp:799
+msgid "Case-sensitive"
+msgstr ""
+
+#: src/log/log_window.cpp:824
+#, c++-format
+msgid "Invalid regular expression: {0}"
+msgstr ""
+
+#: src/log/log_window.cpp:849
+msgid "First Parent"
+msgstr ""
+
+#: src/log/log_window.cpp:850
+msgid "No _merges"
+msgstr ""
+
+#: src/log/log_window.cpp:852
+msgid "_Follow renames"
+msgstr ""
+
+#: src/log/log_window.cpp:853
+msgid "Full history"
+msgstr ""
+
+#: src/log/log_window.cpp:855
+msgid "_Compressed Graph"
+msgstr ""
+
+#: src/log/log_window.cpp:856
+msgid "Show la_beled commits only"
+msgstr ""
+
+#: src/log/log_window.cpp:871
+msgid "H_ide Unrelated Changed Paths"
+msgstr ""
+
+#: src/log/log_window.cpp:872
+msgid "_Gray Unrelated Changed Paths"
+msgstr ""
+
+#: src/log/log_window.cpp:881
+msgid "_Labels"
+msgstr ""
+
+#: src/log/log_window.cpp:882
+msgid "_Local branches"
+msgstr ""
+
+#: src/log/log_window.cpp:882
+msgid "_Tags"
+msgstr ""
+
+#: src/log/log_window.cpp:883
+msgid "Other refs"
+msgstr ""
+
+#: src/log/log_window.cpp:883
+msgid "_Remote branches"
+msgstr ""
+
+#: src/log/log_window.cpp:885
+msgid "View Patch"
+msgstr ""
+
+#: src/log/log_window.cpp:887
+msgid "_Settings..."
+msgstr ""
+
+#: src/log/log_window.cpp:907
+msgid "Reset columns"
+msgstr ""
+
+#: src/log/log_window.cpp:1022
+msgid "No more revisions found."
+msgstr ""
+
+#: src/rebase/rebase_engine.cpp:70 src/rebase/rebase_window.cpp:219
+#: src/rebase/rebase_window.cpp:386
+msgid "Start Rebase"
+msgstr ""
+
+#: src/rebase/rebase_engine.cpp:84
+#, c++-format
+msgid "Fast forward to \"{0}\""
+msgstr ""
+
+#: src/rebase/rebase_engine.cpp:340 src/rebase/rebase_window.cpp:426
+msgid "Finished rebasing."
+msgstr ""
+
+#: src/rebase/rebase_engine.cpp:355 src/rebase/rebase_window.cpp:220
+msgid "Abort"
+msgstr ""
+
+#: src/rebase/rebase_engine.cpp:367
+msgid "Rebase aborted."
+msgstr ""
+
+#: src/rebase/rebase_model.cpp:30
+msgid "Pick"
+msgstr ""
+
+#: src/rebase/rebase_model.cpp:31
+msgid "Squash"
+msgstr ""
+
+#: src/rebase/rebase_model.cpp:32
+msgid "Edit"
+msgstr ""
+
+#: src/rebase/rebase_model.cpp:33
+msgid "Skip"
+msgstr ""
+
+#: src/rebase/rebase_model.cpp:43
+msgid "REBASE"
+msgstr ""
+
+#: src/rebase/rebase_model.cpp:44
+msgid "ID"
+msgstr ""
+
+#: src/rebase/rebase_window.cpp:42
+msgid "cannot rebase in a bare repository"
+msgstr ""
+
+#: src/rebase/rebase_window.cpp:111
+#, c++-format
+msgid "{0} - Rebase - Tortilla"
+msgstr ""
+
+#: src/rebase/rebase_window.cpp:115
+msgid "Branch:"
+msgstr ""
+
+#: src/rebase/rebase_window.cpp:120
+msgid "Swap branch and upstream"
+msgstr ""
+
+#: src/rebase/rebase_window.cpp:134
+msgid "Upstream:"
+msgstr ""
+
+#: src/rebase/rebase_window.cpp:141
+msgid "_Onto"
+msgstr ""
+
+#: src/rebase/rebase_window.cpp:159 src/rebase/rebase_window.cpp:669
+msgid "_Pick ALL"
+msgstr ""
+
+#: src/rebase/rebase_window.cpp:161
+msgid "_Up"
+msgstr ""
+
+#: src/rebase/rebase_window.cpp:162
+msgid "_Down"
+msgstr ""
+
+#: src/rebase/rebase_window.cpp:164
+msgid "_Add"
+msgstr ""
+
+#: src/rebase/rebase_window.cpp:165
+msgid "_Preserve merges"
+msgstr ""
+
+#: src/rebase/rebase_window.cpp:168
+msgid ""
+"Include merge commits. Reordering commits with merges does not work properly."
+msgstr ""
+
+#: src/rebase/rebase_window.cpp:170
+msgid "_Force Rebase"
+msgstr ""
+
+#: src/rebase/rebase_window.cpp:173
+msgid ""
+"Force the rebase even if the current branch is a descendant of the commit "
+"you are rebasing onto."
+msgstr ""
+
+#: src/rebase/rebase_window.cpp:177
+msgid "Revision Files"
+msgstr ""
+
+#: src/rebase/rebase_window.cpp:182
+msgid "Conflict Files"
+msgstr ""
+
+#: src/rebase/rebase_window.cpp:187
+msgid "Commit Message"
+msgstr ""
+
+#: src/rebase/rebase_window.cpp:190 src/ui/settings_dialog.cpp:127
+msgid "Log"
+msgstr ""
+
+#: src/rebase/rebase_window.cpp:209
+msgid "Show log"
+msgstr ""
+
+#: src/rebase/rebase_window.cpp:222
+msgid "Recover to the status before rebase"
+msgstr ""
+
+#: src/rebase/rebase_window.cpp:224
+msgid "Help"
+msgstr ""
+
+#: src/rebase/rebase_window.cpp:244
+#, c++-format
+msgid "Rebasing... ({0}/{1})"
+msgstr ""
+
+#: src/rebase/rebase_window.cpp:261
+msgid "Cherry-pick failed. Skip this commit?"
+msgstr ""
+
+#: src/rebase/rebase_window.cpp:297
+msgid "Please select branch"
+msgstr ""
+
+#: src/rebase/rebase_window.cpp:299
+msgid "Please select upstream"
+msgstr ""
+
+#: src/rebase/rebase_window.cpp:301
+#, c++-format
+msgid "No need to rebase: \"{0}\" equals \"{1}\""
+msgstr ""
+
+#: src/rebase/rebase_window.cpp:305
+#, c++-format
+msgid "Branch \"{0}\" is behind \"{1}\": \"{0}\" will fast-forward to \"{1}\""
+msgstr ""
+
+#: src/rebase/rebase_window.cpp:310
+#, c++-format
+msgid ""
+"Current branch \"{0}\" is up to date. To rebase anyway, check \"Force "
+"Rebase\" below."
+msgstr ""
+
+#: src/rebase/rebase_window.cpp:316
+msgid "Nothing to Rebase"
+msgstr ""
+
+#: src/rebase/rebase_window.cpp:337
+msgid "Please take a look at the skipped commits"
+msgstr ""
+
+#: src/rebase/rebase_window.cpp:339
+#, c++-format
+msgid "{0} commit to rebase onto {1}"
+msgid_plural "{0} commits to rebase onto {1}"
+msgstr[0] ""
+msgstr[1] ""
+
+#: src/rebase/rebase_window.cpp:383
+msgid "Continue"
+msgstr ""
+
+#: src/rebase/rebase_window.cpp:386
+msgid "Start (FastFwd)"
+msgstr ""
+
+#: src/rebase/rebase_window.cpp:389
+msgid "Amend"
+msgstr ""
+
+#: src/rebase/rebase_window.cpp:390
+msgid "Done"
+msgstr ""
+
+#: src/rebase/rebase_window.cpp:411
+msgid "Conflict: resolve the files, then press Commit"
+msgstr ""
+
+#: src/rebase/rebase_window.cpp:417
+msgid "Edit the commit, then press Amend"
+msgstr ""
+
+#: src/rebase/rebase_window.cpp:418
+msgid "Edit the squashed message, then press Commit"
+msgstr ""
+
+#: src/rebase/rebase_window.cpp:421
+msgid "The rebase stopped with an error; see the Log tab, then Abort"
+msgstr ""
+
+#: src/rebase/rebase_window.cpp:461
+msgid "Your changes were stashed before the rebase. Pop the stash now?"
+msgstr ""
+
+#: src/rebase/rebase_window.cpp:487
+msgid "Git doesn't know who you are, so it can't create commits."
+msgstr ""
+
+#: src/rebase/rebase_window.cpp:488
+msgid ""
+"Set your name and email, for example:\n"
+"git config --global user.name \"Your Name\"\n"
+"git config --global user.email you@example.com"
+msgstr ""
+
+#: src/rebase/rebase_window.cpp:516
+msgid "The working tree has local changes. Stash them and start the rebase?"
+msgstr ""
+
+#: src/rebase/rebase_window.cpp:535
+msgid "Are you sure you want to abort the rebase process?"
+msgstr ""
+
+#: src/rebase/rebase_window.cpp:634
+msgid "_Pick"
+msgstr ""
+
+#: src/rebase/rebase_window.cpp:636
+msgid "_Squash (with commit below)"
+msgstr ""
+
+#: src/rebase/rebase_window.cpp:639 src/ui/diff_window.cpp:140
+msgid "_Edit"
+msgstr ""
+
+#: src/rebase/rebase_window.cpp:641
+msgid "S_kip"
+msgstr ""
+
+#: src/rebase/rebase_window.cpp:647
+msgid "Copy SHA-1 to clipboard"
+msgstr ""
+
+#: src/rebase/rebase_window.cpp:670
+msgid "_Squash ALL"
+msgstr ""
+
+#: src/rebase/rebase_window.cpp:671
+msgid "_Edit ALL"
+msgstr ""
+
+#: src/rebase/rebase_window.cpp:672
+msgid "S_kip unselected"
+msgstr ""
+
+#: src/rebase/rebase_window.cpp:673
+msgid "S_quash unselected"
+msgstr ""
+
+#: src/rebase/rebase_window.cpp:674
+msgid "E_dit unselected"
+msgstr ""
+
+#: src/remote/clone_dialog.cpp:75
+msgid "Git clone - Tortilla"
+msgstr ""
+
+#: src/remote/clone_dialog.cpp:78
+msgid "Clone Existing Repository"
+msgstr ""
+
+#: src/remote/clone_dialog.cpp:81 src/remote/pull_fetch_dialog.cpp:159
+#: src/remote/push_dialog.cpp:112
+msgid "URL"
+msgstr ""
+
+#: src/remote/clone_dialog.cpp:83
+msgid "Directory"
+msgstr ""
+
+#: src/remote/clone_dialog.cpp:86
+msgid "Bro_wse..."
+msgstr ""
+
+#: src/remote/clone_dialog.cpp:91
+msgid "Clone into"
+msgstr ""
+
+#: src/remote/clone_dialog.cpp:104 src/remote/pull_fetch_dialog.cpp:186
+msgid "Depth"
+msgstr ""
+
+#: src/remote/clone_dialog.cpp:106
+msgid "Recursive"
+msgstr ""
+
+#: src/remote/clone_dialog.cpp:109
+msgid "Clone into Bare Repo"
+msgstr ""
+
+#: src/remote/clone_dialog.cpp:111
+msgid "No Checkout"
+msgstr ""
+
+#: src/remote/clone_dialog.cpp:119
+msgid "Origin Name"
+msgstr ""
+
+#: src/remote/clone_dialog.cpp:175 src/remote/clone_dialog.cpp:220
+msgid "Clone"
+msgstr ""
+
+#: src/remote/clone_dialog.cpp:177
+msgid "URL and directory must not be empty."
+msgstr ""
+
+#: src/remote/clone_dialog.cpp:182
+msgid "Enter the origin's name."
+msgstr ""
+
+#: src/remote/clone_dialog.cpp:212
+msgid "E_xplore to"
+msgstr ""
+
+#: src/remote/pull_fetch_dialog.cpp:29 src/remote/push_dialog.cpp:20
+msgid "Arbitrary URL..."
+msgstr ""
+
+#: src/remote/pull_fetch_dialog.cpp:30 src/remote/push_dialog.cpp:21
+msgid "- all -"
+msgstr ""
+
+#: src/remote/pull_fetch_dialog.cpp:80
+msgid "Pull needs a working tree."
+msgstr ""
+
+#: src/remote/pull_fetch_dialog.cpp:153
+#, c++-format
+msgid "{0} - Fetch - Tortilla"
+msgstr ""
+
+#: src/remote/pull_fetch_dialog.cpp:153
+#, c++-format
+msgid "{0} - Pull - Tortilla"
+msgstr ""
+
+#: src/remote/pull_fetch_dialog.cpp:155 src/remote/pull_fetch_dialog.cpp:157
+#: src/remote/push_dialog.cpp:110
+msgid "Remote"
+msgstr ""
+
+#: src/remote/pull_fetch_dialog.cpp:160 src/remote/push_dialog.cpp:105
+msgid "Remote branch"
+msgstr ""
+
+#: src/remote/pull_fetch_dialog.cpp:191 src/remote/pull_fetch_dialog.cpp:192
+#: src/remote/pull_fetch_dialog.cpp:222 src/remote/push_dialog.cpp:129
+msgid "Default"
+msgstr ""
+
+#: src/remote/pull_fetch_dialog.cpp:191
+msgid "Tags"
+msgstr ""
+
+#: src/remote/pull_fetch_dialog.cpp:192
+msgid "Prune"
+msgstr ""
+
+#: src/remote/pull_fetch_dialog.cpp:194
+msgid "_Launch Rebase After Fetch"
+msgstr ""
+
+#: src/remote/pull_fetch_dialog.cpp:216
+msgid "Default (none)"
+msgstr ""
+
+#: src/remote/pull_fetch_dialog.cpp:217
+msgid "Default (all)"
+msgstr ""
+
+#: src/remote/pull_fetch_dialog.cpp:218
+msgid "Default (reachable)"
+msgstr ""
+
+#: src/remote/pull_fetch_dialog.cpp:219
+msgid "All (--tags)"
+msgstr ""
+
+#: src/remote/pull_fetch_dialog.cpp:219
+msgid "None (--no-tags)"
+msgstr ""
+
+#: src/remote/pull_fetch_dialog.cpp:223 src/remote/push_dialog.cpp:130
+#, c++-format
+msgid "Default ({0})"
+msgstr ""
+
+#: src/remote/pull_fetch_dialog.cpp:224
+msgid "Don't prune (--no-prune)"
+msgstr ""
+
+#: src/remote/pull_fetch_dialog.cpp:224
+msgid "Prune (--prune)"
+msgstr ""
+
+#: src/remote/pull_fetch_dialog.cpp:242
+msgid "Fetch"
+msgstr ""
+
+#: src/remote/pull_fetch_dialog.cpp:242 src/remote/pull_fetch_dialog.cpp:252
+msgid "Pull"
+msgstr ""
+
+#: src/remote/pull_fetch_dialog.cpp:243
+msgid "Choose a remote."
+msgstr ""
+
+#: src/remote/pull_fetch_dialog.cpp:243
+msgid "Enter the URL to pull from."
+msgstr ""
+
+#: src/remote/pull_fetch_dialog.cpp:253
+msgid "You asked to pull, but did not specify a remote branch."
+msgstr ""
+
+#: src/remote/pull_fetch_dialog.cpp:319
+msgid "Pulled _Diff"
+msgstr ""
+
+#: src/remote/pull_fetch_dialog.cpp:331
+msgid "Pulled _Log"
+msgstr ""
+
+#: src/remote/pull_fetch_dialog.cpp:354
+msgid "_Rebase..."
+msgstr ""
+
+#: src/remote/pull_fetch_dialog.cpp:375
+#, c++-format
+msgid "{0} - Fetch"
+msgstr ""
+
+#: src/remote/pull_fetch_dialog.cpp:375
+#, c++-format
+msgid "{0} - Pull"
+msgstr ""
+
+#: src/remote/pull_fetch_dialog.cpp:389
+msgid ""
+"Current branch is up to date or newer than the fetched branch. Open rebase "
+"anyway?"
+msgstr ""
+
+#: src/remote/push_dialog.cpp:92
+#, c++-format
+msgid "{0} - Push - Tortilla"
+msgstr ""
+
+#: src/remote/push_dialog.cpp:95
+msgid "Ref"
+msgstr ""
+
+#: src/remote/push_dialog.cpp:97
+msgid "_Push all branches"
+msgstr ""
+
+#: src/remote/push_dialog.cpp:101
+msgid "Local"
+msgstr ""
+
+#: src/remote/push_dialog.cpp:108
+msgid "Destination"
+msgstr ""
+
+#: src/remote/push_dialog.cpp:117
+msgid "Force _with lease"
+msgstr ""
+
+#: src/remote/push_dialog.cpp:121
+msgid "Include _Tags"
+msgstr ""
+
+#: src/remote/push_dialog.cpp:125
+msgid "_Set upstream/track remote branch"
+msgstr ""
+
+#: src/remote/push_dialog.cpp:127
+msgid "Recurse submodules"
+msgstr ""
+
+#: src/remote/push_dialog.cpp:131
+msgid "Check"
+msgstr ""
+
+#: src/remote/push_dialog.cpp:131
+msgid "On demand"
+msgstr ""
+
+#: src/remote/push_dialog.cpp:134
+msgid "Push option"
+msgstr ""
+
+#: src/remote/push_dialog.cpp:182 src/remote/push_dialog.cpp:190
+#: src/remote/push_dialog.cpp:203
+msgid "Push"
+msgstr ""
+
+#: src/remote/push_dialog.cpp:183
+msgid "Enter the URL to push to."
+msgstr ""
+
+#: src/remote/push_dialog.cpp:191
+msgid "Do you really want to push all local branches?"
+msgstr ""
+
+#: src/remote/push_dialog.cpp:205
+msgid ""
+"Local and remote branch are empty.\n"
+"Continue?"
+msgstr ""
+
+#: src/remote/push_dialog.cpp:206
+msgid ""
+"This results in a remote removal.\n"
+"Continue?"
+msgstr ""
+
+#: src/remote/push_dialog.cpp:282
+#, c++-format
+msgid "{0} - Push"
+msgstr ""
+
+#: src/ui/compare.cpp:25
+msgid "working tree"
+msgstr ""
+
+#: src/ui/compare.cpp:40
+msgid "Choose one on the Diff Viewer page of the Settings."
+msgstr ""
+
+#: src/ui/compare.cpp:65
+msgid "git has no diff tool configured (diff.tool)."
+msgstr ""
+
+#: src/ui/compare.cpp:82
+msgid "No diff program is set."
+msgstr ""
+
+#: src/ui/compare.cpp:97
+msgid "The diff tool failed."
+msgstr ""
+
+#: src/ui/diff_window.cpp:96 src/ui/progress_dialog.cpp:210
+#, c++-format
+msgid "{0} - Tortilla"
+msgstr ""
+
+#: src/ui/diff_window.cpp:100
+msgid "Find:"
+msgstr ""
+
+#: src/ui/diff_window.cpp:110
+msgid "_Previous"
+msgstr ""
+
+#: src/ui/diff_window.cpp:111
+msgid "_Next"
+msgstr ""
+
+#: src/ui/diff_window.cpp:112
+msgid "Match _case"
+msgstr ""
+
+#: src/ui/diff_window.cpp:127
+msgid "_File"
+msgstr ""
+
+#: src/ui/diff_window.cpp:131
+msgid "_Save As..."
+msgstr ""
+
+#: src/ui/diff_window.cpp:135
+msgid "_Close"
+msgstr ""
+
+#: src/ui/diff_window.cpp:146
+msgid "_Find..."
+msgstr ""
+
+#: src/ui/diff_window.cpp:149
+msgid "Find _Next"
+msgstr ""
+
+#: src/ui/diff_window.cpp:153
+msgid "Find _Previous"
+msgstr ""
+
+#: src/ui/diff_window.cpp:233
+msgid "Not found"
+msgstr ""
+
+#: src/ui/diff_window.cpp:261
+#, c++-format
+msgid "{0} of {1}"
+msgstr ""
+
+#: src/ui/diff_window.cpp:268 src/ui/diff_window.cpp:296
+msgid "Save Diff"
+msgstr ""
+
+#: src/ui/diff_window.cpp:273
+msgid "All files"
+msgstr ""
+
+#: src/ui/diff_window.cpp:273
+msgid "Patches (*.patch, *.diff)"
+msgstr ""
+
+#: src/ui/progress_dialog.cpp:116
+#, c++-format
+msgid "Failed ({0} ms @ {1})"
+msgstr ""
+
+#: src/ui/progress_dialog.cpp:116
+#, c++-format
+msgid "Success ({0} ms @ {1})"
+msgstr ""
+
+#: src/ui/progress_dialog.cpp:202
+msgid "_Abort"
+msgstr ""
+
+#: src/ui/settings_dialog.cpp:105
+#, c++-format
+msgid "System default ({0})"
+msgstr ""
+
+#: src/ui/settings_dialog.cpp:121 src/ui/settings_dialog.cpp:123
+msgid "Language"
+msgstr ""
+
+#: src/ui/settings_dialog.cpp:124
+msgid "Applies the next time Tortilla starts."
+msgstr ""
+
+#: src/ui/settings_dialog.cpp:129
+msgid "Action icons"
+msgstr ""
+
+#: src/ui/settings_dialog.cpp:131
+msgid "Bevelled"
+msgstr ""
+
+#: src/ui/settings_dialog.cpp:131
+msgid "Classic"
+msgstr ""
+
+#: src/ui/settings_dialog.cpp:131
+msgid "Glyphs"
+msgstr ""
+
+#: src/ui/settings_dialog.cpp:131
+msgid "Line"
+msgstr ""
+
+#: src/ui/settings_dialog.cpp:211
+#, c++-format
+msgid "{0} (not yet in Tortilla)"
+msgstr ""
+
+#: src/ui/settings_dialog.cpp:235
+msgid "Submenu"
+msgstr ""
+
+#: src/ui/settings_dialog.cpp:235
+msgid "Top level"
+msgstr ""
+
+#: src/ui/settings_dialog.cpp:236
+msgid "Hidden"
+msgstr ""
+
+#: src/ui/settings_dialog.cpp:236
+msgid "With Shift"
+msgstr ""
+
+#: src/ui/settings_dialog.cpp:241
+msgid "Bisect"
+msgstr ""
+
+#: src/ui/settings_dialog.cpp:242
+msgid "Merge, Abort Merge"
+msgstr ""
+
+#: src/ui/settings_dialog.cpp:293
+msgid ""
+"Top-level entries appear directly in the file manager's context menu, with\n"
+"\"Git\" before them; the rest are in its Tortilla submenu. Greyed entries\n"
+"aren't in Tortilla yet."
+msgstr ""
+
+#: src/ui/settings_dialog.cpp:298
+msgid "Entry"
+msgstr ""
+
+#: src/ui/settings_dialog.cpp:299
+msgid "Shows"
+msgstr ""
+
+#: src/ui/settings_dialog.cpp:307
+msgid "Selected entries show:"
+msgstr ""
+
+#: src/ui/settings_dialog.cpp:319
+msgid "Restore defaults"
+msgstr ""
+
+#: src/ui/settings_dialog.cpp:330
+msgid "Hide the menu outside repositories (Shift shows it)"
+msgstr ""
+
+#: src/ui/settings_dialog.cpp:333
+msgid ""
+"No menu for these paths, one a line (end one with \\ for a folder and all in "
+"it,\n"
+"or with * for every path that starts so):"
+msgstr ""
+
+#: src/ui/settings_dialog.cpp:346
+msgid "Tortilla's unified diff viewer"
+msgstr ""
+
+#: src/ui/settings_dialog.cpp:347
+msgid "git difftool (no diff.tool configured)"
+msgstr ""
+
+#: src/ui/settings_dialog.cpp:348
+#, c++-format
+msgid "git difftool (diff.tool: {0})"
+msgstr ""
+
+#: src/ui/settings_dialog.cpp:350 src/ui/settings_dialog.cpp:379
+#: src/ui/settings_dialog.cpp:449
+msgid "Custom..."
+msgstr ""
+
+#: src/ui/settings_dialog.cpp:397
+msgid "Comparing revisions"
+msgstr ""
+
+#: src/ui/settings_dialog.cpp:400
+msgid "Compare with"
+msgstr ""
+
+#: src/ui/settings_dialog.cpp:402 src/ui/settings_dialog.cpp:419
+#: src/ui/settings_dialog.cpp:481
+msgid "Command"
+msgstr ""
+
+#: src/ui/settings_dialog.cpp:404
+#, c-format
+msgid "program %base %mine"
+msgstr ""
+
+#: src/ui/settings_dialog.cpp:407
+msgid ""
+"%base and %mine are the two sides compared: folders when a whole commit is\n"
+"compared. %bname and %yname are their names. Without placeholders the two\n"
+"sides go at the end of the command."
+msgstr ""
+
+#: src/ui/settings_dialog.cpp:413
+msgid "Resolving conflicts"
+msgstr ""
+
+#: src/ui/settings_dialog.cpp:416
+msgid "Merge with"
+msgstr ""
+
+#: src/ui/settings_dialog.cpp:423
+msgid "program %base %theirs %mine %merged"
+msgstr ""
+
+#: src/ui/settings_dialog.cpp:426
+msgid ""
+"%base, %theirs and %mine are the conflict's three sides and %merged the file "
+"to save;\n"
+"%bname, %tname, %yname and %mname their titles. Without placeholders the "
+"four\n"
+"files go at the end."
+msgstr ""
+
+#: src/ui/settings_dialog.cpp:446
+msgid "git's own (ssh)"
+msgstr ""
+
+#: src/ui/settings_dialog.cpp:447
+#, c++-format
+msgid "git's own ({0})"
+msgstr ""
+
+#: src/ui/settings_dialog.cpp:476 src/ui/settings_dialog.cpp:479
+msgid "SSH client"
+msgstr ""
+
+#: src/ui/settings_dialog.cpp:486
+msgid ""
+"Run for each remote as git's GIT_SSH_COMMAND: git adds the host and the\n"
+"command to run there. plink and TortoiseGitPlink are known by their names."
+msgstr ""
+
+#: src/ui/settings_dialog.cpp:492
+msgid ""
+"\n"
+"Git for Windows rewrites absolute Linux paths (/...) in it: for WSL ssh,\n"
+"write them from home (~/...)."
+msgstr ""
+
+#: src/ui/settings_dialog.cpp:499
+msgid ""
+"Used by the git Tortilla runs (fetch, pull, push, clone); the repository's\n"
+"core.sshCommand applies only with git's own."
+msgstr ""
+
+#: src/ui/settings_dialog.cpp:523
+msgid "Settings - Tortilla"
+msgstr ""
+
+#: src/ui/settings_dialog.cpp:527
+msgid "General"
+msgstr ""
+
+#: src/ui/settings_dialog.cpp:528
+msgid "Context Menu"
+msgstr ""
+
+#: src/ui/settings_dialog.cpp:530
+msgid "Diff Viewer"
+msgstr ""
+
+#: src/ui/settings_dialog.cpp:532
+msgid "Network"
+msgstr ""
+
+#: src/ui/stash_dialog.cpp:28
+msgid "optional"
+msgstr ""
+
+#: src/ui/stash_dialog.cpp:29
+msgid "Include _untracked files"
+msgstr ""

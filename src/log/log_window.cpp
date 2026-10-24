@@ -1,5 +1,6 @@
 #include "log_window.h"
 
+#include "i18n.h"
 #include "settings.h"
 #include "ui/menu_text.h"
 #include "ui/settings_dialog.h"
@@ -143,7 +144,7 @@ void log_window::build()
     title = rap::sys::path_to_utf8(rap::sys::path_from_utf8(title).make_preferred());
 
     window_ = ui_.create(window{
-        title + " - Log Messages - Tortilla",
+        rap::i18n::format(_("{0} - Log Messages - Tortilla"), title),
         {vbox{
             // Filter bar [spec 1.2, row 1]
             hbox{
@@ -151,9 +152,9 @@ void log_window::build()
                     .bind(ref_button_)
                     .on_menu([this] { return ref_menu(); })
                     .width(22_ch),
-                label{"From:"},
+                label{_("From:")},
                 date_picker{}.bind(from_).on_changed([this](a::date) { dates_changed(); }),
-                label{"To:"},
+                label{_("To:")},
                 date_picker{}.bind(to_).on_changed([this](a::date) { dates_changed(); }),
                 entry{}
                     .bind(search_)
@@ -164,16 +165,17 @@ void log_window::build()
                 menu_button{""}
                     .icon(rap::icon::named("edit-find-symbolic"))
                     .on_menu([this] { return filter_menu(); })
-                    .tooltip("Filter options"),
-                drop_down{{"Author Email", "Committer Email", "Merge Point", "Parent 1", "Parent 2",
-                           "Tag", "Tag (FF)", "Branch", "Branch (FF)", "Selection History"},
+                    .tooltip(_("Filter options")),
+                drop_down{{_("Author Email"), _("Committer Email"), _("Merge Point"), _("Parent 1"),
+                           _("Parent 2"), _("Tag"), _("Tag (FF)"), _("Branch"), _("Branch (FF)"),
+                           _("Selection History")},
                           0}
                     .bind(jump_type_),
-                button{"Jump up (Alt+Up)"}
+                button{_("Jump up (Alt+Up)")}
                     .icon(jump_arrow(true))
                     .icon_only()
                     .on_click([this] { jump(true); }),
-                button{"Jump down (Alt+Down)"}
+                button{_("Jump down (Alt+Down)")}
                     .icon(jump_arrow(false))
                     .icon_only()
                     .on_click([this] { jump(false); }),
@@ -231,8 +233,8 @@ void log_window::build()
             hbox{
                 vbox{
                     // TODO: enabled once the log can be opened for a path.
-                    check{"Show _Whole Project"}.enabled(false),
-                    check{"_All Branches"}
+                    check{_("Show _Whole Project")}.enabled(false),
+                    check{_("_All Branches")}
                         .bind(all_branches_)
                         .on_toggled(
                             [this](bool)
@@ -243,16 +245,16 @@ void log_window::build()
                             }),
                 },
                 // TODO: path filter.
-                entry{}.placeholder("   Filter paths").enabled(false).stretch(),
+                entry{}.placeholder(std::string("   ") + _("Filter paths")).enabled(false).stretch(),
             },
             hbox{
-                button{"Refresh"}.tooltip("Reload the log (F5)").on_click([this] { reload(); }),
-                button{"S_tatistics"}.bind(statistics_).enabled(false),
+                button{_("Refresh")}.tooltip(_("Reload the log (F5)")).on_click([this] { reload(); }),
+                button{_("S_tatistics")}.bind(statistics_).enabled(false),
                 progress_bar{}.bind(progress_).stretch(),
-                menu_button{"Walk Be_havior"}.bind(walk_).on_menu([this] { return walk_menu(); }),
-                menu_button{"_View"}.bind(view_).on_menu([this] { return view_menu(); }),
+                menu_button{_("Walk Be_havior")}.bind(walk_).on_menu([this] { return walk_menu(); }),
+                menu_button{_("_View")}.bind(view_).on_menu([this] { return view_menu(); }),
                 spacer{},
-                button{"OK"}.on_click(
+                button{_("OK")}.on_click(
                     [this]
                     {
                         save_layout();
@@ -468,7 +470,7 @@ void log_window::reload()
     view_->set_visible(false);
     progress_->set_visible(true);
     pulse_timer_ = ui_.timer(100, true, [this] { progress_->pulse(); });
-    status_->set_text("Loading…");
+    status_->set_text(_("Loading…"));
 
     walk_options opts = walk_options_;
     opts.since = since_;
@@ -486,7 +488,7 @@ void log_window::loaded(const std::string& error)
     view_->set_visible(true);
     if (!error.empty())
     {
-        status_->set_text("Error: " + error);
+        status_->set_text(rap::i18n::format(_("Error: {0}"), error));
         return;
     }
 
@@ -576,13 +578,14 @@ void log_window::show_commit(size_t row)
         // [spec 1.8]: "Fetching Status..." until the status arrives.
         if (!log_.working_tree_known())
         {
-            details_->set_text("Working tree changes\n\nFetching status...");
+            details_->set_text(std::string(_("Working tree changes")) + "\n\n" + _("Fetching status..."));
             files_.set_source({.what = changes_source::working_tree});
             files_.clear();
             return;
         }
-        details_->set_text("Working tree changes\n\n" +
-                           std::to_string(log_.working_tree_files().size()) + " files changed");
+        const size_t changed = log_.working_tree_files().size();
+        details_->set_text(std::string(_("Working tree changes")) + "\n\n" +
+                           rap::i18n::format(N_("{0} file changed", "{0} files changed", changed), changed));
         files_.set_source({.what = changes_source::working_tree});
         files_.set_files(log_.working_tree_files(), show_unversioned_);
         return;
@@ -596,13 +599,13 @@ void log_window::show_commit(size_t row)
         spans.push_back({text.size(), text.size() + label.size(), {.bold = true}});
         text += label + value + "\n";
     };
-    line("SHA-1: ", c.id.hex());
-    line("Author: ", c.author + " <" + c.email + ">");
-    line("Date: ", format_time(c.time, c.offset_minutes));
+    line(_("SHA-1: "), c.id.hex());
+    line(_("Author: "), c.author + " <" + c.email + ">");
+    line(_("Date: "), format_time(c.time, c.offset_minutes));
     if (c.committer != c.author || c.commit_time != c.time)
-        line("Committer: ", c.committer + " <" + c.committer_email + "> " +
+        line(_("Committer: "), c.committer + " <" + c.committer_email + "> " +
                                 format_time(c.commit_time, c.commit_offset_minutes));
-    for (auto& p : c.parents) line("Parent: ", p.hex());
+    for (auto& p : c.parents) line(_("Parent: "), p.hex());
     text += "\n" + c.message;
     details_->set_text(text, spans);
     show_avatar(c.email);
@@ -659,16 +662,16 @@ void log_window::update_status()
 {
     if (log_.loading()) return;
     size_t n = log_.commit_rows();
-    std::string s = "Showing " + std::to_string(n) + " revision(s)";
+    std::string s = rap::i18n::format(_("Showing {0} revision(s)"), n);
     if (n)
     {
         size_t first = log_.row_count() - n;
-        s += ", from revision " + log_.commit(log_.row_count() - 1)->id.hex(8) + " to revision " +
-             log_.commit(first)->id.hex(8);
+        s = rap::i18n::format(_("Showing {0} revision(s), from revision {1} to revision {2}"), n,
+                              log_.commit(log_.row_count() - 1)->id.hex(8), log_.commit(first)->id.hex(8));
     }
     auto sel = commit_list_->selection();
-    s += " - " + std::to_string(sel.size()) + " revision(s) selected, " +
-         std::to_string(files_.selection().size()) + " file(s) selected";
+    s = rap::i18n::format(_("{0} - {1} revision(s) selected, {2} file(s) selected"), s, sel.size(),
+                          files_.selection().size());
     if (sel.size() == 1)
     {
         size_t added = 0, removed = 0, mod = 0, add = 0, del = 0, ren = 0;
@@ -685,9 +688,9 @@ void log_window::update_status()
             default: ++mod;
             }
         }
-        s += "; line: " + std::to_string(added) + "(+) " + std::to_string(removed) +
-             "(-) files: modified = " + std::to_string(mod) + " added = " + std::to_string(add) +
-             " deleted = " + std::to_string(del) + " replaced = " + std::to_string(ren);
+        s = rap::i18n::format(
+            _("{0}; line: {1}(+) {2}(-) files: modified = {3} added = {4} deleted = {5} replaced = {6}"), s,
+            added, removed, mod, add, del, ren);
     }
     status_->set_text(s);
 }
@@ -696,11 +699,11 @@ void log_window::update_status()
 void log_window::update_ref_button()
 {
     if (walk_options_.all_branches)
-        ref_button_->set_text("<All Branches>");
+        ref_button_->set_text(_("<All Branches>"));
     else
     {
         std::string head = repo_.head_name();
-        ref_button_->set_text(head == "HEAD" ? "<No branch>" : head);
+        ref_button_->set_text(head == "HEAD" ? _("<No branch>") : head);
     }
 }
 
@@ -710,7 +713,7 @@ rap::menu log_window::ref_menu()
 {
     std::string head = repo_.head_name();
     return {
-        {.label = "Browse References", .enabled = false},
+        {.label = _("Browse References"), .enabled = false},
         {.label = head == "HEAD" ? "HEAD" : "HEAD -> \"" + menu_text(head) + "\"",
          .action =
              [this]
@@ -720,7 +723,7 @@ rap::menu log_window::ref_menu()
              update_ref_button();
              reload();
          }},
-        {.label = "All",
+        {.label = _("All"),
          .action =
              [this]
          {
@@ -729,8 +732,8 @@ rap::menu log_window::ref_menu()
              update_ref_button();
              reload();
          }},
-        {.label = "All basic refs", .enabled = false},
-        {.label = "All local branches", .enabled = false},
+        {.label = _("All basic refs"), .enabled = false},
+        {.label = _("All local branches"), .enabled = false},
     };
 }
 
@@ -738,13 +741,13 @@ rap::menu log_window::ref_menu()
 std::string log_window::filter_cue() const
 {
     static const std::pair<unsigned, const char*> fields[] = {
-        {filter_subject, "Subject"}, {filter_messages, "Messages"}, {filter_paths, "Paths"},
-        {filter_authors, "Authors"}, {filter_emails, "Emails"},     {filter_revs, "SHA-1"},
-        {filter_refname, "Refname"}};
+        {filter_subject, T_("Subject")}, {filter_messages, T_("Messages")}, {filter_paths, T_("Paths")},
+        {filter_authors, T_("Authors")}, {filter_emails, T_("Emails")},     {filter_revs, T_("SHA-1")},
+        {filter_refname, T_("Refname")}};
     std::string cue;
     for (auto [bit, name] : fields)
-        if (filter_.fields & bit) cue += std::string(cue.empty() ? "" : ", ") + name;
-    return "   Filter by " + cue;
+        if (filter_.fields & bit) cue += std::string(cue.empty() ? "" : ", ") + _(name);
+    return "   " + rap::i18n::format(_("Filter by {0}"), cue);
 }
 
 rap::menu log_window::filter_menu()
@@ -762,15 +765,15 @@ rap::menu log_window::filter_menu()
             enabled);
     };
     return {
-        field("Subject", filter_subject),
-        field("Messages", filter_messages),
-        field("Paths", filter_paths, false),
-        field("Authors", filter_authors),
-        field("Emails", filter_emails),
-        field("SHA-1", filter_revs),
-        field("Refname", filter_refname),
+        field(_("Subject"), filter_subject),
+        field(_("Messages"), filter_messages),
+        field(_("Paths"), filter_paths, false),
+        field(_("Authors"), filter_authors),
+        field(_("Emails"), filter_emails),
+        field(_("SHA-1"), filter_revs),
+        field(_("Refname"), filter_refname),
         rap::menu_item::separator(),
-        {.label = "Toggle filters",
+        {.label = _("Toggle filters"),
          .action =
              [this]
          {
@@ -778,7 +781,7 @@ rap::menu log_window::filter_menu()
              search_->set_placeholder(filter_cue());
              apply_filter();
          }},
-        {.label = "All",
+        {.label = _("All"),
          .action =
              [this]
          {
@@ -787,13 +790,13 @@ rap::menu log_window::filter_menu()
              apply_filter();
          }},
         rap::menu_item::separator(),
-        toggle("Use regular expression", filter_.regex,
+        toggle(_("Use regular expression"), filter_.regex,
                [this]
                {
                    filter_.regex = !filter_.regex;
                    apply_filter();
                }),
-        toggle("Case-sensitive", filter_.case_sensitive,
+        toggle(_("Case-sensitive"), filter_.case_sensitive,
                [this]
                {
                    filter_.case_sensitive = !filter_.case_sensitive;
@@ -818,7 +821,7 @@ void log_window::apply_filter()
     std::string error = log_.set_filter(filter_);
     if (!error.empty())
     {
-        status_->set_text("Invalid regular expression: " + error);
+        status_->set_text(rap::i18n::format(_("Invalid regular expression: {0}"), error));
         return;
     }
     if (keep)
@@ -843,14 +846,14 @@ rap::menu log_window::walk_menu()
         };
     };
     return {
-        toggle("First Parent", walk_options_.first_parent, flip(&walk_options::first_parent)),
-        toggle("No _merges", walk_options_.no_merges, flip(&walk_options::no_merges)),
+        toggle(_("First Parent"), walk_options_.first_parent, flip(&walk_options::first_parent)),
+        toggle(_("No _merges"), walk_options_.no_merges, flip(&walk_options::no_merges)),
         // TODO: the rest of the walk options.
-        toggle("_Follow renames", false, {}, false),
-        toggle("Full history", false, {}, false),
+        toggle(_("_Follow renames"), false, {}, false),
+        toggle(_("Full history"), false, {}, false),
         rap::menu_item::separator(),
-        toggle("_Compressed Graph", false, {}, false),
-        toggle("Show la_beled commits only", false, {}, false),
+        toggle(_("_Compressed Graph"), false, {}, false),
+        toggle(_("Show la_beled commits only"), false, {}, false),
     };
 }
 
@@ -865,23 +868,23 @@ rap::menu log_window::view_menu()
     };
     return {
         // Unrelated paths only exist once the log can be opened for a path.
-        toggle("H_ide Unrelated Changed Paths", false, {}, false),
-        toggle("_Gray Unrelated Changed Paths", true, {}, false),
+        toggle(_("H_ide Unrelated Changed Paths"), false, {}, false),
+        toggle(_("_Gray Unrelated Changed Paths"), true, {}, false),
         rap::menu_item::separator(),
-        toggle("Show _Unversioned Files", show_unversioned_,
+        toggle(_("Show _Unversioned Files"), show_unversioned_,
                [this]
                {
                    show_unversioned_ = !show_unversioned_;
                    selection_changed();
                }),
         rap::menu_item::separator(),
-        {.label = "_Labels",
-         .children = {label("_Tags", label_tags), label("_Local branches", label_local),
-                      label("_Remote branches", label_remote), label("Other refs", label_other)}},
+        {.label = _("_Labels"),
+         .children = {label(_("_Tags"), label_tags), label(_("_Local branches"), label_local),
+                      label(_("_Remote branches"), label_remote), label(_("Other refs"), label_other)}},
         rap::menu_item::separator(),
-        toggle("View Patch", false, {}, false),
+        toggle(_("View Patch"), false, {}, false),
         rap::menu_item::separator(),
-        {.label = "_Settings...", .action = [this] { open_settings(settings_page::general); }},
+        {.label = _("_Settings..."), .action = [this] { open_settings(settings_page::general); }},
     };
 }
 
@@ -901,7 +904,7 @@ void log_window::open_settings(settings_page page)
 rap::menu log_window::header_menu()
 {
     auto columns = log_model::columns();
-    rap::menu menu{{.label = "Reset columns",
+    rap::menu menu{{.label = _("Reset columns"),
                     .action =
                         [this]
                     {
@@ -1016,7 +1019,7 @@ void log_window::jump(bool up)
     }
     ui_.message(window_.get(), {.icon = rap::message_spec::icon::info,
                                 .title = "Tortilla",
-                                .text = "No more revisions found."});
+                                .text = _("No more revisions found.")});
 }
 
 }  // namespace tortilla

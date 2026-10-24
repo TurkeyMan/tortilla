@@ -3,6 +3,7 @@
 #include "git/command.h"
 #include "git/remotes.h"
 #include "git/repo.h"
+#include "i18n.h"
 #include "remote/pull_fetch_dialog.h"
 #include "settings.h"
 #include "ui/progress_dialog.h"
@@ -15,14 +16,16 @@ namespace tortilla
 namespace
 {
 
-constexpr const char* k_url_item = "Arbitrary URL...";
-constexpr const char* k_all = "- all -";
+// Shown translated; k_all is also what the settings remember for "all".
+constexpr const char* k_url_item = T_("Arbitrary URL...");
+constexpr const char* k_all = T_("- all -");
 
-std::string title(const std::string& workdir, const std::string& what)
+// `what` with the repository's folder for {0}.
+std::string title(const std::string& workdir, const char* what)
 {
     std::string root = workdir;
     while (root.size() > 1 && (root.back() == '/' || root.back() == '\\')) root.pop_back();
-    return rap::sys::path_to_utf8(rap::sys::path_from_utf8(root).make_preferred()) + " - " + what;
+    return rap::i18n::format(what, rap::sys::path_to_utf8(rap::sys::path_from_utf8(root).make_preferred()));
 }
 
 }  // namespace
@@ -68,65 +71,67 @@ void push_dialog::build(const std::string& preselected)
     using namespace rap::literals;
     const std::string key = "push." + workdir_;
     std::vector<std::string> items;
-    if (remotes_.size() > 1) items.push_back(k_all);
+    if (remotes_.size() > 1) items.push_back(_(k_all));
     items.insert(items.end(), remotes_.begin(), remotes_.end());
-    items.push_back(k_url_item);
+    items.push_back(_(k_url_item));
     // The last remote pushed to, until the branch's own says otherwise
     // [spec 7.3.2].
     // (TortoiseGit leaves it blank with several remotes and no say; a
     // drop-down can't be blank, so origin, else the first, never all.)
     const std::string last = settings::get().value(key + ".remote");
     int current = remotes_.empty() ? int(items.size()) - 1 : first_remote();
-    for (size_t i = 0; i < items.size(); ++i)
-        if (items[i] == "origin") current = int(i);
-    for (size_t i = 0; i < items.size(); ++i)
-        if (items[i] == last) current = int(i);
+    for (size_t i = 0; i < remotes_.size(); ++i)
+        if (remotes_[i] == "origin") current = first_remote() + int(i);
+    for (size_t i = 0; i < remotes_.size(); ++i)
+        if (remotes_[i] == last) current = first_remote() + int(i);
+    if (last == k_all && first_remote() == 1) current = 0;
     const std::string branch = !preselected.empty() ? preselected : current_branch(workdir_);
 
     std::string recurse_config = config_value(workdir_, "push.recurseSubmodules");
     window_ = ui_.create(dialog{
-        title(workdir_, "Push - Tortilla"),
+        title(workdir_, _("{0} - Push - Tortilla")),
         {vbox{
             group{
-                "Ref",
+                _("Ref"),
                 vbox{
-                    check{"_Push all branches", settings::get().value(key + ".all") == "1"}
+                    check{_("_Push all branches"), settings::get().value(key + ".all") == "1"}
                         .bind(all_branches_)
                         .on_toggled([this](bool) { update_state(); }),
                     form{
-                        {"Local", combo{local_branches(workdir_), branch.empty() ? "HEAD" : branch}
+                        {_("Local"), combo{local_branches(workdir_), branch.empty() ? "HEAD" : branch}
                                       .bind(local_)
                                       .width(40_ch)
                                       .on_changed([this](const std::string&) { local_changed(); })},
-                        {"Remote branch", combo{}.bind(remote_branch_)},
+                        {_("Remote branch"), combo{}.bind(remote_branch_)},
                     },
                 }},
-            group{"Destination",
+            group{_("Destination"),
                   form{
-                      {"Remote", drop_down{items, current}.bind(remote_).on_changed(
+                      {_("Remote"), drop_down{items, current}.bind(remote_).on_changed(
                                      [this](int) { update_state(); })},
-                      {"URL", combo{}.bind(url_)},
+                      {_("URL"), combo{}.bind(url_)},
                   }},
-            group{"Options",
+            group{_("Options"),
                   vbox{
                       hbox{
-                          check{"Force _with lease"}
+                          check{_("Force _with lease")}
                               .bind(force_with_lease_)
                               .on_toggled([this](bool) { update_state(); }),
-                          check{"_Force"}.bind(force_).on_toggled([this](bool) { update_state(); }),
-                          check{"Include _Tags"}.bind(tags_).on_toggled([this](bool)
+                          check{_("_Force")}.bind(force_).on_toggled([this](bool) { update_state(); }),
+                          check{_("Include _Tags")}.bind(tags_).on_toggled([this](bool)
                                                                         { update_state(); }),
                           spacer{},
                       },
-                      check{"_Set upstream/track remote branch"}.bind(set_upstream_),
+                      check{_("_Set upstream/track remote branch")}.bind(set_upstream_),
                       form{
-                          {"Recurse submodules",
-                           drop_down{{recurse_config.empty() ? "Default"
-                                                             : "Default (" + recurse_config + ")",
-                                      "None", "Check", "On demand"},
+                          {_("Recurse submodules"),
+                           drop_down{{recurse_config.empty()
+                                          ? std::string(_("Default"))
+                                          : rap::i18n::format(_("Default ({0})"), recurse_config),
+                                      _("None"), _("Check"), _("On demand")},
                                      0}
                                .bind(recurse_)},
-                          {"Push option", entry{}.bind(push_option_)},
+                          {_("Push option"), entry{}.bind(push_option_)},
                       },
                   }},
             buttons{dialog_button{rap::dialog_role::ok, ""}.on_click([this] { ok(); }), cancel},
@@ -174,16 +179,16 @@ void push_dialog::ok()
     if (url && url_->text().empty())
     {
         ui_.message(window_.get(), {.icon = rap::message_spec::icon::warning,
-                                    .title = "Push",
-                                    .text = "Enter the URL to push to."});
+                                    .title = _("Push"),
+                                    .text = _("Enter the URL to push to.")});
         return;
     }
     if (all_branches_->checked())
     {
         ui_.message(window_.get(),
                     {.icon = rap::message_spec::icon::question,
-                     .title = "Push",
-                     .text = "Do you really want to push all local branches?",
+                     .title = _("Push"),
+                     .text = _("Do you really want to push all local branches?"),
                      .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
                     [this](rap::dialog_role r)
                     {
@@ -195,10 +200,10 @@ void push_dialog::ok()
     {
         ui_.message(window_.get(),
                     {.icon = rap::message_spec::icon::question,
-                     .title = "Push",
+                     .title = _("Push"),
                      .text = remote_branch_->text().empty()
-                                 ? "Local and remote branch are empty.\nContinue?"
-                                 : "This results in a remote removal.\nContinue?",
+                                 ? _("Local and remote branch are empty.\nContinue?")
+                                 : _("This results in a remote removal.\nContinue?"),
                      .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
                     [this](rap::dialog_role r)
                     {
@@ -268,13 +273,13 @@ void push_dialog::push()
     };
     // After a rejection, Pull or Fetch first; Push again always [spec 7.3.4].
     std::vector<progress_follow_up> follow_ups{
-        {.label = "_Pull...", .after_close = reopen(1), .offered = [](bool ok) { return !ok; }},
-        {.label = "F_etch...", .after_close = reopen(2), .offered = [](bool ok) { return !ok; }},
-        {.label = "Pus_h...", .after_close = reopen(0), .offered = [](bool) { return true; }},
+        {.label = _("_Pull..."), .after_close = reopen(1), .offered = [](bool ok) { return !ok; }},
+        {.label = _("F_etch..."), .after_close = reopen(2), .offered = [](bool ok) { return !ok; }},
+        {.label = _("Pus_h..."), .after_close = reopen(0), .offered = [](bool) { return true; }},
     };
     const size_t running = windows::hold({});
     run_progress_dialog(
-        ui_, nullptr, title(workdir_, "Push"), workdir_, std::move(commands),
+        ui_, nullptr, title(workdir_, _("{0} - Push")), workdir_, std::move(commands),
         [running](bool) { windows::release(running); }, std::move(follow_ups));
     // close() only hides it: what closing means (its release) is ours.
     window_->close();

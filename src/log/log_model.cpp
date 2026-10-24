@@ -1,6 +1,7 @@
 #include "log_model.h"
 
 #include "git/status.h"
+#include "i18n.h"
 #include "log/ref_labels.h"
 #include "util/calendar.h"
 
@@ -127,16 +128,16 @@ std::vector<rap::column> log_model::columns()
     using namespace rap::literals;
     // Graph | Actions | Message | Author | Date, the rest hidden [GLLB:321-336]
     std::vector<rap::column> c(column_count);
-    c[graph] = {.title = "Graph", .width = 60_px, .painted = true};
-    c[actions] = {.title = "Actions", .width = 90_px, .painted = true};
-    c[message] = {.title = "Message", .width = 200_px, .stretch = true, .painted = true};
-    c[author] = {.title = "Author", .width = 18_ch};
-    c[date] = {.title = "Date", .width = 19_ch};
-    c[hash] = {.title = "SHA-1", .width = 42_ch, .visible = false};
-    c[email] = {.title = "Email", .width = 24_ch, .visible = false};
-    c[commit_name] = {.title = "Commit Name", .width = 18_ch, .visible = false};
-    c[commit_email] = {.title = "Commit Email", .width = 24_ch, .visible = false};
-    c[commit_date] = {.title = "Commit Date", .width = 19_ch, .visible = false};
+    c[graph] = {.title = _("Graph"), .width = 60_px, .painted = true};
+    c[actions] = {.title = _("Actions"), .width = 90_px, .painted = true};
+    c[message] = {.title = _("Message"), .width = 200_px, .stretch = true, .painted = true};
+    c[author] = {.title = _("Author"), .width = 18_ch};
+    c[date] = {.title = _("Date"), .width = 19_ch};
+    c[hash] = {.title = _("SHA-1"), .width = 42_ch, .visible = false};
+    c[email] = {.title = _("Email"), .width = 24_ch, .visible = false};
+    c[commit_name] = {.title = _("Commit Name"), .width = 18_ch, .visible = false};
+    c[commit_email] = {.title = _("Commit Email"), .width = 24_ch, .visible = false};
+    c[commit_date] = {.title = _("Commit Date"), .width = 19_ch, .visible = false};
     return c;
 }
 
@@ -634,7 +635,7 @@ uint8_t log_model::actions_for(size_t row) const
 
 std::string log_model::text(size_t row, size_t column) const
 {
-    if (is_working_tree(row)) return column == message ? "Working tree changes" : "";
+    if (is_working_tree(row)) return column == message ? _("Working tree changes") : "";
     const tortilla::commit& c = commits_[index(row)];
     switch (column)
     {
@@ -803,8 +804,9 @@ void log_model::paint_message(size_t row, rap::painter& p, const rap::cell_info&
     rap::text_style subject = style(row, message);
     if (is_working_tree(row))
     {
-        rap::size_f sz = p.measure("Working tree changes", subject);
-        p.text({2, (cell.size.h - sz.h) / 2}, "Working tree changes", subject);
+        const char* text = _("Working tree changes");
+        rap::size_f sz = p.measure(text, subject);
+        p.text({2, (cell.size.h - sz.h) / 2}, text, subject);
         return;
     }
 

@@ -3,6 +3,7 @@
 #include "git/command.h"
 #include "git/remotes.h"
 #include "git/repo.h"
+#include "i18n.h"
 #include "remote/push_dialog.h"
 #include "settings.h"
 #include "ui/progress_dialog.h"
@@ -65,25 +66,25 @@ void create_ref_dialog::build(const std::string& base, const std::string& name, 
             .output.starts_with("true");
     const bool can_sign = !config_value(workdir_, "user.signingkey").empty();
     window_ = ui_.create(dialog{
-        tag_ ? "Create Tag" : "Create Branch",
+        tag_ ? _("Create Tag") : _("Create Branch"),
         {vbox{
-            group{"Name", entry{name}.bind(name_).width(40_ch).on_changed([this](const std::string&)
+            group{_("Name"), entry{name}.bind(name_).width(40_ch).on_changed([this](const std::string&)
                                                                           { name_changed(); })},
-            base_.layout({.caption = "Base On", .head = true}),
-            group{"Options",
+            base_.layout({.caption = _("Base On"), .head = true}),
+            group{_("Options"),
                   hbox{
-                      check{"Trac_k"}.bind(track_).visible(!tag_),
-                      check{"_Force"}.bind(force_),
-                      check{"_Switch to new branch",
+                      check{_("Trac_k")}.bind(track_).visible(!tag_),
+                      check{_("_Force")}.bind(force_),
+                      check{_("_Switch to new branch"),
                             switch_to || settings::get().value("branch.switchTo") == "1"}
                           .bind(switch_)
                           .visible(!tag_ && !bare),
-                      check{"Si_gn"}.bind(sign_).visible(tag_).enabled(can_sign),
-                      check{"_Push", settings::get().value("tag.push") == "1"}.bind(push_).visible(
+                      check{_("Si_gn")}.bind(sign_).visible(tag_).enabled(can_sign),
+                      check{_("_Push"), settings::get().value("tag.push") == "1"}.bind(push_).visible(
                           tag_),
                       spacer{},
                   }},
-            group{tag_ ? "Message (makes an annotated tag)" : "Description",
+            group{tag_ ? _("Message (makes an annotated tag)") : _("Description"),
                   text_view{}.bind(message_).height(4_lines).stretch()},
             buttons{dialog_button{rap::dialog_role::ok, ""}.on_click([this] { ok(); }), cancel},
         }}});
@@ -136,40 +137,41 @@ void create_ref_dialog::ok()
     auto refuse = [this](const std::string& text)
     {
         ui_.message(window_.get(), {.icon = rap::message_spec::icon::warning,
-                                    .title = tag_ ? "Create Tag" : "Create Branch",
+                                    .title = tag_ ? _("Create Tag") : _("Create Branch"),
                                     .text = text});
     };
     if (tag_ && sign_->checked() && message.empty())
-        return refuse("You must enter a log message for the commit");
+        return refuse(_("You must enter a log message for the commit"));
     // [spec 8.2.3]
     const bool valid =
         !name.empty() && name.find_first_of("\"|<>") == std::string::npos &&
         run_git(workdir_, {"check-ref-format", tag_ ? "refs/tags/" + name : "refs/heads/" + name},
                 git_output::stdout_only)
             .ok();
-    if (!valid) return refuse("Branch/Tag name must not be empty or is invalid.");
+    if (!valid) return refuse(_("Branch/Tag name must not be empty or is invalid."));
     if (!force_->checked() && ref_exists(workdir_, (tag_ ? "refs/tags/" : "refs/heads/") + name))
     {
         if (!tag_ && name == base_.current_branch())
             return refuse(
-                "Cannot force updating current branch. Use reset command if you want to do so.");
-        return refuse(std::string(tag_ ? "A tag" : "A branch") +
-                      " with this name already exists. Use a different name or use the \"Force\" "
-                      "option to overwrite it.");
+                _("Cannot force updating current branch. Use reset command if you want to do so."));
+        return refuse(tag_ ? _("A tag with this name already exists. Use a different name or use the "
+                               "\"Force\" option to overwrite it.")
+                           : _("A branch with this name already exists. Use a different name or use "
+                               "the \"Force\" option to overwrite it."));
     }
     if (ref_exists(workdir_, (tag_ ? "refs/heads/" : "refs/tags/") + name))
     {
         ui_.message(
             window_.get(),
             {.icon = rap::message_spec::icon::warning,
-             .title = tag_ ? "Create Tag" : "Create Branch",
-             .text = tag_ ? "A branch with the same name as your entered tag name already exists "
-                            "(so the short ref "
-                            "is ambiguous).\nThis can cause problems so you should avoid it."
-                          : "A tag with the same name as your entered branch name already exists "
-                            "(so the short ref "
-                            "is ambiguous).\nThis can cause problems so you should avoid it.",
-             .detail = "Continue anyway?",
+             .title = tag_ ? _("Create Tag") : _("Create Branch"),
+             .text = tag_ ? _("A branch with the same name as your entered tag name already exists "
+                              "(so the short ref "
+                              "is ambiguous).\nThis can cause problems so you should avoid it.")
+                          : _("A tag with the same name as your entered branch name already exists "
+                              "(so the short ref "
+                              "is ambiguous).\nThis can cause problems so you should avoid it."),
+             .detail = _("Continue anyway?"),
              .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
             [this](rap::dialog_role r)
             {
@@ -227,7 +229,7 @@ void create_ref_dialog::create()
     if (!r.ok())
     {
         ui_.message(window_.get(), {.icon = rap::message_spec::icon::error,
-                                    .title = tag_ ? "Create Tag" : "Create Branch",
+                                    .title = tag_ ? _("Create Tag") : _("Create Branch"),
                                     .text = r.output});
         return;
     }
@@ -240,7 +242,7 @@ void create_ref_dialog::create()
         if (switch_->checked())
         {
             const size_t running = windows::hold({});
-            run_progress_dialog(ui_, nullptr, "Switch/Checkout", workdir_,
+            run_progress_dialog(ui_, nullptr, _("Switch/Checkout"), workdir_,
                                 {{"checkout", "--end-of-options", name, "--"}},
                                 [done = done_, running](bool)
                                 {

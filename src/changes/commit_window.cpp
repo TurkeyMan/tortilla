@@ -1,5 +1,6 @@
 #include "commit_window.h"
 
+#include "i18n.h"
 #include "settings.h"
 #include "ui/progress_dialog.h"
 #include "ui/settings_dialog.h"
@@ -53,7 +54,7 @@ commit_window::open(rap::ui& ui, const std::vector<std::string>& paths)
     const std::string first = paths.empty() ? "." : paths.front();
     auto repo = repo::open(first);
     if (!repo) return std::unexpected(repo.error());
-    if (repo->bare()) return std::unexpected("No working directory found.");
+    if (repo->bare()) return std::unexpected(_("No working directory found."));
     std::error_code ec;
     const fs::path root = fs::weakly_canonical(rap::sys::path_from_utf8(repo->workdir()), ec);
     std::vector<std::string> relative;
@@ -68,7 +69,7 @@ commit_window::open(rap::ui& ui, const std::vector<std::string>& paths)
     // TortoiseGit asks for an identity before anything else [spec 5.4.1].
     if (w->config("user.name").empty() || w->config("user.email").empty())
         return std::unexpected(
-            "git doesn't know who you are: set user.name and user.email (git config --global).");
+            _("git doesn't know who you are: set user.name and user.email (git config --global)."));
     w->build();
     w->reload();
     return w;
@@ -118,18 +119,18 @@ void commit_window::build()
         [this](const char* text, std::function<bool(const file_change&)> which, bool on = true)
     { return label{text}.link([this, which, on] { files_.check_where(which, on); }); };
     window_ = ui_.create(window{
-        "Commit",
+        _("Commit"),
         {vbox{
             hbox{
-                label{"Commit to:"},
+                label{_("Commit to:")},
                 entry{}.bind(branch_).read_only().width(24_ch),
-                check{"new branch"}
+                check{_("new branch")}
                     .bind(new_branch_)
                     .on_toggled(
                         [this](bool on)
                         {
                             branch_->set_read_only(!on);
-                            branch_->set_placeholder(on ? "new branch name" : "");
+                            branch_->set_placeholder(on ? _("new branch name") : "");
                             branch_->set_text(on ? "" : current_branch_);
                             if (on) branch_->focus();
                         }),
@@ -138,15 +139,15 @@ void commit_window::build()
             splitter{
                 vertical,
                 group{
-                    "Message:",
+                    _("Message:"),
                     vbox{
                         text_view{}.bind(message_).on_changed([this] { update_state(); }).stretch(),
-                        check{"Amend _Last Commit"}.bind(amend_).on_toggled([this](bool on)
+                        check{_("Amend _Last Commit")}.bind(amend_).on_toggled([this](bool on)
                                                                             { amend_toggled(on); }),
                         hbox{
                             // Shown greyed until wanted, as the author field: the
                             // row keeps its layout when they're turned on.
-                            check{"Set author _date"}.bind(set_date_).on_toggled(
+                            check{_("Set author _date")}.bind(set_date_).on_toggled(
                                 [this](bool on)
                                 {
                                     date_->set_enabled(on);
@@ -157,42 +158,42 @@ void commit_window::build()
                             spacer{},
                         },
                         hbox{
-                            check{"Set au_thor"}
+                            check{_("Set au_thor")}
                                 .bind(set_author_)
                                 .on_toggled([this](bool on) { author_->set_enabled(on); }),
                             entry{}.bind(author_).enabled(false).width(36_ch),
                             spacer{},
-                            button{"Add _Signed-off-by"}.on_click([this] { add_signoff(); }),
+                            button{_("Add _Signed-off-by")}.on_click([this] { add_signoff(); }),
                         },
                     }},
                 group{
-                    "Changes made (F5: refresh, double-click on file for diff):",
+                    _("Changes made (F5: refresh, double-click on file for diff):"),
                     vbox{
                         hbox{
-                            label{"Check:"},
-                            check_link("All", [](const file_change&) { return true; }),
+                            label{_("Check:")},
+                            check_link(_("All"), [](const file_change&) { return true; }),
                             check_link(
-                                "None", [](const file_change&) { return true; }, false),
-                            check_link("Unversioned",
+                                _("None"), [](const file_change&) { return true; }, false),
+                            check_link(_("Unversioned"),
                                        [](const file_change& f) { return f.status == '?'; }),
-                            check_link("Versioned", versioned),
-                            check_link("Added",
+                            check_link(_("Versioned"), versioned),
+                            check_link(_("Added"),
                                        [](const file_change& f) { return f.status == 'A'; }),
-                            check_link("Deleted",
+                            check_link(_("Deleted"),
                                        [](const file_change& f) { return f.status == 'D'; }),
                             check_link(
-                                "Modified", [](const file_change& f)
+                                _("Modified"), [](const file_change& f)
                                 { return f.status == 'M' || f.status == 'T' || f.status == 'R'; }),
-                            check_link("Files",
+                            check_link(_("Files"),
                                        [](const file_change& f) { return !f.path.ends_with('/'); }),
-                            check_link("Submodules",
+                            check_link(_("Submodules"),
                                        [](const file_change& f) { return f.path.ends_with('/'); }),
                             spacer{},
                         },
                         files_.list("commit.files", true).stretch(),
                         hbox{
                             vbox{
-                                check{"Show _Unversioned Files", flag(k_unversioned, true)}
+                                check{_("Show _Unversioned Files"), flag(k_unversioned, true)}
                                     .bind(unversioned_)
                                     .on_toggled(
                                         [this](bool on)
@@ -200,7 +201,7 @@ void commit_window::build()
                                             settings::get().set(k_unversioned, on ? "1" : "0");
                                             reload();
                                         }),
-                                check{"Show _Whole Project",
+                                check{_("Show _Whole Project"),
                                       root_ || flag(whole_project_key(workdir_), false)}
                                     .bind(whole_project_)
                                     .enabled(!root_)
@@ -211,7 +212,7 @@ void commit_window::build()
                                                                 on ? "1" : "0");
                                             reload();
                                         }),
-                                check{"Message onl_y"}
+                                check{_("Message onl_y")}
                                     .bind(message_only_)
                                     .on_toggled([this](bool) { update_state(); }),
                             },
@@ -224,8 +225,8 @@ void commit_window::build()
                 .stretch(),
             hbox{
                 spacer{},
-                button{"C_ommit"}.bind(commit_).enabled(false).on_click([this] { commit(); }),
-                button{"Cancel"}.on_click([this] { close(false); }),
+                button{_("C_ommit")}.bind(commit_).enabled(false).on_click([this] { commit(); }),
+                button{_("Cancel")}.on_click([this] { close(false); }),
             },
         }}}.size(100_ch, 44_lines));
 
@@ -290,7 +291,8 @@ void commit_window::update_title()
     fs::path shown = rap::sys::path_from_utf8(root);
     if (!whole_project_->checked() && paths_.size() == 1)
         shown /= rap::sys::path_from_utf8(paths_.front());
-    window_->set_title(rap::sys::path_to_utf8(shown.make_preferred()) + " - Commit - Tortilla");
+    window_->set_title(rap::i18n::format(_("{0} - Commit - Tortilla"),
+                                         rap::sys::path_to_utf8(shown.make_preferred())));
 }
 
 void commit_window::reload()
@@ -330,8 +332,8 @@ void commit_window::loaded(working_tree_changes changes)
 void commit_window::update_state()
 {
     const size_t checked = files_.checked_count();
-    stats_->set_text(std::to_string(checked) + " files selected, " +
-                     std::to_string(files_.files().size()) + " files total");
+    stats_->set_text(rap::i18n::format(_("{0} files selected, {1} files total"), checked,
+                                       files_.files().size()));
     const bool something = checked > 0 || message_only_->checked() || amend_->checked();
     can_commit_ = !committing_ && !trimmed(message_->text()).empty() && something;
     commit_->set_enabled(can_commit_);
@@ -383,8 +385,8 @@ void commit_window::commit()
     if (std::ranges::any_of(files, [](const file_change& f) { return f.status == 'U'; }))
     {
         ui_.message(window_.get(), {.icon = rap::message_spec::icon::warning,
-                                    .title = "Commit",
-                                    .text = "One or more files are in a conflicted state."});
+                                    .title = _("Commit"),
+                                    .text = _("One or more files are in a conflicted state.")});
         return;
     }
     std::string branch;
@@ -394,8 +396,9 @@ void commit_window::commit()
         if (branch.empty() || !run_git(workdir_, {"check-ref-format", "--branch", branch}).ok())
         {
             ui_.message(window_.get(), {.icon = rap::message_spec::icon::warning,
-                                        .title = "Commit",
-                                        .text = "“" + branch + "” isn't a valid branch name."});
+                                        .title = _("Commit"),
+                                        .text = rap::i18n::format(_("“{0}” isn't a valid branch name."),
+                                                                  branch)});
             return;
         }
     }
@@ -425,9 +428,9 @@ void commit_window::commit()
     if (!write(message_file, message_->text()) || !write(paths_file, paths))
     {
         ui_.message(window_.get(), {.icon = rap::message_spec::icon::error,
-                                    .title = "Commit",
-                                    .text = "Could not write the commit message to " +
-                                            rap::sys::path_to_utf8(dir) + "."});
+                                    .title = _("Commit"),
+                                    .text = rap::i18n::format(_("Could not write the commit message to {0}."),
+                                                              rap::sys::path_to_utf8(dir))});
         return;
     }
 
@@ -460,7 +463,7 @@ void commit_window::commit()
     committing_ = true;
     update_state();
     if (load_) load_->cancel();
-    run_progress_dialog(ui_, window_.get(), "Commit", workdir_, std::move(commands),
+    run_progress_dialog(ui_, window_.get(), _("Commit"), workdir_, std::move(commands),
                         [this, message_file, paths_file](bool ok)
                         {
                             std::error_code ec;

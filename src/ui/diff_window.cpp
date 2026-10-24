@@ -1,6 +1,7 @@
 #include "diff_window.h"
 
 #include "git/command.h"
+#include "i18n.h"
 #include "settings.h"
 
 #include <rapport/sys.h>
@@ -92,11 +93,11 @@ public:
             };
         };
         window_ = ui_.create(window{
-            title_ + " - Tortilla",
+            rap::i18n::format(_("{0} - Tortilla"), title_),
             {vbox{
                 text_view{}.read_only().monospace().wrap(false).bind(text_).stretch(),
                 hbox{
-                    label{"Find:"},
+                    label{_("Find:")},
                     entry{}
                         .bind(query_)
                         .on_changed(
@@ -106,9 +107,9 @@ public:
                             })
                         .on_activate(with([](diff_window& w) { w.step(1); }))
                         .stretch(),
-                    button{"_Previous"}.on_click(with([](diff_window& w) { w.step(-1); })),
-                    button{"_Next"}.on_click(with([](diff_window& w) { w.step(1); })),
-                    check{"Match _case"}
+                    button{_("_Previous")}.on_click(with([](diff_window& w) { w.step(-1); })),
+                    button{_("_Next")}.on_click(with([](diff_window& w) { w.step(1); })),
+                    check{_("Match _case")}
                         .bind(match_case_)
                         .on_toggled(
                             [weak](bool)
@@ -123,33 +124,33 @@ public:
                                  .menu_bar({
                                      // The menus live in the window, so their items hold the
                                      // diff_window weakly, like every other callback here.
-                                     {"_File",
+                                     {_("_File"),
                                       [with]
                                       {
                                           return rap::menu{
-                                              {.label = "_Save As...",
+                                              {.label = _("_Save As..."),
                                                .action = with([](diff_window& w) { w.save_as(); }),
                                                .shortcut = "Ctrl+S"},
                                               rap::menu_item::separator(),
-                                              {.label = "_Close",
+                                              {.label = _("_Close"),
                                                .action = with([](diff_window& w) { w.close(); }),
                                                .shortcut = "Ctrl+W"},
                                           };
                                       }},
-                                     {"_Edit",
+                                     {_("_Edit"),
                                       [with, weak]
                                       {
                                           auto s = weak.lock();
                                           const bool any = s && !s->query_->text().empty();
                                           return rap::menu{
-                                              {.label = "_Find...",
+                                              {.label = _("_Find..."),
                                                .action = with([](diff_window& w) { w.show_find(); }),
                                                .shortcut = "Ctrl+F"},
-                                              {.label = "Find _Next",
+                                              {.label = _("Find _Next"),
                                                .action = with([](diff_window& w) { w.step(1); }),
                                                .shortcut = "F3",
                                                .enabled = any},
-                                              {.label = "Find _Previous",
+                                              {.label = _("Find _Previous"),
                                                .action = with([](diff_window& w) { w.step(-1); }),
                                                .shortcut = "Shift+F3",
                                                .enabled = any},
@@ -229,7 +230,7 @@ private:
         current_ = -1;
         if (matches_.empty())
         {
-            count_->set_text(query_->text().empty() ? "" : "Not found");
+            count_->set_text(query_->text().empty() ? "" : _("Not found"));
             return;
         }
         const size_t caret = text_->selection().first;
@@ -257,19 +258,19 @@ private:
     {
         const size_t at = matches_[size_t(current_)];
         text_->select(at, at + query_->text().size());
-        count_->set_text(std::to_string(current_ + 1) + " of " + std::to_string(matches_.size()));
+        count_->set_text(rap::i18n::format(_("{0} of {1}"), current_ + 1, matches_.size()));
     }
 
     void save_as()
     {
         rap::file_dialog_spec spec;
         spec.mode = rap::file_dialog_spec::mode::save;
-        spec.title = "Save Diff";
+        spec.title = _("Save Diff");
         std::string name;
         for (char c : title_)
             name += std::isalnum(static_cast<unsigned char>(c)) || c == '-' || c == '.' ? c : '_';
         spec.initial_path = name + ".patch";
-        spec.filters = {{"Patches (*.patch, *.diff)", "*.patch;*.diff"}, {"All files", "*"}};
+        spec.filters = {{_("Patches (*.patch, *.diff)"), "*.patch;*.diff"}, {_("All files"), "*"}};
         std::weak_ptr<diff_window> weak = shared_from_this();
         ui_.choose_files(window_.get(), spec,
                         [weak](std::vector<std::string> paths)
@@ -292,8 +293,8 @@ private:
         if (f) ok = std::fclose(f) == 0 && ok;
         if (!ok)
             ui_.message(window_.get(), {.icon = rap::message_spec::icon::error,
-                                        .title = "Save Diff",
-                                        .text = "Could not save " + path + "."});
+                                        .title = _("Save Diff"),
+                                        .text = rap::i18n::format(_("Could not save {0}."), path)});
     }
 
     void close()

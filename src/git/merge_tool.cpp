@@ -2,6 +2,7 @@
 
 #include "git/command.h"
 #include "git/remotes.h"
+#include "i18n.h"
 #include "settings.h"
 #include "util/programs.h"
 
@@ -169,7 +170,7 @@ std::expected<conflict_sides, std::string> write_conflict_sides(const std::strin
         if (n >= 1 && n <= 3) stage[n] = true;
     }
     if (!stage[1] && !stage[2] && !stage[3])
-        return std::unexpected("“" + path + "” isn't in conflict.");
+        return std::unexpected(rap::i18n::format(_("“{0}” isn't in conflict."), path));
 
     // During a rebase (tortilla's, or git's) HEAD is the upstream being built
     // on and the pick is the user's own commit: mine is stage 3.
@@ -184,10 +185,10 @@ std::expected<conflict_sides, std::string> write_conflict_sides(const std::strin
     s.theirs_deleted = !stage[theirs];
 
     // Titles [spec 9.1.6].
-    s.base_title = "Base";
+    s.base_title = _("Base");
     if (rebasing)
     {
-        std::string onto = "upstream", branch = "your branch";
+        std::string onto = _("upstream"), branch = _("your branch");
         const std::string text = read_file(active);
         if (size_t at = text.find("onto="); at != std::string::npos)
             onto = text.substr(at + 5, text.find('\n', at) - at - 5);
@@ -206,9 +207,9 @@ std::expected<conflict_sides, std::string> write_conflict_sides(const std::strin
         else if (fs::exists(git_dir / "CHERRY_PICK_HEAD", ec))
             s.theirs_title = "CHERRY_PICK_HEAD (" + short_of("CHERRY_PICK_HEAD") + ")";
         else if (fs::exists(git_dir / "REVERT_HEAD", ec))
-            s.theirs_title = "Parent of " + short_of("REVERT_HEAD");
+            s.theirs_title = rap::i18n::format(_("Parent of {0}"), short_of("REVERT_HEAD"));
         else
-            s.theirs_title = "Theirs";
+            s.theirs_title = _("Theirs");
     }
     if (s.mine_deleted || s.theirs_deleted || s.submodule) return s;
 
@@ -244,8 +245,8 @@ std::expected<conflict_sides, std::string> write_conflict_sides(const std::strin
         if (!t.ok() || tab == std::string::npos)
         {
             remove_conflict_sides(s);
-            return std::unexpected("Could not write " + rap::sys::path_to_utf8(to) + ": " +
-                                   t.output);
+            return std::unexpected(rap::i18n::format(_("Could not write {0}: {1}"),
+                                                     rap::sys::path_to_utf8(to), t.output));
         }
         fs::rename(rap::sys::path_from_utf8(workdir) /
                        rap::sys::path_from_utf8(t.output.substr(0, tab)),
@@ -253,8 +254,8 @@ std::expected<conflict_sides, std::string> write_conflict_sides(const std::strin
         if (ec)
         {
             remove_conflict_sides(s);
-            return std::unexpected("Could not write " + rap::sys::path_to_utf8(to) + ": " +
-                                   ec.message());
+            return std::unexpected(rap::i18n::format(_("Could not write {0}: {1}"),
+                                                     rap::sys::path_to_utf8(to), ec.message()));
         }
     }
     return s;

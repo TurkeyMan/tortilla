@@ -54,7 +54,8 @@ private:
     void run(const std::vector<file_change>& files);
     void open_commit();
     void close(bool done);
-    std::string name() const;  // "Add", "Revert", "Resolve"
+    std::string name() const;   // "Add", "Revert", "Resolve" (also its settings key)
+    std::string title() const;  // name(), translated
     std::string settings_key() const;
     bool shows(const file_change&) const;
     bool starts_checked(const file_change&) const;

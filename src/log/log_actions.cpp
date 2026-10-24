@@ -12,6 +12,7 @@
 #include "ui/windows.h"
 
 #include "git/command.h"
+#include "i18n.h"
 #include "git/diff_tool.h"
 #include "ui/compare.h"
 #include "ui/diff_window.h"
@@ -122,7 +123,7 @@ void log_window::run_quietly(const std::string& title, std::vector<arg_list> com
                 if (show_failure)
                     ui_.message(window_.get(), {.icon = rap::message_spec::icon::error,
                                                 .title = title,
-                                                .text = title + " failed.",
+                                                .text = rap::i18n::format(_("{0} failed."), title),
                                                 .detail = run->output});
                 if (after) after(false, run->output);  // an earlier command may have succeeded
             });
@@ -218,31 +219,31 @@ menu log_window::context_menu(std::optional<size_t> clicked)
         // Group A: diffs
         if (wc)
         {
-            m.push_back(item("C_ommit...",
+            m.push_back(item(_("C_ommit..."),
                              [this] { keep_dialog(commit_window::open(ui_, {repo_.workdir()})); }));
             if (merging)
-                m.push_back(item("Abort _Merge", [this]
+                m.push_back(item(_("Abort _Merge"), [this]
                                  { keep_dialog(abort_merge_dialog::open(ui_, repo_.workdir())); }));
-            m.push_back(item("Show changes as _unified diff",
+            m.push_back(item(_("Show changes as _unified diff"),
                              [this]
                              {
-                                 show_unified_diff(ui_, "Working tree changes", repo_.workdir(),
+                                 show_unified_diff(ui_, _("Working tree changes"), repo_.workdir(),
                                                    {"diff", "HEAD"});
                              }));
-            m.push_back(item("_Compare with previous revision", [this] { difftool({"HEAD"}); }));
+            m.push_back(item(_("_Compare with previous revision"), [this] { difftool({"HEAD"}); }));
         }
         else
         {
             if (has_wc)
-                m.push_back(item("Compare with _working tree", [this, hash] { difftool({hash}); }));
+                m.push_back(item(_("Compare with _working tree"), [this, hash] { difftool({hash}); }));
             if (c->parents.size() > 1)
             {
-                menu_item udiff{.label = "_Unified diff with"};
-                menu_item compare{.label = "_Compare with previous revision"};
+                menu_item udiff{.label = _("_Unified diff with")};
+                menu_item compare{.label = _("_Compare with previous revision")};
                 for (size_t i = 0; i < c->parents.size(); ++i)
                 {
                     std::string p = c->parents[i].hex();
-                    std::string label = "Parent " + std::to_string(i + 1) + ": ";
+                    std::string label = rap::i18n::format(_("Parent {0}: "), i + 1);
                     if (auto prow = log_.row_of(c->parents[i]))
                         label += "\"" + menu_text(short_subject(*log_.commit(*prow))) + "\" ";
                     label += "(" + c->parents[i].hex(8) + ")";
@@ -262,26 +263,26 @@ menu log_window::context_menu(std::optional<size_t> clicked)
             else
             {
                 if (has_wc)
-                    m.push_back(item("Show changes as _unified diff",
+                    m.push_back(item(_("Show changes as _unified diff"),
                                      [this, hash]
                                      {
                                          show_unified_diff(ui_, hash.substr(0, 8), repo_.workdir(),
                                                            {"show", "--format=fuller", hash});
                                      }));
                 if (!c->parents.empty())
-                    m.push_back(item("_Compare with previous revision",
+                    m.push_back(item(_("_Compare with previous revision"),
                                      [this, hash] { difftool({hash + "^", hash}); }));
             }
         }
         separator(m);
 
         // Group B: stash
-        if (wc && !merging) m.push_back(item("Stash changes...", [this] { stash_changes(); }));
+        if (wc && !merging) m.push_back(item(_("Stash changes..."), [this] { stash_changes(); }));
         if ((wc || is_stash) && has_stash)
         {
             m.push_back(
-                item("Stash Pop", [this] { run_git_commands("Stash Pop", {{"stash", "pop"}}); }));
-            m.push_back(todo("Stash List"));
+                item(_("Stash Pop"), [this] { run_git_commands(_("Stash Pop"), {{"stash", "pop"}}); }));
+            m.push_back(todo(_("Stash List")));
         }
         separator(m);
 
@@ -290,21 +291,21 @@ menu log_window::context_menu(std::optional<size_t> clicked)
         {
             if (!merging)
                 m.push_back(
-                    item("_Pull...", [this]
+                    item(_("_Pull..."), [this]
                          { keep_dialog(pull_fetch_dialog::open(ui_, repo_.workdir(), true)); }));
             m.push_back(
-                item("F_etch...", [this]
+                item(_("F_etch..."), [this]
                      { keep_dialog(pull_fetch_dialog::open(ui_, repo_.workdir(), false)); }));
             separator(m);
-            m.push_back(todo("_Clean up..."));
+            m.push_back(todo(_("_Clean up...")));
             separator(m);
         }
 
         // Group E: commit rows
         if (!wc)
         {
-            if (refs && !is_stash) m.push_back(todo("Show log..."));
-            m.push_back(todo("_Browse repository"));
+            if (refs && !is_stash) m.push_back(todo(_("Show log...")));
+            m.push_back(todo(_("_Browse repository")));
             if (!head && has_wc && !merging && !is_stash)
             {
                 // Merge a branch at this commit by name, else the commit.
@@ -318,10 +319,10 @@ menu log_window::context_menu(std::optional<size_t> clicked)
                             break;
                         }
                 m.push_back(
-                    item("_Merge to " + cur + "...", [this, c, what] { merge_from(*c, what); }));
+                    item(rap::i18n::format(_("_Merge to {0}..."), cur), [this, c, what] { merge_from(*c, what); }));
             }
             if (has_wc && !is_stash)
-                m.push_back(item("R_eset " + cur + " to this...", [this, c] { reset_to(*c); }));
+                m.push_back(item(rap::i18n::format(_("R_eset {0} to this..."), cur), [this, c] { reset_to(*c); }));
 
             std::vector<std::string> branches;
             if (refs)
@@ -330,20 +331,20 @@ menu log_window::context_menu(std::optional<size_t> clicked)
             if (!branches.empty() && has_wc && !is_stash)
             {
                 auto checkout = [this](const std::string& b)
-                { run_git_commands("Switch/Checkout", {{"checkout", b}}); };
+                { run_git_commands(_("Switch/Checkout"), {{"checkout", b}}); };
                 if (branches.size() == 1)
-                    m.push_back(item("_Switch/Checkout to \"" + menu_text(branches[0]) + "\"",
+                    m.push_back(item(rap::i18n::format(_("_Switch/Checkout to \"{0}\""), menu_text(branches[0])),
                                      [checkout, b = branches[0]] { checkout(b); }));
                 else
                 {
-                    menu_item sub{.label = "_Switch/Checkout to"};
+                    menu_item sub{.label = _("_Switch/Checkout to")};
                     for (auto& b : branches)
                         sub.children.push_back(item(menu_text(b), [checkout, b] { checkout(b); }));
                     m.push_back(std::move(sub));
                 }
             }
             if (!head && has_wc && !is_stash)
-                m.push_back(item("Sw_itch/Checkout to this...",
+                m.push_back(item(_("Sw_itch/Checkout to this..."),
                                  [this, c]
                                  {
                                      keep_dialog(switch_dialog::open(ui_, repo_.workdir(),
@@ -352,13 +353,13 @@ menu log_window::context_menu(std::optional<size_t> clicked)
             if (!is_stash)
             {
                 m.push_back(
-                    item("Create Br_anch at this version...", [this, c] { create_branch(*c); }));
-                m.push_back(item("Create _Tag at this version...", [this, c] { create_tag(*c); }));
+                    item(_("Create Br_anch at this version..."), [this, c] { create_branch(*c); }));
+                m.push_back(item(_("Create _Tag at this version..."), [this, c] { create_tag(*c); }));
             }
             if (!head && has_wc && !merging && !is_stash)
-                m.push_back(item("Rebase " + cur + " onto this...(_G)",
+                m.push_back(item(rap::i18n::format(_("Rebase {0} onto this...(_G)"), cur),
                                  [this, hash] { open_rebase(hash); }));
-            m.push_back(todo("E_xport this version..."));
+            m.push_back(todo(_("E_xport this version...")));
             if (has_wc && !merging && !is_stash)
             {
                 auto revert = [this, hash](std::optional<size_t> parent)
@@ -366,22 +367,22 @@ menu log_window::context_menu(std::optional<size_t> clicked)
                     arg_list args{"revert", "--no-edit"};
                     if (parent) args.insert(args.end(), {"-m", std::to_string(*parent + 1)});
                     args.push_back(hash);
-                    confirm_then_run("Revert the changes made by " + hash.substr(0, 8) + "?",
-                                     "Revert", {args});
+                    confirm_then_run(rap::i18n::format(_("Revert the changes made by {0}?"), hash.substr(0, 8)),
+                                     _("Revert"), {args});
                 };
                 if (c->parents.size() > 1)
                 {
-                    menu_item sub{.label = "_Revert change by this commit"};
+                    menu_item sub{.label = _("_Revert change by this commit")};
                     for (size_t i = 0; i < c->parents.size(); ++i)
-                        sub.children.push_back(item("Parent " + std::to_string(i + 1) + " (" +
-                                                        c->parents[i].hex(8) + ")",
+                        sub.children.push_back(item(rap::i18n::format(_("Parent {0} ({1})"), i + 1,
+                                                                      c->parents[i].hex(8)),
                                                     [revert, i] { revert(i); }));
                     m.push_back(std::move(sub));
                 }
                 else
-                    m.push_back(item("_Revert change by this commit", [revert] { revert({}); }));
+                    m.push_back(item(_("_Revert change by this commit"), [revert] { revert({}); }));
             }
-            if (!is_stash) m.push_back(todo("Edit _Notes"));
+            if (!is_stash) m.push_back(todo(_("Edit _Notes")));
             separator(m);
         }
     }
@@ -396,21 +397,21 @@ menu log_window::context_menu(std::optional<size_t> clicked)
         {
             std::string a = oldest->id.hex(), b = newest->id.hex();
             if (sel.size() == 2 || contiguous)
-                m.push_back(item("_Compare revisions", [this, a, b] { difftool({a, b}); }));
+                m.push_back(item(_("_Compare revisions"), [this, a, b] { difftool({a, b}); }));
             if (sel.size() == 2)
             {
                 if (has_wc)
-                    m.push_back(item("Show changes as _unified diff",
+                    m.push_back(item(_("Show changes as _unified diff"),
                                      [this, a, b]
                                      {
                                          show_unified_diff(ui_,
                                                            a.substr(0, 8) + ".." + b.substr(0, 8),
                                                            repo_.workdir(), {"diff", a, b});
                                      }));
-                m.push_back(todo("Show log of " + a.substr(0, 8) + ".." + b.substr(0, 8)));
-                m.push_back(todo("Show log of " + b.substr(0, 8) + ".." + a.substr(0, 8)));
-                m.push_back(todo("Show log of " + a.substr(0, 8) + "..." + b.substr(0, 8)));
-                m.push_back(todo("Comp_are change sets"));
+                m.push_back(todo(rap::i18n::format(_("Show log of {0}"), a.substr(0, 8) + ".." + b.substr(0, 8))));
+                m.push_back(todo(rap::i18n::format(_("Show log of {0}"), b.substr(0, 8) + ".." + a.substr(0, 8))));
+                m.push_back(todo(rap::i18n::format(_("Show log of {0}"), a.substr(0, 8) + "..." + b.substr(0, 8))));
+                m.push_back(todo(_("Comp_are change sets")));
             }
             separator(m);
             if (has_wc && !merging)
@@ -419,13 +420,15 @@ menu log_window::context_menu(std::optional<size_t> clicked)
                 arg_list args{"revert", "--no-edit"};
                 for (size_t r : sel)
                     if (const commit* c = log_.commit(r)) args.push_back(c->id.hex());
-                m.push_back(item("_Revert changes by these commits",
+                m.push_back(item(_("_Revert changes by these commits"),
                                  [this, args]
                                  {
-                                     confirm_then_run("Revert the changes made by " +
-                                                          std::to_string(args.size() - 2) +
-                                                          " commits?",
-                                                      "Revert", {args});
+                                     const size_t n = args.size() - 2;
+                                     confirm_then_run(
+                                         rap::i18n::format(N_("Revert the changes made by {0} commit?",
+                                                  "Revert the changes made by {0} commits?", n),
+                                            n),
+                                         _("Revert"), {args});
                                  }));
             }
             separator(m);
@@ -444,22 +447,22 @@ menu log_window::context_menu(std::optional<size_t> clicked)
             }
         if (!picks.empty() && picks.size() == sel.size())
         {
-            if (sel.size() > 1) m.push_back(todo("Com_bine to one commit"));
+            if (sel.size() > 1) m.push_back(todo(_("Com_bine to one commit")));
             if (!any_head && has_wc && !merging)
             {
                 arg_list args{"cherry-pick"};
                 args.insert(args.end(), picks.begin(), picks.end());
-                std::string label = picks.size() == 1 ? "Cherr_y Pick this commit..."
-                                                      : "Cherr_y Pick selected commits...";
+                std::string label = picks.size() == 1 ? _("Cherr_y Pick this commit...")
+                                                      : _("Cherr_y Pick selected commits...");
                 m.push_back(item(label,
                                  [this, args, n = picks.size()]
                                  {
-                                     confirm_then_run("Cherry-pick " + std::to_string(n) +
-                                                          " commit(s) onto the current branch?",
-                                                      "Cherry Pick", {args});
+                                     confirm_then_run(
+                                         rap::i18n::format(_("Cherry-pick {0} commit(s) onto the current branch?"), n),
+                                         _("Cherry Pick"), {args});
                                  }));
             }
-            m.push_back(todo("_Format Patch..."));
+            m.push_back(todo(_("_Format Patch...")));
             separator(m);
         }
     }
@@ -485,12 +488,12 @@ menu log_window::context_menu(std::optional<size_t> clicked)
             std::string local;
             for (const auto& r : *refs)
                 if (r.kind == ref_kind::local_branch && local.empty()) local = r.name;
-            m.push_back(item("Pus_h...", [this, local]
+            m.push_back(item(_("Pus_h..."), [this, local]
                              { keep_dialog(push_dialog::open(ui_, repo_.workdir(), local)); }));
         }
         if (log_.is_head(row) && has_wc && !merging)
             m.push_back(
-                item("_Pull...",
+                item(_("_Pull..."),
                      [this] { keep_dialog(pull_fetch_dialog::open(ui_, repo_.workdir(), true)); }));
 
         std::vector<const ref*> deletable;
@@ -515,13 +518,15 @@ menu log_window::context_menu(std::optional<size_t> clicked)
         if (deletable.size() == 1)
         {
             const ref r = *deletable.front();  // a copy: `refs` may be this call's own
-            m.push_back(item(
-                "_Delete " + menu_text(r.full_name), [this, r, delete_args]
-                { confirm_then_run("Delete " + r.full_name + "?", "Delete", {delete_args(r)}); }));
+            m.push_back(item(rap::i18n::format(_("_Delete {0}"), menu_text(r.full_name)), [this, r, delete_args]
+                             {
+                                 confirm_then_run(rap::i18n::format(_("Delete {0}?"), r.full_name), _("Delete"),
+                                                  {delete_args(r)});
+                             }));
         }
         else if (deletable.size() > 1)
         {
-            menu_item sub{.label = "_Delete branch/tag"};
+            menu_item sub{.label = _("_Delete branch/tag")};
             std::vector<arg_list> all;
             for (const ref* r : deletable)
             {
@@ -529,44 +534,45 @@ menu log_window::context_menu(std::optional<size_t> clicked)
                 all.push_back(args);
                 sub.children.push_back(
                     item(menu_text(r->full_name), [this, r, args]
-                         { confirm_then_run("Delete " + r->full_name + "?", "Delete", {args}); }));
+                         { confirm_then_run(rap::i18n::format(_("Delete {0}?"), r->full_name), _("Delete"), {args}); }));
             }
-            sub.children.push_back(item("All",
+            sub.children.push_back(item(_("All"),
                                         [this, all]
                                         {
                                             confirm_then_run(
-                                                "Delete " + std::to_string(all.size()) + " refs?",
-                                                "Delete", all);
+                                                rap::i18n::format(N_("Delete {0} ref?", "Delete {0} refs?", all.size()),
+                                                   all.size()),
+                                                _("Delete"), all);
                                         }));
             m.push_back(std::move(sub));
         }
         separator(m);
         if (!log_.filtering() && !log_.is_working_tree(row))
         {
-            m.push_back(todo("Collapse revisions"));
+            m.push_back(todo(_("Collapse revisions")));
             separator(m);
         }
     }
 
     // Always present
-    menu_item copy{.label = "Copy to clipboard"};
+    menu_item copy{.label = _("Copy to clipboard")};
     auto copy_item = [this, sel](const char* label, int format)
     { return item(label, [this, sel, format] { copy_to_clipboard(sel, format); }); };
-    copy.children = {copy_item("Full data", copy_full),
-                     copy_item("Full commit data without changed paths", copy_full_no_paths),
-                     copy_item("SHA-1", copy_hash),
-                     copy_item("Authors (full)", copy_authors),
-                     copy_item("Author names", copy_author_names),
-                     copy_item("Author email addresses", copy_author_emails),
-                     copy_item("Subjects", copy_subjects),
-                     copy_item("Messages", copy_messages)};
+    copy.children = {copy_item(_("Full data"), copy_full),
+                     copy_item(_("Full commit data without changed paths"), copy_full_no_paths),
+                     copy_item(_("SHA-1"), copy_hash),
+                     copy_item(_("Authors (full)"), copy_authors),
+                     copy_item(_("Author names"), copy_author_names),
+                     copy_item(_("Author email addresses"), copy_author_emails),
+                     copy_item(_("Subjects"), copy_subjects),
+                     copy_item(_("Messages"), copy_messages)};
     if (sel.size() == 1 && log_.refs_of(sel.front()))
-        copy.children.push_back(copy_item("Tag/branch names", copy_ref_names));
+        copy.children.push_back(copy_item(_("Tag/branch names"), copy_ref_names));
     m.push_back(std::move(copy));
-    m.push_back(item("Search _log messages...", [this] { search_->focus(); }));
+    m.push_back(item(_("Search _log messages..."), [this] { search_->focus(); }));
     if (sel.size() == 1)
         if (const commit* c = log_.commit(sel.front()))
-            m.push_back(item("Show branches this commit is _on",
+            m.push_back(item(_("Show branches this commit is _on"),
                              [this, c] { show_branches_containing(*c); }));
     return m;
 }
@@ -584,10 +590,10 @@ void log_window::copy_to_clipboard(const std::vector<size_t>& rows, int format)
         case copy_full:
         case copy_full_no_paths:
         {
-            out += "Revision: " + c->id.hex() + "\n";
-            out += "Author: " + c->author + " <" + c->email + ">\n";
-            out += "Date: " + format_time(c->time, c->offset_minutes) + "\n";
-            out += "Message:\n" + c->message;
+            out += rap::i18n::format(_("Revision: {0}"), c->id.hex()) + "\n";
+            out += rap::i18n::format(_("Author: {0}"), c->author + " <" + c->email + ">") + "\n";
+            out += rap::i18n::format(_("Date: {0}"), format_time(c->time, c->offset_minutes)) + "\n";
+            out += std::string(_("Message:")) + "\n" + c->message;
             if (!out.ends_with('\n')) out += '\n';
             out += "----\n";
             if (format == copy_full)
@@ -595,7 +601,7 @@ void log_window::copy_to_clipboard(const std::vector<size_t>& rows, int format)
                     for (auto& f : *files)
                     {
                         out += file_model::status_name(f.status) + ": " + f.path;
-                        if (!f.old_path.empty()) out += " (from " + f.old_path + ")";
+                        if (!f.old_path.empty()) out += " " + rap::i18n::format(_("(from {0})"), f.old_path);
                         out += "\n";
                     }
             out += "\n";
@@ -621,8 +627,8 @@ void log_window::show_branches_containing(const commit& c)
     git_result r = run_git(repo_.workdir(), {"branch", "-a", "--contains", c.id.hex()},
                            git_output::stdout_only);
     ui_.message(window_.get(), {.icon = rap::message_spec::icon::info,
-                                .title = "Branches",
-                                .text = "Branches containing " + c.id.hex(8) + ":",
+                                .title = _("Branches"),
+                                .text = rap::i18n::format(_("Branches containing {0}:"), c.id.hex(8)),
                                 .detail = r.output});
 }
 
@@ -701,13 +707,13 @@ void log_window::move_ref(const ref& ref, const commit& target)
         return id.hex(8) + (c ? " \u201c" + c->summary + "\u201d" : "");
     };
     const bool tag = ref.kind == ref_kind::tag;
-    std::string text = std::string(tag ? "Move tag " : "Move branch ") + ref.name + "\nfrom " +
-                       describe(*from) + "\nto " + describe(target.id) + "?";
+    std::string text = rap::i18n::format(tag ? _("Move tag {0}\nfrom {1}\nto {2}?") : _("Move branch {0}\nfrom {1}\nto {2}?"),
+                          ref.name, describe(*from), describe(target.id));
     std::string detail;
     if (tag)
-        detail = "Anyone who already fetched the tag keeps the old one.";
+        detail = _("Anyone who already fetched the tag keeps the old one.");
     else if (repo_.is_ancestor(*from, target.id))
-        detail = "A fast-forward: " + ref.name + " gains commits and loses none.";
+        detail = rap::i18n::format(_("A fast-forward: {0} gains commits and loses none."), ref.name);
     else
     {
         git_result lost = run_git(repo_.workdir(), {"rev-list", "--count", to + ".." + from->hex()},
@@ -715,10 +721,11 @@ void log_window::move_ref(const ref& ref, const commit& target)
         git_result some = run_git(
             repo_.workdir(), {"log", "--format=%h %s", "--max-count=6", to + ".." + from->hex()},
             git_output::stdout_only);
-        detail = ref.name + " will no longer contain " +
-                 (lost.ok() ? lost.output.substr(0, lost.output.find('\n')) : "some") +
-                 " commit(s):\n" + some.output +
-                 "(They stay reachable from the reflog for a while.)";
+        detail = rap::i18n::format(_("{0} will no longer contain {1} commit(s):\n{2}"
+                                "(They stay reachable from the reflog for a while.)"),
+                              ref.name,
+                              lost.ok() ? lost.output.substr(0, lost.output.find('\n')) : _("some"),
+                              some.output);
     }
 
     arg_list args;
@@ -734,7 +741,7 @@ void log_window::move_ref(const ref& ref, const commit& target)
     else
         args = {"tag", "--force", ref.name, to};
 
-    const std::string title = tag ? "Move Tag" : "Move Branch";
+    const std::string title = tag ? _("Move Tag") : _("Move Branch");
     ui_.message(window_.get(),
                 {.icon = rap::message_spec::icon::question,
                  .title = title,
@@ -777,12 +784,13 @@ void log_window::row_activated(size_t row)
             // A tag isn't a branch: checking it out detaches HEAD, so ask.
             const std::string t = "\u201c" + r.name + "\u201d";
             choose(
-                "Switch to " + r.name, "What would you like to do with the tag " + t + "?",
-                {{"_Check out " + menu_text(r.name) + " (detached)",
-                  "To look at or build that version; new commits there aren't on any branch.",
+                rap::i18n::format(_("Switch to {0}"), r.name),
+                rap::i18n::format(_("What would you like to do with the tag {0}?"), t),
+                {{rap::i18n::format(_("_Check out {0} (detached)"), menu_text(r.name)),
+                  _("To look at or build that version; new commits there aren't on any branch."),
                   [this, name = r.name] { switch_to(name, true); }},
-                 {"Create a _branch there and switch to it...",
-                  "For working from that version: the new branch starts at the tag.",
+                 {_("Create a _branch there and switch to it..."),
+                  _("For working from that version: the new branch starts at the tag."),
                   [this, commit = *c, name = r.name] { create_branch(commit, "", true, name); }}});
         }
         if (r.kind == ref_kind::remote_branch)
@@ -851,15 +859,14 @@ void log_window::switch_to(const std::string& target, bool detach)
     if (dirty.ok() && dirty.output.empty()) return run_switch(target, detach, switch_mode::plain);
     const std::string t = "\u201c" + target + "\u201d";
     choose(
-        "Switch to " + target,
-        "You have uncommitted changes. What should happen to them when switching to " + t + "?",
-        {{"_Stash them, then switch", "The stash stays with this commit, ready when you come back.",
+        rap::i18n::format(_("Switch to {0}"), target),
+        rap::i18n::format(_("You have uncommitted changes. What should happen to them when switching to {0}?"), t),
+        {{_("_Stash them, then switch"), _("The stash stays with this commit, ready when you come back."),
           [this, target, detach] { run_switch(target, detach, switch_mode::stash); }},
-         {"_Bring them along",
-          "Merged into " + t +
-              " where it differs; conflicts, if any, are left marked in the files.",
+         {_("_Bring them along"),
+          rap::i18n::format(_("Merged into {0} where it differs; conflicts, if any, are left marked in the files."), t),
           [this, target, detach] { run_switch(target, detach, switch_mode::bring_along); }},
-         {"_Discard them and switch", "Your uncommitted changes are lost. This can't be undone.",
+         {_("_Discard them and switch"), _("Your uncommitted changes are lost. This can't be undone."),
           [this, target, detach] { run_switch(target, detach, switch_mode::discard); }}});
 }
 
@@ -884,11 +891,11 @@ void log_window::run_switch(const std::string& target, bool detach, switch_mode 
     const bool bring_along = mode == switch_mode::bring_along;
     const arg_list merge = checkout("--merge");
     run_quietly(
-        "Switch/Checkout", std::move(commands),
+        _("Switch/Checkout"), std::move(commands),
         [this, bring_along, merge](bool ok, const std::string& output)
         {
             if (!ok && bring_along && output.find("would be overwritten") != std::string::npos)
-                return run_quietly("Switch/Checkout", {merge},
+                return run_quietly(_("Switch/Checkout"), {merge},
                                    [this](bool ok2, const std::string&)
                                    {
                                        reload();
@@ -896,8 +903,8 @@ void log_window::run_switch(const std::string& target, bool detach, switch_mode 
                                    });
             if (!ok && bring_along)
                 ui_.message(window_.get(), {.icon = rap::message_spec::icon::error,
-                                            .title = "Switch/Checkout",
-                                            .text = "Switch/Checkout failed.",
+                                            .title = _("Switch/Checkout"),
+                                            .text = _("Switch/Checkout failed."),
                                             .detail = output});
             reload();
             if (ok) offer_stash_pop();
@@ -935,16 +942,16 @@ void log_window::offer_stash_pop()
         ui_.message(
             window_.get(),
             {.icon = rap::message_spec::icon::question,
-             .title = "Stash",
-             .text = "A stash was made here:\n\u201c" + subject + "\u201d\n\nApply it now?",
+             .title = _("Stash"),
+             .text = rap::i18n::format(_("A stash was made here:\n\u201c{0}\u201d\n\nApply it now?"), subject),
              .detail = clean ? ""
-                             : "You have uncommitted changes. If the stash changes the same files, "
-                               "git won't apply it and it stays in the stash list.",
+                             : _("You have uncommitted changes. If the stash changes the same files, "
+                                 "git won't apply it and it stays in the stash list."),
              .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
             [this, ref](rap::dialog_role r)
             {
                 if (r == rap::dialog_role::yes)
-                    run_quietly("Stash Pop", {{"stash", "pop", ref}},
+                    run_quietly(_("Stash Pop"), {{"stash", "pop", ref}},
                                 [this](bool, const std::string&) { reload(); });
             });
         return;  // the newest only
@@ -997,15 +1004,14 @@ void log_window::reset_to(const commit& c)
     run_dialog<state>(
         ui_, window_.get(), st,
         dialog{
-            "Reset",
+            _("Reset"),
             {vbox{
-                label{"Reset \"" + repo_.head_name() + "\" to " + hash.substr(0, 8) + " " +
-                      c.summary},
+                label{rap::i18n::format(_("Reset \"{0}\" to {1} {2}"), repo_.head_name(), hash.substr(0, 8), c.summary)},
                 form{
-                    {"Reset Type",
-                     drop_down{{"Soft: Leave working tree and index untouched",
-                                "Mixed: Leave working tree untouched, reset index",
-                                "Hard: Reset working tree and index (discard all local changes)"},
+                    {_("Reset Type"),
+                     drop_down{{_("Soft: Leave working tree and index untouched"),
+                                _("Mixed: Leave working tree untouched, reset index"),
+                                _("Hard: Reset working tree and index (discard all local changes)")},
                                1}
                          .bind(st->type)},
                 },
@@ -1016,7 +1022,7 @@ void log_window::reset_to(const commit& c)
         {
             static const char* modes[] = {"--soft", "--mixed", "--hard"};
             int i = std::clamp(s.type->current(), 0, 2);
-            run_git_commands("Reset", {{"reset", modes[i], hash}});
+            run_git_commands(_("Reset"), {{"reset", modes[i], hash}});
         });
 }
 
@@ -1032,7 +1038,7 @@ void log_window::open_rebase(const std::string& upstream)
     if (!w)
     {
         ui_.message(window_.get(),
-                    {.icon = rap::message_spec::icon::error, .title = "Rebase", .text = w.error()});
+                    {.icon = rap::message_spec::icon::error, .title = _("Rebase"), .text = w.error()});
         return;
     }
     rebase_window* raw = w->get();
