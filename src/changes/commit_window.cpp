@@ -123,13 +123,16 @@ void commit_window::build()
         {vbox{
             hbox{
                 label{_("Commit to:")},
-                entry{}.bind(branch_).read_only().width(24_ch),
+                // Read-only and frameless, it reads as the branch's name, as
+                // TortoiseGit's does; "new branch" gives it a frame to type in.
+                entry{}.bind(branch_).read_only().frame(false).width(24_ch),
                 check{_("new branch")}
                     .bind(new_branch_)
                     .on_toggled(
                         [this](bool on)
                         {
                             branch_->set_read_only(!on);
+                            branch_->set_frame(on);
                             branch_->set_placeholder(on ? _("new branch name") : "");
                             branch_->set_text(on ? "" : current_branch_);
                             if (on) branch_->focus();
