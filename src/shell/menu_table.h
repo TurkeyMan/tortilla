@@ -62,6 +62,7 @@ enum class run
     rebase,    // tortilla rebase <folder>
     settings,  // tortilla settings <first>
     repostatus,  // tortilla repostatus <every selected path>
+    commit,      // tortilla commit <every selected path>
 };
 
 struct row
@@ -94,7 +95,7 @@ inline constexpr row k_rows[] = {
     {"Pus&h...", {{{FIG | ONE, 0}, {BARE, 0}, {ROOT, 0}}}, place::sub, run::none, "push"},
     {"Sync...", {{{FIG | ONE, BISECT | MERGE}}}, place::top, run::none, "sync"},
     separator,
-    {"&Commit...", {{{GIT, 0}, {FIG, 0}}}, place::top, run::none, "commit"},
+    {"&Commit...", {{{GIT, 0}, {FIG, 0}}}, place::top, run::commit, "commit"},
     {"SVN DCommit...",
      {{{GIT | SVN, BISECT | MERGE}, {FIG | SVN, BISECT | MERGE}}},
      place::sub,

@@ -4,6 +4,7 @@
 //   tortilla diff [path]              a file: its working tree changes against HEAD, in
 //                                     the diff tool; a folder: Check for modifications
 //   tortilla repostatus [path...]      Check for modifications (TortoiseGit's repostatus)
+//   tortilla commit [path...]          the Commit dialog
 //   tortilla diff [path] rev [rev2]   a commit, or rev..rev2, as a unified diff
 //   tortilla settings [path] [diff|menu]  the Settings dialog (at Diff Viewer or Context Menu)
 //   tortilla --which-ui       show the detected desktop and backend order
@@ -12,6 +13,7 @@
 //                             for this user or (elevated, as the installer
 //                             does) every user
 #include "changes/changes_window.h"
+#include "changes/commit_window.h"
 #include "git/repo.h"
 #include "log/log_window.h"
 #include "rebase/rebase_window.h"
@@ -86,7 +88,7 @@ int main(int argc, char** argv)
         else if (args.empty() && command == "log" &&
                  (std::strcmp(argv[i], "log") == 0 || std::strcmp(argv[i], "rebase") == 0 ||
                   std::strcmp(argv[i], "diff") == 0 || std::strcmp(argv[i], "settings") == 0 ||
-                  std::strcmp(argv[i], "repostatus") == 0))
+                  std::strcmp(argv[i], "repostatus") == 0 || std::strcmp(argv[i], "commit") == 0))
             command = argv[i];
         else
             args.push_back(argv[i]);
@@ -110,6 +112,27 @@ int main(int argc, char** argv)
                                                  : tortilla::settings_page::general,
                                 {}, [&] { (*ui)->quit(); });
         return (*ui)->run();
+    }
+
+    if (command == "commit")
+    {
+        auto w = tortilla::commit_window::open(**ui, args.empty() ? std::vector<std::string>{path}
+                                                                  : args);
+        if (!w)
+        {
+            std::fprintf(stderr, "tortilla: %s\n", w.error().c_str());
+            return 1;
+        }
+        int code = 0;
+        (*w)->on_closed(
+            [&](bool committed)
+            {
+                code = committed ? 0 : 1;
+                (*ui)->quit();
+            });
+        (*w)->show();
+        (*ui)->run();
+        return code;
     }
 
     // A folder's Diff is Check for modifications, as TortoiseGit's [spec 5.1].

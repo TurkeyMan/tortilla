@@ -1,5 +1,6 @@
 #include "changes_window.h"
 
+#include "changes/commit_window.h"
 #include "settings.h"
 #include "ui/diff_window.h"
 #include "ui/progress_dialog.h"
@@ -90,6 +91,7 @@ changes_window::changes_window(rap::ui& ui, repo r, std::vector<std::string> rel
 
 changes_window::~changes_window()
 {
+    commit_window_.reset();
     if (load_) load_->cancel();  // so the worker's thread isn't left waiting on git
 }
 
@@ -158,7 +160,7 @@ void changes_window::build()
                 spacer{},
                 button{"Save unified diff"}.on_click([this] { show_unified_diff_of_paths(); }),
                 menu_button{"Stash"}.on_menu([this] { return stash_menu(); }),
-                button{"Commit"}.enabled(false).tooltip("Not yet in Tortilla"),
+                button{"Commit"}.on_click([this] { open_commit(); }),
                 button{"_Refresh"}.bind(refresh_).on_click([this] { reload(); }),
                 // Always OK, closing even mid-load (TortoiseGit relabels it
                 // Cancel while loading, which only flickers).
@@ -306,6 +308,37 @@ void changes_window::update_stats()
                      "(-)\nfiles: normal=0, non-versioned=" + n(unversioned) +
                      ", modified=" + n(modified) + ", added=" + n(add) + ", deleted=" + n(del) +
                      ", conflicted=" + n(conflicted));
+}
+
+// Commit, for the same paths; this list reloads when it closes [spec 5.3.4].
+void changes_window::open_commit()
+{
+    std::vector<std::string> paths;
+    const fs::path root = rap::sys::path_from_utf8(workdir_);
+    if (whole_project_->checked() || paths_.empty())
+        paths.push_back(workdir_);
+    else
+        for (const std::string& p : paths_)
+            paths.push_back(rap::sys::path_to_utf8(root / rap::sys::path_from_utf8(p)));
+    auto w = commit_window::open(ui_, paths);
+    if (!w)
+    {
+        ui_.message(window_.get(),
+                    {.icon = rap::message_spec::icon::error, .title = "Commit", .text = w.error()});
+        return;
+    }
+    commit_window_ = std::move(*w);
+    commit_window_->on_closed(
+        [this](bool)
+        {
+            ui_.post(
+                [this]
+                {
+                    commit_window_.reset();
+                    reload();
+                });
+        });
+    commit_window_->show();
 }
 
 // Stash changes, and Pop/Apply/List once there's a stash [spec 5.3.4].

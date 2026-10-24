@@ -43,6 +43,7 @@ private:
     void set_loading(bool);
     rap::menu stash_menu();
     void show_unified_diff_of_paths();
+    void open_commit();
 
     rap::ui& ui_;
     repo repo_;
@@ -59,6 +60,7 @@ private:
     std::vector<file_change> loaded_;  // everything loaded, before the filters
     std::unique_ptr<rap::window> window_;
     std::function<void()> closed_;
+    std::unique_ptr<class commit_window> commit_window_;
 
     rap::label* branch_ = nullptr;
     rap::label* stats_ = nullptr;

@@ -372,9 +372,10 @@ public:
         case run::diff: rap::shell::launch(tortilla_exe(), {"diff", first}); return;
         case run::rebase: rap::shell::launch(tortilla_exe(), {"rebase", folder}); return;
         case run::settings: rap::shell::launch(tortilla_exe(), {"settings", first}); return;
+        case run::commit:
         case run::repostatus:
         {
-            std::vector<std::string> args{"repostatus"};
+            std::vector<std::string> args{r->command == run::commit ? "commit" : "repostatus"};
             if (sel.paths.empty())
                 args.push_back(folder);
             else

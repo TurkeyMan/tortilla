@@ -6,6 +6,8 @@
 #include <rapport/rapport.h>
 
 #include <algorithm>
+#include <functional>
+#include <unordered_map>
 
 namespace tortilla
 {
@@ -35,10 +37,51 @@ public:
     void set(std::vector<file_change> files, bool show_unversioned = true)
     {
         files_.clear();
+        checked_.clear();
         for (auto& f : files)
-            if (show_unversioned || f.status != '?') files_.push_back(std::move(f));
+            if (show_unversioned || f.status != '?')
+            {
+                // A box the user set keeps its state across reloads; new
+                // rows start as TortoiseGit's Commit does: changes to
+                // versioned files checked, the rest not [spec 5.4.5].
+                auto it = remembered_.find(f.path);
+                checked_.push_back(it != remembered_.end() ? it->second : starts_checked(f.status));
+                files_.push_back(std::move(f));
+            }
         notify_reset();
     }
+
+    static bool starts_checked(char status)
+    {
+        return status != '?' && status != '!' && status != 'S' && status != 'h';
+    }
+
+    // Row checkboxes (lists made with them): what toggle_checked does is
+    // the owner's (TortoiseGit applies it to the selection).
+    std::function<void(size_t row)> on_toggle;
+    rap::check_state checked(size_t row) const override
+    {
+        return row < checked_.size() && checked_[row] ? rap::check_state::checked
+                                                      : rap::check_state::unchecked;
+    }
+    void toggle_checked(size_t row) override
+    {
+        if (on_toggle) on_toggle(row);
+    }
+    bool is_checked(size_t row) const { return row < checked_.size() && checked_[row]; }
+    void set_checked(const std::vector<size_t>& rows, bool on)
+    {
+        for (size_t r : rows)
+            if (r < checked_.size())
+            {
+                checked_[r] = on;
+                remembered_[files_[r].path] = on;
+                notify_changed(r, 1);
+            }
+    }
+    size_t checked_count() const { return size_t(std::ranges::count(checked_, true)); }
+    // Forget the user's choices (a new set of files).
+    void forget_checks() { remembered_.clear(); }
 
     // Line counts arriving after the list: files[i] is the (first + i)th
     // file given to set(). Rows keep their place and selection.
@@ -128,6 +171,8 @@ public:
 
 private:
     std::vector<file_change> files_;
+    std::vector<bool> checked_;                         // per row, with checkboxes
+    std::unordered_map<std::string, bool> remembered_;  // by path, as the user set them
 };
 
 }  // namespace tortilla

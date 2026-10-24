@@ -58,13 +58,17 @@ public:
         std::function<void(settings_page)> open_settings;
         // The selection changed (the window's status line counts it).
         std::function<void()> selection_changed;
+        // With checkboxes: which files are checked changed.
+        std::function<void()> checks_changed = {};
     };
 
     explicit changes_view(host);
 
     // The list, for the window's layout. `settings_key` names where its
     // column widths and order are kept ("log.files", ...).
-    rap::layout::list list(std::string settings_key);
+    // With `checkboxes`, a box per row: clicking one in a selection sets
+    // them all [TortoiseGit, spec 5.2.6].
+    rap::layout::list list(std::string settings_key, bool checkboxes = false);
     void save_layout() const;
     void restore_layout();
 
@@ -76,6 +80,13 @@ public:
 
     const std::vector<file_change>& files() const { return model_.files(); }
     std::vector<size_t> selection() const;
+
+    // Checkboxes.
+    std::vector<file_change> checked_files() const;
+    size_t checked_count() const { return model_.checked_count(); }
+    // Checks (or unchecks) every row `which` accepts (the Commit dialog's
+    // "Check:" links).
+    void check_where(const std::function<bool(const file_change&)>& which, bool on);
 
 private:
     rap::menu context_menu(std::optional<size_t> row, std::optional<size_t> column);

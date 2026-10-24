@@ -77,10 +77,20 @@ changes_view::changes_view(host h)
 {
 }
 
-rap::layout::list changes_view::list(std::string settings_key)
+rap::layout::list changes_view::list(std::string settings_key, bool checkboxes)
 {
     settings_key_ = std::move(settings_key);
+    if (checkboxes)
+        model_.on_toggle = [this](size_t row)
+        {
+            // A box in the selection sets the whole selection to its new state.
+            std::vector<size_t> rows = selection();
+            if (std::ranges::find(rows, row) == rows.end()) rows = {row};
+            model_.set_checked(rows, !model_.is_checked(row));
+            if (host_.checks_changed) host_.checks_changed();
+        };
     return rap::layout::list{file_model::columns(), &model_}
+        .checkboxes(checkboxes)
         .compact()
         .soft_selection()
         .bind(list_)
@@ -136,6 +146,23 @@ void changes_view::set_counts(size_t first, const std::vector<file_change>& file
 std::vector<size_t> changes_view::selection() const
 {
     return list_ ? list_->selection() : std::vector<size_t>{};
+}
+
+std::vector<file_change> changes_view::checked_files() const
+{
+    std::vector<file_change> out;
+    for (size_t r = 0; r < model_.files().size(); ++r)
+        if (model_.is_checked(r)) out.push_back(model_.files()[r]);
+    return out;
+}
+
+void changes_view::check_where(const std::function<bool(const file_change&)>& which, bool on)
+{
+    std::vector<size_t> rows;
+    for (size_t r = 0; r < model_.files().size(); ++r)
+        if (which(model_.files()[r])) rows.push_back(r);
+    model_.set_checked(rows, on);
+    if (host_.checks_changed) host_.checks_changed();
 }
 
 menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t> column)
