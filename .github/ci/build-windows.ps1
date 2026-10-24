@@ -60,7 +60,7 @@ Copy-Item -Recurse data/windows/menu "$stage/bin/menu"
 New-Item -ItemType Directory "$stage/translations" | Out-Null
 Get-ChildItem data/translations/*.po, rapport/i18n/*.po -ErrorAction SilentlyContinue |
     Copy-Item -Destination "$stage/translations/"
-Copy-Item README.md, LICENSE $stage
+Copy-Item README.md, LICENSE, NOTICES.md $stage
 # Self-contained: nothing but Windows' own DLLs, for the exe and for the
 # extension Explorer loads.
 Run 'the import check' { python rapport/ci/check-imports.py "$stage/bin/tortilla.exe" "$stage/bin/tortilla-shell.dll" }

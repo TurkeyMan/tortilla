@@ -1,5 +1,7 @@
 // Tortilla: a TortoiseGit-style git GUI.
-//   tortilla [log] [--all] [path]   log window for the repository containing path
+//   tortilla [log] [--all] [path]   log window for the repository containing path;
+//                                     with nothing given and none here, the welcome window
+//   tortilla about                    the welcome window: what Tortilla is, links
 //   tortilla rebase [path] [upstream]   rebase dialog
 //   tortilla diff [path]              a file: its working tree changes against HEAD, in
 //                                     the diff tool; a folder: Check for modifications
@@ -38,6 +40,7 @@
 #include "ui/compare.h"
 #include "ui/diff_window.h"
 #include "ui/settings_dialog.h"
+#include "ui/welcome_window.h"
 #include "ui/windows.h"
 
 #include <rapport/rapport.h>
@@ -77,6 +80,7 @@ int main(int argc, char** argv)
     tortilla::ssh_environment();
     rap::load_options opts;
     std::string command = "log";
+    bool named = false;  // a command was given (else the log, or the welcome window)
     bool all_branches = false;
     std::vector<std::string> args;
     for (int i = 1; i < argc; ++i)
@@ -126,8 +130,11 @@ int main(int argc, char** argv)
                   std::strcmp(argv[i], "push") == 0 || std::strcmp(argv[i], "branch") == 0 ||
                   std::strcmp(argv[i], "tag") == 0 || std::strcmp(argv[i], "switch") == 0 ||
                   std::strcmp(argv[i], "merge") == 0 || std::strcmp(argv[i], "mergeabort") == 0 ||
-                  std::strcmp(argv[i], "conflicteditor") == 0))
+                  std::strcmp(argv[i], "conflicteditor") == 0 || std::strcmp(argv[i], "about") == 0))
+        {
             command = argv[i];
+            named = true;
+        }
         else
             args.push_back(argv[i]);
     }
@@ -362,14 +369,29 @@ int main(int argc, char** argv)
         return (*ui)->run();
     }
 
+    tortilla::windows::init(**ui);
+    // Started with nothing to open (from the Start menu, a launcher): what
+    // Tortilla is and a way in, rather than nothing at all.
+    auto welcome = [&]
+    {
+        tortilla::windows::keep(tortilla::welcome_window::open(**ui));
+        return (*ui)->run();
+    };
+    if (command == "about") return welcome();
     auto log = tortilla::log_window::open(**ui, path, all_branches);
     if (!log)
     {
+        if (!named && args.empty()) return welcome();
+        // No console to read it on: said in a window too.
         std::fprintf(stderr, "tortilla: %s\n", log.error().c_str());
+        (*ui)->message(nullptr,
+                       {.icon = rap::message_spec::icon::error, .title = "Tortilla",
+                        .text = log.error()},
+                       [&](rap::dialog_role) { (*ui)->quit(); });
+        (*ui)->run();
         return 1;
     }
     // The log, and the dialogs it opens: until the last closes.
-    tortilla::windows::init(**ui);
     tortilla::windows::keep(std::move(*log));
     return (*ui)->run();
 }

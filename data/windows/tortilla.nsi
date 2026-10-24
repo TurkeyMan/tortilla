@@ -1,8 +1,8 @@
 ; Tortilla's Windows installer. Built by .github/ci/build-windows.ps1:
 ;   makensis -DVERSION=0.1 -DSTAGE=<install tree> -DOUT=<setup.exe> tortilla.nsi
 ; STAGE holds the app as installed: bin\ (tortilla.exe, self-contained, and
-; the Explorer extension tortilla-shell.dll), translations\, and the README
-; and licence.
+; the Explorer extension tortilla-shell.dll), translations\, and the README,
+; licence and third-party notices.
 ;
 ; The extension is registered for every user (tortilla --register-shell
 ; --all-users). Explorer keeps it loaded, so it can't be overwritten or
@@ -146,6 +146,7 @@ Section "Uninstall"
   RMDir /r "$INSTDIR\translations"
   Delete "$INSTDIR\README.md"
   Delete "$INSTDIR\LICENSE"
+  Delete "$INSTDIR\NOTICES.md"
   Delete "$INSTDIR\uninstall.exe"
   RMDir /REBOOTOK "$INSTDIR"
   DeleteRegKey HKLM "${UNINSTALL_KEY}"

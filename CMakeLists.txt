@@ -85,6 +85,7 @@ add_executable(tortilla
     src/ui/settings_dialog.cpp
     src/shell/menu_icons.cpp
     src/util/gravatar.cpp
+    src/ui/welcome_window.cpp
     src/i18n.cpp
     src/ui/askpass.cpp
     src/ui/windows.cpp
@@ -135,17 +136,29 @@ add_custom_command(TARGET tortilla-shell-probe POST_BUILD
             $<TARGET_FILE_DIR:tortilla-shell-probe>/menu)
 target_link_libraries(tortilla PRIVATE rapport::shell)
 
+# The welcome window's mascot, built in: nothing to install or lose.
+set(TORTILLA_MASCOT_PNG ${CMAKE_CURRENT_SOURCE_DIR}/data/icons/hicolor/256x256/apps/tortilla.png)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${TORTILLA_MASCOT_PNG})
+file(READ ${TORTILLA_MASCOT_PNG} TORTILLA_MASCOT HEX)
+string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," TORTILLA_MASCOT "${TORTILLA_MASCOT}")
+file(GENERATE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/mascot.cpp CONTENT
+     "#include <cstddef>\n#include <cstdint>\nnamespace tortilla\n{\nextern const uint8_t k_mascot_png[] = {${TORTILLA_MASCOT}};\nextern const size_t k_mascot_png_size = sizeof k_mascot_png;\n}\n")
+target_sources(tortilla PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/mascot.cpp)
+target_compile_definitions(tortilla PRIVATE TORTILLA_VERSION="${PROJECT_VERSION}")
+
 # Translations: Tortilla's and rapport's .po files, read as they are
-# (data/translations; rapport/i18n). Copied beside the build's programs, so
-# a built tortilla finds them as an installed one does.
+# (data/translations; rapport/i18n). Copied beside the build's programs on
+# every build (a changed translation relinks nothing), so a built tortilla
+# finds them as an installed one does.
 file(GLOB TORTILLA_TRANSLATIONS CONFIGURE_DEPENDS
      ${CMAKE_CURRENT_SOURCE_DIR}/data/translations/*.po ${CMAKE_CURRENT_SOURCE_DIR}/rapport/i18n/*.po)
 if(TORTILLA_TRANSLATIONS)
-    add_custom_command(TARGET tortilla POST_BUILD
+    add_custom_target(tortilla-translations ALL
         COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:tortilla>/translations
         COMMAND ${CMAKE_COMMAND} -E copy_if_different ${TORTILLA_TRANSLATIONS}
                 $<TARGET_FILE_DIR:tortilla>/translations
         COMMAND_EXPAND_LISTS)
+    add_dependencies(tortilla-translations tortilla)
 endif()
 
 if(UNIX AND NOT APPLE)
@@ -153,6 +166,8 @@ if(UNIX AND NOT APPLE)
     install(TARGETS tortilla RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
     install(DIRECTORY data/icons/hicolor DESTINATION ${CMAKE_INSTALL_DATADIR}/icons)
     install(FILES ${TORTILLA_TRANSLATIONS} DESTINATION ${CMAKE_INSTALL_DATADIR}/tortilla/translations)
+    # The welcome window's Licence and Third-party notices links open these.
+    install(FILES LICENSE NOTICES.md DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/tortilla)
     install(FILES data/linux/tortilla.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
 endif()
 
