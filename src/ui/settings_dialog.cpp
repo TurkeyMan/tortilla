@@ -298,7 +298,6 @@ rap::node context_menu_page(std::shared_ptr<state> st)
         list{{{.title = _("Entry"), .width = 44_ch, .painted = true},
               {.title = _("Shows"), .width = 14_ch, .stretch = true}},
              st->menu_entries.get()}
-            .compact()
             .soft_selection()
             .on_selection_changed(selection_changed)
             .bind(st->menu_list)

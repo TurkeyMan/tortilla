@@ -184,7 +184,6 @@ void log_window::build()
             splitter{
                 vertical,
                 list{log_model::columns(), &log_}
-                    .compact()
                     .soft_selection()
                     .auto_scroll()
                     .bind(commit_list_)
@@ -202,7 +201,7 @@ void log_window::build()
                 // file list until that reaches its minimum. (TortoiseGit
                 // shrinks the details first [spec 1.3]; this is deliberate.)
                 hbox{
-                    text_view{}.read_only().compact().bind(details_).stretch(),
+                    text_view{}.read_only().bind(details_).stretch(),
                     // Kept top right, as TortoiseGit has it [spec 1.2].
                     vbox{
                         canvas{}

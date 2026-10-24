@@ -95,7 +95,6 @@ rap::layout::list changes_view::list(std::string settings_key, bool checkboxes)
         };
     return rap::layout::list{file_model::columns(), &model_}
         .checkboxes(checkboxes)
-        .compact()
         .soft_selection()
         .bind(list_)
         .on_selection_changed(

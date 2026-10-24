@@ -144,7 +144,6 @@ void rebase_window::build(const std::string& upstream)
             splitter{
                 vertical,
                 list{rebase_model::columns(), &model_}
-                    .compact()
                     .soft_selection()
                     .bind(list_)
                     .on_selection_changed([this] { selection_changed(); })
@@ -175,20 +174,17 @@ void rebase_window::build(const std::string& upstream)
                     },
                     tabs{
                         {_("Revision Files"), vbox{revision_files_.list("rebase.revision")
-                                                    .compact()
                                                     .soft_selection()
                                                     .stretch()}
                                                .handle(revision_page_)},
                         {_("Conflict Files"), vbox{conflict_files_.list("rebase.conflicts")
-                                                    .compact()
                                                     .soft_selection()
                                                     .stretch()}
                                                .handle(conflict_page_)},
                         {_("Commit Message"),
-                         vbox{text_view{}.compact().read_only().bind(message_).stretch()}.handle(
+                         vbox{text_view{}.read_only().bind(message_).stretch()}.handle(
                              message_page_)},
                         {_("Log"), vbox{text_view{}
-                                         .compact()
                                          .monospace()
                                          .read_only()
                                          .wrap(false)
