@@ -85,6 +85,7 @@ add_executable(tortilla
     src/ui/settings_dialog.cpp
     src/shell/menu_icons.cpp
     src/util/gravatar.cpp
+    src/i18n.cpp
     src/ui/askpass.cpp
     src/ui/windows.cpp
     src/remote/pull_fetch_dialog.cpp
@@ -134,10 +135,24 @@ add_custom_command(TARGET tortilla-shell-probe POST_BUILD
             $<TARGET_FILE_DIR:tortilla-shell-probe>/menu)
 target_link_libraries(tortilla PRIVATE rapport::shell)
 
+# Translations: Tortilla's and rapport's .po files, read as they are
+# (data/translations; rapport/i18n). Copied beside the build's programs, so
+# a built tortilla finds them as an installed one does.
+file(GLOB TORTILLA_TRANSLATIONS CONFIGURE_DEPENDS
+     ${CMAKE_CURRENT_SOURCE_DIR}/data/translations/*.po ${CMAKE_CURRENT_SOURCE_DIR}/rapport/i18n/*.po)
+if(TORTILLA_TRANSLATIONS)
+    add_custom_command(TARGET tortilla POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:tortilla>/translations
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${TORTILLA_TRANSLATIONS}
+                $<TARGET_FILE_DIR:tortilla>/translations
+        COMMAND_EXPAND_LISTS)
+endif()
+
 if(UNIX AND NOT APPLE)
     include(GNUInstallDirs)
     install(TARGETS tortilla RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
     install(DIRECTORY data/icons/hicolor DESTINATION ${CMAKE_INSTALL_DATADIR}/icons)
+    install(FILES ${TORTILLA_TRANSLATIONS} DESTINATION ${CMAKE_INSTALL_DATADIR}/tortilla/translations)
     install(FILES data/linux/tortilla.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
 endif()
 

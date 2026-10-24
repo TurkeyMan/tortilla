@@ -28,6 +28,7 @@
 #include "changes/file_action_window.h"
 #include "git/repo.h"
 #include "git/ssh_client.h"
+#include "i18n.h"
 #include "log/log_window.h"
 #include "rebase/rebase_window.h"
 #include "remote/clone_dialog.h"
@@ -53,6 +54,8 @@
 
 int main(int argc, char** argv)
 {
+    // The language first: what follows shows text, and git inherits it.
+    tortilla::setup_language();
     // Started by git or ssh for an answer (a password, a passphrase): asked
     // in a window, answered on our output, so before the console is taken.
     if (tortilla::started_as_askpass(argc))

@@ -1,0 +1,20 @@
+# German translation of Tortilla.
+# This file is distributed under the same licence as Tortilla (GPLv3).
+msgid ""
+msgstr ""
+"Project-Id-Version: tortilla\n"
+"Language: de\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+msgid "Language"
+msgstr "Sprache"
+
+#, c++-format
+msgid "System default ({0})"
+msgstr "Systemstandard ({0})"
+
+msgid "Applies the next time Tortilla starts."
+msgstr "Gilt ab dem nächsten Start von Tortilla."

@@ -3,10 +3,13 @@
 #include "git/diff_tool.h"
 #include "git/merge_tool.h"
 #include "git/ssh_client.h"
+#include "i18n.h"
 #include "log/action_icons.h"
 #include "settings.h"
 #include "shell/menu_icons.h"
 #include "shell/menu_table.h"
+
+#include <rapport/sys.h>
 
 #include <algorithm>
 #include <cctype>
@@ -32,6 +35,9 @@ struct state
     // unvisited page saves nothing.
     rap::drop_down* icon_style = nullptr;
     rap::canvas* icon_preview = nullptr;
+    // Language: the tag each choice saves ("" for the system's).
+    rap::drop_down* language = nullptr;
+    std::vector<std::string> language_tags;
     // Compare with: Tortilla's viewer, git difftool, each detected tool, then
     // Custom (the command line shown only for it).
     rap::drop_down* diff_tool_select = nullptr;
@@ -92,7 +98,31 @@ rap::node general_page(std::shared_ptr<state> st)
             x += 10;
         }
     };
+    // The system's language, English (the source, so always there), then
+    // each translation installed.
+    const auto system = rap::sys::ui_languages();
+    std::vector<std::string> languages{rap::i18n::format(
+        _("System default ({0})"),
+        system.empty() ? std::string("English") : rap::i18n::native_name(system.front()))};
+    st->language_tags = {"", "en"};
+    languages.push_back("English");
+    if (const auto dir = translations_dir(); !dir.empty())
+        for (const auto& l : rap::i18n::available("tortilla", dir))
+            if (l.tag != "en")
+            {
+                languages.push_back(l.name);
+                st->language_tags.push_back(l.tag);
+            }
+    const std::string chosen = settings::get().value(k_language_setting);
+    int current_language = 0;
+    for (size_t i = 1; i < st->language_tags.size(); ++i)
+        if (st->language_tags[i] == chosen) current_language = int(i);
     return vbox{
+        group{_("Language"),
+              form{
+                  {_("Language"), drop_down{languages, current_language}.bind(st->language)},
+                  {"", label{_("Applies the next time Tortilla starts.")}},
+              }},
         group{
             "Log",
             form{
@@ -512,6 +542,16 @@ void show_settings(rap::ui& ui, rap::window* parent, const std::string& repo_dir
             if (role == rap::dialog_role::ok)
             {
                 settings& settings = settings::get();
+                if (keep->language)
+                {
+                    const int i = keep->language->current();
+                    const std::string tag =
+                        i > 0 && size_t(i) < keep->language_tags.size() ? keep->language_tags[size_t(i)] : "";
+                    if (tag.empty())
+                        settings.remove(k_language_setting);
+                    else
+                        settings.set(k_language_setting, tag);
+                }
                 if (keep->icon_style)
                     settings.set(
                         "log.actionIcons",
