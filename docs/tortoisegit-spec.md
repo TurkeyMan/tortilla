@@ -2125,3 +2125,275 @@ These dialogs were searched for an embedded `CGitStatusListCtrl` and none was fo
 - **Folder Diff on a submodule.** Which repository becomes current when a folder Diff is run on a submodule's root folder (no `/submodule` is passed from Explorer). `SetCurrentDir` was not examined.
 - **Help.** The Help button's handler and the help topic it opens.
 - **History key.** The value of `m_sUUID`, used in the commit-message history key.
+
+## 6. Add, Revert and Resolve dialogs
+
+The three dialogs have the same shape: a `CGitStatusListCtrl` with checkboxes (5.2), a tri-state "Select/deselect all" checkbox, and OK, Cancel and Help. OK does no git work itself. It only stores the checked entries, and the command class then runs a progress command in the Git progress dialog (`CGitProgressDlg`, 6.4). The list's own configuration (masks and columns) is summarised in 5.5. This section adds what 5.5 leaves out.
+
+New citation keys (same commit as section 0):
+
+| Key | File |
+|---|---|
+| **ADC** | `src/TortoiseProc/Commands/AddCommand.cpp` |
+| **RVC** | `src/TortoiseProc/Commands/RevertCommand.cpp` |
+| **RSLC** | `src/TortoiseProc/Commands/ResolveCommand.cpp` (`RSC` is taken by RepoStatusCommand) |
+| **ADD** / **ADD.h** | `src/TortoiseProc/AddDlg.cpp` / `.h` |
+| **RVD** / **RVD.h** | `src/TortoiseProc/RevertDlg.cpp` / `.h` |
+| **RSD** / **RSD.h** | `src/TortoiseProc/ResolveDlg.cpp` / `.h` (`RD` is taken by RebaseDlg) |
+| **APC** / **APC.h** | `src/TortoiseProc/ProgressCommands/AddProgressCommand.cpp` / `.h` |
+| **RVPC** / **RVPC.h** | `src/TortoiseProc/ProgressCommands/RevertProgressCommand.cpp` / `.h` |
+| **RSPC** / **RSPC.h** | `src/TortoiseProc/ProgressCommands/ResolveProgressCommand.cpp` / `.h` |
+| **MGT.h** | `src/TortoiseProc/MassiveGitTask.h` |
+| **MGTB** | `src/Git/MassiveGitTaskBase.cpp` (batches one git command over many paths) |
+| **GPD** | `src/TortoiseProc/GitProgressDlg.cpp` |
+| **GPL** | `src/TortoiseProc/GitProgressList.cpp` |
+| **SU** | `src/Utils/ShellUpdater.cpp` (overlay refresh) |
+| **GIT.h** | `src/Git/Git.h` |
+| **TMF** | `src/TortoiseMerge/MainFrm.cpp` |
+
+### 6.1 Shared behaviour
+
+- **Entry points.** Each dialog is opened by a TortoiseGitProc command: `add`, `revert` and `resolve`. Explorer sends `/pathfile:<tmp>` for all three (4.2 rows 48, 39 and 34). None of the three commands overrides the default path requirement, *working tree required*. Outside a working tree, TortoiseGitProc shows "No working directory found." [POT:6485] and stops. [CMDH:96; CMDC:454-462] The paths arrive relative to the repository root, and the root itself becomes the empty path (5.1).
+- **Window.** All three are `CResizableStandAloneDialog`s with `WS_THICKFRAME` and minimize/maximize boxes. [RC:175, 569, 801] They are centred on the Explorer window when one is known, and save and restore their placement under the names "AddDlg", "RevertDlg" and "ResolveDlg". [ADD:84-86; RVD:82-84; RSD:77-79] The list stretches both ways. "Select/deselect all" is anchored bottom-left and widened to fit its text. Everything else is anchored bottom-right. [ADD:74-82; RVD:74-81; RSD:69-76] The title is `<path> - <caption> - TortoiseGit`, formatted as in 5.3.1 (`DialogTitles`, compaction). [AU:3518-3565]
+- **Loading.** The dialog loads on a worker thread: OK is disabled, `StoreScrollPos`, `Clear`, `GetStatus`, then `Show`. If `GetStatus` fails, the list's empty text becomes the git error (`GetLastErrorMessage`). If the thread cannot start, the dialog shows "Could not start thread!" [POT:3141]. [ADD:89-96, 140-157; RVD:87-94, 104-141; RSD:82-89, 133-149]
+- **OK, Cancel, Esc.** OK and Cancel do nothing while loading is in progress. Cancel during loading only sets the control's cancel flag (`SetCancelBool`). [ADD:100-118; RVD:143-188; RSD:94-112] The control enables OK only when at least one row is checked (`SetConfirmButton`, 5.2.7).
+- **Keys.** Ctrl+Enter presses OK when it is enabled. F5 reloads. [ADD:159-184; RVD:205-237; RSD:151-183]
+- **"Select/deselect all"** (`BS_AUTO3STATE`). The control keeps its state in step: unchecked, indeterminate or checked for none, some or all rows checked (5.2.7). When the user clicks it, a box that would go to indeterminate is forced to unchecked. Then `SelectAll(checked)` checks or unchecks **every visible row**. [ADD:120-133; RVD:190-203; RSD:114-127; GSLC:3256-3284]
+- **File drop.** Files and folders dropped on the list are accepted only when they belong to the same repository (`HasAdminDir` equals `g_Git.m_CurrentDir`). A dropped path is added to the dialog's path list unless it is already a row, or (when the list holds folders) already lies under one of them. Its stored check state is reset, and a 200 ms timer reloads the list, re-arming itself while a load is running. [ADD:198-278; RVD:251-320; RSD:197-266]
+- **Refresh requests** from the list's context menu (`GITSLNM_NEEDSREFRESH`, 5.2.9) start a reload unless one is already running. [ADD:186-196; RVD:239-249; RSD:185-195]
+- **Background images.** `IDI_ADD_BKG`, `IDI_REVERT_BKG` and `IDI_RESOLVE_BKG`. The progress dialog reuses the same image for each command. [ADD:69; RVD:69; RSD:64; APC:32; RVPC:37; RSPC:33]
+- **What OK hands on.** `WriteCheckedNamesToPathList` replaces the dialog's path list with the checked entries, sorted by path. The entries are full `CTGitPath` objects, **status bits (`m_Action`) and old path included**, and the progress commands rely on that. [GSLC:3579-3591]
+- **Help.** The Help button exists in all three templates. Its handler and help topic were not examined.
+
+### 6.2 Add (`CAddDlg`, `IDD_ADD`)
+
+#### 6.2.1 Command (`AddCommand::Execute`)
+
+- **`/noui`.** The branch is compiled out (`#if 0`), so `/noui` does nothing and returns false. [ADC:30-39]
+- **All paths are files** (`AreAllPathsFiles`, i.e. none is an existing directory). **There is no dialog.** The progress dialog runs `AddProgressCommand` on the paths as given. [ADC:42-53; TGP:1445-1449]
+- **Otherwise** (at least one folder), `CAddDlg` opens. After OK with a non-empty selection, `AddProgressCommand` runs on the checked entries. [ADC:56-72]
+- **Overlays.** The command always flushes the shell updater at the end (6.4). [ADC:75]
+
+#### 6.2.2 Window
+
+`IDD_ADD DIALOGEX 0,0,244,154`, caption **"Add"**, resizable. Controls from RC:174-185:
+
+| Control | ID | Label | Rect (DLU) |
+|---|---|---|---|
+| File list | `IDC_ADDLIST` | – (report, show-selection-always, border) | 7,7,230,107 |
+| Select all | `IDC_SELECTALL` | "Select/deselect &all" (3-state) | 7,119,78,10 |
+| Include ignored | `IDC_INCLUDE_IGNORED` | "Include &ignored files" (auto checkbox) | 89,119,78,10 |
+| OK | `IDOK` | "OK" (default) | 73,133,50,14 |
+| Cancel | `IDCANCEL` | "Cancel" | 131,133,50,14 |
+| Help | `IDHELP` | "Help" | 187,133,50,14 |
+
+- **Title.** The path is the common root of the given paths, made absolute (`CombinePath(GetCommonRoot().GetUIPathString())`). [ADD:72]
+- **Resizing.** "Include ignored files" is also widened to fit (`AdjustControlSize`). [ADD:75]
+- **Taskbar.** The window is marked unpinnable (`MarkWindowAsUnpinnable`). Revert and Resolve do the same. [ADD:60; RVD:63; RSD:58]
+
+#### 6.2.3 The list
+
+- **Init.** Only Extension is visible by default; Extension, Last Modified and Size are available. Container name "AddDlg", with checkboxes. The context menu is `POPALL ^ (ADD | COMMIT | CHANGELISTS | PREPAREDIFF)`. [ADD:63]
+- **Placeholder.** The empty text is "There is nothing to add.\nAll the files and folders are either under version control,\nhave been ignored or the global ignore configuration setting." [POT:9521]. [ADD:67]
+- **Dead setting.** `SetIgnoreRemoveOnly()` is called [ADD:64], but `m_bIgnoreRemoveOnly` is never read anywhere, so it has no effect. [GSLC.h:452, 839]
+- **Load.** `GetStatus(&paths, false, bShowIgnores = includeIgnored, bShowUnRev = true)`, so it loads `FILELIST_MODIFY` + `FILELIST_UNVER` [+ `FILELIST_IGNORE`] (5.2.2). [ADD:148]
+- **Show.** `Show(UNVERSIONED | DIRECTFILES | REMOVEDANDPRESENT [| IGNORED], check = UNVERSIONED)`. `SHOWREMOVEDANDPRESENT` is 0 (5.2.3), so the rows are the **unversioned files, plus the ignored files when the box is on**. Modified or staged files are loaded but never shown. [ADD:150-153]
+- **Initial checks.** Every unversioned row starts checked. Ignored rows start unchecked, unless the file was passed explicitly on the command line (`DIRECTFILES` pre-check, which applies to non-directory command-line paths [GSLC:406-412, 688-695]). A check state remembered from an earlier load wins (5.2.6).
+- **"Include ignored files".** Default unchecked. It is not persisted (plain member, `FALSE`). A click re-reads the box and reloads the list, which adds or drops the ignored files as their own group, "Ignored Files" (5.2.5). [ADD.h:70; ADD:280-284]
+- **Directories.** `ls-files --others` lists files, so an unversioned folder appears as its files (5.2.2).
+
+#### 6.2.4 What OK does (`AddProgressCommand`)
+
+The progress window title is `<common root> - Add - TortoiseGit` ("Add" [POT:1563]). The first line of the list is "Command" [POT:2680] / "Add". [APC:31-38; GPL:388-391]
+
+- **With libgit2** (the default: `UseLibgit2` TRUE, and `UseLibgit2_mask` defaults include `GIT_CMD_ADD`) [GIT:240-242; GIT.h:34]:
+  1. Open the repository index and `git_index_read(force)`.
+  2. For each path, `git_index_add_bypath(path with any trailing '/' trimmed)`, then report a row "Added" [POT:1620] in the Added colour.
+  3. `git_index_write` once at the end.
+
+  The first error stops the run (`ReportGitError`); paths already added are then not written to the index. Cancel is checked after each file. [APC:42-100; GPL:1090-1137]
+- **Without libgit2.** `git.exe add -f --pathspec-from-file=<tmp> --pathspec-file-nul` with all paths at once. The temp file holds UTF-8, NUL-separated repository paths. [APC:103-105; MGTB:80-128; TGP:1552-1569] `-f` (and libgit2's add, which does not consult ignore rules) is what lets ignored files be added.
+- **After success** [APC:118-141; GPD:255-303]:
+  - The paths are queued for an overlay update.
+  - The progress dialog's menu button offers:
+    - "&Commit..." [POT:431], which runs `/command:commit /path:"<repository root>"`. It is on by default (`m_bShowCommitButtonAfterAdd` = true; `AddCommand` does not change it) [APC.h:24].
+    - "Add as Executable (+x)" [POT:1588] and "Add as Symlink" [POT:1592]. These rewrite the index entry mode of every non-directory path to `100755` / `120000` through libgit2, whatever the libgit2 setting. Errors show a message box such as "Could not update file mode.". [APC:146-193]
+- **Errors.** There is no post-command menu after an error. The info line says "The operation failed." [POT:9403]. [GPL:488-493]
+
+### 6.3 Revert (`CRevertDlg`, `IDD_REVERT`)
+
+#### 6.3.1 Command (`RevertCommand::Execute`)
+
+The dialog always opens, for files and folders alike. On OK, `RevertProgressCommand` (target revision `"HEAD"`, the default) runs on `m_selectedPathList`: the checked rows, sorted by path. **The command returns true whether or not errors occurred.** [RVC:26-41; RVPC.h:24; RVD:143-179]
+
+`m_bRecursive` is computed in OnOK (true only when every row is checked), and in the non-recursive case OnOK also rewrites `m_pathList`. Neither result is used by `RevertCommand`. [RVD:149-175]
+
+#### 6.3.2 Window
+
+`IDD_REVERT DIALOGEX 0,0,279,232`, caption **"Revert"**, resizable. Controls from RC:568-579:
+
+| Control | ID | Label | Rect (DLU) |
+|---|---|---|---|
+| File list | `IDC_REVERTLIST` | – | 7,7,265,180 |
+| Select all | `IDC_SELECTALL` | "Select/deselect &all" (3-state) | 7,189,141,17 |
+| Note | `IDC_UNVERSIONEDITEMS` | "Note: the folder contains unversioned items" (static, hidden) | 160,190,112,16 |
+| OK | `IDOK` | "OK" (default) | 101,210,50,14 |
+| Cancel | `IDCANCEL` | "Cancel" | 161,210,50,14 |
+| Help | `IDHELP` | "Help" | 221,210,50,14 |
+
+- **Title.** The path is the absolute common root of the given paths. [RVD:72]
+- **The "Note" label.** It would be shown only when `HasUnversionedItems()` is true and `HKCU\Software\TortoiseGit\UnversionedAsModified` is set (default FALSE). [RVD:125-135] However, `m_bHasUnversionedItems` is only ever assigned FALSE [GSLC:461; GSLC.h:493, 791], so **the label is never shown**.
+- **Options.** There are no other options in the dialog.
+
+#### 6.3.3 The list
+
+- **Init.** Extension, Status, Lines added and Lines removed are visible; all columns are available. Container name "RevertDlg". The context menu is `POPALL ^ (COMMIT | RESTORE | CHANGELISTS)`, so the list's own "Re&vert..." entry (5.2.8) is still offered. [RVD:65]
+- **Placeholder.** No empty string is set, so an empty list shows "File list is empty" [POT:4501].
+- **Before loading,** the thread refreshes the index stat data with `RefreshGitIndex`: gitdll `git_update_index()`, or `git.exe update-index --refresh` when gitdll is off or the repository uses LFS. [RVD:115; GIT:2756-2775]
+- **Load.** `GetStatus(&paths)` with all defaults, so `FILELIST_MODIFY` only: staged and unstaged changes against HEAD, conflicts and unstaged deletions (5.2.2). Unversioned and ignored files are not loaded. [RVD:117; GSLC.h:466-470]
+- **Show.** `Show(VERSIONEDBUTNORMALANDEXTERNALSFROMDIFFERENTREPOS | DIRECTFILES | EXTERNALFROMDIFFERENTREPO, check = DIRECTFILES | ADDED)`. The rows are modified, added and copied, deleted, renamed and conflicted entries under the given paths. [RVD:121-123]
+- **Initial checks** [GSLC:688-695]:
+  - **Added (and copied) files are always checked.**
+  - Any file that was passed **explicitly as a file path** is checked.
+  - Every other row is **unchecked**. Reverting a folder therefore opens with only its added files checked; the user must tick the modified ones or use "Select/deselect all".
+  - When Explorer passes a single file, that file is checked.
+
+#### 6.3.4 What OK does (`RevertProgressCommand`, target `T` = `HEAD`)
+
+The progress window title is `<common root> - Revert - TortoiseGit` ("Revert" [POT:7825]). The TGitCache is blocked for the repository during the run (`CBlockCacheForPath`). [RVPC:36-39]
+
+**Step 1: move working files to the Recycle Bin.**
+- **When.** Only when `HKCU\Software\TortoiseGit\RevertWithRecycleBin` is non-zero (default TRUE). [RVPC:54-55]
+- **Which files.** Every selected path, **except** added files and, when `RevertRenamedFilesWithRecycleBin` is 0 (default TRUE), renamed files. [RVPC:41-55]
+- **How.** `DeleteAllFiles(bTrash = true)`, which affects existing files only, never directories (so not submodules). It uses `SHFileOperation(FO_DELETE)` with `FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_NO_CONNECTED_ELEMENTS | FOF_NOERRORUI | FOF_SILENT`. Errors are silent. [TGP:1658-1697]
+
+The list then reports "Command" / "Revert". [RVPC:57]
+
+**Step 2: sort the paths into tasks, by kind** [RVPC:76-114]:
+
+| Path kind (`m_Action`) | Tasks |
+|---|---|
+| Renamed (`REPLACED`) with an old path, **when a directory with the old name exists** | Error "Revert failed:\nCannot revert renaming of "<new>". A directory with the old name "<old>" exists." The run stops. |
+| Renamed, the new path exists, and it is a file | `rm --ignore-unmatch` on the new path, plus `checkout` of the **old** path |
+| Renamed, the new path exists, and it is a directory (a submodule) | goes to the move list (step 4) |
+| Renamed, the new path does not exist | `rm -f --cached` on the new path, plus `checkout` of the new path |
+| Added (`ADDED`; not `COPY`) | `rm -f --cached` (unstage only; the file stays on disk and was not recycled) |
+| Everything else: modified, deleted, conflicted, copied | `checkout` of the path |
+| additionally, if Deleted (`DELETED`) | `add -f` of the path |
+
+**Step 3: run the tasks in this order.** Each task is a single git call over all its paths via `--pathspec-from-file=<tmp> --pathspec-file-nul` (`--end-of-options` is kept after the pathspec options) [MGTB:80-128]:
+1. `git.exe rm -f --cached …` (unstage)
+2. `git.exe rm --ignore-unmatch …` (delete rename targets)
+3. `git.exe checkout -f --pathspec-from-file=<tmp> --pathspec-file-nul --end-of-options HEAD`
+4. `git.exe add -f …` (deleted paths)
+
+[RVPC:59-73, 116-147]
+
+Each path produces one "Reverted" [POT:7851] row. Deleted paths report from the `add` step, and the `rm --ignore-unmatch` step reports nothing. A non-zero exit code stops the run with git's output in the list. [RVPC:116-147; MGTB:112-117]
+
+**Step 4: submodule renames.** For each submodule rename, run `git.exe mv [-f] -- <new> <old>` (`-f` when the names differ only in case), then `git.exe checkout -f --end-of-options HEAD -- <old>`, and report "Reverted". Cancel is checked after each one. [RVPC:149-195]
+
+**Step 5: after success.**
+- The paths are queued for an overlay update. [RVPC:220]
+- **Submodules.** If any path was a directory (a submodule), the menu button offers "Handle submodules" [POT:5021]. For each such submodule it runs `/command:diff /submodule /startrev:HEAD /endrev:0000000000000000000000000000000000000000 /path:<sub>` (the old path for renames), which opens the submodule diff dialog (5.1). [RVPC:197-218; GitRev.h:101]
+- **Effect on the submodule itself.** Reverting a submodule entry only checks out the gitlink. Leaving the submodule's own working tree untouched is inferred from the commands, not stated in source.
+
+**Not established.**
+- **Renamed files after recycling.** With the default settings a renamed file's new path is recycled in step 1, before step 2 tests `path.Exists()`. `CTGitPath` caches existence (`m_bExistsKnown`) [TGP:265-277], so which branch runs depends on whether the list entry had already cached its attributes. That was not traced.
+- **Copied entries.** A `COPY` entry (new path, not in `HEAD`) goes to `checkout`. What git then does with a path that is not in `HEAD` was not verified.
+
+### 6.4 The progress dialog these commands open (brief)
+
+- **Window.** `CGitProgressDlg` uses `IDD_SVNPROGRESS` [RC:465-478], caption "Progress", resizable. It contains:
+  - the notification list
+  - a hidden "Show &log..." button, reused as the post-command menu button
+  - a multi-line info text
+  - a progress bar
+  - "OK" and "Cancel" buttons
+
+  [GPD:64]
+- **Rows.** One row per notification: action text and repository path. Right-clicking an Added, Reverted or Resolved row offers "Show log" for that path. [GPL:1090-1155]
+- **When the command ends** [GPD:255-313]:
+  - Cancel is disabled and OK is enabled and focused.
+  - The command's post-command entries go into the menu button, with Alt accelerators taken from their mnemonics.
+  - **Auto-close.** `HKCU\Software\TortoiseGit\AutoCloseGitProgress` decides whether the dialog closes by itself: 0 = never (default), 1 = when there was no error and there are no post-command entries, 2 = when there was no error. The `/closeonend:<n>` argument overrides it. [GPD:32-46]
+- **Overlays.** `CShellUpdater` sets the cache invalidation event, sends the queued paths to TGitCache over its pipe, and calls `SHChangeNotify(SHCNE_UPDATEITEM)` for files. This happens on `Flush()` (Add calls it explicitly) or in the destructor. [SU:32-34, 70-130]
+- **Afterwards.** The dialogs are stand-alone, so TortoiseGitProc exits after the progress dialog closes. There is no results list beyond the progress list.
+
+### 6.5 Resolve (`CResolveDlg`, `IDD_RESOLVE`)
+
+#### 6.5.1 Command (`ResolveCommand::Execute`)
+
+- **The dialog.** It opens unless `/noquestion` is given. [RSLC:27-33]
+- **After OK** (or with `/noquestion`), if the path list is not empty:
+  - **With `/silent`** (used by TortoiseGitMerge's "Mark as resolved", which passes `/closeonend:1 /noquestion /skipcheck /silent` [TMF:2271-2281]):
+    1. For each path, run `git.exe add -f -- <path>`. Any failure shows git's output in a message box and returns.
+    2. Delete that path's merge temp files.
+    3. If `/resolvemsghwnd` was given and `HKCU\Software\TortoiseGit\RefreshFileListAfterResolvingConflict` (default TRUE) is TRUE, post the registered message `GITSLNM_NEEDSREFRESH` to that window.
+
+    There is no progress dialog. [RSLC:38-67]
+  - **Otherwise**, the progress dialog (parented to the Explorer window) runs `ResolveProgressCommand(ResolveWith::Current)`. [RSLC:71-77]
+- **Pitfall.** With `/noquestion` and no `/silent`, the paths come straight from the command line with no status bits. `ResolveWith::Current` skips every non-`UNMERGED` path [RSPC:55-60], so such a call would report every path as "Skipped". This is inferred from the code and was not observed.
+- **Other callers.** After a merge or pull with conflicts, the progress dialog offers "Resolve" (`/command:resolve /path:"<root>"`). [AU:2339, 3303]
+
+#### 6.5.2 Window
+
+`IDD_RESOLVE DIALOGEX 0,0,289,154`, caption **"Resolve"**, resizable. Controls from RC:800-811:
+
+| Control | ID | Label | Rect (DLU) | Anchor |
+|---|---|---|---|---|
+| File list | `IDC_RESOLVELIST` | – | 7,7,275,107 | stretches |
+| Select all | `IDC_SELECTALL` | "Select/deselect &all" (3-state) | 7,119,85,10 | bottom-left |
+| Reminder | `IDC_STATIC_REMINDER` | "Reminder: Commit your change after resolve" (static) | 133,119,149,8 | bottom-right |
+| OK | `IDOK` | "OK" (default) | 125,133,50,14 | bottom-right |
+| Cancel | `IDCANCEL` | "Cancel" | 179,133,50,14 | bottom-right |
+| Help | `IDHELP` | "Help" | 232,133,50,14 | bottom-right |
+
+- **Title.** The path is always the **repository root** (`g_Git.m_CurrentDir`), not the given paths. [RSD:67]
+
+#### 6.5.3 The list
+
+- **Init.** Only Extension is visible by default; all columns are available. Container name "ResolveDlg". The context menu is `POPALL ^ (IGNORE | ADD | COMMIT | EXPORT | RESTORE | SAVEAS | PREPAREDIFF | CHANGELISTS)`. It therefore still has "&Edit conflicts", "Resolved" and the two `Resolve conflict using "%s"` items (5.2.8). [RSD:60]
+- **Placeholder.** No empty string is set, so an empty list shows "File list is empty" [POT:4501].
+- **Load.** `GetStatus(&paths)` with defaults (`FILELIST_MODIFY`, which includes `ls-files -u` conflict marking). [RSD:143]
+- **Show.** `Show(CONFLICTED | INEXTERNALS, check = CONFLICTED)`. `SHOWINEXTERNALS` is 0. **The rows are exactly the conflicted (`UNMERGED`) entries under the given paths, and all start checked.** [RSD:145]
+
+#### 6.5.4 What OK does (`ResolveProgressCommand`, `ResolveWith::Current`)
+
+- **Window.** The progress window title is `<common root> - Resolve - TortoiseGit` ("Resolve" [POT:7771]). The TGitCache is blocked for the repository during the run. [RSPC:32, 48]
+- **Per path** [RSPC:50-78]:
+  - A path without the `UNMERGED` bit is reported as "Skipped" [POT:8772].
+  - Every other path goes into one `git.exe add -f --pathspec-from-file=<tmp> --pathspec-file-nul` call, and its merge temp files are deleted first: `<path>.LOCAL<ext>`, `<path>.REMOTE<ext>` and `<path>.BASE<ext>` [AU:1682-1695].
+  - Each added path is reported as "Resolved" [POT:7784].
+- **Every conflict kind is handled the same way** (both modified, deleted by us or by them, added by both, submodule). The dialog only marks the working-tree state as resolved; it never picks a side. What `git add -f` does for a conflict whose file is missing from the working tree was not verified.
+- **After success** [RSPC:35-46, 320-324]:
+  - The menu button offers "&Commit..." [POT:431], which runs `/command:commit /path:"<repository root>"`.
+  - The info text reads "You need commit your change after resolve conflict" (hard-coded English).
+  - The paths are queued for an overlay update.
+
+#### 6.5.5 "Resolve using theirs / mine" (list context menu only, not the dialog's OK)
+
+The same progress command, with `ResolveWith::Theirs` (stage 3) or `Mine` (stage 2), runs from the list's `Resolve conflict using "%s"` items after the confirmation [POT:1838]. While a rebase is active, theirs and mine are swapped. The progress dialog auto-closes when there are no errors. [GSLC:2462-2490]
+
+**Reading the conflict.** For each path, the stage 1, 2 and 3 entries are read with libgit2 `git_index_conflict_get` (default, `GIT_CMD_GETCONFLICTINFO`), or else from `git.exe ls-files -u -t -z -- <path>`. A path with no conflict is reported as "Skipped". [RSPC:80-164]
+
+**Picking the action:**
+
+| Chosen side | Action |
+|---|---|
+| Side is absent (deleted there), path is not a directory | `rm -f` task |
+| Side is absent, path is a directory | `git.exe rm -f -- <path>`. If that fails and the directory is not empty, ask "Do you really want to delete "%s"?" [POT:3743] with "&Delete" [POT:479] / "A&bort" [POT:1481]. On Delete, remove the directory and retry. |
+| Side is a submodule, and the submodule is not initialized | `git.exe checkout-index -f --stage=N -- <path>` (if no directory exists), then `git.exe update-index --replace --cacheinfo 0160000,<hash>,<path>` |
+| Side is a submodule, and the submodule is initialized | If the submodule's `HEAD` differs from the chosen hash, open the Reset dialog (`CAppUtils::GitReset`) inside the submodule (cancel aborts), then `add -f` |
+| Side is a file | `checkout-index -f --stage=N` task, then `add -f` task |
+
+[RSPC:166-296]
+
+**Order.** The batched tasks run in the order `rm -f`, then `checkout-index`, then `add -f`. Cancel is ignored in this mode. [RSPC:298-313]
+
+### 6.6 Not established from source
+
+- **Add of a deleted path.** Explorer offers Add on deleted items (`DELETED !FOLD !ONE`, 4.2 row 48). A deleted path is not a directory, so it goes straight to `git_index_add_bypath`. Whether that stages the deletion or fails was not checked.
+- **Help.** The Help handlers and help topics of the three dialogs.
+- **Renamed and copied paths in Revert.** See the "Not established" notes at the end of 6.3.4.
+- **Progress bar.** How it behaves for Revert, which sets the total to twice the path count [RVPC:41], was not examined.

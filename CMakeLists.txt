@@ -71,6 +71,7 @@ add_executable(tortilla
     src/changes/changes_view.cpp
     src/changes/changes_window.cpp
     src/changes/commit_window.cpp
+    src/changes/file_action_window.cpp
     src/ui/stash_dialog.cpp
     src/rebase/rebase_window.cpp
     src/ui/compare.cpp

@@ -63,6 +63,9 @@ enum class run
     settings,  // tortilla settings <first>
     repostatus,  // tortilla repostatus <every selected path>
     commit,      // tortilla commit <every selected path>
+    add,         // tortilla add <every selected path>
+    revert,      // tortilla revert <every selected path>
+    resolve,     // tortilla resolve <every selected path>
 };
 
 struct row
@@ -153,7 +156,7 @@ inline constexpr row k_rows[] = {
     {"Res&olve...",
      {{{GIT | CONFL, 0}, {GIT | FOLD, 0}, {FIG, 0}}},
      place::sub,
-     run::none,
+     run::resolve,
      "resolve"},
     {"Abort &Merge", {{{GIT | MERGE, 0}, {FIG | MERGE, 0}}}, place::sub, run::none, "mergeabort"},
     {"Re&name...", {{{GIT | ONE | IVF, ROOT}, {ROOT | SUB, 0}}}, place::sub, run::none, "rename"},
@@ -163,7 +166,7 @@ inline constexpr row k_rows[] = {
      run::none,
      "remove"},
     {"&Delete (keep local)", {{{GIT | IVF, ADDED | ROOT}}}, place::sub, run::none, "removekeep"},
-    {"Re&vert...", {{{GIT, NORMAL}, {FIG, 0}}}, place::sub, run::none, "revert"},
+    {"Re&vert...", {{{GIT, NORMAL}, {FIG, 0}}}, place::sub, run::revert, "revert"},
     {"&Clean up...", {{{FIG | FOLD, 0}}}, place::sub, run::none, "cleanup"},
     separator,
     // (LFS: a submenu only when the repository has <gitdir>/lfs [spec 4.4].)
@@ -182,7 +185,7 @@ inline constexpr row k_rows[] = {
     {"&Add...",
      {{{IVF, GIT}, {GIT | FOLD, 0}, {IGN, 0}, {DELETED, FOLD | ONE}}},
      place::sub,
-     run::none,
+     run::add,
      "add"},
     {"&Blame", {{{GIT | ONE, FOLD | ADDED}}}, place::sub, run::none, "blame"},
     {"Add to &ignore list", {{{IVF, IGN | GIT | ROOT}}}, place::sub, run::none, "ignore"},

@@ -19,6 +19,8 @@ struct working_tree_options
     // under it); empty for the whole repository.
     std::vector<std::string> paths;
     bool unversioned = true;
+    // Every untracked file, rather than a folder for a folder of them.
+    bool each_untracked_file = false;
     bool ignored = false;
     bool local_changes_ignored = false;  // skip-worktree and assume-unchanged files
     // Staged changes anywhere in the repository too, outside `paths`

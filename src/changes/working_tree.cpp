@@ -42,8 +42,9 @@ working_tree_changes load_working_tree(const std::string& workdir, const working
     };
 
     std::vector<std::string> status{"status", "--porcelain", "-z",
-                                    o.unversioned ? "--untracked-files=normal"
-                                                  : "--untracked-files=no"};
+                                    !o.unversioned          ? "--untracked-files=no"
+                                    : o.each_untracked_file ? "--untracked-files=all"
+                                                            : "--untracked-files=normal"};
     if (o.ignored) status.push_back("--ignored=matching");
     git_result s = git(limited(status));
     if (!s.ok())

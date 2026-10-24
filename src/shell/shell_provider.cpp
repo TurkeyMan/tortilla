@@ -374,8 +374,15 @@ public:
         case run::settings: rap::shell::launch(tortilla_exe(), {"settings", first}); return;
         case run::commit:
         case run::repostatus:
+        case run::add:
+        case run::revert:
+        case run::resolve:
         {
-            std::vector<std::string> args{r->command == run::commit ? "commit" : "repostatus"};
+            std::vector<std::string> args{r->command == run::commit       ? "commit"
+                                          : r->command == run::repostatus ? "repostatus"
+                                          : r->command == run::add        ? "add"
+                                          : r->command == run::revert     ? "revert"
+                                                                          : "resolve"};
             if (sel.paths.empty())
                 args.push_back(folder);
             else

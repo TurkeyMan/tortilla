@@ -5,8 +5,9 @@
 //                                     the diff tool; a folder: Check for modifications
 //   tortilla repostatus [path...]      Check for modifications (TortoiseGit's repostatus)
 //   tortilla commit [path...]          the Commit dialog
+//   tortilla add|revert|resolve [path...]  the Add, Revert or Resolve dialog
 //   tortilla diff [path] rev [rev2]   a commit, or rev..rev2, as a unified diff
-//   tortilla settings [path] [diff|menu]  the Settings dialog (at Diff Viewer or Context Menu)
+//   tortilla settings [path] [diff|menu|network]  the Settings dialog (at that page)
 //   tortilla --which-ui       show the detected desktop and backend order
 //   tortilla --register-shell / --unregister-shell [--all-users]
 //                             add or remove the file manager's context menu,
@@ -14,6 +15,7 @@
 //                             does) every user
 #include "changes/changes_window.h"
 #include "changes/commit_window.h"
+#include "changes/file_action_window.h"
 #include "git/repo.h"
 #include "git/ssh_client.h"
 #include "log/log_window.h"
@@ -91,7 +93,9 @@ int main(int argc, char** argv)
         else if (args.empty() && command == "log" &&
                  (std::strcmp(argv[i], "log") == 0 || std::strcmp(argv[i], "rebase") == 0 ||
                   std::strcmp(argv[i], "diff") == 0 || std::strcmp(argv[i], "settings") == 0 ||
-                  std::strcmp(argv[i], "repostatus") == 0 || std::strcmp(argv[i], "commit") == 0))
+                  std::strcmp(argv[i], "repostatus") == 0 || std::strcmp(argv[i], "commit") == 0 ||
+                  std::strcmp(argv[i], "add") == 0 || std::strcmp(argv[i], "revert") == 0 ||
+                  std::strcmp(argv[i], "resolve") == 0))
             command = argv[i];
         else
             args.push_back(argv[i]);
@@ -132,6 +136,30 @@ int main(int argc, char** argv)
             [&](bool committed)
             {
                 code = committed ? 0 : 1;
+                (*ui)->quit();
+            });
+        (*w)->show();
+        (*ui)->run();
+        return code;
+    }
+
+    if (command == "add" || command == "revert" || command == "resolve")
+    {
+        const auto action = command == "add"      ? tortilla::file_action::add
+                            : command == "revert" ? tortilla::file_action::revert
+                                                  : tortilla::file_action::resolve;
+        auto w = tortilla::file_action_window::open(**ui, action,
+                                                    args.empty() ? std::vector<std::string>{path} : args);
+        if (!w)
+        {
+            std::fprintf(stderr, "tortilla: %s\n", w.error().c_str());
+            return 1;
+        }
+        int code = 0;
+        (*w)->on_closed(
+            [&](bool done)
+            {
+                code = done ? 0 : 1;
                 (*ui)->quit();
             });
         (*w)->show();
