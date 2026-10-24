@@ -199,7 +199,7 @@ void file_action_window::build()
         name(),
         {vbox{
             files_.list(settings_key() + ".files", true).stretch(),
-            rap::node{rap::spec::box{rap::layout::horizontal, std::move(options)}, {}},
+            rap::node{rap::spec::box{rap::layout::horizontal, std::move(options), false, {}}, {}},
             hbox{
                 spacer{},
                 button{"OK"}.bind(ok_).enabled(false).on_click([this]

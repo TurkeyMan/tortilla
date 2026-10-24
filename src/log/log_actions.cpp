@@ -830,7 +830,7 @@ void log_window::choose(const std::string& title, const std::string& question,
     }
     rows.push_back(buttons{cancel});
     // A box from a list built at run time (VBox{...} takes a fixed list).
-    rap::node box{rap::spec::box{rap::orientation::vertical, std::move(rows)}, {}};
+    rap::node box{rap::spec::box{rap::orientation::vertical, std::move(rows), false, {}}, {}};
     st->window = ui_.create(dialog{title, {std::move(box)}}.resizable(false), window_.get());
     st->window->on_finished(
         [this, st](rap::dialog_role) mutable

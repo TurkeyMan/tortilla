@@ -189,7 +189,7 @@ void run_progress_dialog(rap::ui& ui, rap::window* parent, const std::string& ti
     });
 
     p->window = ui.create(
-        dialog{title + " - Tortilla", {rap::node{rap::spec::box{vertical, std::move(body)}, {}}}}
+        dialog{title + " - Tortilla", {rap::node{rap::spec::box{vertical, std::move(body), false, {}}, {}}}}
             .size(90_ch, 24_lines),
         parent);
 
