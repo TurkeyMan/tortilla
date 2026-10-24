@@ -4,7 +4,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: tortilla\n"
 "Report-Msgid-Bugs-To: https://github.com/TurkeyMan/tortilla/issues\n"
-"POT-Creation-Date: 2026-10-24 15:14+0000\n"
+"POT-Creation-Date: 2026-10-24 17:26+0000\n"
 "Language: de\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
@@ -300,8 +300,8 @@ msgstr "Branch"
 
 #: src/branch/ref_chooser.cpp:71 src/changes/changes_window.cpp:164
 #: src/changes/changes_window.cpp:326 src/changes/commit_window.cpp:122
-#: src/changes/commit_window.cpp:388 src/changes/commit_window.cpp:399
-#: src/changes/commit_window.cpp:431 src/changes/commit_window.cpp:466
+#: src/changes/commit_window.cpp:398 src/changes/commit_window.cpp:409
+#: src/changes/commit_window.cpp:441 src/changes/commit_window.cpp:476
 #: src/changes/file_action_window.cpp:514 src/rebase/rebase_window.cpp:388
 msgid "Commit"
 msgstr "Commit"
@@ -657,7 +657,7 @@ msgstr "_Ignorierte Dateien anzeigen"
 msgid "Show all _staged files"
 msgstr "Alle _vorgemerkten Dateien anzeigen"
 
-#: src/changes/changes_window.cpp:147 src/changes/commit_window.cpp:204
+#: src/changes/changes_window.cpp:147 src/changes/commit_window.cpp:212
 #: src/log/log_window.cpp:236
 msgid "Show _Whole Project"
 msgstr "_Gesamtes Projekt anzeigen"
@@ -742,116 +742,116 @@ msgstr ""
 msgid "Commit to:"
 msgstr "Commit nach:"
 
-#: src/changes/commit_window.cpp:127
+#: src/changes/commit_window.cpp:129
 msgid "new branch"
 msgstr "neuer Branch"
 
-#: src/changes/commit_window.cpp:133
+#: src/changes/commit_window.cpp:136
 msgid "new branch name"
 msgstr "Name des neuen Branches"
 
-#: src/changes/commit_window.cpp:142 src/log/log_actions.cpp:596
+#: src/changes/commit_window.cpp:145 src/log/log_actions.cpp:596
 msgid "Message:"
 msgstr "Nachricht:"
 
-#: src/changes/commit_window.cpp:145
+#: src/changes/commit_window.cpp:153
 msgid "Amend _Last Commit"
 msgstr "_Letzten Commit nachbessern"
 
-#: src/changes/commit_window.cpp:150
+#: src/changes/commit_window.cpp:158
 msgid "Set author _date"
 msgstr "Autor_datum setzen"
 
-#: src/changes/commit_window.cpp:161
+#: src/changes/commit_window.cpp:169
 msgid "Set au_thor"
 msgstr "A_utor setzen"
 
-#: src/changes/commit_window.cpp:166
+#: src/changes/commit_window.cpp:174
 msgid "Add _Signed-off-by"
 msgstr "_Signed-off-by hinzufügen"
 
-#: src/changes/commit_window.cpp:170
+#: src/changes/commit_window.cpp:178
 msgid "Changes made (F5: refresh, double-click on file for diff):"
 msgstr ""
 "Vorgenommene Änderungen (F5: aktualisieren, Doppelklick auf Datei für Diff):"
 
-#: src/changes/commit_window.cpp:173
+#: src/changes/commit_window.cpp:181
 msgid "Check:"
 msgstr "Auswählen:"
 
-#: src/changes/commit_window.cpp:174 src/log/log_actions.cpp:539
+#: src/changes/commit_window.cpp:182 src/log/log_actions.cpp:539
 #: src/log/log_window.cpp:726 src/log/log_window.cpp:784
 msgid "All"
 msgstr "Alle"
 
-#: src/changes/commit_window.cpp:176 src/remote/push_dialog.cpp:131
+#: src/changes/commit_window.cpp:184 src/remote/push_dialog.cpp:131
 msgid "None"
 msgstr "Keine"
 
-#: src/changes/commit_window.cpp:177
+#: src/changes/commit_window.cpp:185
 msgid "Unversioned"
 msgstr "Unversioniert"
 
-#: src/changes/commit_window.cpp:179
+#: src/changes/commit_window.cpp:187
 msgid "Versioned"
 msgstr "Versioniert"
 
-#: src/changes/commit_window.cpp:180 src/changes/file_model.h:34
+#: src/changes/commit_window.cpp:188 src/changes/file_model.h:34
 msgid "Added"
 msgstr "Hinzugefügt"
 
-#: src/changes/commit_window.cpp:182
+#: src/changes/commit_window.cpp:190
 msgid "Deleted"
 msgstr "Gelöscht"
 
-#: src/changes/commit_window.cpp:185
+#: src/changes/commit_window.cpp:193
 msgid "Modified"
 msgstr "Geändert"
 
-#: src/changes/commit_window.cpp:187
+#: src/changes/commit_window.cpp:195
 msgid "Files"
 msgstr "Dateien"
 
-#: src/changes/commit_window.cpp:189
+#: src/changes/commit_window.cpp:197
 msgid "Submodules"
 msgstr "Submodule"
 
-#: src/changes/commit_window.cpp:196 src/log/log_window.cpp:874
+#: src/changes/commit_window.cpp:204 src/log/log_window.cpp:874
 msgid "Show _Unversioned Files"
 msgstr "_Unversionierte Dateien anzeigen"
 
-#: src/changes/commit_window.cpp:215
+#: src/changes/commit_window.cpp:223
 msgid "Message onl_y"
 msgstr "Nur _Nachricht"
 
-#: src/changes/commit_window.cpp:228
+#: src/changes/commit_window.cpp:237
 msgid "C_ommit"
 msgstr "C_ommit"
 
-#: src/changes/commit_window.cpp:229 src/changes/file_action_window.cpp:213
+#: src/changes/commit_window.cpp:238 src/changes/file_action_window.cpp:213
 msgid "Cancel"
 msgstr "Abbrechen"
 
-#: src/changes/commit_window.cpp:294
+#: src/changes/commit_window.cpp:304
 #, c++-format
 msgid "{0} - Commit - Tortilla"
 msgstr "{0} - Commit - Tortilla"
 
-#: src/changes/commit_window.cpp:335
+#: src/changes/commit_window.cpp:345
 #, c++-format
 msgid "{0} files selected, {1} files total"
 msgstr "{0} Dateien ausgewählt, {1} Dateien insgesamt"
 
-#: src/changes/commit_window.cpp:389 src/rebase/rebase_engine.cpp:285
+#: src/changes/commit_window.cpp:399 src/rebase/rebase_engine.cpp:285
 msgid "One or more files are in a conflicted state."
 msgstr "Eine oder mehrere Dateien befinden sich in einem Konfliktzustand."
 
-#: src/changes/commit_window.cpp:400 src/remote/clone_dialog.cpp:180
+#: src/changes/commit_window.cpp:410 src/remote/clone_dialog.cpp:180
 #, c++-format
 msgid "“{0}” isn't a valid branch name."
 msgstr "„{0}“ ist kein gültiger Branch-Name."
 
-#: src/changes/commit_window.cpp:432
+#: src/changes/commit_window.cpp:442
 #, c++-format
 msgid "Could not write the commit message to {0}."
 msgstr "Die Commit-Nachricht konnte nicht nach {0} geschrieben werden."
@@ -1808,7 +1808,7 @@ msgstr "_Remote-Branches"
 msgid "View Patch"
 msgstr "Patch anzeigen"
 
-#: src/log/log_window.cpp:887 src/ui/welcome_window.cpp:78
+#: src/log/log_window.cpp:887 src/ui/welcome_window.cpp:79
 msgid "_Settings..."
 msgstr "_Einstellungen..."
 
@@ -2400,15 +2400,25 @@ msgstr "Arbeitsverzeichnis"
 msgid "Choose one on the Diff Viewer page of the Settings."
 msgstr "Wählen Sie eines auf der Seite „Diff-Betrachter“ der Einstellungen."
 
-#: src/ui/compare.cpp:65
+#: src/ui/compare.cpp:64
+#, c++-format
+msgid "“{0}” has no changes to compare."
+msgstr ""
+
+#: src/ui/compare.cpp:66
+#, fuzzy
+msgid "There are no changes to compare."
+msgstr "Es gibt nichts zu verwerfen."
+
+#: src/ui/compare.cpp:86
 msgid "git has no diff tool configured (diff.tool)."
 msgstr "In git ist kein Diff-Tool konfiguriert (diff.tool)."
 
-#: src/ui/compare.cpp:82
+#: src/ui/compare.cpp:103
 msgid "No diff program is set."
 msgstr "Es ist kein Diff-Programm festgelegt."
 
-#: src/ui/compare.cpp:97
+#: src/ui/compare.cpp:118
 msgid "The diff tool failed."
 msgstr "Das Diff-Tool ist fehlgeschlagen."
 
@@ -2738,66 +2748,71 @@ msgstr "optional"
 msgid "Include _untracked files"
 msgstr "_Unversionierte Dateien einbeziehen"
 
-#: src/ui/welcome_window.cpp:59
+#: src/ui/welcome_window.cpp:60
 msgid "Welcome to Tortilla"
 msgstr "Willkommen bei Tortilla"
 
-#: src/ui/welcome_window.cpp:64
+#: src/ui/welcome_window.cpp:65
 msgid ""
 "Tortilla is a git client that lives where your files do: right-click any\n"
 "folder in your file manager to commit, pull, push, browse the history or\n"
 "untangle a merge."
 msgstr ""
-"Tortilla ist ein Git-Client, der dort wohnt, wo Ihre Dateien sind: Klicken Sie\n"
-"mit der rechten Maustaste auf einen Ordner, um zu committen, zu pullen und zu\n"
+"Tortilla ist ein Git-Client, der dort wohnt, wo Ihre Dateien sind: Klicken "
+"Sie\n"
+"mit der rechten Maustaste auf einen Ordner, um zu committen, zu pullen und "
+"zu\n"
 "pushen, die Historie zu durchstöbern oder einen Merge zu entwirren."
 
-#: src/ui/welcome_window.cpp:67
+#: src/ui/welcome_window.cpp:68
 msgid ""
 "It began with a simple wish: TortoiseGit's way of working, without the\n"
 "waiting, on every desktop. So every window is your system's own, and\n"
 "everything on screen keeps up with your display, however long the history."
 msgstr ""
 "Alles begann mit einem einfachen Wunsch: die Arbeitsweise von TortoiseGit,\n"
-"ohne Warten, auf jedem Desktop. Darum ist jedes Fenster das Ihres Systems, und\n"
-"alles auf dem Bildschirm hält mit Ihrer Anzeige Schritt, wie lang die Historie\n"
+"ohne Warten, auf jedem Desktop. Darum ist jedes Fenster das Ihres Systems, "
+"und\n"
+"alles auf dem Bildschirm hält mit Ihrer Anzeige Schritt, wie lang die "
+"Historie\n"
 "auch sein mag."
 
-#: src/ui/welcome_window.cpp:70
+#: src/ui/welcome_window.cpp:71
 msgid "To start, right-click a folder and look for Tortilla, or open one here."
 msgstr ""
-"Klicken Sie zum Start mit der rechten Maustaste auf einen Ordner und suchen Sie\n"
+"Klicken Sie zum Start mit der rechten Maustaste auf einen Ordner und suchen "
+"Sie\n"
 "Tortilla, oder öffnen Sie hier ein Repository."
 
-#: src/ui/welcome_window.cpp:72
+#: src/ui/welcome_window.cpp:73
 msgid "_Open repository..."
 msgstr "Repository ö_ffnen..."
 
-#: src/ui/welcome_window.cpp:73
+#: src/ui/welcome_window.cpp:74
 msgid "_Clone..."
 msgstr "_Klonen..."
 
-#: src/ui/welcome_window.cpp:106
+#: src/ui/welcome_window.cpp:97
 msgid "Made with care by Manu Evans"
 msgstr "Mit Liebe gemacht von Manu Evans"
 
-#: src/ui/welcome_window.cpp:109
+#: src/ui/welcome_window.cpp:100
 msgid "Licence (GPL 3.0)"
 msgstr "Lizenz (GPL 3.0)"
 
-#: src/ui/welcome_window.cpp:110
+#: src/ui/welcome_window.cpp:101
 msgid "Third-party notices"
 msgstr "Hinweise zu Drittanbietern"
 
-#: src/ui/welcome_window.cpp:137
+#: src/ui/welcome_window.cpp:129
 #, c++-format
 msgid "Version {0}"
 msgstr "Version {0}"
 
-#: src/ui/welcome_window.cpp:140
+#: src/ui/welcome_window.cpp:132
 msgid "Git, wrapped up warm."
 msgstr "Git, warm eingewickelt."
 
-#: src/ui/welcome_window.cpp:146
+#: src/ui/welcome_window.cpp:138
 msgid "Open repository"
 msgstr "Repository öffnen"

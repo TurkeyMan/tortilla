@@ -48,6 +48,27 @@ compare_revisions(rap::ui& ui, rap::window* parent, const std::string& dir,
                    });
     };
 
+    // Nothing to compare: say so. A diff tool given identical sides (git
+    // difftool starts none at all) would otherwise just end, so it looked
+    // like nothing happened [TortoiseGit says "no differences" too].
+    {
+        std::vector<std::string> quiet{"diff", "--quiet"};
+        quiet.insert(quiet.end(), revisions.begin(), revisions.end());
+        quiet.insert(quiet.end(), limit.begin(), limit.end());
+        if (run_git(dir, quiet, git_output::stdout_only).exit_code == 0)
+        {
+            ui.message(parent,
+                       {.icon = rap::message_spec::icon::info,
+                        .title = "Tortilla",
+                        .text = paths.size() == 1
+                                    ? rap::i18n::format(_("“{0}” has no changes to compare."),
+                                                        paths.front())
+                                    : std::string(_("There are no changes to compare."))},
+                       [done](rap::dialog_role) { done(); });
+            return nullptr;
+        }
+    }
+
     std::vector<std::string> args;
     switch (saved_diff_mode(dir))
     {
