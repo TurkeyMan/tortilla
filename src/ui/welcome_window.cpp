@@ -102,7 +102,8 @@ void welcome_window::build()
                     spacer{},
                 },
                 buttons{rap::layout::close()},
-            }}},
+            }}}
+            .resizable(false),  // it's read, not worked in
         nullptr);
     window_->on_finished([this](rap::dialog_role) { close(); });
 }
