@@ -6,6 +6,9 @@
 
 #include <array>
 #include <cstdint>
+#include <optional>
+#include <set>
+#include <string>
 #include <string_view>
 
 namespace tortilla::shell_menu
@@ -224,8 +227,68 @@ inline constexpr row k_rows[] = {
     {"A&bout", {{{FOLD, 0}, {0, FOLD}}}, place::sub, run::none, "about"},
 };
 
-// Where the user's choice of top-level entries is kept (Tortilla's settings
-// file): their ids, comma-separated. Unset, the rows marked top.
+// Where each entry shows, as the Settings page chooses it: TortoiseGit's
+// top-level and Shift-only masks and its administrators' hidden mask
+// [spec 4.6], one choice per entry.
+enum class shows
+{
+    top,      // directly in the file manager's menu, as "Git <entry>"
+    submenu,  // in the Tortilla submenu
+    shift,    // in the submenu, only while Shift is held
+    hidden,   // never
+};
+
+// The entries TortoiseGit sets as one (one bit of its masks [spec 4.6]):
+// the five bisect rows, Merge with Abort Merge, and the two ignore entries.
+constexpr std::string_view group_of(std::string_view id)
+{
+    if (id.starts_with("bisect")) return "bisect";
+    if (id == "mergeabort") return "merge";
+    if (id == "deleteignore") return "ignore";
+    return id;
+}
+
+// Tortilla's settings file keeps the choices as lists of group ids,
+// comma-separated; an unset list means the default (the rows marked top or
+// shift; nothing hidden).
 constexpr std::string_view k_top_setting = "shell.top";
+constexpr std::string_view k_shift_setting = "shell.shift";
+constexpr std::string_view k_hidden_setting = "shell.hidden";
+// "1": no menu outside working trees unless Shift is held [spec 4.5, 4.6].
+constexpr std::string_view k_hide_outside_setting = "shell.hideOutside";
+// Paths with no menu, tab-separated: "dir\" a folder and all in it, "pre*"
+// a prefix, else that path exactly; case ignored [spec 4.6].
+constexpr std::string_view k_no_menu_setting = "shell.noMenu";
+
+using id_set = std::set<std::string, std::less<>>;
+
+inline id_set parse_ids(std::string_view list)
+{
+    id_set out;
+    for (size_t at = 0; at <= list.size();)
+    {
+        size_t comma = list.find(',', at);
+        if (comma == std::string_view::npos) comma = list.size();
+        if (comma > at) out.emplace(list.substr(at, comma - at));
+        at = comma + 1;
+    }
+    return out;
+}
+
+// The three lists as saved; nullopt: never saved, the default.
+struct placements
+{
+    std::optional<id_set> top, shift, hidden;
+};
+
+inline shows where_shown(const row& r, const placements& p)
+{
+    const std::string_view g = group_of(r.id);
+    if (g == "inaccessible") return shows::top;  // always [spec 4.2]
+    if (p.hidden ? p.hidden->contains(g) : false) return shows::hidden;
+    if (p.shift ? p.shift->contains(g) : r.where == place::shift) return shows::shift;
+    if (p.top ? p.top->contains(g) : r.where == place::top) return shows::top;
+    return shows::submenu;
+}
 
 }  // namespace tortilla::shell_menu

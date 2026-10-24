@@ -242,6 +242,12 @@ std::string commit_label(const state& s)
     return label + " -> \"" + escaped + "\"...";
 }
 
+std::string utf8(const fs::path& p)
+{
+    const auto s = p.u8string();
+    return {s.begin(), s.end()};
+}
+
 // Tortilla's settings file, where rap::sys::config_dir("tortilla") puts it;
 // read directly, since the extension links no rapport core.
 fs::path settings_file()
@@ -260,27 +266,71 @@ fs::path settings_file()
 #endif
 }
 
-// The ids chosen for the top level in Settings, or nullopt for the default.
-// Read for every menu: it's one small file, and a change applies at once.
-std::optional<std::set<std::string, std::less<>>> top_entries()
+// What Settings chose for the menu. Read for every menu: it's one small
+// file, and a change applies at once.
+struct menu_settings
 {
+    placements where;
+    bool hide_outside = false;
+    std::vector<std::string> no_menu;
+};
+
+menu_settings read_settings()
+{
+    menu_settings out;
     std::ifstream in(settings_file());
-    const std::string key = std::string(k_top_setting) + "=";
     for (std::string line; std::getline(in, line);)
     {
-        if (!line.starts_with(key)) continue;
-        std::set<std::string, std::less<>> ids;
-        line = trim(line.substr(key.size()));
-        for (size_t at = 0; at <= line.size();)
-        {
-            size_t comma = line.find(',', at);
-            if (comma == std::string::npos) comma = line.size();
-            if (comma > at) ids.insert(line.substr(at, comma - at));
-            at = comma + 1;
-        }
-        return ids;
+        const size_t eq = line.find('=');
+        if (eq == std::string::npos) continue;
+        const std::string_view key = std::string_view(line).substr(0, eq);
+        const std::string value = trim(line.substr(eq + 1));
+        if (key == k_top_setting) out.where.top = parse_ids(value);
+        else if (key == k_shift_setting) out.where.shift = parse_ids(value);
+        else if (key == k_hidden_setting) out.where.hidden = parse_ids(value);
+        else if (key == k_hide_outside_setting) out.hide_outside = value == "1";
+        else if (key == k_no_menu_setting)
+            for (size_t at = 0; at <= value.size();)
+            {
+                size_t tab = value.find('\t', at);
+                if (tab == std::string::npos) tab = value.size();
+                if (tab > at) out.no_menu.push_back(value.substr(at, tab - at));
+                at = tab + 1;
+            }
     }
-    return std::nullopt;
+    return out;
+}
+
+// TortoiseGit's exclusion patterns [spec 4.6]: "dir\\" a folder and all in
+// it, "pre*" a prefix, else the path itself; case ignored.
+bool excluded(const fs::path& path, const std::vector<std::string>& patterns)
+{
+    auto lower = [](std::string s)
+    {
+        for (char& c : s)
+        {
+            c = char(std::tolower(static_cast<unsigned char>(c)));
+            if (c == '\\') c = '/';
+        }
+        return s;
+    };
+    const std::string p = lower(utf8(path));
+    for (std::string pattern : patterns)
+    {
+        pattern = lower(pattern);
+        if (pattern.empty()) continue;
+        if (pattern.back() == '*')
+        {
+            if (p.starts_with(std::string_view(pattern).substr(0, pattern.size() - 1))) return true;
+        }
+        else if (pattern.back() == '/')
+        {
+            if (p.starts_with(pattern) || p + '/' == pattern) return true;
+        }
+        else if (p == pattern)
+            return true;
+    }
+    return false;
 }
 
 std::string top_label(std::string label)
@@ -297,12 +347,6 @@ fs::path tortilla_exe()
 #endif
 }
 
-std::string utf8(const fs::path& p)
-{
-    const auto s = p.u8string();
-    return {s.begin(), s.end()};
-}
-
 class tortilla_provider : public rap::shell::provider
 {
 public:
@@ -311,12 +355,9 @@ public:
         state_ = compute(sel);
         const uint32_t f = state_.flags;
 
-        const auto chosen = top_entries();
-        auto at_top = [&](const row& r)
-        {
-            if (std::string_view(r.id) == "inaccessible") return true;  // always [spec 4.2]
-            return chosen ? chosen->contains(std::string_view(r.id)) : r.where == place::top;
-        };
+        const menu_settings settings = read_settings();
+        if (excluded(state_.first, settings.no_menu)) return {};
+        if (settings.hide_outside && !(f & (EXT | GIT | FIG | IVF | BARE | INACC))) return {};
         std::vector<menu_item> top, sub;
         bool armed = false, added_since = false;
         for (const row& r : k_rows)
@@ -326,14 +367,15 @@ public:
                 armed = true;
                 continue;
             }
-            if (r.where == place::shift && !(f & EXT)) continue;
+            const shows where = where_shown(r, settings.where);
+            if (where == shows::hidden || (where == shows::shift && !(f & EXT))) continue;
             if (!matches(r, f)) continue;
             std::string label = r.label;
             if (std::string_view(r.id) == "commit") label = commit_label(state_);
             // Diff of two files isn't Tortilla's yet, only of one item.
             const bool runs = r.command != run::none && (r.command != run::diff || (f & ONE));
             menu_item item{.id = r.id, .label = label, .enabled = runs};
-            if (at_top(r))
+            if (where == shows::top)
             {
                 item.label = top_label(item.label);
                 top.push_back(std::move(item));
