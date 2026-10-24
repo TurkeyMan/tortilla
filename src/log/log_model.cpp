@@ -675,10 +675,10 @@ void log_model::paint(size_t row, size_t column, rap::painter& p,
 }
 
 // TortoiseGit's structure [GLLB:663-1048] (lanes by column, squares for
-// merges and fork points) drawn in a lighter style: small nodes ringed in
-// the row's background colour, and lanes that join or branch as smooth
-// curves leaving and entering their lane vertically, so they meet the
-// straight segments in the neighbouring rows without a kink.
+// merges and fork points) drawn in a lighter style: small nodes set off by
+// a gap where their lanes stop short, and lanes that join or branch as
+// smooth curves leaving and entering their lane vertically, so they meet
+// the straight segments in the neighbouring rows without a kink.
 void log_model::paint_graph(const graph_row& g, rap::painter& p, const rap::cell_info& cell) const
 {
     // Tight lane pitch keeps busy histories (many parallel lanes) narrow.
@@ -714,15 +714,71 @@ void log_model::paint_graph(const graph_row& g, rap::painter& p, const rap::cell
             hi = std::max(hi, lane);
         }
     float cy = grid.stroke(mid, line);
+    const float cx = x(g.node);
+
+    // The node on the device grid at any scale: a whole number of device
+    // pixels across, the parity of the lane's stroke, so dot, lane and riser
+    // share a centre. The gap round it is the row's own background showing,
+    // whatever the toolkit painted there (selected, hovered, alternate):
+    // the lines meeting the node stop short rather than a ring being filled.
+    auto snapped = [&](float diameter)
+    {
+        const int wl = int(std::round(line * grid.k));
+        const float want = diameter * grid.k;
+        int d = std::max(1, int(std::round(want)));
+        if ((d - wl) % 2)
+            d = std::abs(want - (d - 1)) < std::abs(want - (d + 1)) && d > 1 ? d - 1 : d + 1;
+        return d / grid.k;
+    };
+    const bool square = g.merge || g.fork;
+    // A square reads larger than a circle of the same radius, so it's a
+    // little smaller, for the same visual weight.
+    const float size = snapped(2 * (square ? r * 0.88f : r));
+    const float gap = size / 2 + grid.size(ring);
+
+    // Vertical lines run a pixel past the row's edges (the cell clips), so
+    // neighbouring rows' antialiased ends overlap with no seam between them.
+    const float top = -grid.px(), bottom = h + grid.px();
+
+    // A corner arc as far as the node's gap: the arcs onto and off the riser
+    // can end inside it, where the painted ring used to cover them. The arc
+    // then stops where its circle crosses the gap's.
+    auto arc = [&](rap::point_f c, float a0, float a1, const rap::paint& colour)
+    {
+        auto outside = [&](float a)
+        {
+            const float dx = c.x + corner * std::cos(a) - cx, dy = c.y + corner * std::sin(a) - cy;
+            return dx * dx + dy * dy >= gap * gap;
+        };
+        const bool in0 = !outside(a0), in1 = !outside(a1);
+        if (in0 && in1) return;
+        if (in0 || in1)
+        {
+            // From the arc's centre: the node's direction, and either side
+            // of it by the angle the law of cosines gives the crossings.
+            const float dx = cx - c.x, dy = cy - c.y, d = std::hypot(dx, dy);
+            const float cos_a = (corner * corner + d * d - gap * gap) / (2 * corner * d);
+            const float toward = std::atan2(dy, dx), a = std::acos(std::clamp(cos_a, -1.f, 1.f));
+            const float lo_a = std::min(a0, a1), hi_a = std::max(a0, a1);
+            for (float cross : {toward - a, toward + a, toward - a + 2 * pi, toward + a - 2 * pi})
+                if (cross >= lo_a && cross <= hi_a) (in0 ? a0 : a1) = cross;
+        }
+        p.arc(c, corner, std::min(a0, a1), std::max(a0, a1), colour, line);
+    };
+
     if (lo != hi)
     {
         // The riser stops where a far lane's corner starts, or at a lane
-        // that runs straight through.
+        // that runs straight through, and short of the node either side.
         auto end = [&](uint16_t lane, float dir)
         { return std::ranges::contains(through, lane) ? x(lane) : x(lane) - dir * corner; };
-        float left = lo < g.node ? end(lo, -1) : x(g.node);
-        float right = hi > g.node ? end(hi, 1) : x(g.node);
-        p.line({left, cy}, {right, cy}, rap::paint{rap::theme_color::text}, line);
+        const rap::paint riser{rap::theme_color::text};
+        // Only what lies outside the node's gap: a near corner can start
+        // inside it.
+        if (lo < g.node && end(lo, -1) < cx - gap)
+            p.line({end(lo, -1), cy}, {cx - gap, cy}, riser, line);
+        if (hi > g.node && end(hi, 1) > cx + gap)
+            p.line({cx + gap, cy}, {end(hi, 1), cy}, riser, line);
     }
 
     for (auto& s : g.top)
@@ -731,17 +787,17 @@ void log_model::paint_graph(const graph_row& g, rap::painter& p, const rap::cell
         float xf = x(s.from);
         if (s.from == s.to || std::ranges::contains(through, s.from))
         {
-            // Straight down to mid (the node's lane, or a pass-through).
-            p.line({xf, 0}, {xf, s.from == g.node ? cy : h}, c, line);
+            // Down to the node's gap (the node's lane), or straight through.
+            p.line({xf, top}, {xf, s.from == g.node ? cy - gap : bottom}, c, line);
             continue;
         }
         // Down the lane, then a quarter circle onto the riser.
         float dir = s.to > s.from ? 1.f : -1.f;
-        p.line({xf, 0}, {xf, cy - corner}, c, line);
+        p.line({xf, top}, {xf, cy - corner}, c, line);
         if (dir > 0)
-            p.arc({xf + corner, cy - corner}, corner, pi / 2, pi, c, line);
+            arc({xf + corner, cy - corner}, pi / 2, pi, c);
         else
-            p.arc({xf - corner, cy - corner}, corner, 0, pi / 2, c, line);
+            arc({xf - corner, cy - corner}, 0, pi / 2, c);
     }
     for (auto& s : g.bottom)
     {
@@ -750,34 +806,23 @@ void log_model::paint_graph(const graph_row& g, rap::painter& p, const rap::cell
         float xt = x(s.to);
         if (s.from == s.to)
         {
-            p.line({xt, s.to == g.node ? cy : mid}, {xt, h}, c, line);
+            p.line({xt, s.to == g.node ? cy + gap : mid}, {xt, bottom}, c, line);
             continue;
         }
         // Off the riser with a quarter circle, then down the lane.
         float dir = s.to > s.from ? 1.f : -1.f;
         if (dir > 0)
-            p.arc({xt - corner, cy + corner}, corner, -pi / 2, 0, c, line);
+            arc({xt - corner, cy + corner}, -pi / 2, 0, c);
         else
-            p.arc({xt + corner, cy + corner}, corner, pi, 3 * pi / 2, c, line);
-        p.line({xt, cy + corner}, {xt, h}, c, line);
+            arc({xt + corner, cy + corner}, pi, 3 * pi / 2, c);
+        p.line({xt, cy + corner}, {xt, bottom}, c, line);
     }
 
-    rap::paint node = lane_colour(g.node);
-    rap::paint background = cell.selected ? rap::theme_color::highlight : rap::theme_color::base;
-    float cx = x(g.node);
-    if (g.merge || g.fork)
-    {
-        // Same ring and visual weight as the dots: a square reads larger
-        // than a circle of the same radius, so it's drawn a little smaller.
-        float half = r * 0.88f, o = half + ring;
-        p.rect({cx - o, mid - o, 2 * o, 2 * o}, 1.5f, background, std::nullopt);
-        p.rect({cx - half, mid - half, 2 * half, 2 * half}, 1, node, std::nullopt);
-    }
+    const rap::paint node = lane_colour(g.node);
+    if (square)
+        p.rect({cx - size / 2, cy - size / 2, size, size}, 1, node, std::nullopt);
     else
-    {
-        p.circle({cx, mid}, r + ring, background, std::nullopt);
-        p.circle({cx, mid}, r, node, std::nullopt);
-    }
+        p.circle({cx, cy}, size / 2, node, std::nullopt);
 }
 
 // Five fixed 16 px slots: modified, added, deleted, renamed, conflicted
@@ -793,9 +838,15 @@ void log_model::paint_actions(uint8_t mask, rap::painter& p, const rap::cell_inf
                      rap::paint{rap::theme_color::placeholder_text}, std::nullopt);
         return;
     }
+    // On whole device pixels, so the icons' straight edges are crisp at
+    // fractional scales.
+    const rap::pixel_grid grid(p);
+    s = grid.size(s);
+    oy = grid.snap(oy);
     for (int n = 0; n < 5; ++n)
         if (mask & (1 << n))
-            paint_action_icon(p, action_bits(1 << n), 5 + n * 16 + (16 - s) / 2, oy, s, icon_style_);
+            paint_action_icon(p, action_bits(1 << n), grid.snap(5 + n * 16 + (16 - s) / 2), oy, s,
+                              icon_style_);
 }
 
 // Ref labels (see ref_labels.h), then a space, then the subject.
