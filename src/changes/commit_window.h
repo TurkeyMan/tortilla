@@ -60,9 +60,11 @@ private:
     bool committing_ = false;
     bool can_commit_ = false;  // Commit's enabled state
 
-    rap::label* branch_ = nullptr;
+    // The branch committed to, read-only; with "new branch" the same field
+    // takes the new name, so nothing around it moves [spec 5.4.2].
+    rap::entry* branch_ = nullptr;
+    std::string current_branch_;
     rap::check* new_branch_ = nullptr;
-    rap::entry* new_branch_name_ = nullptr;
     rap::text_view* message_ = nullptr;
     rap::check* amend_ = nullptr;
     rap::check* set_date_ = nullptr;

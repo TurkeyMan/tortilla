@@ -122,19 +122,16 @@ void commit_window::build()
         {vbox{
             hbox{
                 label{"Commit to:"},
-                label{}.bind(branch_),
-                entry{}
-                    .bind(new_branch_name_)
-                    .placeholder("new branch name")
-                    .visible(false)
-                    .width(24_ch),
+                entry{}.bind(branch_).read_only().width(24_ch),
                 check{"new branch"}
                     .bind(new_branch_)
                     .on_toggled(
                         [this](bool on)
                         {
-                            new_branch_name_->set_visible(on);
-                            if (on) new_branch_name_->focus();
+                            branch_->set_read_only(!on);
+                            branch_->set_placeholder(on ? "new branch name" : "");
+                            branch_->set_text(on ? "" : current_branch_);
+                            if (on) branch_->focus();
                         }),
                 spacer{},
             },
@@ -147,14 +144,16 @@ void commit_window::build()
                         check{"Amend _Last Commit"}.bind(amend_).on_toggled([this](bool on)
                                                                             { amend_toggled(on); }),
                         hbox{
+                            // Shown greyed until wanted, as the author field: the
+                            // row keeps its layout when they're turned on.
                             check{"Set author _date"}.bind(set_date_).on_toggled(
                                 [this](bool on)
                                 {
-                                    date_->set_visible(on);
-                                    time_->set_visible(on);
+                                    date_->set_enabled(on);
+                                    time_->set_enabled(on);
                                 }),
-                            date_picker{}.bind(date_).visible(false),
-                            entry{}.bind(time_).placeholder("HH:MM:SS").width(10_ch).visible(false),
+                            date_picker{}.bind(date_).enabled(false),
+                            entry{}.bind(time_).placeholder("HH:MM:SS").width(10_ch).enabled(false),
                             spacer{},
                         },
                         hbox{
@@ -219,7 +218,8 @@ void commit_window::build()
                             spacer{},
                             label{}.bind(stats_),
                         },
-                    }},
+                    }}
+                    .stretch(),  // the files take what the window gains, not the message
             }
                 .stretch(),
             hbox{
@@ -312,7 +312,8 @@ void commit_window::reload()
             std::string branch = r.head_name();
             return [this, changes = std::move(changes), branch]() mutable
             {
-                branch_->set_text(branch);
+                current_branch_ = branch;
+                if (!new_branch_->checked()) branch_->set_text(branch);
                 loaded(std::move(changes));
             };
         });
@@ -389,7 +390,7 @@ void commit_window::commit()
     std::string branch;
     if (new_branch_->checked())
     {
-        branch = trimmed(new_branch_name_->text());
+        branch = trimmed(branch_->text());
         if (branch.empty() || !run_git(workdir_, {"check-ref-format", "--branch", branch}).ok())
         {
             ui_.message(window_.get(), {.icon = rap::message_spec::icon::warning,
