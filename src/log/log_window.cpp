@@ -807,18 +807,10 @@ rap::menu log_window::walk_menu()
     };
 }
 
-// View [spec 1.9.5].
+// View [spec 1.9.5]. Not TortoiseGit's Action Icons (Settings > General
+// has them) or Gravatar (always shown).
 rap::menu log_window::view_menu()
 {
-    auto icon_style = [this](const char* text, action_icon_style style)
-    {
-        return toggle(text, log_.icon_style() == style,
-                      [this, style]
-                      {
-                          log_.set_action_icon_style(style);
-                          settings::get().set("log.actionIcons", std::to_string(int(style)));
-                      });
-    };
     auto label = [this](const char* text, unsigned bit)
     {
         return toggle(text, log_.labels() & bit,
@@ -836,16 +828,10 @@ rap::menu log_window::view_menu()
                    selection_changed();
                }),
         rap::menu_item::separator(),
-        {.label = "_Action Icons",
-         .children = {icon_style("_Classic", action_icon_style::document),
-                      icon_style("_Glyphs", action_icon_style::glyph),
-                      icon_style("_Bevelled", action_icon_style::bevel),
-                      icon_style("L_ine", action_icon_style::line)}},
         {.label = "_Labels",
          .children = {label("_Tags", label_tags), label("_Local branches", label_local),
                       label("_Remote branches", label_remote), label("Other refs", label_other)}},
         rap::menu_item::separator(),
-        toggle("G_ravatar", false, {}, false),
         toggle("View Patch", false, {}, false),
         rap::menu_item::separator(),
         {.label = "_Settings...", .action = [this] { open_settings(settings_page::general); }},

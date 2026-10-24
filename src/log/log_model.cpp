@@ -780,7 +780,7 @@ void log_model::paint_graph(const graph_row& g, rap::painter& p, const rap::cell
 }
 
 // Five fixed 16 px slots: modified, added, deleted, renamed, conflicted
-// [GLLB:1356-1425], drawn in the style chosen under View > Action Icons.
+// [GLLB:1356-1425], drawn in the style chosen in Settings > General.
 void log_model::paint_actions(uint8_t mask, rap::painter& p, const rap::cell_info& cell) const
 {
     float s = std::min(13.f, cell.size.h - 3), oy = (cell.size.h - s) / 2;
