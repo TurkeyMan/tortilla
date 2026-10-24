@@ -24,12 +24,11 @@ jobs:
       - name: Install build dependencies
         run: apt-get update && apt-get install -y --no-install-recommends ca-certificates git
 
+      # rapport's URL is SSH; with no SSH key given, checkout fetches
+      # submodules over HTTPS with the job's token.
       - uses: actions/checkout@v4
-
-      # rapport's URL is SSH, for pushing from a clone; CI has no key, so it
-      # fetches over HTTPS.
-      - name: Submodules
-        run: "git -c url.https://github.com/.insteadOf=git@github.com: submodule update --init --recursive"
+        with:
+          submodules: recursive
 
       - name: Install library dependencies
         run: .github/ci/deps-debian.sh
@@ -44,12 +43,11 @@ jobs:
     name: windows x86_64
     runs-on: windows-2022
     steps:
+      # rapport's URL is SSH; with no SSH key given, checkout fetches
+      # submodules over HTTPS with the job's token.
       - uses: actions/checkout@v4
-
-      # rapport's URL is SSH, for pushing from a clone; CI has no key, so it
-      # fetches over HTTPS.
-      - name: Submodules
-        run: "git -c url.https://github.com/.insteadOf=git@github.com: submodule update --init --recursive"
+        with:
+          submodules: recursive
 
       - name: vcpkg
         id: vcpkg
