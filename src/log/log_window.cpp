@@ -386,7 +386,9 @@ std::string log_window::repository_state() const
 }
 
 // Another window or program may change the repository (a rebase, a pull,
-// git on the command line): checked every two seconds, by file times only.
+// git on the command line): the system says when the git folder or its
+// refs change, and the log reloads if HEAD or a ref did (not for the index,
+// which the log's own status touches).
 void log_window::watch_repository()
 {
     git_dir_ = rap::sys::path_from_utf8(repo_.git_dir());
@@ -401,11 +403,25 @@ void log_window::watch_repository()
                   : common_dir.is_absolute() ? common_dir
                                              : rap::sys::path_from_utf8(ran_in) / common_dir;
     state_ = repository_state();
-    watch_timer_ = ui_.timer(2000, true,
-                             [this]
-                             {
-                                 if (repository_state() != state_) reload();
-                             });
+    auto changed = [this, alive = std::weak_ptr<bool>(alive_)](rap::sys::watch_batch)
+    {
+        // (On the watch's thread.)
+        ui_.post(
+            [this, alive]
+            {
+                if (alive.lock() && repository_state() != state_) reload();
+            });
+    };
+    const rap::sys::watch_options settle{.settle = std::chrono::milliseconds(200)};
+    for (auto [folder, recursive] : {std::pair{git_dir_, false}, std::pair{common_dir_, false},
+                                     std::pair{common_dir_ / "refs", true}})
+    {
+        if (folder == common_dir_ && common_dir_ == git_dir_) continue;
+        auto options = settle;
+        options.recursive = recursive;
+        if (auto w = rap::sys::directory_watch::start(folder, options, changed))
+            watches_.push_back(std::move(*w));
+    }
 }
 
 void log_window::reload()

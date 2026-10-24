@@ -220,12 +220,13 @@ void pull_fetch_dialog::remote_changed()
     if (prune.empty()) prune = config_value(workdir_, "fetch.prune");
     prune_->set_items({prune.empty() ? "Default" : "Default (" + prune + ")", "Prune (--prune)",
                        "Don't prune (--no-prune)"});
-    if (url) url_->focus();
 }
 
 void pull_fetch_dialog::show()
 {
     window_->show();
+    // With no remote to choose (or a URL chosen), the URL is what's typed.
+    if (by_url()) url_->focus();
 }
 
 void pull_fetch_dialog::ok()

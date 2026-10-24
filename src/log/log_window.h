@@ -11,6 +11,7 @@
 #include "ui/settings_dialog.h"
 
 #include <rapport/rapport.h>
+#include <rapport/sys.h>
 
 #include <chrono>
 #include <filesystem>
@@ -157,7 +158,7 @@ private:
     std::string repository_state() const;
     std::filesystem::path git_dir_, common_dir_;
     std::string state_;
-    rap::subscription watch_timer_;
+    std::vector<std::unique_ptr<rap::sys::directory_watch>> watches_;
     std::shared_ptr<git_process> difftool_;
     std::shared_ptr<git_process> ref_command_;
     std::vector<std::unique_ptr<rebase_window>> rebases_;
