@@ -322,7 +322,9 @@ void merge_dialog::ok()
             windows::release(running);
         },
         std::move(follow_ups));
+    // close() only hides it: what closing means (its release) is ours.
     window_->close();
+    if (closed_) closed_();
 }
 
 std::expected<std::unique_ptr<abort_merge_dialog>, std::string>
@@ -386,7 +388,9 @@ void abort_merge_dialog::ok()
                         {{.label = "_Retry",
                           .commands = [c] { return std::vector<git_command>{c}; },
                           .offered = [](bool ok) { return !ok; }}});
+    // close() only hides it: what closing means (its release) is ours.
     window_->close();
+    if (closed_) closed_();
 }
 
 }  // namespace tortilla

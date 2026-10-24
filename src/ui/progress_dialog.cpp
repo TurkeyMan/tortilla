@@ -19,6 +19,8 @@ struct progress : std::enable_shared_from_this<progress>
     std::function<void(bool)> done;
     std::vector<progress_follow_up> follow_ups;
     std::function<void()> after_close;  // the follow-up chosen
+    // The dialog keeps itself alive until closed().
+    std::shared_ptr<progress> keep_alive;
     std::vector<size_t> offered;        // the follow-ups offered for the outcome
 
     std::unique_ptr<rap::window> window;
@@ -126,6 +128,19 @@ struct progress : std::enable_shared_from_this<progress>
         close->focus();
     }
 
+    // Closed by its close button or a follow-up: window::close() only hides
+    // it, so both come here, once.
+    void closed()
+    {
+        auto keep = std::move(keep_alive);
+        if (!keep) return;
+        window->close();
+        if (process) process->kill();
+        if (after_close) after_close();
+        if (done) done(ok);
+        ui.post([keep] {});  // destroyed after this callback returns
+    }
+
     rap::menu follow_up_menu()
     {
         rap::menu m;
@@ -138,7 +153,7 @@ struct progress : std::enable_shared_from_this<progress>
         if (f.after_close)
         {
             after_close = f.after_close;
-            window->close();
+            closed();
             return;
         }
         // More commands, here.
@@ -194,16 +209,8 @@ void run_progress_dialog(rap::ui& ui, rap::window* parent, const std::string& ti
         parent);
 
     p->close->set_enabled(false);
-    // The dialog keeps itself alive until it is closed.
-    p->window->on_finished(
-        [p](rap::dialog_role) mutable
-        {
-            auto keep = std::move(p);
-            if (keep->process) keep->process->kill();
-            if (keep->after_close) keep->after_close();
-            if (keep->done) keep->done(keep->ok);
-            keep->ui.post([keep] {});  // destroy after this callback returns
-        });
+    p->keep_alive = p;
+    p->window->on_finished([raw = p.get()](rap::dialog_role) { raw->closed(); });
     p->window->on_close_request([raw = p.get()] { return !raw->process; });
     p->window->show();
     p->started = std::chrono::steady_clock::now();

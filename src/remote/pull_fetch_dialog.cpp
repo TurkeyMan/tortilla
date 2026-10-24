@@ -401,7 +401,9 @@ void pull_fetch_dialog::ok()
             windows::release(running);
         },
         std::move(follow_ups));
+    // close() only hides it: what closing means (its release) is ours.
     window_->close();
+    finished();
 }
 
 void pull_fetch_dialog::finished()

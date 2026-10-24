@@ -218,7 +218,9 @@ void clone_dialog::ok()
     run_progress_dialog(
         ui_, nullptr, "Clone", rap::sys::path_to_utf8(where), {c},
         [running](bool) { windows::release(running); }, std::move(follow_ups));
+    // close() only hides it: what closing means (its release) is ours.
     window_->close();
+    if (closed_) closed_();
 }
 
 }  // namespace tortilla

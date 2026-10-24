@@ -236,7 +236,9 @@ void switch_dialog::ok()
             windows::release(running);
         },
         std::move(follow_ups));
+    // close() only hides it: what closing means (its release) is ours.
     window_->close();
+    if (closed_) closed_();
 }
 
 }  // namespace tortilla

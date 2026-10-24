@@ -258,7 +258,9 @@ void create_ref_dialog::create()
             if (auto d = push_dialog::open(ui_, workdir_, "refs/tags/" + name))
                 windows::keep(std::move(*d));
     }
+    // close() only hides it: what closing means (its release) is ours.
     window_->close();
+    if (closed_) closed_();
 }
 
 }  // namespace tortilla
