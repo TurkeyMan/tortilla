@@ -26,17 +26,21 @@ endforeach()
 # A file manager's context menu, one package each (tortilla-nautilus, ...):
 # the extension rapport_add_shell_extension() installs, and the file
 # manager's own package for each kind of package.
-set(tortilla_shells ${RAPPORT_SHELL_FILE_MANAGERS})
+# PCManFM(-Qt) reads file manager actions rather than loading an extension,
+# so its package is Tortilla's own (CMakeLists.txt), alongside rapport's.
+set(tortilla_shells ${RAPPORT_SHELL_FILE_MANAGERS} pcmanfm)
 set(fm_deb_nautilus nautilus)
 set(fm_deb_nemo nemo)
 set(fm_deb_caja caja)
 set(fm_deb_thunar thunar)
 set(fm_deb_dolphin dolphin)
+set(fm_deb_pcmanfm "pcmanfm-qt | pcmanfm")
 set(fm_rpm_nautilus nautilus)
 set(fm_rpm_nemo nemo)
 set(fm_rpm_caja caja)
 set(fm_rpm_thunar Thunar)
 set(fm_rpm_dolphin dolphin)
+set(fm_rpm_pcmanfm "(pcmanfm-qt or pcmanfm)")
 
 set(CPACK_PACKAGE_NAME tortilla)
 set(CPACK_PACKAGE_VERSION ${TORTILLA_PACKAGE_VERSION})
@@ -93,6 +97,10 @@ foreach(fm IN LISTS tortilla_shells)
     set(CPACK_COMPONENT_TORTILLA-SHELL-${FM}_DESCRIPTION
         "Tortilla's entries in the ${fm} file manager's context menu.")
 endforeach()
+set(CPACK_COMPONENT_TORTILLA-SHELL-PCMANFM_DESCRIPTION
+    "Tortilla's entries in the context menus of PCManFM-Qt and PCManFM, as\n"
+    "file manager actions: a fixed menu inside and outside a working tree. Caja\n"
+    "reads them too if caja-actions is installed, beside tortilla-caja's own menu.")
 
 # -- .deb -------------------------------------------------------------------
 set(CPACK_DEB_COMPONENT_INSTALL ON)
@@ -123,6 +131,8 @@ foreach(fm IN LISTS tortilla_shells)
     set(CPACK_DEBIAN_TORTILLA-SHELL-${FM}_PACKAGE_DEPENDS ${fm_deb_${fm}})
     set(CPACK_DEBIAN_TORTILLA-SHELL-${FM}_PACKAGE_ENHANCES ${fm_deb_${fm}})
 endforeach()
+set(CPACK_DEBIAN_TORTILLA-SHELL-PCMANFM_PACKAGE_ENHANCES "pcmanfm-qt, pcmanfm")
+set(CPACK_DEBIAN_TORTILLA-SHELL-PCMANFM_PACKAGE_ARCHITECTURE all)
 
 # -- .rpm -------------------------------------------------------------------
 set(CPACK_RPM_COMPONENT_INSTALL ON)

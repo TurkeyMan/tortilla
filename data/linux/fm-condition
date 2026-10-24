@@ -1,0 +1,10 @@
+#!/bin/sh
+# For PCManFM's Tortilla menu (tools/make_fm_actions.cpp): prints "true",
+# as the file manager actions spec's ShowIfTrue wants, when PATH is on the
+# asked side of a working tree.
+#   fm-condition inside|outside PATH
+p=$2
+[ -d "$p" ] || p=$(dirname -- "$p")
+if git -C "$p" rev-parse --is-inside-work-tree >/dev/null 2>&1; then side=inside; else side=outside; fi
+[ "$side" = "$1" ] && echo true
+exit 0
