@@ -122,12 +122,19 @@ if(RAPPORT_STATIC)
 endif()
 
 # The file manager's context menu: TortoiseGit's Explorer menu, launching
-# tortilla [spec 4]. Built beside tortilla, which registers it
-# (tortilla --register-shell).
+# tortilla [spec 4]. On Windows built beside tortilla, which registers it
+# (tortilla --register-shell); on Linux one extension per file manager, each
+# its own install component (tortilla-shell-nautilus, ...), which packages
+# put in the file manager's extension directory.
 rapport_add_shell_extension(tortilla-shell
     NAME "Tortilla" ID org.tortilla.Tortilla
     WINDOWS_CLSID {D73E7C0C-F88B-4DD5-AC56-9AABAB52E4EB}
     SOURCES src/shell/shell_provider.cpp)
+if(UNIX AND NOT APPLE)
+    include(GNUInstallDirs)
+    target_compile_definitions(tortilla-shell_provider PRIVATE
+        TORTILLA_INSTALL_BINDIR="${CMAKE_INSTALL_FULL_BINDIR}")
+endif()
 # Its icons, beside it as installed (tools/make_menu_icons.cpp draws them).
 add_custom_command(TARGET tortilla-shell-probe POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_CURRENT_SOURCE_DIR}/data/windows/tortilla.ico
@@ -165,6 +172,9 @@ if(UNIX AND NOT APPLE)
     include(GNUInstallDirs)
     install(TARGETS tortilla RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT tortilla)
     install(DIRECTORY data/icons/hicolor DESTINATION ${CMAKE_INSTALL_DATADIR}/icons
+            COMPONENT tortilla)
+    # The file managers' menu icons, from the icon theme.
+    install(DIRECTORY data/linux/icons/hicolor DESTINATION ${CMAKE_INSTALL_DATADIR}/icons
             COMPONENT tortilla)
     install(FILES ${TORTILLA_TRANSLATIONS} DESTINATION ${CMAKE_INSTALL_DATADIR}/tortilla/translations
             COMPONENT tortilla)

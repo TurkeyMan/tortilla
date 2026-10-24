@@ -1,9 +1,10 @@
 #!/bin/sh
-# Configure, build with every toolkit backend, and run the tests.
+# Configure, build with every toolkit backend and file-manager extension, and
+# run the tests.
 set -eu
 cmake -S . -B build-ci -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr | tee build-ci.log
 if grep -E -- '^-- rapport: skipping' build-ci.log | grep -v win32; then
-  echo "a toolkit backend is missing; install its -dev package in .github/ci/deps-debian.sh" >&2
+  echo "a toolkit backend or file-manager SDK is missing; install its -dev package in .github/ci/deps-*.sh" >&2
   exit 1
 fi
 cmake --build build-ci --parallel "$(nproc)"

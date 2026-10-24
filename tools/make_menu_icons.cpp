@@ -1,10 +1,12 @@
 // Renders the file manager menu's icons (src/shell/menu_icons.cpp) to
 // <outdir>/<group>.ico, each drawn at every size a menu uses rather than
-// scaled, plus <outdir>/sheet.png: all of them large, to look over.
+// scaled, plus <outdir>/sheet.png: all of them large, to look over. Given a
+// second directory, also the Linux file managers' theme icons there:
+// hicolor/<n>x<n>/apps/tortilla-menu-<group>.png.
 // Needs Qt 6 (QtGui), so it isn't part of the build:
 //   g++ -std=c++23 -fPIC -Isrc -Irapport/core/include tools/make_menu_icons.cpp \
 //       src/shell/menu_icons.cpp -o make_menu_icons $(pkg-config --cflags --libs Qt6Gui)
-//   QT_QPA_PLATFORM=offscreen ./make_menu_icons data/windows/menu
+//   QT_QPA_PLATFORM=offscreen ./make_menu_icons data/windows/menu data/linux/icons
 #include "shell/menu_icons.h"
 
 #include <QBuffer>
@@ -176,9 +178,9 @@ QByteArray ico(std::string_view group)
 int main(int argc, char** argv)
 {
     QGuiApplication app(argc, argv);
-    if (argc != 2)
+    if (argc != 2 && argc != 3)
     {
-        std::fprintf(stderr, "usage: make_menu_icons outdir\n");
+        std::fprintf(stderr, "usage: make_menu_icons outdir [linux-icons-dir]\n");
         return 2;
     }
     const QString dir = argv[1];
@@ -190,6 +192,21 @@ int main(int argc, char** argv)
         if (!f.open(QIODevice::WriteOnly)) return 1;
         f.write(ico(g));
     }
+    if (argc == 3)
+        for (int n : {16, 24, 32, 48})
+        {
+            const QString apps = QString("%1/hicolor/%2x%2/apps").arg(argv[2]).arg(n);
+            QDir().mkpath(apps);
+            for (std::string_view g : groups)
+            {
+                const QString name =
+                    "tortilla-menu-" + QString::fromUtf8(g.data(), qsizetype(g.size()));
+                if (!render(g, n)
+                         .convertToFormat(QImage::Format_ARGB32)
+                         .save(apps + "/" + name + ".png"))
+                    return 1;
+            }
+        }
 
     // The sheet: each icon at 16 px, those pixels magnified, and drawn at 64.
     const int cols = 6, cell = 160;

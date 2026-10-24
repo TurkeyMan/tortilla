@@ -338,12 +338,33 @@ std::string top_label(std::string label)
     return "Git " + label;
 }
 
+// On Windows, beside the extension; on Linux the extension is in the file
+// manager's directory, and tortilla where it was installed.
 fs::path tortilla_exe()
 {
 #ifdef _WIN32
     return rap::shell::module_dir() / "tortilla.exe";
 #else
-    return rap::shell::module_dir() / "tortilla";
+    return fs::path(TORTILLA_INSTALL_BINDIR) / "tortilla";
+#endif
+}
+
+// Windows' .ico files beside the extension; on Linux, the icon theme's.
+std::string icon(std::string_view group)
+{
+#ifdef _WIN32
+    return "menu/" + std::string(group) + ".ico";
+#else
+    return "tortilla-menu-" + std::string(group);
+#endif
+}
+
+std::string app_icon()
+{
+#ifdef _WIN32
+    return "tortilla.ico";
+#else
+    return "tortilla";
 #endif
 }
 
@@ -375,10 +396,7 @@ public:
             // Diff of two files isn't Tortilla's yet, only of one item.
             const bool runs = r.command != run::none && (r.command != run::diff || (f & ONE));
             // Drawn by src/shell/menu_icons.cpp, one per Settings entry.
-            menu_item item{.id = r.id,
-                           .label = label,
-                           .icon = "menu/" + std::string(group_of(r.id)) + ".ico",
-                           .enabled = runs};
+            menu_item item{.id = r.id, .label = label, .icon = icon(group_of(r.id)), .enabled = runs};
             if (where == shows::top)
             {
                 item.label = top_label(item.label);
@@ -400,7 +418,7 @@ public:
         out.insert(out.end(), top.begin(), top.end());
         if (!sub.empty())
             out.push_back(
-                {.label = "&Tortilla", .icon = "tortilla.ico", .submenu = std::move(sub)});
+                {.label = "&Tortilla", .icon = app_icon(), .submenu = std::move(sub)});
         out.push_back(menu_item::separator());
         return out;
     }

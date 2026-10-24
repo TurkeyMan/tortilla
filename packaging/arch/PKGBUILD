@@ -8,14 +8,16 @@
 # Maintainer: Manu Evans <turkeyman@gmail.com>
 pkgbase=tortilla
 pkgname=(librapport librapport-dev librapport-gtk3 librapport-gtk4 librapport-qt6
-         tortilla-core tortilla-gtk3 tortilla-gtk4 tortilla-qt)
+         tortilla-core tortilla-gtk3 tortilla-gtk4 tortilla-qt
+         tortilla-nautilus tortilla-nemo tortilla-caja tortilla-thunar tortilla-dolphin)
 pkgver=0.1
 pkgrel=1
 pkgdesc='A fast, native git client'
 arch=(x86_64 aarch64)
 url='https://github.com/TurkeyMan/tortilla'
 license=(GPL-3.0-only MIT)
-makedepends=(cmake ninja git libgit2 gtk3 gtk4 qt6-base)
+makedepends=(cmake ninja git libgit2 gtk3 gtk4 qt6-base
+             libnautilus-extension nemo caja thunar kio)
 # rapport's shell-extension libraries are static, for librapport-dev.
 options=(staticlibs)
 
@@ -34,6 +36,7 @@ build() {
     -DCMAKE_INSTALL_PREFIX=/usr \
     -DRAPPORT_EXAMPLES=OFF \
     -DRAPPORT_REQUIRE_BACKENDS=ON \
+    -DRAPPORT_REQUIRE_SHELL_EXTENSIONS=ON \
     -DRAPPORT_BACKEND_WIN32=OFF
   cmake --build build
 }
@@ -104,6 +107,11 @@ package_tortilla-core() {
   pkgdesc='A fast, native git client (the application; install tortilla-gtk4, tortilla-qt or tortilla-gtk3)'
   license=(GPL-3.0-only)
   depends=("librapport=$pkgver-$pkgrel" libgit2 git hicolor-icon-theme gcc-libs glibc)
+  optdepends=('tortilla-nautilus: entries in the context menu of Nautilus (GNOME Files)'
+              'tortilla-nemo: entries in the context menu of Nemo'
+              'tortilla-caja: entries in the context menu of Caja'
+              'tortilla-thunar: entries in the context menu of Thunar'
+              'tortilla-dolphin: entries in the context menu of Dolphin')
   _install tortilla
 }
 
@@ -126,4 +134,43 @@ package_tortilla-gtk4() {
 package_tortilla-qt() {
   pkgdesc='A fast, native git client (Qt 6)'
   _frontend qt6
+}
+
+# The file managers' context menus. Each loads its extensions when it starts:
+# quit it (nautilus -q, nemo -q, caja -q, thunar -q) for the menu to appear.
+_shell() {
+  license=(GPL-3.0-only)
+  depends+=("tortilla-core=$pkgver-$pkgrel" gcc-libs glibc glib2)
+  _install "tortilla-shell-$1"
+}
+
+package_tortilla-nautilus() {
+  pkgdesc='Tortilla in the context menu of Nautilus (GNOME Files)'
+  depends=(libnautilus-extension)
+  _shell nautilus
+}
+
+package_tortilla-nemo() {
+  pkgdesc='Tortilla in the context menu of Nemo'
+  depends=(nemo)
+  _shell nemo
+}
+
+package_tortilla-caja() {
+  pkgdesc='Tortilla in the context menu of Caja'
+  depends=(caja)
+  _shell caja
+}
+
+package_tortilla-thunar() {
+  pkgdesc='Tortilla in the context menu of Thunar'
+  depends=(thunar)
+  _shell thunar
+}
+
+package_tortilla-dolphin() {
+  pkgdesc='Tortilla in the context menu of Dolphin and other KIO file managers'
+  depends=(kio qt6-base)
+  optdepends=('dolphin: the file manager')
+  _shell dolphin
 }

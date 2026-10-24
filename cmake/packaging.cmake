@@ -23,6 +23,21 @@ foreach(tk gtk3 gtk4 qt6)
     endif()
 endforeach()
 
+# A file manager's context menu, one package each (tortilla-nautilus, ...):
+# the extension rapport_add_shell_extension() installs, and the file
+# manager's own package for each kind of package.
+set(tortilla_shells ${RAPPORT_SHELL_FILE_MANAGERS})
+set(fm_deb_nautilus nautilus)
+set(fm_deb_nemo nemo)
+set(fm_deb_caja caja)
+set(fm_deb_thunar thunar)
+set(fm_deb_dolphin dolphin)
+set(fm_rpm_nautilus nautilus)
+set(fm_rpm_nemo nemo)
+set(fm_rpm_caja caja)
+set(fm_rpm_thunar Thunar)
+set(fm_rpm_dolphin dolphin)
+
 set(CPACK_PACKAGE_NAME tortilla)
 set(CPACK_PACKAGE_VERSION ${TORTILLA_PACKAGE_VERSION})
 set(CPACK_PACKAGE_VENDOR "Manu Evans")
@@ -35,6 +50,9 @@ set(CPACK_PACKAGE_DIRECTORY ${CMAKE_BINARY_DIR}/packages)
 set(CPACK_COMPONENTS_ALL core dev tortilla)
 foreach(tk IN LISTS tortilla_toolkits)
     list(APPEND CPACK_COMPONENTS_ALL ${tk} tortilla_${tk})
+endforeach()
+foreach(fm IN LISTS tortilla_shells)
+    list(APPEND CPACK_COMPONENTS_ALL tortilla-shell-${fm})
 endforeach()
 
 # Component -> package name, and what it needs of ours.
@@ -51,6 +69,11 @@ foreach(tk IN LISTS tortilla_toolkits)
     set(CPACK_COMPONENT_${TK}_DEPENDS core)
     set(CPACK_COMPONENT_TORTILLA_${TK}_DEPENDS tortilla ${tk})
 endforeach()
+foreach(fm IN LISTS tortilla_shells)
+    string(TOUPPER ${fm} FM)
+    set(pkg_tortilla-shell-${fm} tortilla-${fm})
+    set(CPACK_COMPONENT_TORTILLA-SHELL-${FM}_DEPENDS tortilla)
+endforeach()
 
 set(CPACK_COMPONENT_CORE_DESCRIPTION
     "rapport, the toolkit-neutral UI library Tortilla is built on: the core\n"
@@ -64,6 +87,11 @@ foreach(tk IN LISTS tortilla_toolkits)
     set(CPACK_COMPONENT_${TK}_DESCRIPTION "rapport's ${tk} backend plugin.")
     set(CPACK_COMPONENT_TORTILLA_${TK}_DESCRIPTION
         "A fast, native git client, with the ${tk} user interface.")
+endforeach()
+foreach(fm IN LISTS tortilla_shells)
+    string(TOUPPER ${fm} FM)
+    set(CPACK_COMPONENT_TORTILLA-SHELL-${FM}_DESCRIPTION
+        "Tortilla's entries in the ${fm} file manager's context menu.")
 endforeach()
 
 # -- .deb -------------------------------------------------------------------
@@ -87,6 +115,14 @@ set(CPACK_DEBIAN_CORE_PACKAGE_RECOMMENDS
 # The app shells out to git for everything but the revision walk.
 set(CPACK_DEBIAN_TORTILLA_PACKAGE_DEPENDS git)
 set(CPACK_DEBIAN_TORTILLA_PACKAGE_RECOMMENDS "tortilla-gtk4 | tortilla-qt | tortilla-gtk3")
+list(TRANSFORM tortilla_shells PREPEND tortilla- OUTPUT_VARIABLE shell_packages)
+list(JOIN shell_packages ", " shell_packages)
+set(CPACK_DEBIAN_TORTILLA_PACKAGE_SUGGESTS "${shell_packages}")
+foreach(fm IN LISTS tortilla_shells)
+    string(TOUPPER ${fm} FM)
+    set(CPACK_DEBIAN_TORTILLA-SHELL-${FM}_PACKAGE_DEPENDS ${fm_deb_${fm}})
+    set(CPACK_DEBIAN_TORTILLA-SHELL-${FM}_PACKAGE_ENHANCES ${fm_deb_${fm}})
+endforeach()
 
 # -- .rpm -------------------------------------------------------------------
 set(CPACK_RPM_COMPONENT_INSTALL ON)
@@ -104,12 +140,14 @@ foreach(c IN LISTS CPACK_COMPONENTS_ALL)
     endforeach()
     if(c STREQUAL tortilla)
         list(APPEND requires git)
+    elseif(c MATCHES "^tortilla-shell-(.*)")
+        list(APPEND requires ${fm_rpm_${CMAKE_MATCH_1}})
     endif()
     list(JOIN requires ", " requires)
     set(CPACK_RPM_${C}_PACKAGE_REQUIRES "${requires}")
 endforeach()
 set(CPACK_RPM_CORE_PACKAGE_SUGGESTS "libcurl, gdk-pixbuf2")
-set(CPACK_RPM_TORTILLA_PACKAGE_SUGGESTS "tortilla-gtk4")
+set(CPACK_RPM_TORTILLA_PACKAGE_SUGGESTS "tortilla-gtk4, ${shell_packages}")
 list(APPEND CPACK_RPM_EXCLUDE_FROM_AUTO_FILELIST_ADDITION
     ${CMAKE_INSTALL_FULL_DATADIR}/applications
     ${CMAKE_INSTALL_FULL_DATADIR}/icons
