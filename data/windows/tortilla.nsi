@@ -1,7 +1,8 @@
 ; Tortilla's Windows installer. Built by .github/ci/build-windows.ps1:
 ;   makensis -DVERSION=0.1 -DSTAGE=<install tree> -DOUT=<setup.exe> tortilla.nsi
 ; STAGE holds the app as installed: bin\ (tortilla.exe, self-contained, and
-; the Explorer extension tortilla-shell.dll), and the README and licence.
+; the Explorer extension tortilla-shell.dll), translations\, and the README
+; and licence.
 ;
 ; The extension is registered for every user (tortilla --register-shell
 ; --all-users). Explorer keeps it loaded, so it can't be overwritten or
@@ -38,6 +39,44 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
 VIAddVersionKey "FileDescription" "Tortilla installer"
 VIAddVersionKey "LegalCopyright" "Manu Evans, GPL-3.0"
 
+; Tortilla running from this install (a log, a dialog, git's password
+; prompt) holds tortilla.exe, so it's closed before its files are replaced
+; or removed: after asking (OK in a silent install), each window is asked
+; to close as its own close button would; one still open after five
+; seconds is ended. Copies of Tortilla elsewhere are left alone.
+!define PS_TORTILLA `powershell.exe -NoProfile -NonInteractive -Command "Get-Process tortilla -ErrorAction SilentlyContinue | Where-Object { $$_.Path -eq '$INSTDIR\bin\tortilla.exe' }`
+!macro CloseTortilla
+  StrCpy $R0 0
+  ${Do}
+    ${IfNot} ${FileExists} "$INSTDIR\bin\tortilla.exe"
+      ${Break}
+    ${EndIf}
+    ; A running program's file can't be opened for writing.
+    ClearErrors
+    FileOpen $R1 "$INSTDIR\bin\tortilla.exe" a
+    ${IfNot} ${Errors}
+      FileClose $R1
+      ${Break}
+    ${EndIf}
+    ${If} $R0 == 0
+      MessageBox MB_ICONINFORMATION|MB_OKCANCEL "Tortilla is running. Setup will close its windows to continue;$\r$\nanything unsaved in them (a commit message, say) is lost." /SD IDOK IDOK +2
+      Abort
+      nsExec::Exec `${PS_TORTILLA} | ForEach-Object { [void]$$_.CloseMainWindow() }"`
+      Pop $R1
+    ${ElseIf} $R0 == 10
+      nsExec::Exec `${PS_TORTILLA} | Stop-Process -Force"`
+      Pop $R1
+    ${ElseIf} $R0 >= 20
+      MessageBox MB_ICONEXCLAMATION|MB_RETRYCANCEL "Tortilla's files are still in use. Close Tortilla, then retry." /SD IDCANCEL IDRETRY +2
+      Abort
+      ; Retry: end them again, then wait.
+      StrCpy $R0 9
+    ${EndIf}
+    IntOp $R0 $R0 + 1
+    Sleep 500
+  ${Loop}
+!macroend
+
 ; Moves a loaded Explorer extension out of the way and deletes it once
 ; nothing holds it (now, or at the next restart).
 !macro MoveAsideShellExtension
@@ -63,9 +102,11 @@ FunctionEnd
 
 Section "Tortilla"
   SetShellVarContext all
+  !insertmacro CloseTortilla
   ; A reinstall replaces the old tree rather than mixing DLLs of two versions.
   !insertmacro MoveAsideShellExtension
   RMDir /r /REBOOTOK "$INSTDIR\bin"
+  RMDir /r "$INSTDIR\translations"
   SetOutPath "$INSTDIR"
   File /r "${STAGE}\*"
   WriteUninstaller "$INSTDIR\uninstall.exe"
@@ -97,10 +138,12 @@ SectionEnd
 
 Section "Uninstall"
   SetShellVarContext all
+  !insertmacro CloseTortilla
   ExecWait '"$INSTDIR\bin\tortilla.exe" --unregister-shell --all-users'
   !insertmacro MoveAsideShellExtension
   Delete "$SMPROGRAMS\Tortilla.lnk"
   RMDir /r /REBOOTOK "$INSTDIR\bin"
+  RMDir /r "$INSTDIR\translations"
   Delete "$INSTDIR\README.md"
   Delete "$INSTDIR\LICENSE"
   Delete "$INSTDIR\uninstall.exe"
