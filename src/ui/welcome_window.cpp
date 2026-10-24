@@ -9,6 +9,7 @@
 
 #include <rapport/sys.h>
 
+#include <algorithm>
 #include <system_error>
 
 namespace tortilla
@@ -81,27 +82,17 @@ void welcome_window::build()
                 },
                 separator{},
                 hbox{
-                    canvas{}
-                        .on_paint(
-                            [](rap::painter& p, rap::size_f size)
-                            {
-                                p.rect({0, 0, size.w, size.h}, 0,
-                                       rap::paint{rap::theme_color::window}, std::nullopt);
-                                paint_github_mark(p, 0, (size.h - 16) / 2, 16,
-                                                  rap::paint{rap::theme_color::window_text});
-                            })
-                        .on_pointer(
-                            [](const rap::pointer_event& e)
-                            {
-                                if (e.type != rap::pointer_event_type::release || e.button != 1)
-                                    return false;
-                                rap::sys::open_url(k_project_url);
-                                return true;
-                            })
-                        .width(16_px)
-                        .height(20_px),
-                    label{"github.com/TurkeyMan/tortilla"}.link(
-                        [] { rap::sys::open_url(k_project_url); }),
+                    // GitHub's mark is part of the link: one click, one pointer.
+                    label{"github.com/TurkeyMan/tortilla"}
+                        .link([] { rap::sys::open_url(k_project_url); })
+                        .icon(rap::icon{.draw =
+                                            [](rap::painter& p, rap::size_f size)
+                                        {
+                                            const float side = std::min(size.w, size.h);
+                                            paint_github_mark(
+                                                p, (size.w - side) / 2, (size.h - side) / 2, side,
+                                                rap::paint{rap::theme_color::window_text});
+                                        }}),
                     spacer{},
                     label{_("Made with care by Manu Evans")},
                 },
