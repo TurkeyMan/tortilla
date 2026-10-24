@@ -1,6 +1,7 @@
 #include "settings_dialog.h"
 
 #include "git/diff_tool.h"
+#include "git/ssh_client.h"
 #include "log/action_icons.h"
 #include "settings.h"
 #include "shell/menu_table.h"
@@ -34,8 +35,15 @@ struct state
     std::vector<detected_tool> tools;
     // Context Menu: an entry's id and its "at the top level" box.
     std::vector<std::pair<std::string, rap::check*>> top_entries;
+    // SSH client: git's own, each detected client, then Custom (the command
+    // line shown only for it).
+    rap::drop_down* ssh_select = nullptr;
+    rap::entry* ssh_command = nullptr;
+    rap::widget* ssh_help = nullptr;
+    std::vector<ssh_client> ssh_clients;
 
     int custom_index() const { return 2 + int(tools.size()); }
+    int ssh_custom_index() const { return 1 + int(ssh_clients.size()); }
 };
 
 rap::node general_page(std::shared_ptr<state> st)
@@ -194,6 +202,64 @@ rap::node diff_viewer_page(std::shared_ptr<state> st)
     };
 }
 
+// Which SSH client git runs for remotes [TortoiseGit: Settings > Network].
+rap::node network_page(std::shared_ptr<state> st)
+{
+    using namespace rap::layout;
+    const std::string git_command = git_ssh_command(st->repo_dir);
+    st->ssh_clients = detect_ssh_clients();
+
+    std::vector<std::string> choices{git_command.empty() ? "git's own (ssh)"
+                                                         : "git's own (" + git_command + ")"};
+    for (const ssh_client& c : st->ssh_clients) choices.push_back(c.name);
+    choices.push_back("Custom...");
+
+    // What's saved: a command that's a detected client's shows as that client.
+    const ssh_client saved = saved_ssh_client();
+    int current = 0;
+    if (!saved.command.empty())
+    {
+        current = st->ssh_custom_index();
+        for (size_t i = 0; i < st->ssh_clients.size(); ++i)
+            if (st->ssh_clients[i].command == saved.command) current = 1 + int(i);
+    }
+    const bool custom = current == st->ssh_custom_index();
+
+    std::weak_ptr<state> weak = st;
+    auto chosen = [weak](int choice)
+    {
+        auto s = weak.lock();
+        if (!s || !s->ssh_command) return;
+        const bool custom = choice == s->ssh_custom_index();
+        s->ssh_command->set_visible(custom);
+        if (s->ssh_help) s->ssh_help->set_visible(custom);
+        // Custom starts from the last client picked, to adjust.
+        if (choice >= 1 && !custom)
+            s->ssh_command->set_text(s->ssh_clients[size_t(choice - 1)].command);
+    };
+    return vbox{
+        group{
+            "SSH client",
+            vbox{
+                form{
+                    {"SSH client",
+                     drop_down{choices, current}.bind(st->ssh_select).on_changed(chosen)},
+                    {"Command", entry{saved.command}
+                                    .bind(st->ssh_command)
+                                    .placeholder("ssh -i ~/.ssh/key")
+                                    .visible(custom)},
+                },
+                label{"Run for each remote as git's GIT_SSH_COMMAND: git adds the host and the\n"
+                      "command to run there. plink and TortoiseGitPlink are known by their names."}
+                    .handle(st->ssh_help)
+                    .visible(custom),
+            }},
+        label{"Used by the git Tortilla runs (fetch, pull, push, clone); the repository's\n"
+              "core.sshCommand applies only with git's own."},
+        spacer{},
+    };
+}
+
 }  // namespace
 
 void show_settings(rap::ui& ui, rap::window* parent, const std::string& repo_dir,
@@ -221,6 +287,7 @@ void show_settings(rap::ui& ui, rap::window* parent, const std::string& repo_dir
                             lazy{[weak, build] { return build(weak, context_menu_page); }}},
                        page{"Diff Viewer",
                             lazy{[weak, build] { return build(weak, diff_viewer_page); }}},
+                       page{"Network", lazy{[weak, build] { return build(weak, network_page); }}},
                    }
                        .sidebar()
                        .bind(page_tabs)
@@ -260,6 +327,18 @@ void show_settings(rap::ui& ui, rap::window* parent, const std::string& repo_dir
                         save_diff_settings(choice >= 2 ? diff_mode::custom
                                                        : diff_mode(std::max(choice, 0)),
                                            keep->diff_command->text());
+                }
+                if (keep->ssh_select)
+                {
+                    // A detected client is saved as its command and variant;
+                    // Custom leaves the variant to git.
+                    const int choice = keep->ssh_select->current();
+                    if (choice >= 1 && choice < keep->ssh_custom_index())
+                        save_ssh_client(keep->ssh_clients[size_t(choice - 1)]);
+                    else if (choice == keep->ssh_custom_index())
+                        save_ssh_client({.command = keep->ssh_command->text()});
+                    else
+                        save_ssh_client({});
                 }
                 if (saved) saved();
             }

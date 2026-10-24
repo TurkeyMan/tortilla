@@ -15,6 +15,7 @@
 #include "changes/changes_window.h"
 #include "changes/commit_window.h"
 #include "git/repo.h"
+#include "git/ssh_client.h"
 #include "log/log_window.h"
 #include "rebase/rebase_window.h"
 #include "ui/compare.h"
@@ -44,6 +45,8 @@ int main(int argc, char** argv)
         std::freopen("CONOUT$", "w", stderr);
     }
 #endif
+    // The SSH client's settings, read here before any worker runs git.
+    tortilla::ssh_environment();
     rap::load_options opts;
     std::string command = "log";
     bool all_branches = false;
@@ -104,12 +107,13 @@ int main(int argc, char** argv)
 
     if (command == "settings")
     {
-        // tortilla settings [path] [diff|menu]: the page to open on.
+        // tortilla settings [path] [diff|menu|network]: the page to open on.
         const std::string page = args.size() > 1 ? args[1] : "";
         tortilla::show_settings(**ui, nullptr, path,
-                                page == "diff"   ? tortilla::settings_page::diff_viewer
-                                : page == "menu" ? tortilla::settings_page::context_menu
-                                                 : tortilla::settings_page::general,
+                                page == "diff"      ? tortilla::settings_page::diff_viewer
+                                : page == "menu"    ? tortilla::settings_page::context_menu
+                                : page == "network" ? tortilla::settings_page::network
+                                                    : tortilla::settings_page::general,
                                 {}, [&] { (*ui)->quit(); });
         return (*ui)->run();
     }

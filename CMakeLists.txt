@@ -57,6 +57,8 @@ add_library(tortilla_git STATIC
     src/git/status.cpp
     src/git/repo_worker.cpp
     src/git/diff_tool.cpp
+    src/git/ssh_client.cpp
+    src/util/programs.cpp
     src/changes/working_tree.cpp)
 target_include_directories(tortilla_git PUBLIC src)
 target_link_libraries(tortilla_git PUBLIC ${TORTILLA_LIBGIT2} rapport::rapport)

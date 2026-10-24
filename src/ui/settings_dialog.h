@@ -16,6 +16,7 @@ enum class settings_page
     general,
     context_menu,
     diff_viewer,
+    network,
 };
 
 // Modal to `parent` (or a window of its own when null). `repo_dir` is the

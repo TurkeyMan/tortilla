@@ -2,6 +2,7 @@
 
 #include "git/command.h"
 #include "settings.h"
+#include "util/programs.h"
 
 #include <rapport/sys.h>
 
@@ -73,35 +74,6 @@ void replace_all(std::string& s, const std::string& from, const std::string& to)
         s.replace(at, from.size(), to);
 }
 
-// Where a program would run from: a path, or a name found on PATH.
-std::string find_program(const std::string& name)
-{
-    std::error_code ec;
-    const fs::path p = rap::sys::path_from_utf8(name);
-    if (p.has_parent_path()) return fs::is_regular_file(p, ec) ? name : "";
-#ifdef _WIN32
-    const char sep = ';';
-    const std::vector<std::string> exts{".exe", ".cmd", ".bat", ""};
-#else
-    const char sep = ':';
-    const std::vector<std::string> exts{""};
-#endif
-    const std::string path = rap::sys::env("PATH").value_or("");
-    for (size_t at = 0; at <= path.size();)
-    {
-        size_t end = std::min(path.find(sep, at), path.size());
-        if (end > at)
-            for (const std::string& ext : exts)
-            {
-                fs::path candidate = rap::sys::path_from_utf8(path.substr(at, end - at)) /
-                                     rap::sys::path_from_utf8(name + ext);
-                if (fs::is_regular_file(candidate, ec)) return rap::sys::path_to_utf8(candidate);
-            }
-        at = end + 1;
-    }
-    return "";
-}
-
 }  // namespace
 
 std::string expand_placeholders(const std::string& command, const std::string& base_name,
@@ -167,10 +139,7 @@ std::vector<detected_tool> detect_diff_tools()
     };
     std::vector<known_tool> known;
 #ifdef _WIN32
-    std::vector<std::string> roots;
-    for (const char* var : {"ProgramFiles", "ProgramFiles(x86)", "ProgramW6432", "LOCALAPPDATA"})
-        if (auto v = rap::sys::env(var))
-            roots.push_back(*v + (std::string(var) == "LOCALAPPDATA" ? "\\Programs" : ""));
+    const std::vector<std::string> roots = install_roots();
     // The usual install folders, then PATH (installed elsewhere).
     auto at = [&](std::initializer_list<const char*> rel, const char* on_path)
     {

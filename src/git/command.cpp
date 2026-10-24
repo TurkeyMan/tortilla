@@ -1,5 +1,7 @@
 #include "command.h"
 
+#include "git/ssh_client.h"
+
 #include <rapport/sys.h>
 
 #include <atomic>
@@ -13,11 +15,14 @@ namespace
 using rap::sys::process;
 
 // Prompts are disabled: a GUI has no terminal to answer them on, and
-// GIT_EDITOR=true never opens an editor (merge messages etc.).
+// GIT_EDITOR=true never opens an editor (merge messages etc.). The SSH
+// client is the one chosen in Settings, if any.
 process::options git_options(git_output output)
 {
-    return {.env = {{"GIT_TERMINAL_PROMPT", "0"}, {"GIT_EDITOR", "true"}},
-            .merge_stderr = output == git_output::all};
+    process::options o{.env = {{"GIT_TERMINAL_PROMPT", "0"}, {"GIT_EDITOR", "true"}},
+                       .merge_stderr = output == git_output::all};
+    for (auto& e : ssh_environment()) o.env.push_back(std::move(e));
+    return o;
 }
 
 std::vector<std::string> git_command_line(const std::string& dir, const std::vector<std::string>& args)
