@@ -2403,12 +2403,11 @@ msgstr "Wählen Sie eines auf der Seite „Diff-Betrachter“ der Einstellungen.
 #: src/ui/compare.cpp:64
 #, c++-format
 msgid "“{0}” has no changes to compare."
-msgstr ""
+msgstr "„{0}“ hat keine Änderungen zum Vergleichen."
 
 #: src/ui/compare.cpp:66
-#, fuzzy
 msgid "There are no changes to compare."
-msgstr "Es gibt nichts zu verwerfen."
+msgstr "Es gibt keine Änderungen zum Vergleichen."
 
 #: src/ui/compare.cpp:86
 msgid "git has no diff tool configured (diff.tool)."
