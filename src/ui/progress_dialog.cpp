@@ -19,6 +19,7 @@ struct progress : std::enable_shared_from_this<progress>
     std::function<void(bool)> done;
     std::vector<progress_follow_up> follow_ups;
     std::function<void()> after_close;  // the follow-up chosen
+    std::vector<size_t> offered;        // the follow-ups offered for the outcome
 
     std::unique_ptr<rap::window> window;
     rap::text_view* output = nullptr;
@@ -113,15 +114,22 @@ struct progress : std::enable_shared_from_this<progress>
                        s);
         close->set_enabled(true);
         abort->set_enabled(false);
-        if (more) more->set_visible(ok);
+        if (more)
+        {
+            // The first follow-up this outcome offers names the button.
+            offered.clear();
+            for (size_t i = 0; i < follow_ups.size(); ++i)
+                if (follow_ups[i].offered ? follow_ups[i].offered(ok) : ok) offered.push_back(i);
+            if (!offered.empty()) more->set_text(follow_ups[offered.front()].label);
+            more->set_visible(!offered.empty());
+        }
         close->focus();
     }
 
     rap::menu follow_up_menu()
     {
         rap::menu m;
-        for (size_t i = 0; i < follow_ups.size(); ++i)
-            m.push_back({.label = follow_ups[i].label, .action = [this, i] { follow(i); }});
+        for (size_t i : offered) m.push_back({.label = follow_ups[i].label, .action = [this, i] { follow(i); }});
         return m;
     }
     void follow(size_t i)
@@ -138,6 +146,7 @@ struct progress : std::enable_shared_from_this<progress>
         close->set_enabled(false);
         abort->set_enabled(true);
         output->append("\n");
+        ok = true;  // a retry starts afresh
         for (git_command& c : f.commands()) commands.push_back(std::move(c));
         bar->set_fraction(0);
         pulse = ui.timer(100, true, [this] { bar->pulse(); });

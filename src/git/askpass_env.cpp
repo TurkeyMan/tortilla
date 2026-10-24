@@ -13,6 +13,8 @@ std::vector<std::pair<std::string, std::string>> askpass_environment()
         std::vector<std::pair<std::string, std::string>> e{
             {"GIT_ASKPASS", self},
             {"SSH_ASKPASS", self},
+            // Git for Windows' "Should I try again?" (a file it can't replace).
+            {"GIT_ASK_YESNO", self},
             // OpenSSH 8.4+: the askpass program even without a terminal or
             // DISPLAY to ask on.
             {"SSH_ASKPASS_REQUIRE", "force"},

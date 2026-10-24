@@ -6,6 +6,8 @@
 //   tortilla repostatus [path...]      Check for modifications (TortoiseGit's repostatus)
 //   tortilla commit [path...]          the Commit dialog
 //   tortilla add|revert|resolve [path...]  the Add, Revert or Resolve dialog
+//   tortilla clone [folder] [url]      the Clone dialog, cloning into folder
+//   tortilla fetch|pull|push [path]    the Fetch, Pull or Push dialog
 //   tortilla diff [path] rev [rev2]   a commit, or rev..rev2, as a unified diff
 //   tortilla settings [path] [diff|menu|network]  the Settings dialog (at that page)
 //   tortilla --which-ui       show the detected desktop and backend order
@@ -22,7 +24,11 @@
 #include "rebase/rebase_window.h"
 #include "ui/compare.h"
 #include "ui/diff_window.h"
+#include "remote/clone_dialog.h"
+#include "remote/pull_fetch_dialog.h"
+#include "remote/push_dialog.h"
 #include "ui/askpass.h"
+#include "ui/windows.h"
 #include "ui/settings_dialog.h"
 
 #include <rapport/rapport.h>
@@ -104,7 +110,9 @@ int main(int argc, char** argv)
                   std::strcmp(argv[i], "diff") == 0 || std::strcmp(argv[i], "settings") == 0 ||
                   std::strcmp(argv[i], "repostatus") == 0 || std::strcmp(argv[i], "commit") == 0 ||
                   std::strcmp(argv[i], "add") == 0 || std::strcmp(argv[i], "revert") == 0 ||
-                  std::strcmp(argv[i], "resolve") == 0))
+                  std::strcmp(argv[i], "resolve") == 0 || std::strcmp(argv[i], "clone") == 0 ||
+                  std::strcmp(argv[i], "fetch") == 0 || std::strcmp(argv[i], "pull") == 0 ||
+                  std::strcmp(argv[i], "push") == 0))
             command = argv[i];
         else
             args.push_back(argv[i]);
@@ -150,6 +158,37 @@ int main(int argc, char** argv)
         (*w)->show();
         (*ui)->run();
         return code;
+    }
+
+    // The remote dialogs, and the windows their follow-ups open: the program
+    // runs until the last of them closes.
+    if (command == "clone" || command == "fetch" || command == "pull" || command == "push")
+    {
+        tortilla::windows::init(**ui);
+        if (command == "clone")
+            tortilla::windows::keep(
+                tortilla::clone_dialog::open(**ui, args.empty() ? "" : args[0], args.size() > 1 ? args[1] : ""));
+        else if (command == "push")
+        {
+            auto d = tortilla::push_dialog::open(**ui, path);
+            if (!d)
+            {
+                std::fprintf(stderr, "tortilla: %s\n", d.error().c_str());
+                return 1;
+            }
+            tortilla::windows::keep(std::move(*d));
+        }
+        else
+        {
+            auto d = tortilla::pull_fetch_dialog::open(**ui, path, command == "pull");
+            if (!d)
+            {
+                std::fprintf(stderr, "tortilla: %s\n", d.error().c_str());
+                return 1;
+            }
+            tortilla::windows::keep(std::move(*d));
+        }
+        return (*ui)->run();
     }
 
     if (command == "add" || command == "revert" || command == "resolve")

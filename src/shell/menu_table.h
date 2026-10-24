@@ -66,6 +66,10 @@ enum class run
     add,         // tortilla add <every selected path>
     revert,      // tortilla revert <every selected path>
     resolve,     // tortilla resolve <every selected path>
+    clone,       // tortilla clone <folder>
+    fetch,       // tortilla fetch <folder>
+    pull,        // tortilla pull <folder>
+    push,        // tortilla push <folder>
 };
 
 struct row
@@ -87,15 +91,15 @@ inline constexpr row k_rows[] = {
     {"Clone...",
      {{{FOLD, GIT | FIG | BARE | INACC}, {FOLD | IGN, 0}, {FOLD | EXT, 0}}},
      place::top,
-     run::none,
+     run::clone,
      "clone"},
     {"&Pull...",
      {{{FIG | ONE, BISECT | MERGE}, {ROOT, BISECT | MERGE}}},
      place::sub,
-     run::none,
+     run::pull,
      "pull"},
-    {"F&etch...", {{{FIG | ONE, 0}, {BARE, 0}, {ROOT, 0}}}, place::sub, run::none, "fetch"},
-    {"Pus&h...", {{{FIG | ONE, 0}, {BARE, 0}, {ROOT, 0}}}, place::sub, run::none, "push"},
+    {"F&etch...", {{{FIG | ONE, 0}, {BARE, 0}, {ROOT, 0}}}, place::sub, run::fetch, "fetch"},
+    {"Pus&h...", {{{FIG | ONE, 0}, {BARE, 0}, {ROOT, 0}}}, place::sub, run::push, "push"},
     {"Sync...", {{{FIG | ONE, BISECT | MERGE}}}, place::top, run::none, "sync"},
     separator,
     {"&Commit...", {{{GIT, 0}, {FIG, 0}}}, place::top, run::commit, "commit"},

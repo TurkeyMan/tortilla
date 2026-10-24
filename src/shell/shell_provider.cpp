@@ -372,6 +372,10 @@ public:
         case run::diff: rap::shell::launch(tortilla_exe(), {"diff", first}); return;
         case run::rebase: rap::shell::launch(tortilla_exe(), {"rebase", folder}); return;
         case run::settings: rap::shell::launch(tortilla_exe(), {"settings", first}); return;
+        case run::clone: rap::shell::launch(tortilla_exe(), {"clone", folder}); return;
+        case run::fetch: rap::shell::launch(tortilla_exe(), {"fetch", folder}); return;
+        case run::pull: rap::shell::launch(tortilla_exe(), {"pull", folder}); return;
+        case run::push: rap::shell::launch(tortilla_exe(), {"push", folder}); return;
         case run::commit:
         case run::repostatus:
         case run::add:

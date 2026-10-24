@@ -23,6 +23,8 @@ struct progress_follow_up
     std::string label;
     std::function<std::vector<git_command>()> commands;
     std::function<void()> after_close;
+    // When it's offered, from the outcome; unset: after success.
+    std::function<bool(bool ok)> offered;
 };
 
 // Owns itself; `done` gets whether every command succeeded once the user
