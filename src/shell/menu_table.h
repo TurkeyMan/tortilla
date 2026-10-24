@@ -79,6 +79,7 @@ enum class run
     merge,       // tortilla merge <folder>
     merge_abort,  // tortilla mergeabort <folder>
     edit_conflicts,  // tortilla conflicteditor <file>
+    about,           // tortilla about
 };
 
 struct row
@@ -224,7 +225,7 @@ inline constexpr row k_rows[] = {
     separator,
     {"&Settings", {{{FOLD, 0}, {0, FOLD}}}, place::sub, run::settings, "settings"},
     {"&Help", {{{FOLD, 0}, {0, FOLD}}}, place::sub, run::none, "help"},
-    {"A&bout", {{{FOLD, 0}, {0, FOLD}}}, place::sub, run::none, "about"},
+    {"A&bout", {{{FOLD, 0}, {0, FOLD}}}, place::sub, run::about, "about"},
 };
 
 // Where each entry shows, as the Settings page chooses it: TortoiseGit's
