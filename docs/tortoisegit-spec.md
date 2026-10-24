@@ -2397,3 +2397,491 @@ The same progress command, with `ResolveWith::Theirs` (stage 3) or `Mine` (stage
 - **Help.** The Help handlers and help topics of the three dialogs.
 - **Renamed and copied paths in Revert.** See the "Not established" notes at the end of 6.3.4.
 - **Progress bar.** How it behaves for Revert, which sets the total to twice the path count [RVPC:41], was not examined.
+
+## 7. Remotes: Clone, Fetch, Pull, Push (and Sync, briefly)
+
+All four commands follow the same pattern. A dialog collects options. Code in `CAppUtils` (or in the command class, for Clone) builds a single `git.exe` command line. A **console-output progress dialog** (`CProgressDlg`, `IDD_GITPROGRESS`, 7.6) then runs it. This is not the notification-list dialog of 6.4. libgit2 implementations of clone and fetch exist, but they are off by default (7.1.4, 7.2.6). Git never gets a console. Credentials, passphrases and host-key questions reach the user through askpass programs and TortoiseGitPlink, which TortoiseGit installs through environment variables (7.5).
+
+New citation keys (same commit as section 0):
+
+| Key | File |
+|---|---|
+| **CLD** | `src/TortoiseProc/CloneDlg.cpp` |
+| **CLC** | `src/TortoiseProc/Commands/CloneCommand.cpp` |
+| **PFD** | `src/TortoiseProc/PullFetchDlg.cpp` |
+| **PLC** / **FTC** / **PSC** / **SYC** | `src/TortoiseProc/Commands/PullCommand.cpp` / `FetchCommand.cpp` / `PushCommand.cpp` / `SyncCommand.cpp` |
+| **PSD** | `src/TortoiseProc/PushDlg.cpp` |
+| **SYD** | `src/TortoiseProc/SyncDlg.cpp` |
+| **PD** | `src/TortoiseProc/ProgressDlg.cpp` (`CProgressDlg`, the console-output progress dialog) |
+| **GCOP** | `src/TortoiseProc/GitCliOutputParser.cpp` (`\r`/`\n` line handling for `PD`) |
+| **HC** | `src/Utils/MiscUI/HistoryCombo.cpp` |
+| **SAP** / **SAP.rc** | `src/SshAskPass/SshAskPass.cpp` / `SshAskPass.rc` |
+| **TPW** | `src/TortoisePlink/Windows/console.c` (TortoiseGitPlink GUI prompts) |
+| **TPC** | `src/TortoisePlink/console.c` (button wording for PuTTY's dialog text) |
+| **TPLD** | `src/TortoisePlink/LoginDialog.cpp` |
+| **TPRC** | `src/TortoisePlink/Windows/TortoisePlink.rc` |
+| **TPSSH** | `src/TortoisePlink/ssh/common.c` (PuTTY host-key dialog text) |
+| **FSWA** | `src/TortoiseProc/FirstStartWizardAuthentication.cpp` |
+
+### 7.0 Shared conventions
+
+- **Quoting** (`CGit::QuoteParameter`) [GIT:4015-4034]:
+  - Normal mode replaces every `\` with `/` and wraps the value in double quotes. It refuses any value containing `"`, `?` or `*` with the error "The git.exe command could not be constructed. …"; the command then shows that error and stops.
+  - "Relaxed" mode (used for refspecs and branch arguments) applies plain Windows argument escaping instead.
+  - With MSYS2 or Cygwin git, values are single-quoted for bash.
+- **Process.** `RunAsync` gives git a stdin pipe and a single pipe for **stdout and stderr together**, hides the window, and starts git with `DETACHED_PROCESS`, so git has no console. [GIT:272-319] Prompts can only come through askpass (7.5).
+- **Per-repository registry keys** use the working directory with `:` replaced by `_` (shown as `<wd>` below). [PFD:125-126; PSD:164-165]
+- **History combos.** `LoadHistory` reads `<section>\<prefix>0..n` and then leaves **no item selected**. `AddString` puts a new string first (or re-selects an existing one) and selects it. [HC:144-193, 262-283]
+- **Remote settings.** "Manage Remotes" and "Mana&ge" open Settings on the `gitremote` page, then refresh the dialog. [AU:696-707; PFD:467-471; PSD:501-505]
+- **Rebase lock.** Pull first checks for `<gitdir>/tgitrebase.active`. If it exists, the user is asked to remove the stale lock or abort [POT:4724]. [AU:2438, 3771-3786]
+- **Several paths.** When Pull, Fetch or Push receive more than one path, the command runs once per path that is a working-tree root or a bare repository. Any other path makes the overall result false. [PLC:25-45; FTC:24-44; PSC:25-49]
+- **Window type.** All three option dialogs are `CHorizontalResizableStandAloneDialog`s, so they resize **horizontally only**. They save their placement as "CloneDlg", "PullFetchDlg" and "PushDlg". [CLD:32, 193; PFD:33, 265; PSD:37, 157]
+
+### 7.1 Clone (`CCloneDlg`, `IDD_CLONE`)
+
+#### 7.1.1 Window
+
+`IDD_CLONE DIALOGEX 0,0,359,218`, caption **"Git clone - TortoiseGit"**. Controls from RC:1098-1137:
+
+| Control | ID | Label | Rect | Default |
+|---|---|---|---|---|
+| Group | `IDC_GROUP_CLONE` | "Clone Existing Repository" | 6,10,346,95 | |
+| URL | `IDC_URLCOMBO` | "&URL:" (editable, sorted history combo) | 64,25,206,164 | see 7.1.2 |
+| URL browse | `IDC_CLONE_BROWSE_URL` | "&Browse..." (split button) | 276,25,67,15 | last entry used |
+| Directory | `IDC_CLONE_DIR` | "&Directory:" (edit, filesystem autocomplete) | 64,47,206,14 | see 7.1.2 |
+| Dir browse | `IDC_CLONE_DIR_BROWSE` | "Bro&wse..." | 276,46,67,15 | |
+| Depth | `IDC_CHECK_DEPTH` + `IDC_EDIT_DEPTH` | "Depth" + number edit | 20,70 / 64,68 | off, 1 |
+| Recursive | `IDC_CHECK_RECURSIVE` | "Recursive" | 101,71 | remembered |
+| Bare | `IDC_CHECK_BARE` | "Clone into Bare Repo" | 170,71 | off |
+| No checkout | `IDC_CHECK_NOCHECKOUT` | "No Checkout" | 276,71 | off |
+| Branch | `IDC_CHECK_BRANCH` + `IDC_EDIT_BRANCH` | "Branch" + edit | 20,88 / 64,86 | off, empty |
+| Origin | `IDC_CHECK_ORIGIN` + `IDC_EDIT_ORIGIN` | "Origin Name" + edit | 150,88 / 216,86 | off, empty |
+| PuTTY key | `IDC_PUTTYKEY_AUTOLOAD` + `IDC_PUTTYKEYFILE` + `IDC_PUTTYKEYFILE_BROWSE` | "Load Putty &Key" + path history combo + "..." | 20,111 / 103,110 / 304,109 | see 7.5.4 |
+| SVN group | `IDC_CLONE_GROUP_SVN`, `IDC_CHECK_SVN` … | "From SVN Repository", "From &SVN Repository", "&Trunk:", "Ta&gs:", "Branc&h:", "&From:", "User&name:" | 6,126,346,64 | off; "trunk", "tags", "branches", 0 |
+| Buttons | `IDOK`/`IDCANCEL`/`IDHELP` | "OK"/"Cancel"/"Help" | y=196 | |
+
+[RC:1098-1137; CLD:34-61]
+
+- **Tooltips.** Depth [POT:3206], Recursive [POT:9057], Bare [POT:2607], No Checkout [POT:6387], Branch [POT:5635], Origin Name [POT:5639]. [CLD:130-140]
+- **Anchoring.** The URL and directory fields, the key combo and both group boxes stretch horizontally. [CLD:116-128]
+- **Not in this dialog.** There is **no LFS option** at this commit. Nothing in CLD or CLC mentions LFS.
+
+#### 7.1.2 Defaults and auto-fill
+
+- **Directory.** It starts as the folder TortoiseGitProc was given (the Explorer folder), or the CWD when no path was given. [CLC:76-88] With `/hasurlhandler` there is no path. The dialog then falls back to the **parent of the last clone directory** (`HKCU\Software\TortoiseGit\TortoiseProc\CloneDir`), and then to the user's Documents folder. [CLD:144-156]
+- **URL.**
+  - `/url:<x>` fills the field. [CLC:90-91; CLD:174-175]
+  - Otherwise the **clipboard** is used when it holds a URL. `GetClipboardLink("git clone ")` takes the first line and strips surrounding quotes. It accepts text that starts with `http://`, `https://`, `git://`, `ssh://` or `git@`, or a drive-letter path. It also accepts `git clone <url>` with the prefix stripped. [CLD:163-173; AU:2018-2082]
+  - Otherwise the first history entry is used (`HKCU\Software\TortoiseGit\History\repoURLS`, keys `url0…`). [CLD:162]
+- **Directory derived from URL** (on every edit of the URL, `CBN_EDITCHANGE`; disabled by `/exactpath`) [CLD:332-402]:
+  1. Change `\` to `/` and trim trailing `/`.
+  2. The module name is the text after the last `/`. If there is no `/`, it is the text after the last `:`, then after the last `@`, then the whole string.
+  3. A trailing `.git` (any case) is dropped.
+  4. If the directory currently **ends with the previous module name**, that suffix is removed.
+  5. Trailing `\`/`/` are trimmed, and `\<module>` is appended.
+
+  Example: directory `D:\src`, URL `https://host/team/proj.git` gives `D:\src\proj`. Editing the URL to `…/other` gives `D:\src\other`.
+- **Initial URL and the directory.** Whether the programmatic URL set at init also fires `CBN_EDITCHANGE` (and so derives the directory) was not established from source.
+- **Key autoload follows the URL.** `http://`, `https://` and `git://` URLs untick "Load Putty Key". Any other URL sets it to `CloneUseSSHKey` (default TRUE) and only when the SSH client is plink. [CLD:394-399]
+- **URL "&Browse..." split button.**
+  - Entry "&Browse..." [POT:387] opens a folder picker that writes into the **URL** field (for local repositories).
+  - Entry "&Open" [POT:922] opens the URL in the browser or Explorer.
+  - The last entry used is remembered (`CloneBrowse`). [CLD:181-183, 268-297]
+- **Mutual exclusions** [CLD:404-437, 467-511]:
+  - Recursive or No Checkout disables Bare and clears it.
+  - Bare clears and disables Recursive and No Checkout, and disables Origin.
+  - Origin disables Bare.
+  - "From SVN Repository" clears and disables Depth, Bare, Recursive, Branch and No Checkout. It sets Trunk, Tags and Branch on, unless the URL ends in `trunk`.
+- **OK validation** [CLD:225-261]:
+  - The URL or the directory is empty: "URL and directory must not be empty." [POT:9808].
+  - Branch is on and the name is invalid: a balloon [POT:2162].
+  - Origin is on, the name is empty, and this is not an SVN clone: a balloon.
+  - **On success** the URL and key histories are saved, along with `CloneDir`, `CloneUseSSHKey` and `CloneRecursive`.
+
+#### 7.1.3 Command line (default, git.exe)
+
+```
+git.exe clone --progress[ --recursive][ --bare][ --no-checkout][ --branch "<b>"][ --origin "<o>"][ --depth <n>] -v -- "<url>" "<dir>"
+```
+
+[CLC:97-152]
+
+- **URL.** A UNC URL starting with `\\` has its backslashes turned into `/` (only after the `@` when there is one). [CLC:127-141]
+- **Origin** is ignored when cloning from SVN.
+- **Working directory.** Git runs in the deepest existing ancestor of `<dir>` (or `%TEMP%`). [CLC:32-50, 275]
+- **SVN** (one line): `git.exe svn clone[ --prefix "<o>/"][ -T "<trunk>"][ -b "<branches>"][ -t "<tags>"][ -r <from>:HEAD][ --username "<u>"] -- "<url>" "<dir>"`. A local path is turned into a `file:///` URL first. [CLC:188-242]
+- **libgit2 variant.** When `GIT_CMD_CLONE` is in `UseLibgit2_mask` (it is **not** in the default mask [GIT.h:34, 307-309]), `CloneProgressCommand` runs in the notification-list progress dialog instead. [CLC:245-269]
+
+#### 7.1.4 After the command
+
+- **Before the run.** If "Load Putty Key" is on, pageant is started with the chosen key file (7.5.4). [CLC:121-122]
+- **Failure.** The menu button offers only "&Retry" [POT:1082], which re-opens the progress dialog with the same command. [CLC:160-166, 272-283]
+- **Success** [CLC:169-185]:
+  - **Bare:** `SetupBareRepoIcon(dir)`.
+  - **Key:** if the key was used, `remote.<origin or "origin">.puttykeyfile = <key>` is written into the new repository's config with libgit2. [CLC:52-72]
+  - **Menu entries:** "Show &log" [POT:8440] (`/command:log /path:<dir>`) and "Explore to" [POT:4259].
+
+### 7.2 Fetch and Pull (`CPullFetchDlg`, `IDD_PULLFETCH`)
+
+One template serves both commands: `m_IsPull` is TRUE for Pull and FALSE for Fetch. [PFD:37; AU:2442, 2729]
+
+#### 7.2.1 Window
+
+`IDD_PULLFETCH DIALOGEX 0,0,327,223`, caption "Pull/Fetch". The title is replaced by `<wd> - Pull - TortoiseGit` ("Pull" [POT:7249]) or `<wd> - Fetch - TortoiseGit` ("Fetch" [POT:4430]). [RC:1154-1184; PFD:255-261]
+
+| Control | ID | Label | Default |
+|---|---|---|---|
+| Group | `IDC_GROUPT_REMOTE` | "Remote" | |
+| Radio | `IDC_REMOTE_RD` + `IDC_REMOTE_COMBO` | "&Remote:" + drop-down list of remotes | selected |
+| Radio | `IDC_OTHER_RD` + `IDC_OTHER` | "Arbitrary &URL:" + editable URL history combo | disabled |
+| Remote branch | `IDC_REMOTE_BRANCH` + `IDC_BUTTON_BROWSE_REF` | "Remote &Branch:" + editable combo + "..." | see 7.2.2 |
+| Group | `IDC_GROUP_OPTION` | "Options" | |
+| | `IDC_CHECK_SQUASH` | "&Squash" | off (Pull only) |
+| | `IDC_CHECK_NOFF` | "No &Fast Forward" | off (Pull only) |
+| | `IDC_CHECK_NOCOMMIT` | "No Co&mmit" | off (Pull only) |
+| | `IDC_CHECK_DEPTH` + `IDC_EDIT_DEPTH` | "Depth" + number | shown only in shallow repositories, then on, 1 |
+| | `IDC_CHECK_FFONLY` | "Fast Forward O&nly" | remembered (Pull only) |
+| | `IDC_CHECK_FETCHTAGS` + `IDC_STATIC_TAGOPT` | "Tags" (3-state) + config hint | indeterminate |
+| | `IDC_CHECK_PRUNE` + `IDC_STATIC_PRUNE` | "Prune" (3-state) + config hint | indeterminate |
+| | `IDC_PUTTYKEY_AUTOLOAD` | "AutoLoad Putty &Key" | remembered; enabled only with plink |
+| Link | `IDC_REMOTE_MANAGE` | "Manage Remotes" (static hyperlink) | |
+| | `IDC_CHECK_REBASE` | "&Launch Rebase After Fetch" | remembered; disabled in bare repositories |
+| Buttons | | "OK" / "Cancel" / "Help" | |
+
+[RC:1154-1184; PFD:35-54, 92-269]
+
+- **Fetch mode.** Squash, No Fast Forward, Fast Forward Only, No Commit and the Options group box are **disabled**. [PFD:222-229]
+- **No Fast Forward and Fast Forward Only** exclude each other. Ticking one clears and disables the other. [PFD:496-514]
+- **Not in this dialog.** There is **no** autostash, `--rebase` (as a pull flag), `--recurse-submodules` or verbose option.
+
+#### 7.2.2 Remote and remote branch selection (`Refresh`)
+
+[PFD:271-334]
+
+- **Pull remote.** `branch.<current>.remote`. If that is empty, the last remote used here (`HKCU\Software\TortoiseGit\History\PullRemote\<wd>`). A remote given by the caller (`/remote:` for Fetch, `m_PreSelectRemote`) overrides both. [PFD:278-315; FTC:44]
+- **Remote list.** `git remote` order.
+  - **Fetch with more than one remote** puts "- all -" [POT:1365] first. When no remote matches, index 0 is selected, which in fetch mode with several remotes **is "- all -"**. [PFD:317-332]
+  - **Pull** never offers "- all -".
+- **Remote branch combo.**
+  1. It is loaded from `History\PullRemoteBranch` and the first entry is selected.
+  2. `Refresh` then adds and selects one of these, in order: the tracked branch (`branch.<current>.merge` without `refs/heads/`); for a submodule without one, the parent's `submodule.<path>.branch`; otherwise the current branch name.
+
+  [PFD:252-253, 283-309; GIT:845-857]
+- **Fetch with a named remote.** `HKCU\Software\TortoiseGit\NamedRemoteFetchAll` (default TRUE) **disables the remote-branch combo and "..."**. [PFD:52, 210-214]
+- **Config hints next to the 3-state boxes** (for a named remote) [PFD:337-371; POT:3340, 6493, 1661, 7394]:
+  - Tags: "Default: None|All|Reachable", from `remote.<r>.tagopt`.
+  - Prune: "Default: <value>", from `remote.<r>.prune`, else `fetch.prune`. Empty when neither is set.
+- **Switching to "Arbitrary URL"** [PFD:388-423]:
+  - The clipboard is checked for `git pull <url> <branch>` or `git fetch <url> <branch>` (or a bare URL). This fills the URL and the branch.
+  - It **disables and clears "Launch Rebase After Fetch"**.
+  - In Fetch mode it re-enables the branch combo.
+
+  Switching back to "&Remote:" resets the rebase box to the config-forced value (7.2.3). [PFD:373-387]
+- **"..."** opens `CSelectRemoteRefDlg` for the selected remote or URL and adds the chosen branch. [PFD:473-488]
+
+#### 7.2.3 Rebase forced by config (Pull only)
+
+The dialog reads `branch.<current>.rebase`, falling back to `pull.rebase`, unless HEAD is detached. If the value is true or `merges`, "Launch Rebase After Fetch" is ticked and `m_bRebaseActivatedInConfigForPull` is set (`merges` also sets preserve-merges). The comment explains why: plain `git pull` would rebase anyway. [PFD:148-197]
+
+#### 7.2.4 OK and what is remembered
+
+[PFD:426-465]
+
+- **Remote radio.**
+  - `m_RemoteURL` = the remote name; "- all -" means all remotes.
+  - The remote branch is **left out** in two cases, so that git updates the remote-tracking refs: Fetch with `NamedRemoteFetchAll`, and Pull when the remote and branch equal the configured upstream.
+- **URL radio.** The URL and branch are used as typed, and the URL is saved to `History\PullURLS`.
+- **Rebase with no branch.** With rebase on, Pull and an empty branch field: "You asked to pull, but did not specify a remote branch." [POT:10531].
+- **Saved:**
+  - `History\PullRemote\<wd>` and the branch history.
+  - `HKCU\Software\TortoiseGit\TortoiseProc\PullFetch\<wd>_<isPull>\{rebase, ffonly, autoload}`. The defaults are false, false and "SSH client is plink".
+
+  These keys are **separate for Pull (`_1`) and Fetch (`_0`)**. Squash, No-FF, No Commit, Tags, Prune and Depth are **not** remembered. [PFD:128-137]
+
+#### 7.2.5 Pull command (`DoPull`)
+
+If "Launch Rebase After Fetch" is ticked, Pull runs **Fetch + Rebase** instead (7.2.6), because TortoiseGit never uses `git pull --rebase`. [AU:2445-2457]
+
+```
+git.exe pull --progress -v --no-rebase[ --no-tags|--tags][ --no-ff][ --ff-only][ --squash][ --no-commit][ --depth <n>][ --prune|--no-prune][ --allow-unrelated-histories] -- "<remote|url>"[ <branch>]
+```
+
+[AU:2282-2317]
+
+- **Tags.** Unchecked gives `--no-tags`, checked gives `--tags`, indeterminate adds nothing. Prune maps the same way.
+- **Depth** is passed only when the box is on.
+- **The branch** uses relaxed quoting.
+- **`--allow-unrelated-histories`** is added only by the "Merge unrelated history" retry.
+- **Before the run.** The PuTTY key is loaded first when ticked, and HEAD is recorded as `hashOld`. [AU:2272-2280]
+
+**Post-command entries** [AU:2326-2420]:
+
+| Situation | Entries |
+|---|---|
+| Failure with conflicts | Info box [POT:10419] (with a "do not show again" box, value `MergeConflictsNeedsCommit`), then "Resolve" [POT:7771] (`/command:resolve`) and "&Commit..." [POT:431] |
+| Failure without conflicts | First, when the remote is a named remote and HEAD and `remotes/<r>/<b>` have **no common ancestor**: "&Merge unrelated history" [POT:838]. Then always: "&Pull..." [POT:994], "Stash changes" [POT:8924], and "Reset" [POT:7755], which opens the Reset dialog on `remotes/<upstream>` with type 2 (hard, judging by the order of the radio buttons) |
+| Success | "Stash Pop" (only when the caller asked for it), "Pulled Diff" [POT:7265] (`/command:showcompare /revision1:<old> /revision2:<new>`), "Pulled Log" [POT:7269] (`/command:log /range:<old>..<new>`), "Pus&h..." (when the caller asked for it, e.g. Pull started from a rejected push), and "Update Submodules" [POT:9979] (`/command:subupdate /bkpath:`) when the repository has submodules |
+
+**After the dialog closes** with OK, if git exited with 1 and the output contains `CONFLICT`, the user is asked "Do you want to see changes?" [POT:3836]. Yes opens `/command:repostatus`. [AU:2424-2431]
+
+#### 7.2.6 Fetch command (`DoFetch`)
+
+```
+git.exe fetch --progress[ -v][ --depth <n>][ --prune|--no-prune][ --tags|--no-tags] -- "<remote|url>"[ <refspec>]
+git.exe fetch --all --progress[ -v][ …same options…]          (for "- all -")
+```
+
+[AU:2570-2605]
+
+- **`-v`** is controlled by `HKCU\Software\TortoiseGit\FetchVerbose` (default TRUE).
+- **The 3-state mappings** are those of 7.2.5.
+- **The PuTTY key** is loaded for the chosen remote, or for every remote with "- all -". [AU:2523-2535]
+- **libgit2.** `FetchProgressCommand` is used only when `GIT_CMD_FETCH` is in the mask; the default is git.exe. [AU:2650-2663; GIT.h:34]
+
+**Post-command entries** [AU:2608-2646]:
+
+| Situation | Entries |
+|---|---|
+| Failure | "&Retry" (and "Show &log" for all remotes) |
+| Success | "Show &log", "Reset" (as for Pull), "F&etch..." [POT:4320], "Rebase..." [POT:7415] (only when no rebase was requested and the repository is not bare), "S&witch/Checkout..." [POT:7962] |
+
+**Rebase after fetch** (the Pull checkbox, or the Fetch checkbox) runs in `m_PostExecCallback` when the exit code is 0 [AU:2537-2568, 2665-2720]:
+
+1. **Upstream.** For a named remote: `remotes/<r>/<branch>`, or `remotes/<r>/<tracked branch>` when the branch was omitted. For an arbitrary URL: `FETCH_HEAD`.
+2. **Checks** (only when the user asked for the rebase, not when the config forced it):
+   - **HEAD already contains the upstream:** "Current branch is up to date or newer than the fetched branch. Open rebase anyway?" [POT:3287].
+   - **Upstream did not move:** "The remote branch has not changed.\n\nOpen the rebase dialog anyway?" [POT:9443].
+   - **HEAD can fast-forward** to it: "The fetched branch fast-forwards upon the current branch.\n\nMerge or open the rebase dialog anyway?" [POT:9294], with "&Merge" / "&Rebase" / "A&bort". Merge runs `git.exe merge --ff-only -- "<upstream>"` in a progress dialog that auto-closes when there are no errors.
+
+   Each question has a "do not show again" checkbox.
+3. **Otherwise** `CRebaseDlg` opens with that upstream. It **auto-starts** when the rebase was forced by config. Its post buttons are "Show &log", "Pus&h...", "Send Patch(es) by eMail" [POT:8356] and "Rebase..." (which loops back). [AU:2465-2519]
+
+### 7.3 Push (`CPushDlg`, `IDD_PUSH`)
+
+#### 7.3.1 Window
+
+`IDD_PUSH DIALOGEX 0,0,311,277`, caption "Push". The title becomes `<wd> - Push - TortoiseGit`. [RC:1186-1223; PSD:153]
+
+| Group | Control | Label | Default |
+|---|---|---|---|
+| "Ref" | `IDC_PUSHALL` | "&Push all branches" | remembered per repository (only when no branch was preselected) |
+| | `IDC_BRANCH_SOURCE` + `IDC_BUTTON_BROWSE_SOURCE_BRANCH` | "&Local:" + editable combo of local branches + menu button ("Reference Browser" / "Log" / "RefLog") | current branch |
+| | `IDC_BRANCH_REMOTE` + `IDC_BUTTON_BROWSE_DEST_BRANCH` | "&Remote:" + editable combo + "..." (remote ref picker; also selects the remote) | push branch |
+| "Destination" | `IDC_RD_REMOTE` + `IDC_REMOTE` + `IDC_REMOTE_MANAGE` | "Re&mote:" + drop-down list ("- all -" first when there is more than one remote) + "Mana&ge" | see 7.3.2 |
+| | `IDC_RD_URL` + `IDC_URL` | "Arbitrary &URL:" + URL history (`History\PushURLS\<wd>`) | disabled |
+| "Options" | `IDC_FORCE_WITH_LEASE` | "Force &with lease" | off |
+| | `IDC_FORCE` | "&Force" | off |
+| | `IDC_TAGS` | "Include &Tags" | off |
+| | `IDC_PUTTYKEY_AUTOLOAD` | "&Autoload Putty Key" | remembered (`History\PushDlgAutoLoad\<wd>`, default "plink in use"); enabled only with plink |
+| | `IDC_PROC_PUSH_SET_UPSTREAM` | "&Set upstream/track remote branch" | on if HEAD's branch has no upstream |
+| | `IDC_PROC_PUSH_SET_PUSHREMOTE` | "Always push to the selected remote archive for this local branch" | off |
+| | `IDC_PROC_PUSH_SET_PUSHBRANCH` | "Always push to the selected remote branch for this local branch" | off |
+| | `IDC_COMBOBOX_RECURSE_SUBMODULES` | "Recurse submodule": "None" / "Check" / "On demand" | 7.3.3 |
+| | `IDC_PUSHOPTION` | "Push &option:" (history `History\PushOption\<wd>`) | empty |
+
+[RC:1186-1223; PSD:39-52, 96-216]
+
+- **Tooltips.** Force [POT:4691], Force with lease [POT:4687], pushremote [POT:8380], pushbranch [POT:8384]. [PSD:190-193]
+- **F5** refreshes the dialog. [PSD:577-592]
+- **Enable rules** [PSD:336-356, 594-639]:
+  - **Force and Include Tags** both disable "Force with lease". "Force with lease" disables both of them.
+  - **"Push all branches"** disables the Local and Remote combos and their buttons.
+  - **"Set upstream"** clears and disables the two "Always push…" boxes. Either "Always push…" box clears and disables "Set upstream".
+  - **The two "Always push…" boxes are disabled and cleared** when "- all -" is selected, "Push all branches" is on, the URL radio is chosen, or Local is empty.
+  - **"Set upstream" stays enabled** only for the remote radio with a non-empty Local (or "Push all branches").
+
+#### 7.3.2 Default remote and remote branch
+
+1. **Local.** A preselected `refs/heads/x` or `remotes/…` (from the log, `/branch:`) is used. Otherwise the current branch, or `HEAD` when detached. [PSD:248-272; PSC:27-29]
+2. **Remote**, first pass: the last remote pushed to (`History\PushRemote\<wd>`), or "- all -" if that was the last choice. [PSD:223-246]
+3. **Then `GetRemotePushBranch(local)`** runs [PSD:289-334; GIT:867-891]:
+   - **Remote:** `branch.<local>.pushremote`, else `remote.pushdefault`, else `branch.<local>.remote`. If one is found it is selected (and written to the `PushRemote` history at once).
+   - **Without one:** the only remote is selected if there is just one. Otherwise **nothing is selected** (unless "- all -" is), and OK then says "Remote name must not be empty." [POT:7589].
+   - **Remote branch:** `branch.<local>.pushbranch` (a **TortoiseGit-specific** key, not stripped, for Gerrit), else `branch.<local>.merge` without `refs/heads/`. It is selected over the `History\RemoteBranch\<wd>` entries. With no upstream the field stays **empty**, and git then pushes to the branch of the same name.
+4. **Not consulted.** `push.default` is not read anywhere in this path.
+5. **Re-run on change.** Changing Local re-runs step 3. [PSD:401-404]
+6. **All remotes.** `TortoiseProc\Push\<wd>\AllRemotes` reselects "- all -". [PSD:166-167, 284-286]
+7. **"Arbitrary URL"** fills itself from a `git pull`/`git fetch` clipboard line, like Pull. [PSD:360-398]
+
+#### 7.3.3 OK
+
+[PSD:406-499]
+
+- **"Push all branches":** "Do you really want to push all local branches?" [POT:3773], with a "do not show again" box.
+- **Otherwise**, in order:
+  1. Local and Remote both empty: "…are empty.\nContinue?" [POT:9391].
+  2. Local empty but Remote set: "This results in a remote removal.\nContinue?" [POT:9395].
+  3. Remote name invalid: [POT:2158].
+  4. An ambiguous source ref: [POT:9290].
+- **"Always push…" boxes** set or unset `branch.<local>.pushbranch` / `branch.<local>.pushremote` in the repository config. They apply only to local branches.
+- **Saved:** the remote, URL, branch and push-option histories; `AllBranches`, `AllRemotes`, autoload; and the recurse choice (`History\PushRecurseSubmodules\<wd>`, whose initial default comes from `push.recurseSubmodules`). [PSD:195-207]
+
+#### 7.3.4 Command lines (`DoPush`)
+
+[AU:2738-2862]
+
+- **Pre-push hook.** A TortoiseGit pre-push client hook runs first; on failure a task dialog offers to abort or continue. [AU:2742-2759]
+- **Options string** (the order is fixed): `[--tags ][--force ][--force-with-lease ][--set-upstream ][--recurse-submodules=no|check|on-demand ][--push-option=<opt> ]--progress `.
+  - `--tags` is added only when "Push all branches" is off.
+  - `--recurse-submodules=…` is added **only when the choice differs from `push.recurseSubmodules`**.
+- **The command, once per remote** ("- all -" means every remote; the PuTTY key is loaded for each):
+
+```
+git.exe push <options> -- "<remote|url>" [<local>[:<remoteBranch>]]          (single branch; refspec relaxed-quoted)
+git.exe push --all <options> -- "<remote>"                                   (push all branches)
+git.exe push --tags <options> -- "<remote>"                                  (extra command when all branches + tags)
+git.exe rev-list --count --first-parent --end-of-options "<local>" --        (only if ShowBranchRevisionNumber)
+```
+
+- **The run.** All commands go into one progress dialog. A failing command **does not stop the later ones**; the exit codes are OR-ed. [PD:228-273]
+
+**Post-command entries** [AU:2866-2908]:
+- **The post-push hook** runs first.
+- **Failure:**
+  - If the output contains `! [rejected]`: "&Pull..." (a Pull that then offers Push) and "F&etch..." (same remote).
+  - Always: "Pus&h...".
+- **Success:**
+  - "Create pull &request" [POT:3214], which opens `CRequestPullDlg`, then `git.exe request-pull -- <start> <url> <end>`. [AU:2926-2940]
+  - "Pus&h...".
+  - "S&witch/Checkout...".
+  - "Commit super project" [POT:2742] when the repository is a submodule.
+
+### 7.4 Sync (`CSyncDlg`, `IDD_SYNC`), summary only
+
+"Git Synchronization" (`/command:sync`) is a resizable all-in-one window [RC:1679-1710; SYC:25-34]:
+- **Top area:** "&Local Branch:", "&Remote Branch:" and "Remote &URL:" combos, "Manage", "Autoload Putty &Key" and "&Force".
+- **Middle:** a tab control with "In Commits", "In Changelist", "Conflicts", "Out Commits", "Out Changelist", "Compare tags", and an embedded git output / progress view. [SYD:1038-1133]
+- **Bottom:** menu buttons.
+
+It runs the same kinds of git commands itself, with its own simpler options (no tags, prune or depth choices). The status line reports ahead and behind counts. [SYD:1379-1450] Its operations:
+- **Pull button**:
+  - "&Pull": `git.exe pull -v --progress[ --force] -- <url> [<branch>]` (the branch is omitted when it is the upstream).
+  - "Fetc&h": `git.exe fetch --progress[ -v][ --force] -- <url> [<branch>:remotes/<url>/<branch>]`.
+  - "Fetch && Re&base".
+  - "Fetch all refs" (fetch with no branch).
+  - "Remote Update": `git.exe remote update`.
+  - "Clean up stale remote branches": `git.exe remote prune -- <url>`.
+  - "Compare tags".
+
+  [SYD:375-500, 1178-1184]
+- **Push button:**
+  - "Pus&h": `git.exe push -v --progress[ --force] -- <url> <local>[:<remote>]`.
+  - "Push ta&gs" (adds `--tags`).
+  - "Push notes" (pushes the notes ref).
+
+  [SYD:777-810, 1174-1176]
+- **Submodule button:** "Submodule Update" (`submodule update --init --recursive`), "Submodule Init", "Submodule Sync" (`--recursive`). [SYD:1773-1790]
+- **Stash button:** "Stash changes" (`stash save`), "Stash Pop", "Stash Apply". [SYD:1823-1837]
+- **Other buttons:** "&Apply Patch" (`git.exe am`), "&Email Patch" (`format-patch`), "Show &log", "&Commit", "Close". [SYD:839, 915]
+
+### 7.5 Credentials and prompts
+
+#### 7.5.1 Environment for every git process (`CGit::CheckMsysGitDir`)
+
+The environment is built once from the process environment. The settings below apply to every git TortoiseGit runs. [GIT:2347-2435]
+
+| Variable | Value |
+|---|---|
+| `TGIT_INITIATED_CALL` | `1` |
+| `GIT_INDEX_FILE`, `GIT_DIR`, `GIT_WORK_TREE`, `GIT_CONFIG*`, `GIT_CEILING_DIRECTORIES` and similar | **removed** (sanitised) |
+| `LC_ALL` | `C` if unset |
+| `HOME` | set to TortoiseGit's home directory if unset |
+| `GIT_SSH` / `SVN_SSH` | `HKCU` (then `HKLM`) `Software\TortoiseGit\SSH` if set; otherwise `<TortoiseGit bin>\TortoiseGitPlink.exe` |
+| `GIT_SSH_VARIANT` | `ssh`, when the client is TortoiseGitPlink (by default, or when the configured path ends in `tortoisegitplink[.exe]`); for any other client it is left as is |
+| `DISPLAY` | `:9999` (OpenSSH only uses `SSH_ASKPASS` when `DISPLAY` is set) |
+| `SSH_ASKPASS`, `GIT_ASKPASS`, `GIT_ASK_YESNO` | `<TortoiseGit bin>\SshAskPass.exe` |
+| `SSH_ASKPASS_REQUIRE` | `force` (Win32-OpenSSH compatibility, issue #3996) |
+
+- **Not set:** `GIT_TERMINAL_PROMPT` and credential-helper variables. HTTP credentials therefore come from git's own `credential.helper` (the first-start wizard may write one into the global or XDG config [FSWA:102-123]). When no helper answers, git falls back to `GIT_ASKPASS`, i.e. SshAskPass.
+- **SSH client choice.** The first-start wizard sets `SSH` to `TortoiseGitPlink.exe` or `ssh.exe`. [FSWA:90-100]
+- **Plink check.** `CAppUtils::IsSSHPutty()` is simply "`GIT_SSH` contains `plink`" (case-insensitive). It enables every "Autoload Putty Key" box. [AU:2011-2016]
+
+#### 7.5.2 SshAskPass.exe (`GIT_ASKPASS` / `SSH_ASKPASS` / `GIT_ASK_YESNO`)
+
+The prompt arrives as the command line. One pair of surrounding quotes is stripped. With no argument the prompt is "Enter your OpenSSH passphrase:". [SAP:45-69] The prompt is classified by substring:
+
+1. **Contains `(yes/no`** (OpenSSH host-key question): a task dialog with Yes/No command links. Without task-dialog support, a `MessageBox(MB_YESNO)` titled "TortoiseGit - Git CLI stdin wrapper". The program prints `yes` or `no` to stdout. [SAP:71-87]
+2. **Contains `Should I try again?`** (Git for Windows `GIT_ASK_YESNO`, e.g. a failed unlink): the same Yes/No dialog, titled "TortoiseGit - Git CLI yes/no wrapper". The answer is the **exit code**: 0 = yes, 1 = no. [SAP:89-102]
+3. **Anything else** (password, passphrase, `Username for '…':`) opens `IDD_ASK_PASSWORD` [SAP.rc:41-50]:
+   - **Layout.** The caption is "TortoiseGit -  git CLI stdin wrapper" (two spaces). A static shows the prompt, with an edit 215 DLU wide and OK/Cancel. The dialog is system-modal and centred on the screen.
+   - **Sizing.** It grows to fit the prompt text, and it flashes.
+   - **Masking.** The edit is **masked only if the prompt contains `pass`** (case-insensitive). Username prompts are therefore visible. [SAP:225-251]
+   - **Limits and wiping.** Input is limited to 255 characters. The field is overwritten with `*` and then cleared on close. [SAP:247, 302-319]
+   - **OK** prints the text as **UTF-8 plus `\n`** and exits 0. **Cancel** prints `\n` and exits −1. [SAP:104-117]
+   - **Theme.** Dark mode follows `HKCU\Software\TortoiseGit\DarkTheme`. [SAP:163-206]
+
+#### 7.5.3 TortoiseGitPlink (PuTTY plink with GUI prompts)
+
+- **Host key.** The unknown or changed host-key text is PuTTY's own: title "TortoiseGitPlink Security Alert", text "The host key is not cached for this server: … The server's <type> key fingerprint is: … Store key in cache?", and for a changed key "WARNING - POTENTIAL SECURITY BREACH!" … "Update cached key?". The action words are adapted to buttons (`hit "Yes"`, `hit "No"`, `hit "Cancel"`). [TPSSH:938-1070; TPC:12-23] The text appears in `MessageBox(MB_ICONWARNING | MB_YESNOCANCEL, default Cancel)`: Yes stores the key and continues, No continues once, Cancel aborts. [TPW:117-140]
+- **Weak crypto / weak cached host key.** Yes/No message boxes titled "TortoiseGitPlink Security Alert". [TPW:142-193]
+- **Passwords, passphrases and keyboard-interactive prompts.** Each prompt opens `IDD_LOGIN` (caption "TortoiseGitPlink", prompt static, masked edit, OK/Cancel, parented to the desktop). Cancel aborts the connection. [TPW:349-376; TPLD:51-146; TPRC:39-48] So with the default plink client, **SshAskPass is not used for SSH**. It handles HTTP prompts and OpenSSH.
+- **Not traced.** Where TortoiseGitPlink stores accepted host keys (PuTTY's `PUTTY_REG_POS` registry tree).
+
+#### 7.5.4 "Autoload Putty Key"
+
+- **When.** Before running the command, if the box is ticked. [CLC:121-122; AU:2272-2273, 2523-2535, 2809-2810]
+- **Key lookup** (`CAppUtils::LaunchPAgent(keyfile, remote)`) [AU:614-662]:
+  - The key is the explicit file (Clone) or `git config remote.<remote>.puttykeyfile`. The remote defaults to `origin`.
+  - With no key it returns at once.
+  - The "remote" is the selected remote name. For an arbitrary URL the lookup is `remote.<url>.puttykeyfile`, which normally does not exist.
+- **Running pageant:**
+  1. Run `"<bin>\pageant.exe" "<key>" -c "<bin>\tgittouch.exe" "<tempfile>"`. Pageant asks for the passphrase itself, then runs `tgittouch` to create the temp file.
+  2. Poll every 100 ms for the file, for up to 5 minutes. On timeout: "Failed waiting for pageant to finish loading key." [POT:4405].
+  3. If pageant cannot start: "Could not start the Putty Agent (pageant)." [POT:3137].
+- **Clone** writes `remote.<origin>.puttykeyfile` after success, so later fetches and pushes find the key (7.1.4).
+
+### 7.6 Progress dialog for these commands (`CProgressDlg`, `IDD_GITPROGRESS`)
+
+#### 7.6.1 Window
+
+Caption "Git Command Progress", resizable, with minimize and maximize boxes. The title becomes `<wd> - Git Command Progress - TortoiseGit`. [RC:1139-1152; PD:169] Controls:
+- a download animation, with the current-action label below it
+- a smooth progress bar
+- a read-only RichEdit log that stretches
+- a hidden post-command menu button at the bottom left
+- "Close" (`IDOK`) and "Abort" (`IDCANCEL`), both disabled at first
+
+[PD:132-136]
+
+#### 7.6.2 Running
+
+- **Worker thread.** It runs the command list in order. Before each command it echoes the command line into the log (`m_bShowCommand` defaults to true). [PD:48, 198-275]
+- **Repository lock.** TGitCache is blocked for the repository during the run.
+- **Output** is read in 1 KiB chunks into `CGitCliOutputParser`.
+- **Timer.** A 125 ms timer moves the parsed text into the RichEdit. [PD:308, 459-465]
+
+#### 7.6.3 `\r` progress lines
+
+These are handled specially [GCOP:37-127, 141-267; PD:521-606]:
+- **Input.** `\0` becomes `\n`. Lines are capped at 8 KiB ("... [line truncated at 8 KiB]") and the buffer at 150 MiB.
+- **Pending line.** A line ending in `\r` is held as the **pending CR line** and shown, but it can be replaced.
+  - The next `\r` line **overwrites** it. A shorter new text overlays the start of the old one, like a console.
+  - The parser tells the UI to erase the previous last line (`erasePreviousLineWithLength`). The UI selects from the start of the last line to the end and replaces it. So `Receiving objects:  45% (…)\r` updates in place.
+  - A following `\n` line makes the overlaid text permanent.
+- **`remote: ` lines** get extra handling, so that the server's `remote: …\r` progress and the empty `remote: ` lines between them do not leave blank or duplicate rows.
+- **Text clean-up.** ANSI `ESC[K` and colour sequences `ESC[…m` are removed (`ClearESC`). [PD:481-519]
+- **Progress bar.** In each new text chunk, the label is set to the text before the last `:`, and the bar to the number just before the first `%`. The taskbar button shows the same progress. [PD:587-606]
+- **Output limit.** `HKCU\Software\TortoiseGit\GitOutputLimitinKiB` (default 2048, range 16 to 102400). Beyond it the log shows "[Output truncated at about N KiB]" and further output is dropped. [PD:44, 568-584]
+
+#### 7.6.4 End
+
+[PD:311-455]
+
+- **Status line.** "Success" [POT:9061] in bold blue, or "git did not exit cleanly (exit code %d)" [POT:10836] in bold red with a beep (unless `NoSounds`). Timings are added unless `ShowGitexeTimings` = 0.
+- **Styling.** Warnings, errors and URLs in the log are styled (`StyleGitOutput`, default TRUE). URLs are clickable.
+- **Post-command entries** (only when the command list completed, not on a start failure) fill the menu button. Alt+mnemonic accelerators are built from their labels. Choosing one hides the dialog, runs the action and closes the dialog. [PD:651-656]
+- **Auto-close.** `AutoCloseGitProgress` / `/closeonend` work as in 6.4 (1 = no error and no post entries, 2 = no error). [PD:58-73, 449-452]
+- **Abort while running** [PD:665-698]:
+  1. Ask "The process is still running.\nAre you sure to abort?" [POT:9430], only when `ConfirmKillProcess` is set.
+  2. Send Ctrl+C and wait up to 10 s.
+  3. Kill the process tree.
+- **Log file.** Closing writes the log text to TortoiseGit's log file (`CLogFile`). [PD:610-649]
+
+### 7.7 Not established from source
+
+- Whether setting the Clone URL at init (from `/url` or the clipboard) triggers the directory auto-fill (7.1.2).
+- Reset type 2 = hard: inferred from the order of the `ResetDlg` radio buttons, not traced.
+- `CSelectRemoteRefDlg` (Pull "...") and `CRequestPullDlg`: their layouts were not examined.
+- Where TortoiseGitPlink stores accepted host keys, and how pageant prompts for the passphrase (PuTTY code, not read).
+- The Help topics of the three dialogs.
+- Sync: only the command lines and menu entries above were read. Its tab contents, ahead/behind logic and post-command flow were not examined.
