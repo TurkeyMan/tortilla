@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: tortilla\n"
 "Report-Msgid-Bugs-To: https://github.com/TurkeyMan/tortilla/issues\n"
-"POT-Creation-Date: 2026-10-24 14:54+0000\n"
+"POT-Creation-Date: 2026-10-24 15:14+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -1746,7 +1746,7 @@ msgstr ""
 msgid "View Patch"
 msgstr ""
 
-#: src/log/log_window.cpp:887
+#: src/log/log_window.cpp:887 src/ui/welcome_window.cpp:78
 msgid "_Settings..."
 msgstr ""
 
@@ -2623,4 +2623,59 @@ msgstr ""
 
 #: src/ui/stash_dialog.cpp:29
 msgid "Include _untracked files"
+msgstr ""
+
+#: src/ui/welcome_window.cpp:59
+msgid "Welcome to Tortilla"
+msgstr ""
+
+#: src/ui/welcome_window.cpp:64
+msgid ""
+"Tortilla is a git client that lives where your files do: right-click any\n"
+"folder in your file manager to commit, pull, push, browse the history or\n"
+"untangle a merge."
+msgstr ""
+
+#: src/ui/welcome_window.cpp:67
+msgid ""
+"It began with a simple wish: TortoiseGit's way of working, without the\n"
+"waiting, on every desktop. So every window is your system's own, and\n"
+"everything on screen keeps up with your display, however long the history."
+msgstr ""
+
+#: src/ui/welcome_window.cpp:70
+msgid "To start, right-click a folder and look for Tortilla, or open one here."
+msgstr ""
+
+#: src/ui/welcome_window.cpp:72
+msgid "_Open repository..."
+msgstr ""
+
+#: src/ui/welcome_window.cpp:73
+msgid "_Clone..."
+msgstr ""
+
+#: src/ui/welcome_window.cpp:106
+msgid "Made with care by Manu Evans"
+msgstr ""
+
+#: src/ui/welcome_window.cpp:109
+msgid "Licence (GPL 3.0)"
+msgstr ""
+
+#: src/ui/welcome_window.cpp:110
+msgid "Third-party notices"
+msgstr ""
+
+#: src/ui/welcome_window.cpp:137
+#, c++-format
+msgid "Version {0}"
+msgstr ""
+
+#: src/ui/welcome_window.cpp:140
+msgid "Git, wrapped up warm."
+msgstr ""
+
+#: src/ui/welcome_window.cpp:146
+msgid "Open repository"
 msgstr ""
