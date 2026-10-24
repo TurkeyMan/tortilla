@@ -55,6 +55,7 @@ $stage = 'dist/Tortilla'
 Remove-Item -Recurse -Force dist -ErrorAction SilentlyContinue
 New-Item -ItemType Directory "$stage/bin" | Out-Null
 Copy-Item "$bin/tortilla.exe", "$bin/tortilla-shell.dll", data/windows/tortilla.ico "$stage/bin/"
+Copy-Item -Recurse data/windows/menu "$stage/bin/menu"
 Copy-Item README.md, LICENSE $stage
 # Self-contained: nothing but Windows' own DLLs, for the exe and for the
 # extension Explorer loads.

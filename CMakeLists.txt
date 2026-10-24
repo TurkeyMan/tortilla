@@ -82,6 +82,7 @@ add_executable(tortilla
     src/ui/progress_dialog.cpp
     src/ui/diff_window.cpp
     src/ui/settings_dialog.cpp
+    src/shell/menu_icons.cpp
     src/ui/askpass.cpp
     src/ui/windows.cpp
     src/remote/pull_fetch_dialog.cpp
@@ -123,9 +124,12 @@ rapport_add_shell_extension(tortilla-shell
     NAME "Tortilla" ID org.tortilla.Tortilla
     WINDOWS_CLSID {D73E7C0C-F88B-4DD5-AC56-9AABAB52E4EB}
     SOURCES src/shell/shell_provider.cpp)
+# Its icons, beside it as installed (tools/make_menu_icons.cpp draws them).
 add_custom_command(TARGET tortilla-shell-probe POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_CURRENT_SOURCE_DIR}/data/windows/tortilla.ico
-            $<TARGET_FILE_DIR:tortilla-shell-probe>/tortilla.ico)
+            $<TARGET_FILE_DIR:tortilla-shell-probe>/tortilla.ico
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/data/windows/menu
+            $<TARGET_FILE_DIR:tortilla-shell-probe>/menu)
 target_link_libraries(tortilla PRIVATE rapport::shell)
 
 if(UNIX AND NOT APPLE)

@@ -374,7 +374,11 @@ public:
             if (std::string_view(r.id) == "commit") label = commit_label(state_);
             // Diff of two files isn't Tortilla's yet, only of one item.
             const bool runs = r.command != run::none && (r.command != run::diff || (f & ONE));
-            menu_item item{.id = r.id, .label = label, .enabled = runs};
+            // Drawn by src/shell/menu_icons.cpp, one per Settings entry.
+            menu_item item{.id = r.id,
+                           .label = label,
+                           .icon = "menu/" + std::string(group_of(r.id)) + ".ico",
+                           .enabled = runs};
             if (where == shows::top)
             {
                 item.label = top_label(item.label);
