@@ -55,6 +55,52 @@ git_result run_git(const std::string& dir, const std::vector<std::string>& args,
     return r;
 }
 
+void git_canceller::cancel()
+{
+    std::lock_guard lock(mutex_);
+    cancelled_ = true;
+    if (current_) current_->kill();
+}
+
+bool git_canceller::cancelled() const
+{
+    std::lock_guard lock(mutex_);
+    return cancelled_;
+}
+
+git_result run_git(const std::string& dir, const std::vector<std::string>& args, git_output output,
+                   git_canceller& canceller)
+{
+    git_result r;
+    std::shared_ptr<process> p;
+    {
+        std::lock_guard lock(canceller.mutex_);
+        if (canceller.cancelled_)
+        {
+            r.output = "cancelled";
+            return r;
+        }
+        auto started = process::start("git", git_command_line(dir, args), git_options(output));
+        if (!started)
+        {
+            r.output = "could not start git: " + started.error();
+            return r;
+        }
+        p = canceller.current_ = std::move(*started);
+    }
+    char buf[65536];
+    while (std::size_t n = p->read(buf, sizeof buf)) r.output.append(buf, n);
+    r.exit_code = p->wait();
+    std::lock_guard lock(canceller.mutex_);
+    canceller.current_.reset();
+    if (canceller.cancelled_)
+    {
+        r.exit_code = -1;
+        r.output = "cancelled";
+    }
+    return r;
+}
+
 struct git_process::state
 {
     std::shared_ptr<rap::sys::process> process;

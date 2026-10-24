@@ -3,9 +3,11 @@
 #pragma once
 
 #include <rapport/rapport.h>
+#include <rapport/sys.h>
 
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -31,6 +33,25 @@ struct git_result
 // Runs `git <args>` in `dir` and waits. For quick queries only.
 git_result run_git(const std::string& dir, const std::vector<std::string>& args,
                  git_output = git_output::all);
+
+// Lets another thread stop a series of run_git calls: cancel() kills the git
+// running now, and every later call fails at once.
+class git_canceller
+{
+public:
+    void cancel();
+    bool cancelled() const;
+
+private:
+    friend git_result run_git(const std::string&, const std::vector<std::string>&, git_output,
+                              git_canceller&);
+    mutable std::mutex mutex_;
+    std::shared_ptr<rap::sys::process> current_;
+    bool cancelled_ = false;
+};
+
+git_result run_git(const std::string& dir, const std::vector<std::string>& args, git_output,
+                   git_canceller&);
 
 // Runs `git <args>` in `dir` on a worker thread. Output arrives in chunks on
 // the UI thread; `done` gets the exit code. The process is killed if the

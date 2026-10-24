@@ -4,6 +4,7 @@
 // Blocking; for a worker thread.
 #pragma once
 
+#include "git/command.h"
 #include "git/repo.h"
 
 #include <string>
@@ -31,7 +32,9 @@ struct working_tree_changes
     std::string error;  // git's complaint, if it failed
 };
 
-working_tree_changes load_working_tree(const std::string& workdir, const working_tree_options&);
+// `canceller`, if given, stops it from another thread (a newer load).
+working_tree_changes load_working_tree(const std::string& workdir, const working_tree_options&,
+                                       git_canceller* canceller = nullptr);
 
 // Whether repository-relative `path` is one of `paths` or under one.
 bool within(const std::string& path, const std::vector<std::string>& paths);

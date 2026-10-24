@@ -326,9 +326,25 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
                              { save_revision(hash, f); }));
         }
         m.push_back(todo("View revision in alternative editor"));
-        m.push_back(todo("_Open"));
-        m.push_back(todo("Open with..."));
-        m.push_back(todo("Explore to"));
+        const file_change& f = files.front();
+        // A deleted file has nothing to open in the working tree, nor in
+        // the revision that deleted it.
+        const bool openable = f.status != 'D';
+        m.push_back(item("_Open", [this, f] { open_file(f, false); }, openable));
+#ifdef _WIN32
+        m.push_back(item("Open with...", [this, f] { open_file(f, true); }, openable));
+#else
+        m.push_back(todo("Open with..."));  // no common chooser on Linux desktops
+#endif
+        m.push_back(item("Explore to",
+                         [this, f]
+                         {
+                             const auto path = rap::sys::path_from_utf8(host_.workdir) /
+                                               rap::sys::path_from_utf8(f.path);
+                             std::error_code ec;
+                             rap::sys::reveal(
+                                 std::filesystem::exists(path, ec) ? path : path.parent_path());
+                         }));
         separator(m);
         m.push_back(todo("Mark for comparison"));
     }
@@ -404,10 +420,43 @@ void changes_view::activated(size_t row)
 {
     if (row >= model_.files().size()) return;
     const file_change& f = model_.files()[row];
-    if (f.status == '?' || f.status == 'U') return;
+    // Nothing to compare an unversioned file with: it opens instead.
+    if (f.status == '?' || f.status == '!') return open_file(f, false);
+    if (f.status == 'U') return;
     arg_list paths = paths_of({f});
     if (source_.what == changes_source::working_tree) return difftool({"HEAD"}, paths);
     difftool({source_.parent, source_.hash}, paths);
+}
+
+// Open: the working file, or a revision's version of it written to a
+// temporary file named after it [TortoiseGit: Open / Open with].
+void changes_view::open_file(const file_change& f, bool choose)
+{
+    std::filesystem::path path =
+        rap::sys::path_from_utf8(host_.workdir) / rap::sys::path_from_utf8(f.path);
+    if (source_.what == changes_source::revision)
+    {
+        git_result r =
+            run_git(host_.workdir, {"show", source_.hash + ":" + f.path}, git_output::stdout_only);
+        std::error_code ec;
+        const std::filesystem::path dir =
+            std::filesystem::temp_directory_path(ec) / "tortilla" / source_.hash.substr(0, 8);
+        path = dir / rap::sys::path_from_utf8(file_name(f.path));
+        if (!r.ok() || !write_file(path, r.output))
+        {
+            host_.ui.message(host_.window(), {.icon = rap::message_spec::icon::error,
+                                              .title = "Open",
+                                              .text = "Could not get " + f.path + " at " +
+                                                      source_.hash.substr(0, 8) + ".",
+                                              .detail = r.ok() ? "" : r.output});
+            return;
+        }
+    }
+    if (!(choose ? rap::sys::open_with(path) : rap::sys::open_path(path)))
+        host_.ui.message(host_.window(),
+                         {.icon = rap::message_spec::icon::error,
+                          .title = "Open",
+                          .text = "Could not open " + rap::sys::path_to_utf8(path) + "."});
 }
 
 // With the tool the Diff Viewer page chose (compare.h).

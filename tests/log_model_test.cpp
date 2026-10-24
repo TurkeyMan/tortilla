@@ -2,12 +2,15 @@
 //   tortilla-tests <scratch dir>
 // Builds a repo with branches and merges via the git CLI, then loads it
 // through log_model on the null UI backend.
+#include "changes/working_tree.h"
 #include "git/command.h"
 #include "git/diff_tool.h"
+#include "git/repo_worker.h"
 #include "git/status.h"
 #include "log/log_model.h"
 #include "shell.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -249,6 +252,62 @@ int main(int argc, char** argv)
         }
         check(tortilla::parse_status(" M x\0"s, "x\ty\tz\0garbage"s).size() == 1,
               "status: odd numstat output doesn't throw");
+    }
+
+    // Check for modifications' reloads: each cancels the git still running
+    // and starts again. Whatever the timing, results arrive newest last and
+    // never older after newer, and the last is the last options'.
+    {
+        sh("echo changed >> '" + repo + "/A.txt'");
+        sh("echo new > '" + repo + "/untracked.txt'");
+        tortilla::git_canceller stopped;
+        stopped.cancel();
+        check(tortilla::load_working_tree(repo, {}, &stopped).error == "cancelled",
+              "reloads: a cancelled load says so");
+
+        tortilla::repo_worker worker(**ui, repo);
+        std::shared_ptr<tortilla::git_canceller> current;
+        std::vector<int> delivered;
+        std::vector<tortilla::file_change> last;
+        constexpr int loads = 25;
+        for (int i = 0; i < loads; ++i)
+        {
+            if (current) current->cancel();
+            current = std::make_shared<tortilla::git_canceller>();
+            const tortilla::working_tree_options o{.unversioned = i % 2 == 0};
+            worker.submit(
+                [&, i, o, c = current](tortilla::repo&, const tortilla::repo_worker::progress&)
+                    -> std::function<void()>
+                {
+                    auto r = tortilla::load_working_tree(repo, o, c.get());
+                    return [&, i, files = r.files]
+                    {
+                        delivered.push_back(i);
+                        last = files;
+                    };
+                });
+            // Toggles at uneven speeds: some land mid-load, some after.
+            if (i % 3 == 0) std::this_thread::sleep_for(std::chrono::milliseconds(i));
+            (*ui)->run();
+        }
+        for (int spin = 0; spin < 1000 && (delivered.empty() || delivered.back() != loads - 1);
+             ++spin)
+        {
+            (*ui)->run();
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        check(!delivered.empty() && delivered.back() == loads - 1,
+              "reloads: the newest load arrives last");
+        check(std::ranges::is_sorted(delivered) &&
+                  std::ranges::adjacent_find(delivered) == delivered.end(),
+              "reloads: never an older result after a newer one");
+        auto has = [&](const char* path)
+        {
+            return std::ranges::any_of(last, [&](const tortilla::file_change& f)
+                                       { return f.path == path; });
+        };
+        check(has("A.txt") && has("untracked.txt"), "reloads: the last options' files");
+        std::printf("     (%zu of %d loads delivered)\n", delivered.size(), loads);
     }
 
     std::printf("%s\n", failures ? "FAILED" : "all passed");

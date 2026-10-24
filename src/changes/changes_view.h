@@ -80,6 +80,7 @@ public:
 private:
     rap::menu context_menu(std::optional<size_t> row, std::optional<size_t> column);
     void activated(size_t row);
+    void open_file(const file_change&, bool choose);
     void difftool(std::vector<std::string> revisions, std::vector<std::string> paths);
     void copy_files(int format, std::optional<size_t> column);
     void save_revisions(const std::string& rev, std::vector<file_change> files);

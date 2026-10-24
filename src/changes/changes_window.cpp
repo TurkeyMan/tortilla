@@ -88,7 +88,10 @@ changes_window::changes_window(rap::ui& ui, repo r, std::vector<std::string> rel
     if (!root_) paths_ = std::move(relative);
 }
 
-changes_window::~changes_window() = default;
+changes_window::~changes_window()
+{
+    if (load_) load_->cancel();  // so the worker's thread isn't left waiting on git
+}
 
 void changes_window::build()
 {
@@ -157,16 +160,11 @@ void changes_window::build()
                 menu_button{"Stash"}.on_menu([this] { return stash_menu(); }),
                 button{"Commit"}.enabled(false).tooltip("Not yet in Tortilla"),
                 button{"_Refresh"}.bind(refresh_).on_click([this] { reload(); }),
-                button{"OK"}.bind(ok_).on_click(
+                // Always OK, closing even mid-load (TortoiseGit relabels it
+                // Cancel while loading, which only flickers).
+                button{"OK"}.on_click(
                     [this, close]
                     {
-                        // While loading it's Cancel: stop the load, stay open.
-                        if (loading_)
-                        {
-                            worker_ = std::make_unique<repo_worker>(ui_, workdir_);
-                            loaded({});
-                            return;
-                        }
                         close();
                         window_->close();
                     }),
@@ -213,21 +211,26 @@ void changes_window::update_title()
                        " - Working Tree - Tortilla");
 }
 
+// The loading state (controls greyed, "Please wait...") only for a load
+// that takes a while: most take milliseconds, and showing it for them is
+// just flicker [unlike TortoiseGit, which always shows it].
 void changes_window::set_loading(bool on)
 {
     loading_ = on;
-    ok_->set_text(on ? "Cancel" : "OK");
-    // While loading, everything but Whole Project waits [spec 5.3.3].
-    refresh_->set_enabled(!on);
-    unversioned_->set_enabled(!on && one_folder_);
-    ignored_->set_enabled(!on && one_folder_);
-    local_ignored_->set_enabled(!on);
-    all_staged_->set_enabled(!on);
-    if (on)
+    loading_delay_ = {};
+    auto show = [this](bool busy)
     {
-        branch_->set_text("");
-        note_->set_text("Please wait...");
-    }
+        refresh_->set_enabled(!busy);
+        unversioned_->set_enabled(!busy && one_folder_);
+        ignored_->set_enabled(!busy && one_folder_);
+        local_ignored_->set_enabled(!busy);
+        all_staged_->set_enabled(!busy);
+        if (busy) note_->set_text("Please wait...");
+    };
+    if (on)
+        loading_delay_ = ui_.timer(250, false, [show] { show(true); });
+    else
+        show(false);
 }
 
 void changes_window::reload()
@@ -241,11 +244,16 @@ void changes_window::reload()
     };
     set_loading(true);
     update_title();
+    // A load still running is stopped, so this one starts at once; its
+    // result would be dropped anyway, as the worker only delivers the newest.
+    if (load_) load_->cancel();
+    load_ = std::make_shared<git_canceller>();
     const std::string workdir = workdir_;
     worker_->submit(
-        [this, o, workdir](repo& r, const repo_worker::progress&) -> std::function<void()>
+        [this, o, workdir, cancel = load_](repo& r,
+                                           const repo_worker::progress&) -> std::function<void()>
         {
-            auto changes = load_working_tree(workdir, o);
+            auto changes = load_working_tree(workdir, o, cancel.get());
             std::string branch = r.head_name();
             return [this, changes = std::move(changes), branch]() mutable
             {

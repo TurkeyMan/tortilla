@@ -51,6 +51,9 @@ private:
     bool root_ = false;               // opened on the repository root: whole project, fixed
     bool one_folder_ = false;         // one folder (or the root): unversioned/ignored filters apply
     bool loading_ = false;
+    rap::subscription loading_delay_;  // shows the loading state only if it's slow
+    // Stops the running load's git: a newer reload restarts rather than waits.
+    std::shared_ptr<git_canceller> load_;
     std::unique_ptr<repo_worker> worker_;
     changes_view files_;
     std::vector<file_change> loaded_;  // everything loaded, before the filters
@@ -66,7 +69,6 @@ private:
     rap::check* all_staged_ = nullptr;
     rap::check* whole_project_ = nullptr;
     rap::button* refresh_ = nullptr;
-    rap::button* ok_ = nullptr;
 };
 
 }  // namespace tortilla

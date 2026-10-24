@@ -56,7 +56,8 @@ add_library(tortilla_git STATIC
     src/git/command.cpp
     src/git/status.cpp
     src/git/repo_worker.cpp
-    src/git/diff_tool.cpp)
+    src/git/diff_tool.cpp
+    src/changes/working_tree.cpp)
 target_include_directories(tortilla_git PUBLIC src)
 target_link_libraries(tortilla_git PUBLIC ${TORTILLA_LIBGIT2} rapport::rapport)
 target_compile_features(tortilla_git PUBLIC cxx_std_23)
@@ -67,7 +68,6 @@ add_executable(tortilla
     src/log/log_actions.cpp
     src/changes/changes_view.cpp
     src/changes/changes_window.cpp
-    src/changes/working_tree.cpp
     src/ui/stash_dialog.cpp
     src/rebase/rebase_window.cpp
     src/ui/compare.cpp
