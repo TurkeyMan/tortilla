@@ -26,6 +26,7 @@ std::vector<std::string> fields(const std::string& s)
 char status_letter(char x, char y)
 {
     if (x == '?' && y == '?') return '?';
+    if (x == '!' && y == '!') return '!';
     // Unmerged: either side U, or both added/deleted.
     if (x == 'U' || y == 'U' || (x == 'A' && y == 'A') || (x == 'D' && y == 'D')) return 'U';
     char c = x != ' ' ? x : y;
@@ -85,6 +86,7 @@ std::vector<file_change> parse_status(const std::string& porcelain, const std::s
         if (e.size() < 4) continue;
         file_change f;
         f.status = status_letter(e[0], e[1]);
+        f.staged = e[0] != ' ' && e[0] != '?' && e[0] != '!';
         f.path = e.substr(3);
         if ((e[0] == 'R' || e[0] == 'C') && i + 1 < pf.size()) f.old_path = pf[++i];
         if (auto it = counts.find(f.path); it != counts.end())

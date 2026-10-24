@@ -1,7 +1,9 @@
 // Tortilla: a TortoiseGit-style git GUI.
 //   tortilla [log] [--all] [path]   log window for the repository containing path
 //   tortilla rebase [path] [upstream]   rebase dialog
-//   tortilla diff [path]              the working tree's changes under path, against HEAD
+//   tortilla diff [path]              a file: its working tree changes against HEAD, in
+//                                     the diff tool; a folder: Check for modifications
+//   tortilla repostatus [path...]      Check for modifications (TortoiseGit's repostatus)
 //   tortilla diff [path] rev [rev2]   a commit, or rev..rev2, as a unified diff
 //   tortilla settings [path] [diff|menu]  the Settings dialog (at Diff Viewer or Context Menu)
 //   tortilla --which-ui       show the detected desktop and backend order
@@ -9,6 +11,7 @@
 //                             add or remove the file manager's context menu,
 //                             for this user or (elevated, as the installer
 //                             does) every user
+#include "changes/changes_window.h"
 #include "git/repo.h"
 #include "log/log_window.h"
 #include "rebase/rebase_window.h"
@@ -82,7 +85,8 @@ int main(int argc, char** argv)
         }
         else if (args.empty() && command == "log" &&
                  (std::strcmp(argv[i], "log") == 0 || std::strcmp(argv[i], "rebase") == 0 ||
-                  std::strcmp(argv[i], "diff") == 0 || std::strcmp(argv[i], "settings") == 0))
+                  std::strcmp(argv[i], "diff") == 0 || std::strcmp(argv[i], "settings") == 0 ||
+                  std::strcmp(argv[i], "repostatus") == 0))
             command = argv[i];
         else
             args.push_back(argv[i]);
@@ -105,6 +109,24 @@ int main(int argc, char** argv)
                                 : page == "menu" ? tortilla::settings_page::context_menu
                                                  : tortilla::settings_page::general,
                                 {}, [&] { (*ui)->quit(); });
+        return (*ui)->run();
+    }
+
+    // A folder's Diff is Check for modifications, as TortoiseGit's [spec 5.1].
+    std::error_code ec;
+    if (command == "repostatus" ||
+        (command == "diff" && args.size() < 2 &&
+         std::filesystem::is_directory(rap::sys::path_from_utf8(path), ec)))
+    {
+        auto w = tortilla::changes_window::open(
+            **ui, command == "repostatus" && !args.empty() ? args : std::vector<std::string>{path});
+        if (!w)
+        {
+            std::fprintf(stderr, "tortilla: %s\n", w.error().c_str());
+            return 1;
+        }
+        (*w)->on_closed([&] { (*ui)->quit(); });
+        (*w)->show();
         return (*ui)->run();
     }
 

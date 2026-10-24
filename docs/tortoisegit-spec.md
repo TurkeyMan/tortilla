@@ -44,6 +44,20 @@ Line numbers refer to that commit.
 | **SF** | `src/TortoiseGitSetup/StructureFragment.wxi` (installer registry entries) |
 | **APPX** | `src/TortoiseGitSetup/SparsePackage/AppxManifest.xml` (Windows 11 sparse package) |
 | **MAN-ADM** | `doc/source/en/TortoiseGit/tgit_app_admins.xml` |
+| **TP** | `src/TortoiseProc/TortoiseProc.cpp` (command-line path parsing) |
+| **CMDH** | `src/TortoiseProc/Commands/Command.h` |
+| **CMDC** | `src/TortoiseProc/Commands/Command.cpp` |
+| **DIFFC** | `src/TortoiseProc/Commands/DiffCommand.cpp` |
+| **RSC** | `src/TortoiseProc/Commands/RepoStatusCommand.cpp` |
+| **SCC** | `src/TortoiseProc/Commands/ShowCompareCommand.cpp` |
+| **CC** | `src/TortoiseProc/Commands/CommitCommand.cpp` |
+| **CHD** | `src/TortoiseProc/ChangedDlg.cpp` (Check for modifications) |
+| **CD** | `src/TortoiseProc/CommitDlg.cpp` |
+| **AU** | `src/TortoiseProc/AppUtils.cpp` |
+| **GD** | `src/TortoiseProc/GitDiff.cpp` |
+| **GSLCH** | `src/TortoiseProc/GitStatusListCtrlHelpers.cpp` (file-list sort comparator) |
+| **SCE** | `src/Utils/MiscUI/SciEdit.cpp` (commit message editor) |
+| **PP** | `src/TortoiseProc/ProjectProperties.cpp` / `.h` |
 
 Labels are quoted exactly as they appear in the resources. `&` marks the mnemonic (the underlined access key).
 
@@ -1422,3 +1436,692 @@ There is no separator between Sync and Commit. Commit is in the classic top-leve
 - How Explorer renders `&` in Windows 11 `IExplorerCommand` titles, and whether it collapses adjacent or dangling separators in either menu.
 - Whether the Windows 11 `Directory` item type covers drive roots (the manifest has no `Drive` entry).
 - Icon artwork (only the `.ico` file names are known).
+
+---
+
+## 5. Working-tree file lists: Check for modifications, folder Diff, Commit, and the shared `CGitStatusListCtrl`
+
+This section is organised for building one shared component in tortilla. 5.2 is the file-list control that TortoiseGit embeds in many dialogs. 5.3 (Check for modifications) and 5.4 (Commit) describe only what those dialogs add on top of it. 5.5 lists the other dialogs that embed the same control. The Log dialog's use of the control (a commit's files rather than the working tree) is in 1.11.2.
+
+"WC mode" below means the control shows working-tree changes, which is the case whenever `GetStatus` filled it: `UpdateFileList` empties `m_CurrentVersion` [GSLC:4133]. Many context-menu conditions test `m_CurrentVersion.IsEmpty()`.
+
+### 5.1 Entry points: Explorer "Diff" on a folder, and `repostatus`
+
+**Path arguments.** TortoiseGitProc reads either `/path` (one path, or several separated by `*`) or `/pathfile` (one path per line; the file is deleted when `/deletepathfile` is given). Passing both is an error. With no path at all, the list is the current directory. [TP:258-300] The repository is found from the first path, or else from the first list entry that is inside a repository. [TP:303-308] Each path is then made relative to the repository root (`Command::SetPaths`). The original first path is kept as `orgCmdLinePath`; the relative one is `cmdLinePath`. **The repository root itself becomes the empty path.** [CMDH:56-84]
+
+**`diff` given one path** (`DiffCommand::Execute`, no `/path2`) [DIFFC:30-107]:
+
+1. `CheckRepo(WorkingTreeOrBareRepoRequired)`. Outside a repository it shows "No valid git repository found." [POT:6481] and stops. [DIFFC:38-39; CMDC:464-471]
+2. **If the original path is a directory and `/submodule` is not given, it opens the Check for modifications dialog (`CChangedDlg`, 5.3) modally, with a path list holding just that one (relative) path.** No diff tool is started. [DIFFC:40-46] This is the same window as `repostatus`. The only code difference is that `RepoStatusCommand` also sets `theApp.m_pMainWnd` to the dialog [RSC:24-31]. A folder Diff at the repository root therefore gets the empty path, which turns on the whole-project mode (5.3.4).
+3. Otherwise (a file, or a directory with `/submodule`):
+   - With `/startrev` and `/endrev`: diff the file between those two revisions, or show a unified diff with `/unified`. [DIFFC:52-58]
+   - Without them: if libgit2 reports the file as `GIT_STATUS_INDEX_NEW` (staged as new), it first looks for a rename source with `git.exe diff-index --raw HEAD -M<n>% -C<n>% -z --`. If it finds one, it diffs the working file against the old path at `HEAD`. If not, it diffs against an empty file (`DiffNull`). [DIFFC:61-99]
+   - Every other file is diffed **working tree against `HEAD`** (`CGitDiff::Diff(..., WorkingCopyRef, "HEAD")`), or shown as a unified diff with `/unified`. [DIFFC:101-104]
+   - A directory with `/submodule` goes to the same `CGitDiff::Diff` call. For a directory, that call opens the submodule diff dialog instead of a file diff. [GD:387-399]
+   - `/alternative` (sent by Explorer when Shift is held, 4.2 row 12) swaps the configured external and internal diff tools. [DIFFC:34; AU:478-487]
+
+**`diff` given `/path2`.** Inside the repository and with `/startrev`+`/endrev`, the two paths are diffed at those revisions. Otherwise the two files are handed straight to the external diff tool (`StartExtDiff(path2, path)`). [DIFFC:108-124] Explorer sends `/path2` when exactly two non-folder items are selected. [4.2 row 12]
+
+**Which diff tool.** `CAppUtils::StartExtDiff` uses the diff program configured for the file type (`PickDiffTool`). If none is configured, or the setting is commented out with `#`, it uses `TortoiseGitMerge.exe /base:%base /mine:%mine /basename:%bname /minename:%yname /basereflectedname:%bpath /minereflectedname:%ypath`. The alternative flag inverts that choice. [AU:466-500] `CGitDiff::Diff` resolves each revision with `^{}`, writes the non-working-tree side to a read-only temp file titled `<path>: <short hash>`, and titles the working-tree side "%s: Working Tree" [POT:263]. It then calls `StartExtDiff(file2, file1, ...)`, so **the older revision (rev2) is the left/base side and the working tree is the right/mine side**. [GD:361-484]
+
+**`repostatus`** ("Check for modifications" in Explorer, 4.2 row 22) receives `/path:<sel>` for a single item, or `/pathfile:<tmp>` when more than one item is selected. [CTX:1440-1445] `RepoStatusCommand` keeps the default path requirement, *working tree required*. A bare repository or a path outside any repository shows "No working directory found." [POT:6485]. It then passes the whole relative path list to `CChangedDlg`. [RSC:24-31; CMDH:96; CMDC:456-462]
+
+**Explorer menu visibility.** "Diff" is offered for a single item inside a repository, folders included (condition `GIT&ONE`), and for two non-folder items (`TWO !FOLD`). "Check for modifications" is offered for any item inside a repository (`GIT | FOLD&FIG`), including multi-selections. [4.2 rows 12 and 22]
+
+### 5.2 The shared file list (`CGitStatusListCtrl`)
+
+`CGitStatusListCtrl` is a report-mode `CListCtrl` with resizable columns (`CResizableColumnsListCtrl<CListCtrl>`) [GSLC.h:193-194]. The embedding dialog configures it with three calls:
+
+- `Init(dwColumns, sColumnInfoContainer, dwContextMenus, bHasCheckboxes = true, bHasWC = true, allowedColumns = all)`, once [GSLC.h:438].
+- `GetStatus(pathList, bUpdate, bShowIgnores, bShowUnRev, bShowLocalChangesIgnored, bShowLFSLocks, bGetStagingStatus)`, to load entries [GSLC.h:466; GSLC:370-376].
+- `Show(dwShow, dwCheck, ...)`, to filter the loaded entries into rows and set the initial checkboxes [GSLC.h:479; GSLC:604].
+
+The dialog also sets the empty-list text (`SetEmptyString`), and optionally a statistics label (`SetStatLabel`), a tri-state "select all" checkbox (`SetSelectButton`) and a confirm button (`SetConfirmButton`), which the control updates itself (5.2.7).
+
+#### 5.2.1 `Init`
+
+- **Extended style**: double-buffering, info tips and sub-item images, plus `LVS_EX_CHECKBOXES` when `bHasCheckboxes` is set. [GSLC:283-286] The base class then adds header drag-and-drop (columns can be reordered by dragging), and full-row select unless `FullRowSelect` is 0 (default 1). [`ResizableColumnsListCtrl.h:86-93`]
+- **Font**: the UI font, or the log font when `LogFontForFileListCtrl` is set (default FALSE). [GSLC:289-294]
+- **Icons**: the system small image list. Directories (submodules) use the folder icon; files use their shell icon. A "restore" overlay (`IDI_RESTOREOVL`) marks files flagged "Restore after commit". [GSLC:296-299, 1123-1133, 1169-1171]
+- **Context-menu mask**: `dwContextMenus` is a 64-bit mask with one bit per command ID (`GetContextMenuBit(id) = 1 << id`). `GITSLC_POPALL` is all ones, and dialogs remove entries by XOR-ing named bits. [GSLC.h:112-139, 197-267]
+- `bHasWC` = false hides working-tree-only entries: Compare with working tree, Commit, Revert, Blame, Explore to and the Shell submenu. [GSLC:1760, 1815, 1869, 1891, 2055]
+- **File drops** are registered as an OLE drop target for `CF_HDROP`. Drops are accepted only after the dialog calls `EnableFileDrop()`, and never onto a group header or from the control's own drag. [GSLC:321-333, 3809-3813, 4486-4501]
+
+#### 5.2.2 Loading (what git is asked)
+
+`GetStatus` builds a load mask and calls `UpdateFileList(mask, bUpdate, pathList, bGetStagingStatus)` [GSLC:389-398]:
+
+| Mask bit | Loaded by | Git command (per path in the list; without pathspec when the list is null or its first path is the root) |
+|---|---|---|
+| `FILELIST_MODIFY` (always) | `CGit::GetWorkingTreeChanges` | `git.exe diff-index --cached --raw HEAD --numstat -C -M -z --` (staged changes; **without a pathspec** whenever `m_bIncludedStaged` is set or there is no list), then `git.exe diff-index --raw HEAD --numstat -C<n>% -M<n>% -z -- <path>` (all changes against HEAD). `HEAD~1` replaces HEAD when the control's `m_amend` is set. Then `git.exe ls-files -u -t -z [-- <path>]` marks conflicts, and `git.exe diff --name-only --diff-filter=D -z [-- <path>]` adds deleted-but-unstaged files as Deleted+Missing. With Cygwin/MSYS2 git, a `git.exe status --no-ahead-behind -- <path>` runs first to refresh stat data. [GIT:3460-3653] In a repository without commits, `GetInitAddList` is used instead. [GIT:3462-3463] |
+| `FILELIST_UNVER` (also loaded whenever `FILELIST_IGNORE` is requested) | `CTGitPathList::FillUnRev(UNVER)` | `git.exe ls-files --exclude-standard --full-name --others -z [-- <path>]`: individual files, not collapsed directories [TGP:1115-1168] |
+| `FILELIST_IGNORE` | `FillUnRev(IGNORE)` | the same with `-i` (ignored files) [TGP:1130-1146] |
+| `FILELIST_LOCALCHANGESIGNORED` | `FillBasedOnIndexFlags` | libgit2 index scan for entries with assume-valid (`GIT_INDEX_ENTRY_VALID`) or skip-worktree flags, filtered by path prefix [TGP:1218-1260] |
+| `FILELIST_LOCKS` (only if `<gitdir>\lfs` exists) | `FillLFSLocks` | `git.exe lfs locks --json` [TGP:1171-1185] |
+
+[GSLC:4307-4347]
+
+- **Staging status** (`bGetStagingStatus`, used by the Commit dialog's staging mode): a file is *partially staged* when it appears in both `git.exe diff-index --cached --raw HEAD --numstat -C -M -z --` and `git.exe diff-files --raw --numstat -C -M -z --`. It is *totally staged* when it appears only in the first, and *totally unstaged* when only in the second. Conflicted files are always unstaged. [GIT:3527-3569]
+- **Renames and copies** come from git's `-M`/`-C` detection; there is no separate rename pass. The similarity threshold is `ms_iSimilarityIndexThreshold`. [GIT:3507-3512]
+- **Untracked submodules and directories**: `ls-files --others` without `--directory` lists files, so an untracked directory shows up as its files. [TGP:1135, 1144]
+- **Missing files staged as Added or Modified**: for each such file, a message box asks "TortoiseGit detected that the file "%s" does not exist, but is staged as "Added" or "Modified". ..." [POT:9643]. The buttons are "R&estore this file from index" (`git.exe checkout -- <f>`), "&Remove this file from index" (`git.exe rm -f --cache -- <f>`) and "&Ignore", with a "&Do the same for the rest" checkbox. Afterwards an information box asks the user to refresh with F5. [GSLC:4142-4191]
+- **Which entries start checked.** Every `FILELIST_MODIFY` entry starts with `m_Checked = TRUE`. Unversioned, ignored, local-changes-ignored and LFS-lock entries start unchecked. `Show()` then recomputes the check state (5.2.6). [GSLC:4145, 4220, 4270, 4288, 4301, 877]
+- **Threading.** The control does not create a thread. The dialog calls `GetStatus` and `Show` from its own worker thread (5.3.5, 5.4.6), and the control guards its arrays with a reader/writer lock (`m_guard`). While `GetStatus` runs, `m_bBusy` is set and the list paints "Please wait..." [POT:7093]. [GSLC:378-383, 3698-3754]
+- **Loaded-once flags.** `m_FileLoaded` records which lists are loaded. A later `UpdateFileList` call skips them unless `bUpdate`/`once` is true. `Clear()` resets the flags and also empties the changelists. [GSLC:4313-4344, 4349-4358]
+- **Changelists** are read from `<worktree admin dir>\tgitchangelist` on every `GetStatus`. Lines `<name>` start a changelist; any other line is a repository-relative path. Paths listed before the first `<name>` line belong to `ignore-on-commit`. [GSLC:413, 4976-5018]
+
+#### 5.2.3 `Show` and the show/check masks
+
+`Show(dwShow, dwCheck, bShowFolders, UpdateStatusList, UseStoredCheckStatus)` clears the rows and rebuilds them. A loaded entry becomes a row when `entry->m_Action & dwShow` is non-zero. The `GITSLC_SHOW*` masks are mostly aliases of `CTGitPath::LOGACTIONS_*` bits. [GSLC:604-743; GSLC.h:58-110]
+
+| Mask | Value |
+|---|---|
+| `GITSLC_SHOWUNVERSIONED` | `LOGACTIONS_UNVER` |
+| `GITSLC_SHOWMODIFIED` | `LOGACTIONS_MODIFIED` |
+| `GITSLC_SHOWADDED` | `LOGACTIONS_ADDED \| LOGACTIONS_COPY` |
+| `GITSLC_SHOWREMOVED` | `LOGACTIONS_DELETED` |
+| `GITSLC_SHOWCONFLICTED` | `LOGACTIONS_UNMERGED` |
+| `GITSLC_SHOWREPLACED` | `LOGACTIONS_REPLACED` (renames) |
+| `GITSLC_SHOWMERGED` | `LOGACTIONS_MERGED` |
+| `GITSLC_SHOWIGNORED` | `LOGACTIONS_IGNORE` |
+| `GITSLC_SHOWASSUMEVALID` / `GITSLC_SHOWSKIPWORKTREE` | `LOGACTIONS_ASSUMEVALID` / `LOGACTIONS_SKIPWORKTREE` |
+| `GITSLC_SHOWDIRECTFILES` | `0x04000000`: pre-check files that were passed explicitly as paths (`m_setDirectFiles`) |
+| `GITSLC_SHOWLFSLOCKS` | `0x00200000` |
+| `GITSLC_SHOWFILES` / `GITSLC_SHOWSUBMODULES` | `0x01000000` / `0x02000000` (used only by `Check()`, 5.2.6) |
+| `GITSLC_SHOWNORMAL`, `SHOWMISSING`, `SHOWOBSTRUCTED`, `SHOWEXTERNAL`, `SHOWINCOMPLETE`, `SHOWINEXTERNALS`, `SHOWREMOVEDANDPRESENT`, `SHOWDIRECTFOLDER`, `SHOWEXTERNALFROMDIFFERENTREPO`, `SHOWSWITCHED`, `SHOWINCHANGELIST` | **0**: SVN leftovers with no effect |
+| `GITSLC_SHOWVERSIONEDBUTNORMALANDEXTERNALS` | MODIFIED\|ADDED\|REMOVED\|CONFLICTED\|REPLACED\|MERGED\|**IGNORED** (plus zero-valued bits) |
+| `GITSLC_SHOWVERSIONEDBUTNORMALANDEXTERNALSFROMDIFFERENTREPOS` | the same set |
+| `GITSLC_SHOWVERSIONED` | the same set (its NORMAL member is 0) |
+| `GITSLC_SHOWALL` | `SHOWVERSIONED \| SHOWUNVERSIONED` |
+
+- The common "versioned" masks include `SHOWIGNORED`. Ignored entries are kept out only because they are not loaded unless asked for.
+- There is no "normal/unmodified" state: unmodified files are never loaded, and `GITSLC_SHOWNORMAL` is 0.
+- **Too many items**: when `SetHideTooManyItems(true)` is in effect and more than `LogTooManyItemsThreshold` (default 1000) entries are loaded, no rows are shown and the list paints "Too many files to display." [POT:9617]. [GSLC:227, 646-661]
+- **Sorting.** Initially there is no sort (`m_nSortedColumn = -1`), so rows appear in load order: changes as git printed them, then unversioned, ignored, local-changes-ignored and LFS locks. [GSLC.h:787; GSLC:666-670, 631-643] Clicking a header sorts by that column; clicking the same column again reverses the direction. A sort arrow (`HDF_SORTUP`/`HDF_SORTDOWN`) is drawn on the header. [GSLC:1235-1253, 720-734] The comparator works per column as follows [GSLCH:39-139]:
+  - Path, Filename and Extension use `StrCmpLogicalW`, unless the Explorer policy `NoStrCmpLogical` is set, in which case `StrCmpI` is used.
+  - Status compares the status text.
+  - Lines added and Lines removed compare as numbers, and so do Last Modified and Size.
+  - Ties fall back to the path.
+  - The sort is stable.
+- **Scroll position.** The dialog may call `StoreScrollPos()` before a reload. `Show()` then restores the first selected row, the selection mark and the scroll origin, unless `RememberFileListPosition` is 0 (default 1). [GSLC:899-928]
+
+#### 5.2.4 Columns
+
+Defined in `Init` [GSLC:302-319]. Each definition is `{id, header, visible by default = (dwColumns & bit), available = (allowedColumns & bit)}`.
+
+| # | Header | Mask bit | Contents [GSLC:1018-1106] |
+|---|---|---|---|
+| 0 | "Path" [POT:6996] | always visible | Repository-relative path with `/`. For renames and copies with an old path: `new (from %s)` [POT:1330]. With `AbbreviateRenamings` (default FALSE), the abbreviated form `GetAbbreviatedRename()` is shown instead. |
+| 1 | "Filename" [POT:4533] | `GITSLC_COLFILENAME` | file or directory name |
+| 2 | "Extension" [POT:4296] | `GITSLC_COLEXT` | extension |
+| 3 | "Status" [POT:8948] | `GITSLC_COLSTATUS` | The first matching name, in this order: "Conflict", "Added", "Missing", "Deleted", "Merged", "Modified", "Rename", "Copy", "Assume valid/unchanged", "Skip worktree", "Ignored". Anything else, unversioned files included, shows "Unknown". [TGP:1782-1811; POT:2899, 1620, 6196, 3454, 6144, 6208, 7676, 2956, 1869, 8764, 5524, 9914] |
+| 4 | "Lines added" [POT:5898] | `GITSLC_COLADD` | numstat count, right-aligned |
+| 5 | "Lines removed" [POT:5902] | `GITSLC_COLDEL` | numstat count, right-aligned |
+| 6 | "Last Modified" [POT:5823] | `GITSLC_COLMODIFICATIONDATE` | File write time, as `FormatDateAndTime(..., DATE_SHORTDATE, true, RelativeTimes)`. Empty for deleted entries. |
+| 7 | "Size" [POT:8747] | `GITSLC_COLSIZE` | `StrFormatByteSize64`; empty for directories; right-aligned |
+| 8 | "LFS Lock Owner" [POT:5735] | `GITSLC_COLLFSLOCK` | lock owner; available only when the repository has `<gitdir>\lfs` |
+
+- **Persistence.** Column order, widths and visibility are stored per container name under `HKCU\Software\TortoiseGit\StatusColumns\<container>`. The column version is 7. [GSLC:315-316; CM:113-162]
+- **Header menu.** The header context menu is the column manager's menu: "Reset columns", then one checkable item per available column (as in 1.4). [CM:561-606]
+- **Tooltip.** The info tip on a row is the full Windows path, unless `ShowListFullPathTooltip` is 0. [GSLC:3331-3350]
+
+#### 5.2.5 Row colours and groups
+
+**Text colours** are the same as the table in 1.11.2 [GSLC:3415-3440]. The colour comes from the first matching state, in this order: gray (unrelated path), conflict, modified, added/copied, deleted, renamed, merged, otherwise the window text colour. Unversioned, ignored, assume-valid and skip-worktree rows therefore use the normal text colour. The background is never changed.
+
+**Groups** (`PrepareGroups`) [GSLC:3968-4119]:
+
+- **When groups are on.** Group view is switched on when any of these holds: shown and loaded unversioned entries, shown and loaded ignored entries, shown and loaded local-changes-ignored entries, a multi-parent (merge) diff, or any changelist assignment.
+- **Groups for the working tree**, in order:
+  - 0 "Modified Files" [POT:6212]
+  - 1 "Not Versioned Files" [POT:6509]
+  - 2 "Ignored Files" [POT:5528]
+  - 3 "Local changes ignored (assumed valid/unchanged or skip worktree flagged files)" [POT:5946]
+  - 4 "(no changelist)" [POT:1335]
+  - one group per changelist name (sorted, from `std::map`)
+  - last, "ignore-on-commit"
+- **Group of a row.** A row in a changelist goes to that changelist's group. Otherwise it goes to group 3 if flagged, group 2 if ignored, group 1 if unversioned, and group 0 for everything else. No row is ever assigned to "(no changelist)". [GSLC:1207-1233]
+- **Merge diffs** (Log only) use "Merged Files" and "Diff with parent %d: <short hash>" instead. [GSLC:4003-4032]
+- **Dark theme.** Group headers are custom-drawn in RGB(200,0,0) with a 2 px RGB(180,0,0) rule to the right of the label. [GSLC:3364-3396]
+
+#### 5.2.6 Checkboxes (which dialogs, and what a check means)
+
+- **Which dialogs.** Checkboxes exist only when `Init` was given `bHasCheckboxes` = true. These dialogs do: Commit, Revert, Add, Resolve and LFS locks. These do not: Check for modifications, Log, Rebase and the Sync lists. (Init calls in 5.5.)
+- **Initial check state, per row**, in `Show` [GSLC:675-705]:
+  1. In three-state (staging) mode, checked means totally or partially staged.
+  2. Otherwise, a state remembered in `m_mapFilenameToChecked` for that path wins.
+  3. Otherwise (unless `UseStoredCheckStatus`), the row is checked when:
+     - its action bits intersect `dwCheck`, and it is not a missing file under `m_bNoAutoselectMissing`; or
+     - `dwShow` has `SHOWDIRECTFILES` and the file was passed explicitly.
+
+     Directories (submodules) are excluded from this when `m_bDoNotAutoselectSubmodules` is set, and files in the `ignore-on-commit` changelist are forced unchecked.
+- **Clicking a box** checks or unchecks that row, and also every other selected row if the clicked row is selected. Each change is recorded in `m_mapFilenameToChecked`, so it survives a refresh. The parent then receives `GITSLNM_CHECKCHANGED` with the checked count. [GSLC:1255-1331, 1333-1464, 4121-4128]
+- **Three-state mode** (`EnableThreeStateCheckboxes(true)`, Commit dialog staging mode) adds an indeterminate image `IDI_INDETERMINATE` for "partially staged". Clicking a checked box goes back to unchecked, never to indeterminate. Checking a row runs `git.exe add -- <path>` immediately. Unchecking runs the unstage command, which depends on the file's status [GSLC:931-983, 1282-1286, 1402-1406, 1459-1463]:
+  - added: `git.exe rm -f --cached -- <path>`
+  - deleted or modified: `git.exe reset -- <path>`
+  - renamed: `git.exe rm -f --cached -- <new>` then `git.exe reset -- <old>`
+- **Group header menu.** In a list with checkboxes and no selection, right-clicking a group header offers "Select changelist" [POT:8244] and "Deselect changelist" [POT:3510], which check or uncheck every row of that group. [GSLC:1575-1637, 1667-1672]
+- **`Check(mask, check)`** checks or unchecks every row whose action bits, plus `SHOWFILES` or `SHOWSUBMODULES`, intersect the mask. It backs the Commit dialog's "Check:" links. [GSLC:3287-3329]
+- **Meaning.** The meaning of a checked row is defined by the dialog (5.4.5 for Commit), not by the control.
+
+#### 5.2.7 Counters, statistics text and placeholder text
+
+- **Selected/total counter.** `GetStatisticsString()` writes "%1!d! files selected, %2!d! files total" [POT:148] (checked rows, row count) into the label set by `SetStatLabel`. It sets the `SetSelectButton` checkbox to unchecked, indeterminate or checked for none, some or all checked. It enables the `SetConfirmButton` button only when at least one row is checked. [GSLC:3213-3229]
+- **Statistics text.** The return value is the statistics text. The full form is `IDS_STATUSLIST_STATUSLINE2`: "line: %d(+) %d(-) files: %s = %ld\n%s = %ld\n%s = %ld\n%s = %ld\n%s = %ld\n%s = %ld" [POT:10874]. Its parts are filled with:
+  - lines added and removed (sums of numstat)
+  - "normal" [POT:10955]: this count is never incremented, so it is always 0
+  - "non-versioned" [POT:10947]: unversioned plus ignored
+  - "modified" [POT:10919]: modified or renamed
+  - "added" [POT:10726]
+  - "deleted" [POT:10808]
+  - "conflicted" [POT:10800]
+
+  The simple form `IDS_STATUSLIST_STATUSLINE1` (lines plus modified/added/deleted/"replaced" [POT:11012]) is the one the Log dialog shows (1.10). The counts come from `BuildStatistics`, which walks **all loaded entries**, including loaded entries that the current filter hides. [GSLC:3181-3212, 1465-1510]
+- **Placeholder text**, painted centred 10 px below the header [GSLC:3698-3754]:
+  - while busy: "Please wait..." [POT:7093], or the dialog's busy string
+  - with too many items: "Too many files to display." [POT:9617]
+  - when empty: the dialog's empty string, defaulting to "File list is empty" [POT:4501]
+- **Background image.** Dialogs may set a background image, a list-view watermark (`SetBackgroundImage`). [GSLC:365-368]
+
+#### 5.2.8 Context menu (WC mode, full order)
+
+The menu is built in `OnContextMenuList` [GSLC:1639-2063]. Section 1.11.2 lists the entries as they appear for a Log-dialog commit. In WC mode the order, conditions and labels are as below. Each item also needs its mask bit. "Sel" is the item under the selection mark, and its status decides most conditions. Shift held while opening adds the extra Add items. When the menu is opened from the keyboard, it is anchored at the centre of the selected row. [GSLC:1660-1666]
+
+1. **Conflicted** (UNMERGED):
+   - "&Edit conflicts" [POT:571], only for a single selection, and the default item.
+   - "Resolved" [POT:7784].
+   - Two items `Resolve conflict using "%s"` [POT:7779], filled with the theirs and mine titles from `GetConflictTitles`. The order is swapped while a rebase is active.
+   - *separator*
+
+   [GSLC:1691-1719]
+2. **Unversioned or ignored**:
+   - "Add" [POT:1563]
+   - with Shift on a file: "Add as Executable (+x)" [POT:1588] and "Add as Symlink" [POT:1592]
+   - "Commit..." [POT:2750]
+
+   [GSLC:1721-1737]
+3. **Versioned and not merely missing** [GSLC:1739-1780]:
+   - "Compare with b&ase" [POT:2819]. It is the default item unless a single conflicted file is selected.
+   - "Show changes as &unified diff" [POT:8516], not offered in a repository without commits.
+   - *separator*
+
+   "Compare with &working tree" needs a commit (`m_CurrentVersion`), so it never appears in WC mode.
+4. **Exactly two non-directory rows selected**: "Compare two files" [POT:2807]. [GSLC:1796-1812]
+5. **Versioned rows with a working tree** [GSLC:1815-1859]:
+   - "Commit..." (not for skip-worktree or assume-valid rows)
+   - "Re&vert..." [POT:7386]
+   - "Skip worktree" [POT:8764] (not for added, conflicted or already skip-worktree rows)
+   - "Assume Unchanged" [POT:1865] (not for added, deleted, conflicted or already assume-valid rows)
+   - "Unflag as skip-worktree and assume-unchanged" [POT:9902] (only for flagged rows)
+   - "Restore after commit" [POT:7809], or "Restore" [POT:7801] once a backup exists, for files only
+   - the LFS lock and unlock items, when the repository has LFS and the row is not conflicted [GSLC:2776-2825]
+6. **Single selection, not unversioned or ignored** [GSLC:1861-1871]:
+   - "Show &log" [POT:8440]
+   - "Show log of submodule" [POT:8609] (directories)
+   - "Show log &before rename/copy" [POT:8596] (renamed or copied rows with an old path)
+   - "&Blame" [POT:359] (files that are not deleted and not newly added)
+7. **Any selection, not deleted or missing**: "Export selection to..." [POT:4275]. [GSLC:1873-1877]
+8. **Single selection** [GSLC:1879-1915]:
+   - "Save revision &to..." [POT:8137] (files that are not deleted)
+   - For files that are not deleted or missing: "View revision in alternative editor" [POT:10318], "&Open" [POT:922] and "Open with..." [POT:6774]
+   - "Explore to" [POT:4259] (not deleted)
+   - *separator*, then "Mark for comparison" [POT:6075] (not deleted). Once a file is marked, or a path was saved by Explorer's "Diff later", it is followed by `Diff with "%s"` [POT:3614].
+9. **Unversioned, ignored or missing**: "&Delete" [POT:479]. [GSLC:1927-1931]
+10. **Unversioned or deleted**: the ignore items [GSLC:1932-1985]:
+    - **All selected items share one extension**: an "Add to &ignore list" [POT:1608] submenu with the file name (or "&Ignore %d items by name" [POT:731] for several items), then `*<ext>`, then (single item in a subfolder) the containing folder's path.
+    - **Mixed extensions**: flat items, "Add to &ignore list" or "&Ignore %d items by name", plus "Ignore %d items by &extension" [POT:5447].
+11. *separator*, then "Copy to clipboard" [POT:2992] ►:
+    - "full paths" [POT:10832]
+    - "relative paths" [POT:11004]
+    - "file/foldernames" [POT:10828]
+    - "Copy all information to clipboard" [POT:2964] (all visible columns with a header line, tab-separated)
+    - `column '%ls'` [POT:10791], for the column that was right-clicked
+
+    [GSLC:1990-2008, 3880-3951]
+12. **Changelists**. Shown unless the row's action bits equal the `git_wc_status_unversioned` or `git_wc_status_none` enum values. That test compares an action bitmask with an SVN-style enum.
+    - *separator*
+    - "Remove from changelist" [POT:7635], when a selected row is in one
+    - "Move to changelist" [POT:6232] ►: "<new changelist>" [POT:1425], *separator*, "ignore-on-commit", then *separator* and the existing changelists
+    - the checkable "Keep changelists" [POT:5707] (registry `KeepChangeLists`, default FALSE)
+
+    [GSLC:2010-2052, 242-243]
+13. **Not deleted or missing, with a working tree, in WC mode**: *separator*, then "Shell" [POT:8396] ►, the Windows shell context menu for the selected files. [GSLC:2054-2061]
+
+**What the WC-mode commands do** [GSLC:2114-2760]:
+
+| Command | Action |
+|---|---|
+| Edit conflicts | `CAppUtils::ConflictEdit` (Shift: alternative tool) |
+| Resolved / Resolve using | Confirm "Are you sure you want to mark the conflicted file(s) as resolved?" [POT:1838], then `ResolveProgressCommand` in the progress dialog. The row becomes Modified. |
+| Add | `AddProgressCommand` in the progress dialog. It offers a Commit button afterwards if the mask has Commit. Then the parent refreshes. |
+| Commit... | `TortoiseGitProc /command:commit /pathfile:<tmp> /deletepathfile` with the selected paths |
+| Compare with base / Enter / double-click | `StartDiff` (5.2.9) |
+| Show changes as unified diff | For each selected file, the unified diff `HEAD[~1]` → working tree (`diff.context` honoured) is concatenated into one read-only temp file and opened in the unified diff viewer. Shift picks the alternative viewer. |
+| Compare two files | `TortoiseGitProc /command:diff /path:A /startrev:<WC or HEAD if A is missing> /path2:B /endrev:<WC or HEAD> /hwnd:<list>`, plus `/alternative` with Shift |
+| Revert... | If any selected row is a modified file, confirm "Are you sure you want to revert %d item(s)? You will lose ALL changes since the last update!" [POT:1842]. Then `RevertProgressCommand` to `HEAD` (`HEAD~1` when amending). Reverted rows are removed from the list; added files or directories trigger a full refresh. |
+| Skip worktree / Assume Unchanged / Unflag | Confirm with [POT:3760] / [POT:3756] / [POT:3811], then set the index flags |
+| Restore after commit / Restore | Copy the file to a temp file and show the overlay. Restore copies it back after confirmation [POT:3797]. |
+| Show log | `TortoiseGitProc /command:log /path:<full path>` (+ `/submodule` for directories) |
+| Blame | `CAppUtils::LaunchTortoiseBlame` |
+| Explore to | `CAppUtils::ExploreTo` |
+| Delete | Removes the paths from the index (libgit2). The existing files go through `SHFileOperation(FO_DELETE)`, to the recycle bin unless Shift is held. Rows are removed, or the list refreshes if the index changed. [GSLC:4702-4784] |
+| Ignore items | `CAppUtils::IgnoreFile(list, byMask)`, then the parent refreshes |
+| Move/Remove changelist | Edit `tgitchangelist` (`SaveChangelists`) |
+
+**Many diffs at once.** Selecting more than `max(3, NumDiffWarning)` files (default 10) for a compare first asks "You have selected %d items to show the diff for. ..." [POT:10572]. [GSLC:4360-4370]
+
+#### 5.2.9 Double-click, keyboard, drag and drop, parent notifications
+
+**Double-click** (when `m_bEnableDblClick`, default true; ignored on the checkbox image) [GSLC:2926-2976]:
+
+- Unversioned or ignored: `StartDiffWC`, i.e. `CGitDiff::Diff(file, file, WorkingCopyRef, m_CurrentVersion)`. In WC mode the second revision is the empty string (5.6).
+- Conflicted: `ConflictEdit` (Shift: alternative). The list re-shows afterwards, or refreshes if the file no longer exists.
+- Missing (and not also Deleted): nothing happens.
+- Otherwise `StartDiff` (WC mode) [GSLC:3026-3060]:
+  - In a repository without commits: `DiffNull(working file)`.
+  - Added: `DiffNull(..., bAdd=true)`, the file against an empty one.
+  - Deleted: `DiffNull("HEAD"[~1], bAdd=false)`, the HEAD version against nothing.
+  - Anything else: **`CGitDiff::Diff(new path, old path for renames and copies, WorkingCopyRef, "HEAD")`**, with `HEAD~1` when amending a file that is not added. This is HEAD on the left and the working tree on the right, in the configured diff tool (5.1). Shift held uses the alternative tool.
+
+**Keys** [GSLC:3832-3878, 3611-3690]:
+
+| Key | Action |
+|---|---|
+| Enter | Same as double-click, for every selected row; the list takes Enter from the default button (`DLGC_WANTALLKEYS`) |
+| Ctrl+A | Select all rows |
+| Ctrl+C, Ctrl+Insert | Copy relative paths, one per line |
+| Ctrl+Shift+C, Ctrl+Shift+Insert | Copy relative path and status, tab-separated, with a header line |
+| Delete | Delete the selected files, if the mask has Delete and the row under the selection mark is unversioned or ignored |
+| Tab / Shift+Tab | Move focus to the next or previous dialog control |
+| Esc | Send `WM_CLOSE` to the dialog |
+
+**Drag out.** Dragging rows starts an OLE drag (`DROPEFFECT_MOVE | DROPEFFECT_COPY`) of a `GitDataObject` holding the selected paths and the shown revision. [GSLC:3767-3807]
+
+**Drop in.** Dropped files are only accepted after `EnableFileDrop()`. Each dropped path is sent to the parent as `GITSLNM_ADDFILE`. [GSLC:4373-4501]
+
+**Notifications to the parent.** The control sends the parent these messages [GSLC.h:268-294]:
+
+- `GITSLNM_NEEDSREFRESH`, after commands that change the working tree (`RefreshParent`)
+- `GITSLNM_ITEMCOUNTCHANGED`
+- `GITSLNM_ADDFILE`
+- `GITSLNM_CHECKCHANGED` (wParam = checked count)
+- `GITSLNM_ITEMCHANGED`, on any item change, including selection
+
+### 5.3 Check for modifications (`CChangedDlg`, `IDD_CHANGEDFILES`)
+
+#### 5.3.1 Window
+
+- **Template.** `IDD_CHANGEDFILES DIALOGEX 0,0,520,243`, caption **"Working Tree"**, resizable (`WS_THICKFRAME`) with minimize and maximize boxes. Unlike the Log dialog it has no `WS_EX_APPWINDOW`. [RC:187-190]
+- **Title.** `<path> - Working Tree - TortoiseGit` [CHD:247-261; AU:3518-3551, 3562-3565]. The path is:
+  - the repository root in whole-project mode;
+  - otherwise the single given path, made absolute;
+  - with several paths, the common directory of the loaded entries.
+
+  It is compacted with `PathCompactPathEx` to `80 − len("Working Tree")` characters. When `DialogTitles` is 1, the part above the repository's parent folder is stripped. The title is set when the dialog opens and again after every load.
+- **Placement.** The dialog is centred on the Explorer window when one is known, and its size and position are saved and restored (`EnableSaveRestore(L"ChangedDlg")`). [CHD:129-131]
+
+#### 5.3.2 Layout (top to bottom)
+
+Controls from RC:191-208; anchors from CHD:113-127.
+
+| Control | ID | Type | Label | Rect (DLU) | Anchor |
+|---|---|---|---|---|---|
+| Branch link | `IDC_BRANCH` | SysLink, no prefix | `<a>current branch</a>` after loading; empty while loading [CHD:161, 186] | 7,2,506,9 | top, stretches |
+| File list | `IDC_CHANGEDLIST` | `CGitStatusListCtrl`, report, show-selection-always, **no checkboxes** | – | 7,14,506,152 | stretches both ways |
+| Unversioned | `IDC_SHOWUNVERSIONED` | auto checkbox | "Show un&versioned files" | 7,171,260,10 | bottom-left |
+| Local changes ignored | `IDC_SHOWLOCALCHANGESIGNORED` | auto checkbox | "Show ignore local changes flagged files" (no mnemonic) | 7,181,263,10 | bottom-left |
+| Ignored | `IDC_SHOWIGNORED` | auto checkbox | "Show i&gnored files" | 7,191,263,10 | bottom-left |
+| Unmodified | `IDC_SHOWUNMODIFIED` | auto checkbox, **hidden** (`NOT WS_VISIBLE`) | "Show un&modified files" | 7,201,263,10 (same place as the next one) | bottom-left |
+| Staged | `IDC_SHOWSTAGED` | auto checkbox | "Show all &staged files" | 7,201,263,10 | bottom-left |
+| Whole project | `IDC_WHOLE_PROJECT` | auto checkbox | "Show &Whole Project" | 7,211,263,10 | bottom-left |
+| Statistics | `IDC_INFOLABEL` | multi-line read-only edit, no border | see 5.3.6 | 294,169,219,23 | bottom-right |
+| Summary | `IDC_SUMMARYTEXT` | static | empty; never written by the code (only anchored) [CHD:115] | 294,193,219,13 | bottom, stretches |
+| Unified diff | `IDC_BUTTON_UNIFIEDDIFF` | push button | "Save unified diff" | 109,222,119,14 | bottom-right |
+| Stash | `IDC_BUTTON_STASH` | `CMenuButton`, drop arrow always shown [CHD:134] | "Stash" | 236,222,68,14 | bottom-right |
+| Commit | `IDC_COMMIT` | push button | "Commit" | 312,222,67,14 | bottom-right |
+| Refresh | `IDC_REFRESH` | push button | "&Refresh" | 388,222,67,14 | bottom-right |
+| OK | `IDOK` | default button | "OK"; "Cancel" while loading | 463,222,50,14 | bottom-right |
+
+- **No Cancel button.** There is no Cancel or Help button. Esc and the close box go through `OnCancel`. [CHD:211-219]
+- **Hidden mnemonic.** The hidden "Show un&modified files" checkbox still owns Alt+M; whether a hidden control's mnemonic fires could not be established from source.
+- **Resizing.** Every checkbox is widened to fit its text (`AdjustControlSize`). [CHD:106-111]
+- **Theme.** The list gets the background image `IDI_CFM_BKG` and the dialog follows the dark theme. [CHD:103, 132]
+
+#### 5.3.3 Checkboxes: defaults, persistence, effect
+
+| Checkbox | Default | Persisted | Effect [CHD:263-309, 450-462, 221-245] |
+|---|---|---|---|
+| Show unversioned files | `HKCU\Software\TortoiseGit\AddBeforeCommit` (default TRUE) [CHD:82-83] | yes, written on click; the same value drives the Commit dialog's "Show Unversioned Files" and the Log's View option | If unversioned files are already loaded, the list is re-filtered. Otherwise, when turned on, the dialog reloads. |
+| Show ignore local changes flagged files | FALSE [CHD:36] | no | Adds assume-valid and skip-worktree entries (group 3); re-filters or reloads as above |
+| Show ignored files | FALSE [CHD:35] | no | Adds ignored files (group 2); re-filters or reloads as above |
+| Show unmodified files (hidden) | 0 [CHD:34] | no | Sets `GITSLC_SHOWNORMAL`, which is 0, so it has no effect. Its click handler also rewrites `AddBeforeCommit`. [CHD:280-287] |
+| Show all staged files | `HKCU\Software\TortoiseGit\TortoiseProc\ChangedFilesIncludeStaged` (default TRUE) [CHD:89-90] | yes, on click | Sets `m_bIncludedStaged`. Staged changes are then listed **for the whole repository**, even outside the given paths (the staged `diff-index` runs without a pathspec). Reloads. [CHD:167; GIT:3505-3509] |
+| Show Whole Project | `HKCU\Software\TortoiseGit\TortoiseProc\ShowWholeProject\<repo root with ':' replaced by '_'>` (default FALSE) [CHD:85-88] | yes, on click; per repository; **the same key as the Commit dialog's checkbox** [CD:218-221] | Loads with no path list (the whole repository) and puts the repository root in the title. Reloads. |
+
+**Enabled states** [CHD:154-159, 182-193]:
+
+- **While loading**: Refresh and every checkbox except Show Whole Project are disabled.
+- **After loading**:
+  - "Show unversioned files" and "Show ignored files" are enabled only when exactly one path was given and it is a directory or the repository root. With a single file or several paths they stay disabled, but they keep their value, which still decides what is loaded.
+  - "Show ignore local changes flagged files" and "Show all staged files" are always enabled.
+  - "Show Whole Project" is never disabled by the thread.
+
+#### 5.3.4 Buttons and the branch link
+
+- **OK** closes the dialog. While a load is running, the button reads "Cancel" [POT:2280]. Clicking it, or pressing Esc, sets the cancel flag instead of closing. [CHD:153, 187, 201-219]
+- **&Refresh** and **F5**, in any control (`PreTranslateMessage`), start a reload. If one is already running, nothing happens. [CHD:330-355]
+- **Commit** opens the Commit dialog through `CAppUtils::Commit` [CHD:365-385; AU:3062-3140]. The path is the single file, if exactly one file was given; otherwise it is the directory of the common root of the path list. The Commit dialog also receives the whole-project state, an empty message and `SelectFilesForCommit` (default TRUE). This dialog reloads when the Commit dialog closes.
+- **Stash** shows a menu below the button, aligned left, excluding the button rectangle. Every entry reloads the list afterwards. [CHD:387-433]
+
+  | Entry | When shown | Action |
+  |---|---|---|
+  | "Stash changes" [POT:8924] (`IDI_SHELVE`) | always | `CAppUtils::StashSave` |
+  | "Stash Pop" [POT:8916] | when the repository has a stash (`HasStashDir`) | `CAppUtils::StashPop(hWnd, 2)` |
+  | "Stash Apply" [POT:8884] | when the repository has a stash | `CAppUtils::StashApply(hWnd, "", false)` |
+  | "Stash List" [POT:8900] | when the repository has a stash | RefLog dialog on `refs/stash` |
+
+- **Save unified diff** runs `TortoiseGitProc /command:showcompare /unified /path:<p> /revision1:HEAD /revision2:<working-copy ref>`, plus `/alternative` when Shift is held. [CHD:435-448] `<p>` depends on the path list:
+  - a single file: that file;
+  - whole-project mode: the repository root (an empty relative path);
+  - otherwise: the directory of the common root.
+
+  `showcompare /unified` writes the unified diff to a read-only temp file and opens it in the unified diff viewer. **No file is saved by this button**; saving would happen in the viewer. [SCC:24-42; AU:913-935]
+- **Branch link** (`IDC_BRANCH`): clicking it runs `CAppUtils::Switch` (the Switch/Checkout dialog) and reloads if that returns true. [CHD:323-328]
+
+#### 5.3.5 Loading
+
+Loading runs in `ChangedStatusThread` on a worker thread (`AfxBeginThread`); a re-entry flag blocks a second load. [CHD:150-199, 345-355] The thread does the following, in order:
+
+1. Relabel OK as "Cancel"; disable the controls listed in 5.3.3; clear the branch link.
+2. Refresh the index stat data (`RefreshGitIndex`).
+3. Store the scroll position; clear the list.
+4. Set `m_bIncludedStaged`; call `GetStatus` with:
+   - the path list (or none in whole-project mode);
+   - `bUpdate` = registry `CheckRepo` (default FALSE);
+   - the ignored, unversioned and local-changes-ignored flags from the checkboxes.
+
+   On failure, the list's error text becomes the empty-list text.
+5. `Show(VERSIONEDBUTNORMALANDEXTERNALS | [UNVERSIONED] | [IGNORED] | [ASSUMEVALID|SKIPWORKTREE])` with no check mask.
+6. Update the statistics and the title; set the branch link to the current branch; relabel OK as "OK"; re-enable the controls.
+
+**While loading**, the list paints "Please wait..." [POT:7093].
+
+**Empty result.** When nothing is shown, it paints "No files to show with the current setting.\nCheck one or more settings below to see unversioned, ignored and/or unmodified files." [POT:6423; CHD:104]
+
+**Reload triggers**:
+
+- dialog opening;
+- Refresh and F5;
+- turning on Show unversioned / ignored / local-changes-ignored when that data is not loaded yet;
+- Show all staged files;
+- Show Whole Project;
+- Commit, Stash and Switch;
+- any list command that sends `GITSLNM_NEEDSREFRESH` (Add, Revert of added files, Ignore, Delete with index changes, LFS, Resolve with errors, and so on). [CHD:311-315]
+
+The dialog does not watch the file system.
+
+#### 5.3.6 Statistics line
+
+`IDC_INFOLABEL` shows the full statistics string of 5.2.7 with " = " replaced by "=" and newlines replaced by ", ". [CHD:357-363] The format is:
+
+```
+line: <added>(+) <removed>(-) files: normal=0, non-versioned=N, modified=N, added=N, deleted=N, conflicted=N
+```
+
+It is updated after each load, after each checkbox re-filter, and on `GITSLNM_ITEMCOUNTCHANGED`. [CHD:317-321] The control's "n files selected, n files total" counter is **not** shown in this dialog, because no stat label is attached.
+
+#### 5.3.7 The file list in this dialog
+
+- **Init.** `Init(COLEXT | COLSTATUS | COLADD | COLDEL | COLMODIFICATIONDATE, L"ChangedDlg", GITSLC_POPALL ^ (POPSAVEAS | POPRESTORE | POPPREPAREDIFF), false)`. This means no checkboxes, `bHasWC` = true, and all columns allowed. [CHD:101]
+- **Default columns**: **Path | Extension | Status | Lines added | Lines removed | Last Modified**. Filename and Size can be added from the header menu, and LFS Lock Owner too when the repository has LFS. Settings are stored under `StatusColumns\ChangedDlg`.
+- **Rows** use the colours of 5.2.5. Groups appear as soon as unversioned, ignored or flagged files are shown, or changelists exist. The list is multi-select (no `LVS_SINGLESEL`) [RC:193] and unsorted until a header is clicked.
+- **Context menu**: everything in 5.2.8 except "Save revision to...", "Mark for comparison"/"Diff with" and "Restore after commit"/"Restore", which the mask removes. Compared with the Log dialog's list (1.11.2), this dialog **adds the changelist items** (Log removes them) and **removes Save revision to... and Mark for comparison**. Because the list has no checkboxes, right-clicking a group header shows no menu.
+- **Double-click and Enter**: working tree against HEAD in the diff tool, as in 5.2.9.
+- **Drag and drop**: dragging out works; dropping in is refused, because `EnableFileDrop` is never called.
+- **Keys**: as in 5.2.9, plus F5 for the dialog.
+
+#### 5.3.8 Subfolder, root, file, several paths
+
+- **Repository root** (relative path empty): "Show Whole Project" is forced checked and **disabled** [CHD:93-97]. This forced value is not written to the registry. The title shows the repository root. Show unversioned and Show ignored are enabled.
+- **Subfolder**: the git commands get the folder as pathspec (5.2.2). Staged files elsewhere still appear while "Show all staged files" is on. "Show Whole Project" is enabled; its per-repository saved value may already be on, in which case the whole repository is listed and the title shows the root. Paths stay relative to the repository root in the Path column; they are not made relative to the subfolder.
+- **Single file**: the same, with that file as pathspec. Show unversioned and Show ignored are disabled after loading. Paths passed explicitly are remembered as "direct files" (`m_setDirectFiles`). That only matters for dialogs that pass `SHOWDIRECTFILES` in their check mask, which this one does not. [GSLC:406-412]
+- **Several paths** (`/pathfile`): each git command runs once per path and the outputs are concatenated [GIT:3478-3524; TGP:1126-1166]. The title uses the common directory, and Show unversioned and Show ignored are disabled after loading. Commit and Save unified diff use the common root's directory.
+
+### 5.4 Commit dialog (`CCommitDlg`, `IDD_COMMITDLG`)
+
+#### 5.4.1 Entry and window
+
+- **Entry.** `/command:commit` takes the paths (`/path` or `/pathfile`), plus `/logmsg:<text>` or `/logmsgfile:<file>` (not both), `/bugid:<id>` and `/wholeproject`. [CC:27-56] `CAppUtils::Commit` first checks that `user.name` and `user.email` are set (`CheckUserData`). It then shows the dialog once and, after it closes with OK, runs the chosen post-commit action (5.4.8). [AU:3062-3140]
+- **Template.** `IDD_COMMITDLG DIALOGEX 0,0,359,318`, caption "Commit", resizable, with minimize and maximize boxes. [RC:245-248]
+- **Title and placement.** The title is `<path> - Commit - TortoiseGit`, with the same path rules as 5.3.1 [CD:1551-1565]. Size and position are saved (`EnableSaveRestore(L"CommitDlg")`). The splitter position is saved as `HKCU\Software\TortoiseGit\TortoiseProc\ResizableState\CommitDlgSizer`, unscaled. [CD:410-430, 1331-1341]
+- **Whole project forced.** `m_bWholeProject2` (whole project, fixed) is set when the path list is empty, or is the single empty path (the repository root). [CD:230-234]
+
+#### 5.4.2 Layout (top to bottom)
+
+Controls from RC:249-297; anchors from CD:360-406.
+
+| Control | ID | Label / type | Rect (DLU) | Notes |
+|---|---|---|---|---|
+| "Commit to:" | `IDC_COMMITLABEL` | static | 6,7,46,8 | |
+| Branch | `IDC_COMMIT_TO` | read-only borderless edit | 48,7,68,12 | current branch, set after each load [CD:1433] |
+| New branch name | `IDC_NEWBRANCH` | edit, hidden | 46,5,68,12 | replaces the branch edit when "new branch" is checked [CD:3026-3041] |
+| "new branch" | `IDC_CHECK_NEWBRANCH` | auto checkbox | 117,5,66,12 | disabled while a merge is in progress [CD:475-478] |
+| "Bug-ID/Issue-Nr:" | `IDC_BUGIDLABEL` | static, right-aligned | 177,6,68,8 | shown only when the bugtraq message (`sMessage`) is configured; the text comes from the bugtraq label when one is set [CD:302-320] |
+| Bug ID | `IDC_BUGID` | edit | 249,3,46,14 | same condition; Enter moves focus to the message [CD:1671-1677] |
+| "{BugTraq}" | `IDC_BUGTRAQBUTTON` | button, hidden and disabled | 299,3,53,14 | shown with the provider's link text when an issue-tracker provider is associated [CD:277-301] |
+| "&Message:" | `IDC_MESSAGEGROUP` | group box | 6,19,346,135 | |
+| Message | `IDC_LOGMESSAGE` | Scintilla | 13,32,331,72 | 5.4.3 |
+| line/column | `IDC_TEXT_INFO` | static, right-aligned | 299,105,45,8 | `<line>/<column>`, 1-based, updated on every caret move [CD:2836-2848] |
+| "Amend &Last Commit" | `IDC_COMMIT_AMEND` | auto checkbox, initially disabled | 14,111,135,10 | tooltip [POT:10189] |
+| "Show diff to last commit" | `IDC_COMMIT_AMENDDIFF` | auto checkbox, hidden and disabled | 212,110,132,10 | shown while amending |
+| "Set author &date" | `IDC_COMMIT_SETDATETIME` | auto checkbox | 14,125,102,10 | |
+| Date / Time | `IDC_COMMIT_DATEPICKER` / `IDC_COMMIT_TIMEPICKER` | date picker / time picker (up-down), hidden | 123,123,66,13 / 193,123,61,13 | shown while "Set author date" is checked; range 1970-01-01 to 2099-12-31 [CD:238-240] |
+| "Reset" | `IDC_COMMIT_AS_COMMIT_DATE` | auto checkbox, hidden and disabled | 259,125,85,10 | shown while amending with a date set; tooltip "Use the current time by setting the author date to the commit date." [POT:10163] |
+| "Set au&thor" | `IDC_COMMIT_SETAUTHOR` | auto checkbox | 14,139,102,10 | |
+| Author | `IDC_COMMIT_AUTHORDATA` | edit (read-only until "Set author" is checked) | 123,137,119,13 | `user.name <user.email>`; HEAD's author while amending [CD:1521-1535, 3081-3097] |
+| "Add &Signed-off-by" | `IDC_SIGNOFF` | button | 258,137,86,13 | |
+| Splitter | `IDC_SPLITTER` | `CSplitterControl` | 6,157,346,5 | moves the message group against the list group; range from 120 px below the message top to 80 px above the list bottom [CD:2599-2612, 2614-2704] |
+| "Changes made (F5: refresh, double-click on file for diff):" | `IDC_LISTGROUP` | group box | 6,162,346,126 | |
+| "Check:" + links | `IDC_SELECTLABEL`, `IDC_CHECKALL`… | static + link controls: "&All", "&None", "Unversioned", "Versioned", "Added", "Deleted", "Modified", "Files", "Submodules" | y=172 | laid out left to right, 9 px apart [CD:344-355] |
+| File list | `IDC_FILELIST` | `CGitStatusListCtrl` **with checkboxes** | 14,184,330,62 | |
+| "Staging support (EXPERIMENTAL)" | `IDC_STAGINGSUPPORT` | auto checkbox | 14,252,180,10 | |
+| "Show &Unversioned Files" | `IDC_SHOWUNVERSIONED` | auto checkbox | 14,263,135,10 | |
+| Statistics | `IDC_STATISTICS` | static, right-aligned | 149,247,195,8 | "%1!d! files selected, %2!d! files total"; its tooltip is the statistics string [CD:252, 1434] |
+| "View Patch>>" | `IDC_VIEW_PATCH` | link | 259,260,76,8 | becomes "Hide Patch<<" [POT:10310, 5049] |
+| "Partial Staging>>" / "Partial Unstaging>>" | `IDC_PARTIAL_STAGING` / `IDC_PARTIAL_UNSTAGING` | links, hidden | 259,268 / 259,276 | shown in staging mode instead of View Patch; they become "Hide Staging<<" / "Hide Unstaging<<" [POT:6923, 6927, 5053, 5057] |
+| "Do not autoselect submodules" | `IDC_NOAUTOSELECTSUBMODULES` | auto checkbox | 14,274,147,10 | |
+| "Show &Whole Project" | `IDC_WHOLE_PROJECT` | auto checkbox | 14,290,109,10 | disabled when `m_bWholeProject2` [CD:1480] |
+| "Message onl&y" | `IDC_COMMIT_MESSAGEONLY` | auto checkbox | 14,301,107,10 | tooltip [POT:1709] |
+| Merge active | `IDC_MERGEACTIVE` | icon, hidden | 147,291,18,17 | shown while `MERGE_HEAD` exists; tooltip [RC:4052] |
+| "C&ommit" | `IDOK` | `CMenuButton`, initially disabled | 171,297,69,14 | 5.4.7 |
+| "Cancel" | `IDCANCEL` | button | 247,297,50,14 | |
+| "Help" | `IDHELP` | button | 302,297,50,14 | |
+
+There are no collapsible sections; the only layout control is the splitter. When a merge is in progress, an information box says the commit is a merge commit [POT:9260]; it can be suppressed with "do not show again" (`CommitMergeHint`). [CD:475-481]
+
+#### 5.4.3 Message editor
+
+- **Initial text.** When no message was passed in, the editor starts with the file named by `commit.template` (unless amend is forced). If `<worktree admin dir>SQUASH_MSG` and then `MERGE_MSG` exist, they are loaded in that order. [CD:156-205] The caret is placed at the start. [CD:322-327]
+- **Font.** The log font (`CAppUtils::GetLogFontName/Size`). [CD:261]
+- **Width marker.** With `tgit.logwidthmarker` = N, the editor draws an edge line at column N and turns word wrap **off**. Without it, it wraps by word. [SCE:339-361; PP:92-97]
+- **Spell checking** is on unless `Spellchecker` is 0. It tries the Windows spell checker for the user or project language first, and hunspell dictionaries otherwise. Suggestions appear as an autocompletion list. [SCE:247-317, 744-783]
+- **Autocompletion** is on unless `Autocompletion` is 0. It opens after `AutoCompleteMinChars` characters (default 3). [CD:1469-1474; SCE:245] The word list is built after each load on the status thread and holds [CD:1939-2136]:
+  - every listed path, and each of its suffixes after a `/` (plus the name without extension when `AutocompleteRemovesExtensions` is set);
+  - identifiers matched in the listed files' contents by the per-extension regexes in `autolist.txt` (application directory, then the user's app-data directory). Unversioned files are skipped unless `AutocompleteParseUnversioned` is set. Files above `AutocompleteParseMaxSize` (300000 bytes) are skipped, and parsing stops after `AutocompleteParseTimeout` seconds (5);
+  - snippets from `snippet.txt`, which insert their expansion (`\t`, `\n`, `\r`, `\\` are escapes).
+- **Styling.** `StyleCommitMessages` (default on) styles `*bold*`-style markup, as in 1.13. Bug IDs and URLs are recognised through the bugtraq regexes. [SCE:244, 339-345]
+- **Context menu.** The editor's own context menu gets these items added [CD:2139-2165, 2167-2261]:
+  - "Pick commit &hash" [POT:7024]: a Log dialog in single-select mode; inserts the chosen hash
+  - "Pick commit &message" [POT:7028]: inserts the chosen commit's subject + CRLF + body
+  - "Paste &filename list" [POT:6943]: one line per checked row, `%-10s %s` (status, path), with unversioned rows shown as "Added"
+  - only when the history is not empty: "Paste &last commit message" [POT:6947] and "Paste r&ecent message..." [POT:6951] (the history dialog)
+- **Message history.** At most `MaxHistoryItems` (default 25) entries [CD:223], stored under `HKCU\Software\TortoiseGit\History\commit<m_ListCtrl.m_sUUID>` (':' replaced by '_'), value name `logmsgs` [CD:1348-1354]. A message is added after a commit, and on cancel when it was changed. While amending, the replaced pre-amend text is added too. [CD:1069-1080, 1601-1612]
+- **Keys** [RC:3486-3490; CD:1641-1684]:
+  - Alt+M focuses the message and Alt+F the file list (`IDR_ACC_COMMITDLG`).
+  - **Ctrl+Enter** commits, if Commit is enabled.
+  - F5 refreshes, unless a commit is running.
+
+#### 5.4.4 Options: labels, defaults, persistence, git mapping
+
+| Option | Default | Persisted | Effect |
+|---|---|---|---|
+| Amend Last Commit | off; enabled after the first load unless a cherry-pick is in progress; forced off in a repository without commits; forced on by `m_bForceCommitAmend` [CD:1484-1499] | no | Puts HEAD's subject + "\n" + body in the editor; the previous text is kept and restored when unticked. Shows "Show diff to last commit". Reloads the list against `HEAD~1` (`m_ListCtrl.m_amend`). The author field shows HEAD's author. Passes `--amend`. [CD:2747-2789, 859-860, 1403] |
+| Show diff to last commit | off | no | When on, the list and index are computed against HEAD instead of `HEAD~1`, so only the new changes show. It lets Commit be enabled with nothing checked. After the reload, it is enabled when HEAD has a parent; when HEAD has no parent it is forced on. [CD:1500-1518, 2537, 2974-2978] |
+| Set author date | off | no | Shows the date and time pickers, initialised to now, or to HEAD's author date while amending. Passes `--date=<YYYY-MM-DD>T<HH:MM:SS>` (local time, no zone). [CD:2986-3018, 862-879] |
+| Reset (only while amending with a date) | off | no | Disables the pickers and passes `--date=now`. [CD:875-876, 3020-3024] |
+| Set author | off | no | Makes the author field editable. Passes `--author=<quoted text>`. [CD:880-892] |
+| Add Signed-off-by (button) | – | – | Appends `Signed-off-by: <user.name> <<user.email>>` if not already present. It trims trailing whitespace, adds an empty line unless the last line already contains "-by: ", and ends with CRLF. [CD:2715-2745] |
+| new branch | off | no | Before committing: `git.exe branch -- <name>` then `git.exe checkout --end-of-options <name> --`. The name is validated, existing branches are refused, and a tag with the same name asks first. [CD:602-626, 777-797] |
+| Message only | off | no | Disables the list. Commits with `--allow-empty`, and no files are staged or reset. [CD:2791-2796, 893] |
+| Show Unversioned Files | `AddBeforeCommit` (TRUE) | yes: on click, and again on OK [CD:1065] | Lists unversioned files, unchecked by default. [CD:1415-1416, 1727-1750] |
+| Do not autoselect submodules | `DoNotAutoselectSubmodules` (FALSE) | yes, **on OK only** [CD:1066] | Submodule (directory) rows are not checked automatically; reloads. [CD:225-226, 1405, 2980-2984] |
+| Show Whole Project | `ShowWholeProject\<repo>` (FALSE), shared with 5.3 | yes, on click | Loads without path restriction. [CD:2798-2824] |
+| Staging support (EXPERIMENTAL) | git config `tgit.commitstagingsupport` | yes: written to the repository's local git config on toggle [CD:3102; `Git.h:419` (`SetConfigValue` defaults to `CONFIG_LOCAL`)] | Turns on three-state checkboxes that stage and unstage at once (5.2.6), shows the Partial Staging and Partial Unstaging links instead of View Patch, and skips the index rewrite at commit time. Shows a hint once [POT:10415]. [CD:3099-3138] |
+| View Patch | git config `tgit.commitshowpatch` | yes | Opens a docked patch window showing `git.exe diff HEAD[~1] -- <file>` for the selected rows. In staging mode it shows "index to working tree" or "HEAD to index" (with `--cached`) for one file, and allows hunk staging. [CD:2409-2488, 2862-2935] |
+| Keep changelists (list context menu) | `KeepChangeLists` (FALSE) | yes | When off, files that were committed are removed from their changelists after a successful commit. [CD:995-999] |
+
+**"Check:" links.** Each link calls `Check(mask, true)`; Shift+click unchecks instead. [CD:2504-2528] The masks are:
+
+| Link | Mask |
+|---|---|
+| All | `SHOWEVERYTHING` |
+| None | `SHOWEVERYTHING` (unchecks) |
+| Unversioned | `SHOWUNVERSIONED` |
+| Versioned | `SHOWVERSIONED` |
+| Added | `SHOWADDED` |
+| Deleted | `SHOWREMOVED` |
+| Modified | `SHOWMODIFIED` |
+| Files | `SHOWFILES` |
+| Submodules | `SHOWSUBMODULES` |
+
+Each link is enabled only when the list has entries of its kind. [CD:3068-3079]
+
+#### 5.4.5 The file list in this dialog
+
+- **Init.** `Init(COLEXT | COLSTATUS | COLADD | COLDEL, L"CommitDlg", GITSLC_POPALL ^ (POPCOMMIT | POPSAVEAS | POPPREPAREDIFF), true, true)`. It has checkboxes, the stat label `IDC_STATISTICS`, the empty text "No files were changed or added since\nthe last commit." [POT:6427], file drops enabled, and the background `IDI_COMMIT_BKG`. [CD:251-256]
+- **Context menu.** It has no "Commit...", "Save revision to..." or "Mark for comparison". It keeps "Restore after commit"/"Restore": marked files are copied back after the commit or on cancel, after asking [POT:10585] [CD:3043-3066]. It keeps the changelist items.
+- **Load** [CD:1356-1549]: `m_bIncludedStaged` = true, so all staged files of the repository are listed. `m_amend` follows the amend options. `GetStatus(paths or none, ..., bGetStagingStatus = staging mode)` is called, plus the unversioned list when shown. The flags are then:
+  - `dwShow` = `VERSIONEDBUTNORMALANDEXTERNALSFROMDIFFERENTREPOS | INCHANGELIST | DIRECTFILES`, plus `UNVERSIONED` when `AddBeforeCommit` is set.
+  - `dwCheck` = `dwShow` without UNVER when `SelectFilesForCommit` is on, else 0.
+
+  So by default every versioned change is checked and every unversioned file is unchecked. Files in `ignore-on-commit` are unchecked, and submodules too when "Do not autoselect submodules" is on.
+- **Nothing to commit.** When nothing is listed but unversioned files exist (and no merge is in progress), a box asks "No files were changed or added since\nthe last commit.\nDo you want to see the unversioned files?" [POT:6431]. Yes ticks Show Unversioned Files. [CD:1446-1458]
+- **Dropping files** from Explorer that belong to the same repository runs `git.exe add -- <path>` and adds the path to the path list if it is not covered yet. The list refreshes 200 ms later, debounced. [CD:1780-1843, 2281-2293]
+- **Meaning of a checked row (non-staging mode).** Checked rows are what gets committed. Before `git commit`, the index is rewritten to match the check state (5.4.6).
+
+#### 5.4.6 Commit sequence (OK)
+
+`OnOK` [CD:569-1098]:
+
+1. If the status thread is running, cancel it.
+2. If any row is conflicted: "One or more files are in a conflicted state." [POT:6690], with OK and Ignore buttons (`CommitWarnOnUnresolved`). OK selects the first conflicted row and stops.
+3. Validate the new branch name, and validate the bug ID ("Only numbers (optionally separated by commas)\nare allowed!" [POT:6722]).
+4. Check the message:
+   - An empty message is refused: "You must enter a log message for the commit" [POT:10589].
+   - With `bugtraq.warnifnoissue`: "You haven't entered an issue number! ..." [POT:10577].
+   - When the template was not edited: [POT:10551], with "do not show again" remembering only "proceed".
+   - With `tgit.warnnosignedoffby` and no sign-off line: "You haven't entered your Signed-Off-By line!" [POT:10581], with buttons "&Add it", "&Commit w/o" and Abort.
+   - Conflict-marker hints in the message stop the commit (`MessageContainsConflictHints`).
+5. **pre-commit hook** (TortoiseGit client hook), with the checked paths and the message. On a non-zero exit code, a task dialog "Hook script failed" offers "&Abort" (the default) or "&Proceed anyway". [POT:9350, 5105, 295, 982]
+6. **Dirty checked submodules.** For each checked submodule, `git.exe diff -- <sub>` ending in `-dirty`, or `git.exe status --porcelain` inside an unversioned one, asks [POT:9460] with Commit / Ignore / Cancel. Commit starts a separate commit dialog for the submodule and stops this one.
+7. **Index preparation** (skipped in staging mode and with Message only). A "Preparing commit..." / "Updating index" progress window appears for 25 or more rows. [CD:1100-1329]
+   - **libgit2 path** (`UsingLibGit2(GIT_CMD_COMMIT_UPDATE_INDEX)`): each checked row is added to the index by path (deleted rows are removed), and a renamed row's old path is removed. Each unchecked versioned row is reset to its entry in HEAD's tree (`HEAD~1` when amending without "Show diff to last commit"). Unchecked added and renamed rows are removed from the index and queued for re-adding.
+   - **git.exe path**, for checked rows:
+     - unversioned files, and directories that are not deleted: `git add -f`
+     - deleted files: `git update-index --force-remove`
+     - other checked files: `git update-index`
+     - a renamed row's old path: `git rm --ignore-unmatch`
+   - **git.exe path**, for unchecked rows:
+     - added or renamed: `git rm -f --cache`, plus a re-add queued; for a rename, its old path goes through `git reset [HEAD~1]` and a re-delete is queued
+     - other versioned rows: `git reset [HEAD~1]`
+   - These run as `CMassiveGitTask` batches; how the batches are split could not be established from source (5.6).
+8. Create and check out the new branch, if requested.
+9. **Detached HEAD.** "Current HEAD is detached, you are working on (no branch).\nDo you want to create a branch now?" [POT:3278] with Yes/No/Cancel. Yes opens the create-branch dialog.
+10. **Bug ID into the message.** The bug ID is written into the message with the bugtraq template (`%BUGID%`), appended or prepended. Then the provider's `CheckCommit` runs. [CD:1617-1639, 802-839]
+11. **Commit or stop.** It commits when Message only is on, or when preparation succeeded and something is checked (or staging mode, amend, or a merge in progress). Otherwise it shows "Nothing to commit" [POT:6561] titled "Commit Finish" [POT:2722]. [CD:841, 1058-1062]
+12. **The commit.** The message is written as UTF-8 to a temp file. Then the dialog runs **`git.exe commit [--author=<a>] [--date=<d>] [--amend] [--allow-empty] -F <tempfile>`** in the git progress dialog (`CProgressDlg`, command line not shown). That dialog auto-closes when there were no errors and the chosen button entry is not plain Commit. [CD:845-919] Its post-command buttons are:
+    - "SVN DCommit..." (git-svn repositories only)
+    - "Pus&h..."
+    - "&Pull..."
+    - "&ReCommit"
+    - "Create &Tag..."
+
+    [POT:8010, 7277, 994, 1006, 3170]
+
+    They are offered only on success and when post actions are allowed.
+13. **After the command**:
+    1. Issue-tracker `OnCommitFinished` runs.
+    2. "Restore after commit" files are copied back.
+    3. The queued re-add and re-delete batches run (`git add --ignore-errors -f`, `git rm --cached --ignore-unmatch`), unless `ReaddUnselectedAddedFilesAfterCommit` is 0. They restore the user's staging of unchecked added files.
+    4. The **post-commit hook** runs; a failure keeps the dialog open.
+    5. Changelists are pruned unless Keep changelists is on.
+
+    [CD:928-1000]
+14. **Close or stay.** On failure or ReCommit the dialog stays open. For ReCommit, the message resets to the template, the amend, date and author options reset, the start-commit hook runs again and the list reloads. Otherwise the dialog closes; with "Commit && &Push" selected, the push happens next (5.4.7). [CD:1002-1098]
+
+The **start-commit hook** runs when the dialog opens, before anything is loaded, and again on ReCommit. If it fails and the user aborts, the dialog closes. [CD:209-213, 3140-3162]
+
+**Status thread** (`StatusThread`, started on open, F5, and when options change) [CD:1356-1549, 1686-1725]:
+
+- It disables Commit, the options and the links while it runs.
+- It refreshes the index and loads the list (above), then sets the branch, title, author and links.
+- It builds the autocompletion list.
+- Cancelling or committing while it runs waits up to 5 s for it to stop, then kills it.
+
+#### 5.4.7 Buttons
+
+- **Commit button.** "C&ommit" (`IDOK`) is a `CMenuButton` with three entries: "C&ommit", "&ReCommit" and "Commit && &Push" [POT:2234, 1006, 2710]. The last-used entry is the default, persisted as `CommitLastAction` (default 0). Each entry's mnemonic with **Alt** (Alt+O, Alt+R, Alt+P) selects that entry and commits at once. [CD:491-530, 2576-2593, 921-922] When post actions are disabled, the entries are not added.
+  - **Commit** commits and closes. The progress dialog's buttons can then pick DCommit, Push, Pull or Create Tag, which run after the dialog closes. ReCommit from the progress dialog keeps it open. [AU:3100-3116]
+  - **ReCommit** commits, keeps the dialog open and reloads. [CD:923-924, 1090-1095]
+  - **Commit & Push** commits, closes, then pushes. If the current branch has a push remote and branch configured and this was not an amend, it pushes directly (`CAppUtils::DoPush`). Otherwise it opens the Push dialog. [CD:553-567, 1086-1088]
+- **Enabled state.** Commit is enabled only when the trimmed message is not empty and at least `tgit.logminsize` characters long, **and** one of these holds [CD:2530-2542]:
+  - Message only is on;
+  - at least one row is checked;
+  - amend with "Show diff to last commit" is on;
+  - a merge is in progress.
+- **Cancel** asks "Are you sure you want to cancel?\n\nHint: Recently used commit messages are available using the context menu of the text field." [POT:1834, 5089] when the message was changed or the list is not empty. No is the default button, and there is a "do not show again" (`CommitAskBeforeCancel`). Cancel then offers to restore "Restore after commit" files and saves a changed message to the history. [CD:1567-1615]
+- **Help** opens the help page; its handler was not examined.
+
+#### 5.4.8 What runs after the dialog closes
+
+`CAppUtils::Commit` runs `m_PostCmd`, which was chosen in the progress dialog [AU:3100-3116]:
+
+| `m_PostCmd` | Runs |
+|---|---|
+| DCommit | `SVNDCommit` |
+| Push | `CAppUtils::Push` (the Push dialog) |
+| CreateTag | `CreateBranchTag(tag)` |
+| Pull | `CAppUtils::Pull` |
+
+The loop around the dialog never repeats: `bFailed` is never set to true. [AU:3071-3138]
+
+### 5.5 Other dialogs that embed the list
+
+| Dialog | Columns visible (allowed) | Context-menu mask | Checkboxes | Show / check masks | Extras |
+|---|---|---|---|---|---|
+| Log (`IDD_LOGMESSAGE`, 1.11.2) | Ext, Status, +, − (only these) | `POPALL ^ (RESTORE \| CHANGELISTS)` | no | `SHOWVERSIONED` [+ `UNVERSIONED`] on a commit's file list (`UpdateWithGitPathList`) | `bHasWC` = repository not bare [`LogDlg.cpp:308, 1024-1032`] |
+| Check for modifications (5.3) | Ext, Status, +, −, Last Modified (all) | `POPALL ^ (SAVEAS \| RESTORE \| PREPAREDIFF)` | no | see 5.3.5 | |
+| Commit (5.4) | Ext, Status, +, − (all) | `POPALL ^ (COMMIT \| SAVEAS \| PREPAREDIFF)` | yes; three-state in staging mode | see 5.4.5 | stat label, file drop |
+| Revert (`IDD_REVERT`) | Ext, Status, +, − (all) | `POPALL ^ (COMMIT \| RESTORE \| CHANGELISTS)` | yes | show `VERSIONEDBUTNORMALANDEXTERNALSFROMDIFFERENTREPOS \| DIRECTFILES`, check `DIRECTFILES \| ADDED` (only the paths the user passed, and added files) | confirm button = OK, select-all checkbox, file drop [`RevertDlg.cpp:65-70, 117-123`] |
+| Add (`IDD_ADD`) | Ext (Ext, Last Modified, Size) | `POPALL ^ (ADD \| COMMIT \| CHANGELISTS \| PREPAREDIFF)` | yes | show `UNVERSIONED \| DIRECTFILES` [+ `IGNORED` when "include ignored" is on], check `UNVERSIONED` | loads unversioned (and ignored); confirm = OK; empty text `IDS_ERR_NOTHINGTOADD` [`AddDlg.cpp:63-70, 145-153`] |
+| Resolve (`IDD_RESOLVE`) | Ext (all) | `POPALL ^ (IGNORE \| ADD \| COMMIT \| EXPORT \| RESTORE \| SAVEAS \| PREPAREDIFF \| CHANGELISTS)` | yes | show `CONFLICTED`, check `CONFLICTED` | confirm = OK, file drop [`ResolveDlg.cpp:60-65, 143-145`] |
+| LFS locks (`IDD_LFS_LOCKS`) | Ext, LFS Lock Owner (Ext, Filename, Size, Last Modified, LFS Lock Owner) | `POPLFSLOCK \| POPLFSUNLOCK` only | yes | show and check `SHOWLFSLOCKS` | loads with `bShowLFSLocks`; confirm = Unlock button [`LFSLocksDlg.cpp:61-63, 107-109`] |
+| Rebase / Cherry-pick (`IDD_REBASE`) | Ext, Status, +, − (only these) | `POPALL ^ (COMMIT \| RESTORE \| CHANGELISTS)` | no | conflict view: `GetStatus(nullptr, true)`, show UNMERGED\|MODIFIED\|ADDED\|DELETED\|REPLACED, check UNMERGED; commit view: `SHOWVERSIONED` on a commit's files | [`RebaseDlg.cpp:243, 2468-2469, 2937-2944`] |
+| Sync, in/out change lists (`IDD_SYNC`) | Ext, Status, +, − (only these) | only `COMPARETWOREVISIONS \| GNUDIFF2REVISIONS` | no | two-revision diff lists (`m_Rev1`/`m_Rev2`); double-click runs `StartDiffTwo` | `bHasWC` = false [`SyncDlg.cpp:1053-1055, 1102-1104`] |
+| Sync, conflict list | Ext, Status, +, − (all) | `EXPLORE \| OPEN \| SHOWLOG \| CONFLICT \| RESOLVE` | no | show and check UNMERGED, after `GetStatus(nullptr, true)` | [`SyncDlg.cpp:1068-1070, 286-289`] |
+
+These dialogs were searched for an embedded `CGitStatusListCtrl` and none was found: Stash save, Delete and the Diff (`FileDiffDlg`) window. The only embedding dialogs found are the ones above. [grep of `src/TortoiseProc` for `CGitStatusListCtrl` members]
+
+### 5.6 Not established from source
+
+- **Double-click on an unversioned or ignored file.** It calls `CGitDiff::Diff(file, file, WorkingCopyRef, m_CurrentVersion.ToString())`, and in WC mode the second revision is the empty hash's string. `CGitDiff::Diff` then resolves it with `"^{}"` appended [GD:376]. Whether that succeeds, and what the user then sees (an error box or a diff against an empty file), was not established.
+- **Added files in WC mode.** `StartDiff` passes `m_CurrentVersion.ToString()` (empty) to `DiffNull` for an added file. How `DiffNull` treats that revision was not examined.
+- **The unified-diff command.** The exact git command behind "Save unified diff" and "Show changes as unified diff" is built by `CGit::GetUnifiedDiffCmd`, which was not examined. The unified diff viewer's own UI (where saving happens) was not examined either.
+- **What the list shows after reverting an added file.** Reverting an added file triggers a full refresh. What appears after that depends on the parent dialog.
+- **Group ordering and empty groups.** Whether Windows list views hide the always-empty "(no changelist)" group, and how groups are ordered on screen, depends on `ListView` behaviour that was not examined.
+- **Mnemonics.** Whether the hidden "Show un&modified files" checkbox still takes Alt+M.
+- **Dialog persistence.** Where `EnableSaveRestore` stores the dialog rectangle. The commit splitter key suggests `HKCU\Software\TortoiseGit\TortoiseProc\ResizableState\`, but the generic code was not examined.
+- **`CMassiveGitTask`.** How it splits long file lists into several git calls, and whether it inserts `--`.
+- **Folder Diff on a submodule.** Which repository becomes current when a folder Diff is run on a submodule's root folder (no `/submodule` is passed from Explorer). `SetCurrentDir` was not examined.
+- **Help.** The Help button's handler and the help topic it opens.
+- **History key.** The value of `m_sUUID`, used in the commit-message history key.

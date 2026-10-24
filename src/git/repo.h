@@ -94,7 +94,11 @@ enum action_bits : uint8_t
 struct file_change
 {
     std::string path, old_path;  // old_path set for renames and copies
-    char status = 'M';          // A, D, M, R, C, t
+    // A D M R C T; working-tree lists also '?' unversioned, 'U' conflicted,
+    // '!' ignored, 'S' skip-worktree and 'h' assume-unchanged (TortoiseGit's
+    // "local changes ignored").
+    char status = 'M';
+    bool staged = false;  // working tree: the change is (also) in the index
     size_t added = 0, removed = 0;
     bool binary = false;
     bool counted = true;  // false: added/removed not known yet

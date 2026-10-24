@@ -1,7 +1,7 @@
 // TortoiseGit's Rebase dialog (IDD_REBASE) [spec 2].
 #pragma once
 
-#include "log/file_model.h"
+#include "changes/file_model.h"
 #include "rebase/rebase_engine.h"
 #include "rebase/rebase_model.h"
 

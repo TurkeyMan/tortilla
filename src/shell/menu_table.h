@@ -61,6 +61,7 @@ enum class run
     diff,      // tortilla diff <first>: the working tree against HEAD
     rebase,    // tortilla rebase <folder>
     settings,  // tortilla settings <first>
+    repostatus,  // tortilla repostatus <every selected path>
 };
 
 struct row
@@ -133,7 +134,7 @@ inline constexpr row k_rows[] = {
     {"Check for modi&fications",
      {{{GIT, 0}, {FOLD | FIG, 0}}},
      place::sub,
-     run::none,
+     run::repostatus,
      "repostatus"},
     {"Rebase...", {{{FIG | ONE, BISECT | MERGE}}}, place::sub, run::rebase, "rebase"},
     {"Stash changes", {{{GIT | ONE, MERGE}}}, place::sub, run::none, "stashsave"},

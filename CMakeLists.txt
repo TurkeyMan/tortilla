@@ -65,7 +65,10 @@ add_executable(tortilla
     src/main.cpp
     src/log/log_window.cpp
     src/log/log_actions.cpp
-    src/log/log_file_actions.cpp
+    src/changes/changes_view.cpp
+    src/changes/changes_window.cpp
+    src/changes/working_tree.cpp
+    src/ui/stash_dialog.cpp
     src/rebase/rebase_window.cpp
     src/ui/compare.cpp
     src/ui/progress_dialog.cpp

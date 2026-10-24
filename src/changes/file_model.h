@@ -82,7 +82,8 @@ public:
         }
         case status: return status_name(f.status);
         case added: return f.binary || f.status == '?' || !f.counted ? "" : std::to_string(f.added);
-        case removed: return f.binary || f.status == '?' || !f.counted ? "" : std::to_string(f.removed);
+        case removed:
+            return f.binary || f.status == '?' || !f.counted ? "" : std::to_string(f.removed);
         }
         return {};
     }
@@ -91,7 +92,8 @@ public:
     rap::text_style style(size_t row, size_t) const override
     {
         if (row >= files_.size()) return {};
-        auto rgb = [](uint8_t r, uint8_t g, uint8_t b) { return rap::text_style{.fg = rap::color{r, g, b}}; };
+        auto rgb = [](uint8_t r, uint8_t g, uint8_t b)
+        { return rap::text_style{.fg = rap::color{r, g, b}}; };
         switch (files_[row].status)
         {
         case 'U': return rgb(255, 0, 0);
@@ -117,6 +119,9 @@ public:
         case 'T': return "Type change";
         case '?': return "Unversioned";
         case 'U': return "Conflicted";
+        case '!': return "Ignored";
+        case 'S': return "Skip worktree";
+        case 'h': return "Assume unchanged";
         }
         return std::string(1, s);
     }

@@ -114,6 +114,19 @@ log_window::log_window(rap::ui& ui, repo repo, std::string path)
     , path_(std::move(path))
     , log_(ui)
     , files_worker_(std::make_unique<repo_worker>(ui, path_))
+    , files_({.ui = ui,
+              .window = [this] { return window_.get(); },
+              .workdir = repo_.workdir(),
+              // Working-tree changes: git runs quietly, and the log reloads after.
+              .run =
+                  [this](const std::string& title, std::vector<std::vector<std::string>> commands)
+              {
+                  run_quietly(title, std::move(commands),
+                              [this](bool, const std::string&) { reload(); });
+              },
+              .refresh = [this] { reload(); },
+              .open_settings = [this](settings_page page) { open_settings(page); },
+              .selection_changed = [this] { update_status(); }})
 {
 }
 
@@ -149,8 +162,8 @@ void log_window::build()
                     .on_menu([this] { return filter_menu(); })
                     .tooltip("Filter options"),
                 drop_down{{"Author Email", "Committer Email", "Merge Point", "Parent 1", "Parent 2",
-                        "Tag", "Tag (FF)", "Branch", "Branch (FF)", "Selection History"},
-                       0}
+                           "Tag", "Tag (FF)", "Branch", "Branch (FF)", "Selection History"},
+                          0}
                     .bind(jump_type_),
                 button{"Jump up (Alt+Up)"}
                     .icon(jump_arrow(true))
@@ -170,29 +183,20 @@ void log_window::build()
                     .auto_scroll()
                     .bind(commit_list_)
                     .on_selection_changed([this] { selection_changed(); })
-                    .on_context_menu([this](std::optional<size_t> row) { return context_menu(row); })
+                    .on_context_menu([this](std::optional<size_t> row)
+                                     { return context_menu(row); })
                     .on_header_menu([this](size_t) { return header_menu(); })
                     .on_cell_drag(label_drag())
                     .on_activate([this](size_t row) { row_activated(row); })
                     .on_cell_context_menu([this](size_t row, size_t column, rap::point_f at)
-                                       { return cell_menu(row, column, at); })
+                                          { return cell_menu(row, column, at); })
                     .stretch(3),
                 // The details pane keeps its height: dragging the upper
                 // divider moves the lower one with it, taking space from the
                 // file list until that reaches its minimum. (TortoiseGit
                 // shrinks the details first [spec 1.3]; this is deliberate.)
                 text_view{}.read_only().compact().bind(details_).height(9_lines),
-                list{file_model::columns(), &files_}
-                    .compact()
-                    .soft_selection()
-                    .bind(file_list_)
-                    .on_selection_changed([this] { update_status(); })
-                    .on_activate([this](size_t row) { file_activated(row); })
-                    .on_context_menu([this](std::optional<size_t> row) { return file_menu(row, std::nullopt); })
-                    .on_cell_context_menu([this](size_t row, size_t column, rap::point_f)
-                                       { return file_menu(row, column); })
-                    .height(4_lines)
-                    .stretch(2),
+                files_.list("log.files").height(4_lines).stretch(2),
             }
                 .bind(splitter_)
                 .stretch(),
@@ -275,7 +279,6 @@ void log_window::save_layout()
     st.save_window("log.window", *window_);
     st.set_numbers("log.panes", splitter_->sizes());
     st.set_numbers("log.columns", commit_list_->column_widths());
-    st.set_numbers("log.files.columns", file_list_->column_widths());
     auto order = [](const std::vector<size_t>& o)
     {
         std::vector<float> v;
@@ -283,7 +286,7 @@ void log_window::save_layout()
         return v;
     };
     st.set_numbers("log.columns.order", order(commit_list_->column_order()));
-    st.set_numbers("log.files.columns.order", order(file_list_->column_order()));
+    files_.save_layout();
     std::string visible;
     for (size_t i = 0; i < log_model::column_count; ++i)
         visible += commit_list_->column_visible(i) ? '1' : '0';
@@ -309,7 +312,6 @@ void log_window::restore_layout()
     st.restore_window("log.window", *window_);
     if (auto v = st.numbers("log.panes"); v.size() == 3) splitter_->set_sizes(v);
     if (auto v = st.numbers("log.columns"); !v.empty()) commit_list_->set_column_widths(v);
-    if (auto v = st.numbers("log.files.columns"); !v.empty()) file_list_->set_column_widths(v);
     // The lists ignore an order that doesn't fit their columns.
     auto order = [](const std::vector<float>& v)
     {
@@ -318,7 +320,7 @@ void log_window::restore_layout()
         return o;
     };
     commit_list_->set_column_order(order(st.numbers("log.columns.order")));
-    file_list_->set_column_order(order(st.numbers("log.files.columns.order")));
+    files_.restore_layout();
     std::string visible = st.value("log.columns.visible");
     for (size_t i = 0; i < visible.size() && i < log_model::column_count; ++i)
         commit_list_->set_column_visible(i, visible[i] == '1');
@@ -443,7 +445,7 @@ void log_window::selection_changed()
     else
     {
         details_->set_text("");
-        files_.set({});
+        files_.clear();
     }
     update_status();
 }
@@ -456,12 +458,14 @@ void log_window::show_commit(size_t row)
         if (!log_.working_tree_known())
         {
             details_->set_text("Working tree changes\n\nFetching status...");
-            files_.set({});
+            files_.set_source({.what = changes_source::working_tree});
+            files_.clear();
             return;
         }
         details_->set_text("Working tree changes\n\n" +
                           std::to_string(log_.working_tree_files().size()) + " files changed");
-        files_.set(log_.working_tree_files(), show_unversioned_);
+        files_.set_source({.what = changes_source::working_tree});
+        files_.set_files(log_.working_tree_files(), show_unversioned_);
         return;
     }
 
@@ -488,7 +492,17 @@ void log_window::show_commit(size_t row)
     // their line counts, which read every file (a commit of thousands of
     // files on a slow disk takes many seconds). Clicking elsewhere drops
     // the counting.
-    files_.set({});
+    changes_source source{.what = changes_source::revision,
+                          .hash = c.id.hex(),
+                          .parent = c.parents.empty() ? k_empty_tree : c.parents.front().hex()};
+    if (!c.parents.empty())
+    {
+        source.parent_title = source.parent.substr(0, 8);
+        if (auto r = log_.row_of(c.parents.front()))
+            if (const commit* p = log_.commit(*r)) source.parent_title += " " + p->summary;
+    }
+    files_.set_source(std::move(source));
+    files_.clear();
     oid id = c.id;
     files_worker_->submit(
         [this, id](repo& repo, const repo_worker::progress& progress) -> std::function<void()>
@@ -500,7 +514,7 @@ void log_window::show_commit(size_t row)
                          progress.post(
                              [this, files]
                              {
-                                 files_.set(files);
+                                 files_.set_files(files);
                                  update_status();
                              });
                      },
@@ -535,7 +549,7 @@ void log_window::update_status()
     }
     auto sel = commit_list_->selection();
     s += " - " + std::to_string(sel.size()) + " revision(s) selected, " +
-         std::to_string(file_list_->selection().size()) + " file(s) selected";
+         std::to_string(files_.selection().size()) + " file(s) selected";
     if (sel.size() == 1)
     {
         size_t added = 0, removed = 0, mod = 0, add = 0, del = 0, ren = 0;

@@ -10,6 +10,7 @@
 #include "ui/menu_items.h"
 #include "ui/menu_text.h"
 #include "ui/progress_dialog.h"
+#include "ui/stash_dialog.h"
 #include "util/calendar.h"
 
 #include <ctime>
@@ -667,33 +668,7 @@ void log_window::create_branch(const commit& c, const std::string& name, bool sw
 // a stash of thousands of files is slow to show and to apply).
 void log_window::stash_changes()
 {
-    struct state
-    {
-        std::unique_ptr<rap::window> window;
-        rap::entry* message = nullptr;
-        rap::check* untracked = nullptr;
-    };
-    auto st = std::make_shared<state>();
-
-    using namespace rap::layout;
-    run_dialog<state>(
-        ui_, window_.get(), st,
-        dialog{"Stash",
-               {vbox{
-                   form{
-                       {"Message", entry{}.bind(st->message).placeholder("optional").width(40_ch)},
-                       {"", check{"Include _untracked files"}.bind(st->untracked)},
-                   },
-                   buttons{ok, cancel},
-               }}}
-            .resizable(false),
-        [this](state& s)
-        {
-            arg_list args{"stash", "push"};
-            if (s.untracked->checked()) args.push_back("--include-untracked");
-            if (std::string msg = s.message->text(); !msg.empty()) args.insert(args.end(), {"-m", msg});
-            run_git_commands("Stash", {args});
-        });
+    tortilla::stash_changes(ui_, window_.get(), repo_.workdir(), [this](bool) { reload(); });
 }
 
 void log_window::create_tag(const commit& c)

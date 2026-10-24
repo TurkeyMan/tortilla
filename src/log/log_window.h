@@ -2,9 +2,9 @@
 // section 1.
 #pragma once
 
+#include "changes/changes_view.h"
 #include "git/command.h"
 #include "git/repo_worker.h"
-#include "log/file_model.h"
 #include "log/log_model.h"
 #include "rebase/rebase_window.h"
 
@@ -105,12 +105,6 @@ private:
     std::optional<std::string> clicked_ref_;  // while building a label's context menu
     void merge_from(const commit&, const std::string& what);
 
-    // Changed-files list context menu and its actions (log_file_actions.cpp).
-    rap::menu file_menu(std::optional<size_t> row, std::optional<size_t> column);
-    void file_activated(size_t row);
-    void copy_files(int format, std::optional<size_t> column);
-    void save_revisions(const std::string& rev, std::vector<file_change> files);
-    void save_revision(const std::string& rev, const file_change& file);
     void copy_to_clipboard(const std::vector<size_t>& rows, int format);
     void show_branches_containing(const commit&);
 
@@ -126,7 +120,7 @@ private:
     std::string path_;
     log_model log_;
     std::unique_ptr<repo_worker> files_worker_;  // the selected commit's files
-    file_model files_;
+    changes_view files_;  // the selected commit's (or the working tree's) files
     std::unique_ptr<rap::window> window_;
     std::function<void()> closed_;
 
@@ -138,7 +132,6 @@ private:
     rap::drop_down* jump_type_ = nullptr;
     rap::list* commit_list_ = nullptr;
     rap::text_view* details_ = nullptr;
-    rap::list* file_list_ = nullptr;
     rap::label* status_ = nullptr;
     rap::check* all_branches_ = nullptr;
     rap::button* statistics_ = nullptr;

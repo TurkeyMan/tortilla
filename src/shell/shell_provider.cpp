@@ -359,7 +359,7 @@ public:
         return out;
     }
 
-    void invoke(std::string_view id, const selection&) override
+    void invoke(std::string_view id, const selection& sel) override
     {
         const row* r = find_row(id);
         if (!r) return;
@@ -372,6 +372,16 @@ public:
         case run::diff: rap::shell::launch(tortilla_exe(), {"diff", first}); return;
         case run::rebase: rap::shell::launch(tortilla_exe(), {"rebase", folder}); return;
         case run::settings: rap::shell::launch(tortilla_exe(), {"settings", first}); return;
+        case run::repostatus:
+        {
+            std::vector<std::string> args{"repostatus"};
+            if (sel.paths.empty())
+                args.push_back(folder);
+            else
+                for (const fs::path& p : sel.paths) args.push_back(utf8(p));
+            rap::shell::launch(tortilla_exe(), args);
+            return;
+        }
         }
     }
 
