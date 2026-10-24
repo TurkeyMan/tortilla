@@ -5,9 +5,12 @@
 #include "git/ssh_client.h"
 #include "log/action_icons.h"
 #include "settings.h"
+#include "shell/menu_icons.h"
 #include "shell/menu_table.h"
 
 #include <algorithm>
+#include <cctype>
+#include <cmath>
 #include <cstdlib>
 #include <memory>
 
@@ -16,7 +19,7 @@ namespace tortilla
 namespace
 {
 
-// The View > Action Icons choices, in the menu's order.
+// The Action icons choices, in the drop-down's order.
 constexpr action_icon_style k_icon_styles[] = {action_icon_style::document,
                                                action_icon_style::glyph, action_icon_style::bevel,
                                                action_icon_style::line};
@@ -41,8 +44,12 @@ struct state
     rap::widget* merge_help = nullptr;
     std::vector<detected_merge_tool> merge_tools;
     int merge_custom_index() const { return int(merge_tools.size()); }
-    // Context Menu: an entry's id and its "at the top level" box.
-    std::vector<std::pair<std::string, rap::check*>> top_entries;
+    // Context Menu: where each entry shows, and the options below it.
+    std::unique_ptr<class menu_entries> menu_entries;
+    rap::list* menu_list = nullptr;
+    rap::drop_down* menu_shows = nullptr;
+    rap::check* hide_outside = nullptr;
+    rap::text_view* no_menu = nullptr;
     // SSH client: git's own, each detected client, then Custom (the command
     // line shown only for it).
     rap::drop_down* ssh_select = nullptr;
@@ -106,50 +113,194 @@ rap::node general_page(std::shared_ptr<state> st)
     };
 }
 
-// Which of Explorer's entries are at the top level of its menu rather than
-// in the Tortilla submenu [TortoiseGit: Settings > Context Menu].
+// The Context Menu page's list: one row per entry TortoiseGit sets as one
+// (shell_menu::group_of), in the menu's order, and where each shows.
+class menu_entries : public rap::list_model
+{
+public:
+    struct entry
+    {
+        std::string group, label;
+        shell_menu::shows where, fallback;  // as chosen; by default
+        bool runs = false;                  // Tortilla does it yet
+    };
+
+    explicit menu_entries(const shell_menu::placements& saved)
+    {
+        using namespace shell_menu;
+        for (const row& r : k_rows)
+        {
+            if (!r.label || std::string_view(r.id) == "inaccessible") continue;  // always at the top
+            const std::string group(group_of(r.id));
+            auto it = std::find_if(entries_.begin(), entries_.end(),
+                                   [&](const entry& e) { return e.group == group; });
+            if (it == entries_.end())
+            {
+                entries_.push_back({group, label_of(r, group), where_shown(r, saved),
+                                    where_shown(r, {})});
+                it = entries_.end() - 1;
+            }
+            it->runs = it->runs || r.command != run::none;
+        }
+    }
+
+    const std::vector<entry>& entries() const { return entries_; }
+
+    void set(const std::vector<size_t>& rows, shell_menu::shows where)
+    {
+        for (size_t i : rows) entries_[i].where = where;
+        if (!rows.empty()) notify_changed(rows.front(), rows.back() - rows.front() + 1);
+    }
+    void restore_defaults()
+    {
+        for (entry& e : entries_) e.where = e.fallback;
+        notify_changed(0, entries_.size());
+    }
+
+    // The groups that show `where`, as the settings file lists them; nullopt
+    // when that's the default.
+    std::optional<std::string> saved_list(shell_menu::shows where) const
+    {
+        std::string ids;
+        bool is_default = true;
+        for (const entry& e : entries_)
+        {
+            if (e.where == where) ids += (ids.empty() ? "" : ",") + e.group;
+            is_default = is_default && (e.where == where) == (e.fallback == where);
+        }
+        if (is_default) return std::nullopt;
+        return ids;
+    }
+
+    size_t row_count() const override { return entries_.size(); }
+    // Columns: the entry (its icon painted before it), where it shows.
+    std::string text(size_t row, size_t column) const override
+    {
+        const entry& e = entries_[row];
+        if (column == 0) return e.runs ? e.label : e.label + " (not yet in Tortilla)";
+        return k_shows_titles[size_t(e.where)];
+    }
+    void paint(size_t row, size_t, rap::painter& p, const rap::cell_info& cell) const override
+    {
+        const entry& e = entries_[row];
+        const float side = std::round(std::min(cell.size.h - 4, 16.f));
+        const float y = std::round((cell.size.h - side) / 2);
+        paint_menu_icon(p, e.group, 4, y, side);
+        rap::text_style style;
+        style.fg = cell.selected ? rap::theme_color::highlight_text
+                   : e.runs      ? rap::theme_color::text
+                                 : rap::theme_color::placeholder_text;
+        const rap::size_f m = p.measure(e.label, style);
+        p.text({side + 10, (cell.size.h - m.h) / 2}, e.label, style);
+    }
+    rap::text_style style(size_t row, size_t) const override
+    {
+        if (entries_[row].runs) return {};
+        return {.fg = rap::theme_color::placeholder_text};
+    }
+
+    // In the order of shell_menu::shows.
+    static constexpr const char* k_shows_titles[] = {"Top level", "Submenu", "With Shift",
+                                                     "Hidden"};
+
+private:
+    static std::string label_of(const shell_menu::row& r, std::string_view group)
+    {
+        if (group == "bisect") return "Bisect";
+        if (group == "merge") return "Merge, Abort Merge";
+        std::string text;
+        for (const char* c = r.label; *c; ++c)
+            if (*c != '&') text += *c;
+        while (text.ends_with('.') || text.ends_with(' ')) text.pop_back();
+        return text;
+    }
+
+    std::vector<entry> entries_;
+};
+
+shell_menu::placements saved_placements()
+{
+    using namespace shell_menu;
+    auto list = [](std::string_view key) -> std::optional<id_set>
+    {
+        const std::string value = settings::get().value(std::string(key), "\x01");
+        if (value == "\x01") return std::nullopt;
+        return parse_ids(value);
+    };
+    return {list(k_top_setting), list(k_shift_setting), list(k_hidden_setting)};
+}
+
+// Where each of the file manager's entries shows, and when there's no menu
+// at all [TortoiseGit: Settings > Context Menu, spec 4.6].
 rap::node context_menu_page(std::shared_ptr<state> st)
 {
     using namespace rap::layout;
     using namespace shell_menu;
-    // The saved choice, else the rows TortoiseGit puts at the top.
-    const std::string saved = settings::get().value(std::string(k_top_setting), "\x01");
-    auto chosen = [&](const row& r)
+    st->menu_entries = std::make_unique<menu_entries>(saved_placements());
+    std::weak_ptr<state> weak = st;
+    // The drop-down shows the selection's placement, blank when it's mixed.
+    auto selection_changed = [weak]
     {
-        if (saved == "\x01") return r.where == place::top;
-        return ("," + saved + ",").find("," + std::string(r.id) + ",") != std::string::npos;
+        auto s = weak.lock();
+        if (!s || !s->menu_list || !s->menu_shows) return;
+        const auto rows = s->menu_list->selection();
+        int common = -1;
+        for (size_t i = 0; i < rows.size(); ++i)
+        {
+            const int w = int(s->menu_entries->entries()[rows[i]].where);
+            common = i == 0 || w == common ? w : -2;
+        }
+        s->menu_shows->set_enabled(!rows.empty());
+        s->menu_shows->set_current(std::max(common, -1));
     };
-    rap::nodes rows;
-    bool group_started = false;
-    // The checks bind to these elements: no reallocation once they're made.
-    st->top_entries.reserve(std::size(k_rows));
-    for (const row& r : k_rows)
-    {
-        if (!r.label)
-        {
-            if (group_started) rows.push_back(rap::layout::separator{});
-            group_started = false;
-            continue;
-        }
-        std::string text;
-        for (const char* c = r.label; *c; ++c)
-            if (*c != '&') text += *c;
-        // Inaccessible always leads the menu, as in TortoiseGit.
-        if (std::string_view(r.id) == "inaccessible")
-        {
-            rows.push_back(check{text, true}.enabled(false));
-            group_started = true;
-            continue;
-        }
-        st->top_entries.emplace_back(r.id, nullptr);
-        rows.push_back(check{text, chosen(r)}.bind(st->top_entries.back().second));
-        group_started = true;
-    }
+    std::vector<std::string> shows_choices(std::begin(menu_entries::k_shows_titles),
+                                           std::end(menu_entries::k_shows_titles));
+    std::string no_menu = settings::get().value(std::string(k_no_menu_setting));
+    std::replace(no_menu.begin(), no_menu.end(), '\t', '\n');
     return vbox{
-        label{"Checked entries appear directly in the file manager's context menu, with\n"
-              "\"Git\" before them; the rest are in its Tortilla submenu."},
-        // (vbox takes a fixed list; this one's built from the table.)
-        scroll{rap::node{rap::spec::box{rap::layout::vertical, std::move(rows)}, {}}}.stretch(),
+        label{"Top-level entries appear directly in the file manager's context menu, with\n"
+              "\"Git\" before them; the rest are in its Tortilla submenu. Greyed entries\n"
+              "aren't in Tortilla yet."},
+        // The last column stretches: it keeps the right edge as the page
+        // (built when first shown) takes its size.
+        list{{{.title = "Entry", .width = 44_ch, .painted = true},
+              {.title = "Shows", .width = 14_ch, .stretch = true}},
+             st->menu_entries.get()}
+            .compact()
+            .soft_selection()
+            .on_selection_changed(selection_changed)
+            .bind(st->menu_list)
+            .stretch(),
+        hbox{
+            label{"Selected entries show:"},
+            drop_down{shows_choices, -1}
+                .enabled(false)
+                .on_changed(
+                    [weak](int choice)
+                    {
+                        auto s = weak.lock();
+                        if (!s || !s->menu_list || choice < 0) return;
+                        s->menu_entries->set(s->menu_list->selection(), shows(choice));
+                    })
+                .bind(st->menu_shows),
+            spacer{},
+            button{"Restore defaults"}.on_click(
+                [weak, selection_changed]
+                {
+                    auto s = weak.lock();
+                    if (!s) return;
+                    s->menu_entries->restore_defaults();
+                    if (s->hide_outside) s->hide_outside->set_checked(false);
+                    if (s->no_menu) s->no_menu->set_text({});
+                    selection_changed();
+                }),
+        },
+        check{"Hide the menu outside repositories (Shift shows it)",
+              settings::get().value(std::string(k_hide_outside_setting)) == "1"}
+            .bind(st->hide_outside),
+        label{"No menu for these paths, one a line (end one with \\ for a folder and all in "
+              "it,\nor with * for every path that starts so):"},
+        text_view{no_menu}.bind(st->no_menu).height(3_lines),
     };
 }
 
@@ -351,7 +502,7 @@ void show_settings(rap::ui& ui, rap::window* parent, const std::string& repo_dir
                        .stretch(),
                    buttons{ok, cancel},
                }}}
-            .size(96_ch, 22_lines),
+            .size(96_ch, 30_lines),
         parent);
 
     st->window->on_finished(
@@ -366,12 +517,43 @@ void show_settings(rap::ui& ui, rap::window* parent, const std::string& repo_dir
                         "log.actionIcons",
                         std::to_string(
                             int(k_icon_styles[std::clamp(keep->icon_style->current(), 0, 3)])));
-                if (!keep->top_entries.empty())
+                if (keep->menu_entries)
                 {
-                    std::string ids;
-                    for (auto& [id, box] : keep->top_entries)
-                        if (box && box->checked()) ids += (ids.empty() ? "" : ",") + id;
-                    settings.set(std::string(shell_menu::k_top_setting), ids);
+                    using namespace shell_menu;
+                    auto save = [&](std::string_view key, shows where)
+                    {
+                        if (auto ids = keep->menu_entries->saved_list(where))
+                            settings.set(std::string(key), *ids);
+                        else
+                            settings.remove(std::string(key));
+                    };
+                    save(k_top_setting, shows::top);
+                    save(k_shift_setting, shows::shift);
+                    save(k_hidden_setting, shows::hidden);
+                    if (keep->hide_outside->checked())
+                        settings.set(std::string(k_hide_outside_setting), "1");
+                    else
+                        settings.remove(std::string(k_hide_outside_setting));
+                    // One a line in the box; tab-separated in the file.
+                    std::string paths;
+                    const std::string text = keep->no_menu->text();
+                    for (size_t at = 0; at <= text.size();)
+                    {
+                        size_t end = text.find('\n', at);
+                        if (end == std::string::npos) end = text.size();
+                        size_t first = at, last = end;
+                        while (first < last && std::isspace(static_cast<unsigned char>(text[first])))
+                            ++first;
+                        while (last > first && std::isspace(static_cast<unsigned char>(text[last - 1])))
+                            --last;
+                        if (last > first)
+                            paths += (paths.empty() ? "" : "\t") + text.substr(first, last - first);
+                        at = end + 1;
+                    }
+                    if (paths.empty())
+                        settings.remove(std::string(k_no_menu_setting));
+                    else
+                        settings.set(std::string(k_no_menu_setting), paths);
                 }
                 if (keep->diff_tool_select)
                 {

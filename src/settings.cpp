@@ -53,6 +53,11 @@ void settings::set(const std::string& key, const std::string& value)
     save();
 }
 
+void settings::remove(const std::string& key)
+{
+    if (values_.erase(key)) save();
+}
+
 void settings::save() const
 {
     std::FILE* f = rap::sys::fopen(settings_file(), "w");

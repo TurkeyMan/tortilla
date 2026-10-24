@@ -18,6 +18,8 @@ public:
 
     std::string value(const std::string& key, const std::string& fallback = {}) const;
     void set(const std::string& key, const std::string& value);
+    // Back to the fallback.
+    void remove(const std::string& key);
 
     // Lists of numbers (sizes, positions, column widths), stored "a,b,c".
     std::vector<float> numbers(const std::string& key) const;
