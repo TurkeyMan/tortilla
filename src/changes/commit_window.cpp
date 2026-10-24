@@ -141,7 +141,12 @@ void commit_window::build()
                 group{
                     _("Message:"),
                     vbox{
-                        text_view{}.bind(message_).on_changed([this] { update_state(); }).stretch(),
+                        // TortoiseGit's room for a message, before any dragging.
+                        text_view{}
+                            .bind(message_)
+                            .on_changed([this] { update_state(); })
+                            .height(8_lines)
+                            .stretch(),
                         check{_("Amend _Last Commit")}.bind(amend_).on_toggled([this](bool on)
                                                                             { amend_toggled(on); }),
                         hbox{
@@ -222,6 +227,7 @@ void commit_window::build()
                     }}
                     .stretch(),  // the files take what the window gains, not the message
             }
+                .bind(splitter_)
                 .stretch(),
             hbox{
                 spacer{},
@@ -254,6 +260,7 @@ void commit_window::build()
             return false;
         });
     settings::get().restore_window("commit.window", *window_);
+    if (auto v = settings::get().numbers("commit.panes"); v.size() == 2) splitter_->set_sizes(v);
     files_.restore_layout();
     files_.set_source({.what = changes_source::working_tree});
     author_->set_text(config("user.name") + " <" + config("user.email") + ">");
@@ -483,6 +490,7 @@ void commit_window::commit()
 void commit_window::close(bool committed)
 {
     settings::get().save_window("commit.window", *window_);
+    settings::get().set_numbers("commit.panes", splitter_->sizes());
     files_.save_layout();
     window_->close();
     if (closed_) closed_(committed);

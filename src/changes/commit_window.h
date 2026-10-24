@@ -28,7 +28,13 @@ public:
     open(rap::ui&, const std::vector<std::string>& paths);
     ~commit_window();
 
-    void show() { window_->show(); }
+    // The message has the focus once shown (showing gives it to the first
+    // control, the branch's name).
+    void show()
+    {
+        window_->show();
+        message_->focus();
+    }
     // After it closes; `committed` says whether a commit was made.
     void on_closed(std::function<void(bool committed)> f) { closed_ = std::move(f); }
 
@@ -66,6 +72,7 @@ private:
     std::string current_branch_;
     rap::check* new_branch_ = nullptr;
     rap::text_view* message_ = nullptr;
+    rap::splitter* splitter_ = nullptr;
     rap::check* amend_ = nullptr;
     rap::check* set_date_ = nullptr;
     rap::date_picker* date_ = nullptr;
