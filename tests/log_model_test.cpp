@@ -5,6 +5,7 @@
 #include "changes/working_tree.h"
 #include "git/command.h"
 #include "git/diff_tool.h"
+#include "git/ignore_patterns.h"
 #include "git/repo_worker.h"
 #include "git/status.h"
 #include "log/log_model.h"
@@ -15,6 +16,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <optional>
 #include <string>
 #include <thread>
@@ -54,6 +57,48 @@ int main(int argc, char** argv)
     check(tortilla::sha256_hex(std::string(1000, 'a')) ==
               "41edece42d63e8d9bf515a9ba6932e1c20cbc9f5a5d134645adb5db1b9737ea3",
           "sha256 of 1000 bytes");
+
+    // Ignore patterns, as the Ignore dialog writes them.
+    {
+        using tortilla::ignore_item;
+        using tortilla::ignore_target;
+        const std::vector<ignore_item> items{{"sub", "build.log", false}, {"sub", "out", true},
+                                             {"", "#odd*.txt", false}, {"sub", "README", false}};
+        auto lines = [](auto plan, std::string file)
+        {
+            for (auto& [f, l] : plan)
+                if (f == file) return l;
+            return std::vector<std::string>{};
+        };
+        auto here = tortilla::ignore_patterns(items, false, false, ignore_target::repository);
+        check(here.size() == 1 &&
+                  lines(here, ".gitignore") ==
+                      std::vector<std::string>{"/sub/build.log", "/sub/out/", "/\\#odd\\*.txt", "/sub/README"},
+              "ignore by name, only here, in the repository's .gitignore (anchored, escaped)");
+        auto every = tortilla::ignore_patterns(items, false, true, ignore_target::repository);
+        check(lines(every, ".gitignore") ==
+                  std::vector<std::string>{"build.log", "out/", "\\#odd\\*.txt", "README"},
+              "ignore by name in every folder");
+        auto masks = tortilla::ignore_patterns(items, true, true, ignore_target::folder);
+        check(lines(masks, "sub/.gitignore") == std::vector<std::string>{"*.log"} &&
+                  lines(masks, ".gitignore") == std::vector<std::string>{"*.txt"},
+              "ignore by extension in each folder's .gitignore (folders and extensionless skipped)");
+        auto local = tortilla::ignore_patterns(items, true, false, ignore_target::folder);
+        check(lines(local, "sub/.gitignore") == std::vector<std::string>{"/*.log"},
+              "by extension only here, relative to the folder's own .gitignore");
+        auto excl = tortilla::ignore_patterns(items, false, false, ignore_target::exclude);
+        check(excl.size() == 1 && excl.front().first.empty() && excl.front().second.size() == 4,
+              "the exclude file is one target");
+        check(tortilla::literal_pattern("a b  ") == "a b\\ \\ ", "trailing spaces escaped, each one");
+
+        const auto file = std::filesystem::path(argv[1]) / "ignore-test" / ".gitignore";
+        std::filesystem::create_directories(file.parent_path());
+        { std::ofstream(file, std::ios::binary) << "keep\n*.log"; }  // no final newline
+        check(tortilla::append_ignore_lines(file, {"*.log", "new/"}).empty(), "append to an ignore file");
+        std::ifstream in(file, std::ios::binary);
+        const std::string got((std::istreambuf_iterator<char>(in)), {});
+        check(got == "keep\n*.log\nnew/\n", "existing lines kept once, a newline added before new ones");
+    }
 
     std::string repo = std::string(argv[1]) + "/repo";
     std::filesystem::create_directories(repo);

@@ -3,6 +3,8 @@
 //                                     with nothing given and none here, the welcome window
 //   tortilla about                    the welcome window: what Tortilla is, links
 //   tortilla remove|removekeep path...  Delete (to the Recycle Bin), or stop tracking
+//   tortilla ignore [--delete] [--mask] path...  add to an ignore list (by extension;
+//                                     and stop tracking)
 //   tortilla rebase [path] [upstream]   rebase dialog
 //   tortilla diff [path]              a file: its working tree changes against HEAD, in
 //                                     the diff tool; a folder: Check for modifications
@@ -29,6 +31,7 @@
 #include "changes/commit_window.h"
 #include "changes/conflict_editor.h"
 #include "changes/file_action_window.h"
+#include "changes/ignore_dialog.h"
 #include "changes/remove.h"
 #include "git/repo.h"
 #include "git/ssh_client.h"
@@ -133,7 +136,8 @@ int main(int argc, char** argv)
                   std::strcmp(argv[i], "tag") == 0 || std::strcmp(argv[i], "switch") == 0 ||
                   std::strcmp(argv[i], "merge") == 0 || std::strcmp(argv[i], "mergeabort") == 0 ||
                   std::strcmp(argv[i], "conflicteditor") == 0 || std::strcmp(argv[i], "about") == 0 ||
-                  std::strcmp(argv[i], "remove") == 0 || std::strcmp(argv[i], "removekeep") == 0))
+                  std::strcmp(argv[i], "remove") == 0 || std::strcmp(argv[i], "removekeep") == 0 ||
+                  std::strcmp(argv[i], "ignore") == 0))
         {
             command = argv[i];
             named = true;
@@ -267,6 +271,30 @@ int main(int argc, char** argv)
                                         [open] { tortilla::windows::release(open); });
             });
         return (*ui)->run();
+    }
+
+    if (command == "ignore")
+    {
+        // tortilla ignore [--delete] [--mask] path...
+        bool untrack = false, by_extension = false;
+        std::vector<std::string> paths;
+        for (const std::string& a : args)
+            if (a == "--delete")
+                untrack = true;
+            else if (a == "--mask")
+                by_extension = true;
+            else
+                paths.push_back(a);
+        int code = 1;
+        tortilla::show_ignore_dialog(**ui, paths.empty() ? std::vector<std::string>{path} : paths,
+                                     by_extension, untrack,
+                                     [&](bool done)
+                                     {
+                                         code = done ? 0 : 1;
+                                         (*ui)->quit();
+                                     });
+        (*ui)->run();
+        return code;
     }
 
     if (command == "remove" || command == "removekeep")

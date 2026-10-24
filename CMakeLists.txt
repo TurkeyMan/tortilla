@@ -63,6 +63,7 @@ add_library(tortilla_git STATIC
     src/git/merge_tool.cpp
     src/util/programs.cpp
     src/util/sha256.cpp
+    src/git/ignore_patterns.cpp
     src/changes/working_tree.cpp)
 target_include_directories(tortilla_git PUBLIC src)
 target_link_libraries(tortilla_git PUBLIC ${TORTILLA_LIBGIT2} rapport::rapport)
@@ -87,6 +88,7 @@ add_executable(tortilla
     src/util/gravatar.cpp
     src/ui/welcome_window.cpp
     src/changes/remove.cpp
+    src/changes/ignore_dialog.cpp
     src/i18n.cpp
     src/ui/askpass.cpp
     src/ui/windows.cpp

@@ -52,15 +52,19 @@ void remove_files(rap::ui& ui, const std::vector<std::string>& paths, bool keep_
         relative.size() == 1
             ? rap::i18n::format(_("“{0}”"), rap::sys::path_to_utf8(absolute.front().filename()))
             : rap::i18n::format(N_("{0} item", "{0} items", relative.size()), relative.size());
+    const size_t n = relative.size();
 #ifdef _WIN32
-    const char* bin = _("It goes to the Recycle Bin, and git stops tracking it.");
+    const char* bin = N_("It goes to the Recycle Bin, and git stops tracking it.",
+                         "They go to the Recycle Bin, and git stops tracking them.", n);
 #else
-    const char* bin = _("It goes to the Trash, and git stops tracking it.");
+    const char* bin = N_("It goes to the Trash, and git stops tracking it.",
+                         "They go to the Trash, and git stops tracking them.", n);
 #endif
     const std::string question =
         keep_local ? rap::i18n::format(_("Stop tracking {0}?"), what)
                    : rap::i18n::format(_("Delete {0}?"), what);
-    const std::string detail = keep_local ? _("It stays on disk, untracked.") : bin;
+    const std::string detail =
+        keep_local ? N_("It stays on disk, untracked.", "They stay on disk, untracked.", n) : bin;
     const std::string workdir = repo->workdir();
     ui.message(nullptr,
                {.icon = rap::message_spec::icon::question,
@@ -73,14 +77,16 @@ void remove_files(rap::ui& ui, const std::vector<std::string>& paths, bool keep_
                    if (r != rap::dialog_role::ok) return done(false);
                    if (!keep_local)
                        if (auto trashed = rap::sys::move_to_trash(absolute); !trashed)
-                           return fail(_("Couldn't delete it."), trashed.error());
+                           return fail(N_("Couldn't delete it.", "Couldn't delete them.", n), trashed.error());
                    // Its removal staged (already gone from disk, or kept there);
                    // untracked items git doesn't know are skipped.
                    std::vector<std::string> args{"rm", "-r", "-q", "--cached", "--ignore-unmatch",
                                                  "--"};
                    args.insert(args.end(), relative.begin(), relative.end());
                    const git_result rm = run_git(workdir, args);
-                   if (!rm.ok()) return fail(_("git couldn't stop tracking it."), rm.output);
+                   if (!rm.ok())
+                       return fail(N_("git couldn't stop tracking it.", "git couldn't stop tracking them.", n),
+                                   rm.output);
                    done(true);
                });
 }

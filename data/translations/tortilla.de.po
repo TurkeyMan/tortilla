@@ -4,7 +4,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: tortilla\n"
 "Report-Msgid-Bugs-To: https://github.com/TurkeyMan/tortilla/issues\n"
-"POT-Creation-Date: 2026-10-24 18:13+0000\n"
+"POT-Creation-Date: 2026-10-24 18:23+0000\n"
 "Language: de\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
@@ -554,7 +554,7 @@ msgstr ""
 "{0} löschen? Die Dateien sind nicht in git, daher kann dies nicht rückgängig "
 "gemacht werden."
 
-#: src/changes/changes_view.cpp:450 src/changes/remove.cpp:67
+#: src/changes/changes_view.cpp:450 src/changes/remove.cpp:71
 #: src/log/log_actions.cpp:523 src/log/log_actions.cpp:537
 #: src/log/log_actions.cpp:545
 msgid "Delete"
@@ -1039,6 +1039,70 @@ msgctxt "status"
 msgid "Assume unchanged"
 msgstr "Assume-Unchanged"
 
+#: src/changes/ignore_dialog.cpp:64
+msgid "(nothing: no extension to go by)"
+msgstr "(nichts: keine Dateiendung vorhanden)"
+
+#: src/changes/ignore_dialog.cpp:154
+msgid "Ignore - Tortilla"
+msgstr "Ignorieren - Tortilla"
+
+#: src/changes/ignore_dialog.cpp:157
+msgid "Ignore"
+msgstr "Ignorieren"
+
+#: src/changes/ignore_dialog.cpp:159
+msgid "In every folder"
+msgstr "In jedem Ordner"
+
+#: src/changes/ignore_dialog.cpp:159
+msgid "Only in its folder"
+msgstr "Nur in seinem Ordner"
+
+#: src/changes/ignore_dialog.cpp:160
+msgid "Only this item"
+msgstr "Nur dieses Element"
+
+#: src/changes/ignore_dialog.cpp:160
+msgid "This name in every folder"
+msgstr "Diesen Namen in jedem Ordner"
+
+#: src/changes/ignore_dialog.cpp:164
+msgid "Write to"
+msgstr "Eintragen in"
+
+#: src/changes/ignore_dialog.cpp:165
+msgid "The .gitignore in its folder"
+msgstr "Die .gitignore in seinem Ordner"
+
+#: src/changes/ignore_dialog.cpp:165
+msgid "The repository's .gitignore"
+msgstr "Die .gitignore des Repositorys"
+
+#: src/changes/ignore_dialog.cpp:166
+msgid "This clone only (.git/info/exclude)"
+msgstr "Nur dieser Klon (.git/info/exclude)"
+
+#: src/changes/ignore_dialog.cpp:171
+msgid "Adds:"
+msgstr "Fügt hinzu:"
+
+#: src/changes/ignore_dialog.cpp:175
+msgid "Also stop tracking it (it stays on disk)"
+msgid_plural "Also stop tracking them (they stay on disk)"
+msgstr[0] "Auch nicht mehr verfolgen (bleibt auf der Festplatte)"
+msgstr[1] "Auch nicht mehr verfolgen (bleiben auf der Festplatte)"
+
+#: src/changes/ignore_dialog.cpp:195
+msgid "Couldn't add to the ignore list."
+msgstr "Konnte nicht zur Ignorierliste hinzugefügt werden."
+
+#: src/changes/ignore_dialog.cpp:201 src/changes/remove.cpp:88
+msgid "git couldn't stop tracking it."
+msgid_plural "git couldn't stop tracking them."
+msgstr[0] "git konnte die Verfolgung nicht beenden."
+msgstr[1] "git konnte die Verfolgung nicht beenden."
+
 #: src/changes/remove.cpp:54
 #, c++-format
 msgid "{0} item"
@@ -1046,40 +1110,44 @@ msgid_plural "{0} items"
 msgstr[0] "{0} Element"
 msgstr[1] "{0} Elemente"
 
-#: src/changes/remove.cpp:56
+#: src/changes/remove.cpp:57
 msgid "It goes to the Recycle Bin, and git stops tracking it."
-msgstr "Es kommt in den Papierkorb, und git verfolgt es nicht mehr."
+msgid_plural "They go to the Recycle Bin, and git stops tracking them."
+msgstr[0] "Es kommt in den Papierkorb, und git verfolgt es nicht mehr."
+msgstr[1] "Sie kommen in den Papierkorb, und git verfolgt sie nicht mehr."
 
-#: src/changes/remove.cpp:58
+#: src/changes/remove.cpp:60
 msgid "It goes to the Trash, and git stops tracking it."
-msgstr "Es kommt in den Papierkorb, und git verfolgt es nicht mehr."
+msgid_plural "They go to the Trash, and git stops tracking them."
+msgstr[0] "Es kommt in den Papierkorb, und git verfolgt es nicht mehr."
+msgstr[1] "Sie kommen in den Papierkorb, und git verfolgt sie nicht mehr."
 
-#: src/changes/remove.cpp:61
+#: src/changes/remove.cpp:64
 #, c++-format
 msgid "Stop tracking {0}?"
 msgstr "{0} nicht mehr verfolgen?"
 
-#: src/changes/remove.cpp:62 src/log/log_actions.cpp:523
+#: src/changes/remove.cpp:65 src/log/log_actions.cpp:523
 #: src/log/log_actions.cpp:537
 #, c++-format
 msgid "Delete {0}?"
 msgstr "{0} löschen?"
 
-#: src/changes/remove.cpp:63
-msgid "It stays on disk, untracked."
-msgstr "Es bleibt auf der Festplatte, unversioniert."
-
 #: src/changes/remove.cpp:67
+msgid "It stays on disk, untracked."
+msgid_plural "They stay on disk, untracked."
+msgstr[0] "Es bleibt auf der Festplatte, unversioniert."
+msgstr[1] "Sie bleiben auf der Festplatte, unversioniert."
+
+#: src/changes/remove.cpp:71
 msgid "Delete (keep local)"
 msgstr "Löschen (lokal behalten)"
 
-#: src/changes/remove.cpp:76
+#: src/changes/remove.cpp:80
 msgid "Couldn't delete it."
-msgstr "Es konnte nicht gelöscht werden."
-
-#: src/changes/remove.cpp:83
-msgid "git couldn't stop tracking it."
-msgstr "git konnte die Verfolgung nicht beenden."
+msgid_plural "Couldn't delete them."
+msgstr[0] "Es konnte nicht gelöscht werden."
+msgstr[1] "Sie konnten nicht gelöscht werden."
 
 #: src/git/command.cpp:59 src/git/command.cpp:95 src/git/command.cpp:132
 #, c++-format

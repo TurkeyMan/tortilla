@@ -82,6 +82,7 @@ enum class run
     about,           // tortilla about
     remove,          // tortilla remove <paths...>
     remove_keep,     // tortilla removekeep <paths...>
+    ignore,          // a submenu: tortilla ignore [--delete] [--mask] <paths...>
 };
 
 struct row
@@ -204,11 +205,11 @@ inline constexpr row k_rows[] = {
      run::add,
      "add"},
     {"&Blame", {{{GIT | ONE, FOLD | ADDED}}}, place::sub, run::none, "blame"},
-    {"Add to &ignore list", {{{IVF, IGN | GIT | ROOT}}}, place::sub, run::none, "ignore"},
+    {"Add to &ignore list", {{{IVF, IGN | GIT | ROOT}}}, place::sub, run::ignore, "ignore"},
     {"Delete and add to &ignore list",
      {{{IVF | GIT, IGN | ROOT}}},
      place::sub,
-     run::none,
+     run::ignore,
      "deleteignore"},
     separator,
     {"Worktrees", {{{FIG | ONE, 0}, {BARE, 0}}}, place::sub, run::none, "worktreelist"},

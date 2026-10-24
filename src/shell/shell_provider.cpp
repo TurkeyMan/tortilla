@@ -368,6 +368,35 @@ std::string app_icon()
 #endif
 }
 
+// The ignore submenu's items [spec 4.4]: by name and, for a file with an
+// extension, by it; for several items, counts. Empty without a selection.
+std::vector<menu_item> ignore_items(const selection& sel, std::string_view row_id)
+{
+    std::vector<menu_item> out;
+    if (sel.paths.empty()) return out;
+    const std::string id(row_id);
+    auto escape = [](std::string s)
+    {
+        std::string out;
+        for (char c : s) out += c == '&' ? std::string("&&") : std::string(1, c);
+        return out;
+    };
+    if (sel.paths.size() == 1)
+    {
+        const fs::path& p = sel.paths.front();
+        const std::string name = utf8(p.filename());
+        out.push_back({.id = id + ":name", .label = escape(name)});
+        const size_t dot = name.rfind('.');
+        if (!is_dir(p) && dot != std::string::npos && dot > 0)
+            out.push_back({.id = id + ":mask", .label = escape("*" + name.substr(dot))});
+        return out;
+    }
+    const std::string n = std::to_string(sel.paths.size());
+    out.push_back({.id = id + ":name", .label = "&Ignore " + n + " items by name"});
+    out.push_back({.id = id + ":mask", .label = "Ignore " + n + " items by &extension"});
+    return out;
+}
+
 class tortilla_provider : public rap::shell::provider
 {
 public:
@@ -397,6 +426,18 @@ public:
             const bool runs = r.command != run::none && (r.command != run::diff || (f & ONE));
             // Drawn by src/shell/menu_icons.cpp, one per Settings entry.
             menu_item item{.id = r.id, .label = label, .icon = icon(group_of(r.id)), .enabled = runs};
+            if (r.command == run::ignore)
+            {
+                // Without the status cache every item counts as tracked, so
+                // which is which is the dialog's to find out: one entry, as
+                // "Add to ignore list", whose dialog offers to stop tracking
+                // those git tracks.
+                item.label = r.label;
+                if (std::string_view(r.id) == "deleteignore") item.label = "Add to &ignore list";
+                if (where == shows::top) item.label = top_label(item.label);
+                item.submenu = ignore_items(sel, r.id);
+                if (item.submenu.empty()) continue;
+            }
             if (where == shows::top)
             {
                 item.label = top_label(item.label);
@@ -425,13 +466,26 @@ public:
 
     void invoke(std::string_view id, const selection& sel) override
     {
+        // An ignore submenu's item: "<row>:name" or "<row>:mask".
+        if (const size_t colon = id.find(':'); colon != std::string_view::npos)
+        {
+            const std::string_view base = id.substr(0, colon), kind = id.substr(colon + 1);
+            std::vector<std::string> args{"ignore"};
+            (void)base;  // both rows: the dialog finds what's tracked
+            if (kind == "mask") args.push_back("--mask");
+            for (const fs::path& p : sel.paths) args.push_back(utf8(p));
+            if (sel.paths.empty()) return;
+            rap::shell::launch(tortilla_exe(), args);
+            return;
+        }
         const row* r = find_row(id);
         if (!r) return;
         const std::string first = utf8(state_.first),
                           folder = utf8(state_.folder.empty() ? state_.first : state_.folder);
         switch (r->command)
         {
-        case run::none: return;
+        case run::none:
+        case run::ignore: return;  // its submenu's items, above
         case run::log: rap::shell::launch(tortilla_exe(), {"log", first}); return;
         case run::diff: rap::shell::launch(tortilla_exe(), {"diff", first}); return;
         case run::rebase: rap::shell::launch(tortilla_exe(), {"rebase", folder}); return;
