@@ -16,8 +16,9 @@ namespace
 {
 
 // The View > Action Icons choices, in the menu's order.
-constexpr action_icon_style k_icon_styles[] = {action_icon_style::document, action_icon_style::glyph,
-                                           action_icon_style::bevel, action_icon_style::line};
+constexpr action_icon_style k_icon_styles[] = {action_icon_style::document,
+                                               action_icon_style::glyph, action_icon_style::bevel,
+                                               action_icon_style::line};
 
 struct state
 {
@@ -250,7 +251,14 @@ rap::node network_page(std::shared_ptr<state> st)
                                     .visible(custom)},
                 },
                 label{"Run for each remote as git's GIT_SSH_COMMAND: git adds the host and the\n"
-                      "command to run there. plink and TortoiseGitPlink are known by their names."}
+                      "command to run there. plink and TortoiseGitPlink are known by their names."
+#ifdef _WIN32
+                      // Git for Windows runs it through its MSYS shell, which
+                      // turns /tmp/key into C:/.../Temp/key before WSL sees it.
+                      "\nGit for Windows rewrites absolute Linux paths (/...) in it: for WSL ssh,\n"
+                      "write them from home (~/...)."
+#endif
+                }
                     .handle(st->ssh_help)
                     .visible(custom),
             }},
@@ -263,7 +271,7 @@ rap::node network_page(std::shared_ptr<state> st)
 }  // namespace
 
 void show_settings(rap::ui& ui, rap::window* parent, const std::string& repo_dir,
-                  settings_page first, std::function<void()> saved, std::function<void()> closed)
+                   settings_page first, std::function<void()> saved, std::function<void()> closed)
 {
     auto st = std::make_shared<state>();
     st->repo_dir = repo_dir;
@@ -305,9 +313,10 @@ void show_settings(rap::ui& ui, rap::window* parent, const std::string& repo_dir
             {
                 settings& settings = settings::get();
                 if (keep->icon_style)
-                    settings.set("log.actionIcons",
-                                 std::to_string(int(
-                                     k_icon_styles[std::clamp(keep->icon_style->current(), 0, 3)])));
+                    settings.set(
+                        "log.actionIcons",
+                        std::to_string(
+                            int(k_icon_styles[std::clamp(keep->icon_style->current(), 0, 3)])));
                 if (!keep->top_entries.empty())
                 {
                     std::string ids;
