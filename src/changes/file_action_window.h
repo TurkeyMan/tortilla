@@ -52,6 +52,7 @@ private:
     void loaded(working_tree_changes);
     void update_state();
     void run(const std::vector<file_change>& files);
+    void open_commit();
     void close(bool done);
     std::string name() const;  // "Add", "Revert", "Resolve"
     std::string settings_key() const;
@@ -72,6 +73,7 @@ private:
     std::set<std::string> seen_;  // rows that have had their first check state
     bool running_ = false;
     bool shown_ = false;  // Add of files runs without showing it
+    std::unique_ptr<class commit_window> commit_;  // the follow-up Commit, while open
 
     rap::check* select_all_ = nullptr;
     rap::check_state all_state_ = rap::check_state::unchecked;  // what it last showed

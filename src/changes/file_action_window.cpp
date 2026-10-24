@@ -1,5 +1,6 @@
 #include "file_action_window.h"
 
+#include "changes/commit_window.h"
 #include "settings.h"
 #include "ui/progress_dialog.h"
 #include "ui/settings_dialog.h"
@@ -392,22 +393,128 @@ void file_action_window::run(const std::vector<file_change>& files)
         return;
     }
 
-    running_ = true;
-    if (load_) load_->cancel();
-    update_state();
-    run_progress_dialog(ui_, shown_ ? window_.get() : nullptr, name(), workdir_,
-                        std::move(commands),
-                        [this, lists](bool ok)
-                        {
-                            running_ = false;
-                            if (ok)
-                                close(true);
-                            else
-                            {
-                                update_state();
-                                reload();
-                            }
-                        });
+    // After Add and Resolve: Commit, and for Add the file modes TortoiseGit
+    // offers [spec 6.2.4, 6.5.4].
+    std::vector<progress_follow_up> follow_ups;
+    if (action_ != file_action::revert)
+        follow_ups.push_back({.label = "_Commit...", .after_close = [this] { open_commit(); }});
+    if (action_ == file_action::add)
+    {
+        std::vector<std::string> paths;
+        std::error_code ec;
+        for (const std::string& p : all)
+            if (!fs::is_directory(rap::sys::path_from_utf8(workdir_) / rap::sys::path_from_utf8(p),
+                                  ec))
+                paths.push_back(p);
+        follow_ups.push_back({.label = "Add as _Executable (+x)",
+                              .commands = [paths]
+                              {
+                                  std::vector<std::string> c{"update-index", "--chmod=+x", "--"};
+                                  c.insert(c.end(), paths.begin(), paths.end());
+                                  return std::vector<git_command>{c};
+                              }});
+        // A symlink's blob is its target: the file as added, with the mode
+        // of a link.
+        follow_ups.push_back(
+            {.label = "Add as _Symlink",
+             .commands = [paths, workdir = workdir_]
+             {
+                 std::vector<std::string> ls{"ls-files", "-s", "-z", "--"};
+                 ls.insert(ls.end(), paths.begin(), paths.end());
+                 const git_result r = run_git(workdir, ls, git_output::stdout_only);
+                 std::vector<std::string> c{"update-index"};
+                 // "<mode> <hash> <stage>\t<path>\0" each.
+                 for (size_t at = 0; r.ok() && at < r.output.size();)
+                 {
+                     size_t end = r.output.find('\0', at);
+                     if (end == std::string::npos) end = r.output.size();
+                     const std::string e = r.output.substr(at, end - at);
+                     at = end + 1;
+                     const size_t hash = e.find(' '), stage = e.find(' ', hash + 1),
+                                  tab = e.find('\t');
+                     if (hash == std::string::npos || stage == std::string::npos ||
+                         tab == std::string::npos)
+                         continue;
+                     c.insert(c.end(),
+                              {"--cacheinfo", "120000," + e.substr(hash + 1, stage - hash - 1) +
+                                                  "," + e.substr(tab + 1)});
+                 }
+                 return c.size() > 1 ? std::vector<git_command>{c} : std::vector<git_command>{};
+             }});
+    }
+    auto start =
+        [this, commands = std::move(commands), lists, follow_ups = std::move(follow_ups)]() mutable
+    {
+        running_ = true;
+        if (load_) load_->cancel();
+        update_state();
+        run_progress_dialog(
+            ui_, shown_ ? window_.get() : nullptr, name(), workdir_, std::move(commands),
+            [this, lists](bool ok)
+            {
+                running_ = false;
+                if (ok)
+                    close(true);
+                else
+                {
+                    update_state();
+                    reload();
+                }
+            },
+            std::move(follow_ups));
+    };
+    if (action_ != file_action::revert)
+    {
+        start();
+        return;
+    }
+    // Revert first moves what it overwrites to the Recycle Bin (the trash),
+    // so it can be undone: every file but the added ones, which it leaves on
+    // disk anyway [spec 6.3.4].
+    std::vector<fs::path> keep;
+    std::error_code ec;
+    for (const file_change& f : files)
+    {
+        const fs::path p = rap::sys::path_from_utf8(workdir_) / rap::sys::path_from_utf8(f.path);
+        if (f.status != 'A' && (fs::is_regular_file(fs::symlink_status(p, ec)) ||
+                                fs::is_symlink(fs::symlink_status(p, ec))))
+            keep.push_back(p);
+    }
+    if (auto kept = rap::sys::move_to_trash(keep); !kept)
+        ui_.message(window_.get(),
+                    {.icon = rap::message_spec::icon::warning,
+                     .title = "Revert",
+                     .text = "The files couldn't be moved to the Recycle Bin first, so reverting "
+                             "can't be undone. "
+                             "Revert anyway?",
+                     .detail = kept.error(),
+                     .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
+                    [start](rap::dialog_role r) mutable
+                    {
+                        if (r == rap::dialog_role::yes) start();
+                    });
+    else
+        start();
+}
+
+// The follow-up Commit: the Commit dialog on the whole repository, which
+// keeps this one's caller waiting until it closes [spec 6.2.4].
+void file_action_window::open_commit()
+{
+    auto w = commit_window::open(ui_, {workdir_});
+    if (!w)
+    {
+        ui_.message(nullptr,
+                    {.icon = rap::message_spec::icon::error, .title = "Commit", .text = w.error()});
+        return;
+    }
+    commit_ = std::move(*w);
+    commit_->on_closed(
+        [this](bool)
+        {
+            if (closed_) closed_(true);
+        });
+    commit_->show();
 }
 
 void file_action_window::close(bool done)
@@ -418,7 +525,7 @@ void file_action_window::close(bool done)
         files_.save_layout();
     }
     window_->close();
-    if (closed_) closed_(done);
+    if (closed_ && !commit_) closed_(done);
 }
 
 }  // namespace tortilla

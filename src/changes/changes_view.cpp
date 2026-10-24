@@ -13,8 +13,10 @@
 #include <rapport/sys.h>
 
 #include <algorithm>
+#include <array>
 #include <cstdio>
 #include <filesystem>
+#include <set>
 
 namespace tortilla
 {
@@ -205,21 +207,72 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
 
     if (wc)
     {
-        if (conflicted && one)
+        if (conflicted)
         {
-            const std::string& path = files.front().path;
-            m.push_back(todo("_Edit conflicts"));
-            m.push_back(
-                item("Resolved", [local, path] { local("Resolved", {{"add", "--", path}}); }));
-            m.push_back(item("Resolve conflict using “theirs”",
-                             [local, path]
-                             {
-                                 local("Resolve",
-                                       {{"checkout", "--theirs", "--", path}, {"add", "--", path}});
-                             }));
+            // The conflicted ones of the selection [spec 5.2.8, 6.5.5].
+            arg_list conflicts;
+            for (const file_change& f : files)
+                if (f.status == 'U') conflicts.push_back(f.path);
+            const std::string question =
+                "Are you sure you want to mark the conflicted file(s) as resolved?";
+            if (one) m.push_back(todo("_Edit conflicts"));
             m.push_back(item(
-                "Resolve conflict using “mine”", [local, path]
-                { local("Resolve", {{"checkout", "--ours", "--", path}, {"add", "--", path}}); }));
+                "Resolved", [confirm_local, question, conflicts]
+                { confirm_local(question, "Resolve", {plus({"add", "-f", "--"}, conflicts)}); }));
+            // During a rebase git's "ours" is the branch being rebased onto
+            // and "theirs" the commit being replayed: mine is then theirs.
+            const bool rebasing = std::ranges::any_of(
+                std::array{"rebase-merge", "rebase-apply"},
+                [&](const char* d)
+                {
+                    const git_result r =
+                        run_git(dir, {"rev-parse", "--git-path", d}, git_output::stdout_only);
+                    std::string p = r.ok() ? r.output : "";
+                    while (!p.empty() && (p.back() == '\n' || p.back() == '\r')) p.pop_back();
+                    std::error_code ec;
+                    return !p.empty() && std::filesystem::exists(
+                                             std::filesystem::path(rap::sys::path_from_utf8(dir)) /
+                                                 rap::sys::path_from_utf8(p),
+                                             ec);
+                });
+            auto take = [confirm_local, question, conflicts, dir](int stage)
+            {
+                return [=]
+                {
+                    // Per file, the side's version, or its removal where that
+                    // side deleted it.
+                    arg_list present, absent;
+                    const git_result r =
+                        run_git(dir, plus({"ls-files", "-u", "-z", "--"}, conflicts),
+                                git_output::stdout_only);
+                    std::set<std::string> has;
+                    for (size_t at = 0; r.ok() && at < r.output.size();)
+                    {
+                        size_t end = r.output.find('\0', at);
+                        if (end == std::string::npos) end = r.output.size();
+                        const std::string e =
+                            r.output.substr(at, end - at);  // "<mode> <hash> <stage>\t<path>"
+                        at = end + 1;
+                        const size_t tab = e.find('\t');
+                        if (tab != std::string::npos && tab >= 2 && e[tab - 1] - '0' == stage)
+                            has.insert(e.substr(tab + 1));
+                    }
+                    for (const std::string& p : conflicts)
+                        (has.contains(p) ? present : absent).push_back(p);
+                    std::vector<arg_list> commands;
+                    if (!absent.empty()) commands.push_back(plus({"rm", "-f", "--"}, absent));
+                    if (!present.empty())
+                    {
+                        commands.push_back(
+                            plus({"checkout-index", "-f", "--stage=" + std::to_string(stage), "--"},
+                                 present));
+                        commands.push_back(plus({"add", "-f", "--"}, present));
+                    }
+                    confirm_local(question, "Resolve", commands);
+                };
+            };
+            m.push_back(item("Resolve conflict using “theirs”", take(rebasing ? 2 : 3)));
+            m.push_back(item("Resolve conflict using “mine”", take(rebasing ? 3 : 2)));
             separator(m);
         }
         if (unversioned)
