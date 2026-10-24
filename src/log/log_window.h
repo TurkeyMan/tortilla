@@ -9,6 +9,7 @@
 #include "rebase/rebase_window.h"
 
 #include "ui/settings_dialog.h"
+#include "util/gravatar.h"
 
 #include <rapport/rapport.h>
 #include <rapport/sys.h>
@@ -139,6 +140,7 @@ private:
     rap::drop_down* jump_type_ = nullptr;
     rap::list* commit_list_ = nullptr;
     rap::text_view* details_ = nullptr;
+    rap::canvas* avatar_canvas_ = nullptr;
     rap::label* status_ = nullptr;
     rap::check* all_branches_ = nullptr;
     rap::button* statistics_ = nullptr;
@@ -164,6 +166,10 @@ private:
     std::vector<std::unique_ptr<rebase_window>> rebases_;
     void open_rebase(const std::string& upstream);
     std::vector<oid> history_;  // selection history, for the "Selection History" jump
+    // The selected commit's author, top right of the details [spec 1.2].
+    void show_avatar(const std::string& email);
+    std::shared_ptr<rap::image> avatar_;
+    gravatar gravatar_{ui_};
 
     // The selection across a reload, by commit (rows move): put back, and
     // the current row scrolled into view, once loading finishes.

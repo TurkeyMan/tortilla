@@ -199,7 +199,29 @@ void log_window::build()
                 // divider moves the lower one with it, taking space from the
                 // file list until that reaches its minimum. (TortoiseGit
                 // shrinks the details first [spec 1.3]; this is deliberate.)
-                text_view{}.read_only().compact().bind(details_).height(9_lines),
+                hbox{
+                    text_view{}.read_only().compact().bind(details_).stretch(),
+                    // Kept top right, as TortoiseGit has it [spec 1.2].
+                    vbox{
+                        canvas{}
+                            .on_paint(
+                                [this](rap::painter& p, rap::size_f size)
+                                {
+                                    p.rect({0, 0, size.w, size.h}, 0,
+                                           rap::paint{rap::theme_color::window}, std::nullopt);
+                                    if (!avatar_) return;
+                                    p.image(*avatar_,
+                                            {0, 0, float(avatar_->width()),
+                                             float(avatar_->height())},
+                                            {0, 0, size.w, size.h});
+                                })
+                            .width(64_px)
+                            .height(64_px)
+                            .bind(avatar_canvas_),
+                        spacer{},
+                    },
+                }
+                    .height(9_lines),
                 files_.list("log.files").height(4_lines).stretch(2),
             }
                 .bind(splitter_)
@@ -518,15 +540,39 @@ void log_window::selection_changed()
     else
     {
         details_->set_text("");
+        show_avatar({});
         files_.clear();
     }
     update_status();
+}
+
+// The picture at the canvas's size in device pixels, so it's drawn 1:1.
+void log_window::show_avatar(const std::string& email)
+{
+    const float scale = avatar_canvas_ ? avatar_canvas_->device_scale() : 1;
+    const int px = int(std::lround(64 * std::max(scale, 1.f)));
+    bool answered = false;
+    auto show = [this](std::shared_ptr<rap::image> image)
+    {
+        if (image == avatar_) return;
+        avatar_ = std::move(image);
+        if (avatar_canvas_) avatar_canvas_->invalidate();
+    };
+    gravatar_.request(email, px,
+                      [show, &answered](std::shared_ptr<rap::image> image)
+                      {
+                          answered = true;
+                          show(std::move(image));
+                      });
+    // Being fetched: not the last author's picture meanwhile.
+    if (!answered) show(nullptr);
 }
 
 void log_window::show_commit(size_t row)
 {
     if (log_.is_working_tree(row))
     {
+        show_avatar({});
         // [spec 1.8]: "Fetching Status..." until the status arrives.
         if (!log_.working_tree_known())
         {
@@ -559,6 +605,7 @@ void log_window::show_commit(size_t row)
     for (auto& p : c.parents) line("Parent: ", p.hex());
     text += "\n" + c.message;
     details_->set_text(text, spans);
+    show_avatar(c.email);
 
     // The file list comes from the worker, so the click (and its highlight)
     // never waits for git: the files as soon as the tree diff has them, then
