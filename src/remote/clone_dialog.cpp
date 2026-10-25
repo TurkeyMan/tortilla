@@ -132,6 +132,19 @@ void clone_dialog::build(const std::string& folder, const std::string& url)
         });
     if (!first_url.empty()) url_changed(first_url);
     update_state();
+
+    // No URL given: one on the clipboard comes before the history's [spec
+    // 7.1.2], unless the field has been typed in by the time it's read.
+    if (url.empty())
+        ui_.clipboard_text(
+            [this, first_url, alive = std::weak_ptr<bool>(alive_)](std::optional<std::string> text)
+            {
+                if (!alive.lock() || !text) return;
+                const std::string found = clone_url_in(*text);
+                if (found.empty() || url_->text() != first_url) return;
+                url_->set_text(found);
+                url_changed(found);
+            });
 }
 
 // The folder follows the URL: <directory>\<name>, replacing the name it

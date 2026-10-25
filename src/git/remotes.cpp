@@ -117,4 +117,61 @@ std::string clone_folder_name(std::string url)
     return name;
 }
 
+std::string clone_url_in(std::string_view text)
+{
+    auto trim = [](std::string_view s)
+    {
+        while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front())))
+            s.remove_prefix(1);
+        while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back()))) s.remove_suffix(1);
+        return s;
+    };
+    std::string_view s = trim(text.substr(0, text.find_first_of("\r\n")));
+    if (s.starts_with("git clone "))
+    {
+        // The first argument that is neither an option nor an option's
+        // value: git clone --depth 1 <url> <dir> works too.
+        static constexpr std::string_view k_with_value[] = {"-b",
+                                                            "--branch",
+                                                            "-o",
+                                                            "--origin",
+                                                            "--depth",
+                                                            "-c",
+                                                            "--config",
+                                                            "-j",
+                                                            "--jobs",
+                                                            "-u",
+                                                            "--upload-pack",
+                                                            "--reference",
+                                                            "--template",
+                                                            "--separate-git-dir",
+                                                            "--filter",
+                                                            "--shallow-since",
+                                                            "--shallow-exclude"};
+        std::string_view rest = s.substr(10), url;
+        bool value_next = false;
+        while (!rest.empty() && url.empty())
+        {
+            rest = trim(rest);
+            const size_t space = rest.find(' ');
+            const std::string_view token = rest.substr(0, space);
+            rest = space == std::string_view::npos ? std::string_view() : rest.substr(space);
+            if (value_next)
+                value_next = false;
+            else if (token.starts_with("-"))
+                value_next = std::ranges::contains(k_with_value, token);
+            else
+                url = token;
+        }
+        s = url;
+    }
+    if (s.size() >= 2 && (s.front() == '"' || s.front() == '\'') && s.back() == s.front())
+        s = s.substr(1, s.size() - 2);
+    const bool drive = s.size() >= 3 && std::isalpha(static_cast<unsigned char>(s[0])) &&
+                       s[1] == ':' && (s[2] == '\\' || s[2] == '/');
+    for (const char* scheme : {"http://", "https://", "git://", "ssh://", "git@"})
+        if (s.starts_with(scheme)) return std::string(s);
+    return drive ? std::string(s) : std::string();
+}
+
 }  // namespace tortilla

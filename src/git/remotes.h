@@ -5,6 +5,7 @@
 
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace tortilla
@@ -39,5 +40,10 @@ std::string push_remote_of(const std::string& workdir, const std::string& branch
 // The folder a clone of `url` makes by default: its last component without
 // ".git" [spec 7.1.2].
 std::string clone_folder_name(std::string url);
+
+// A URL to clone in clipboard text, or "" [spec 7.1.2]: its first line,
+// quotes stripped, "git clone " unwrapped, when it starts http://,
+// https://, git://, ssh://, git@, or is a drive-letter path.
+std::string clone_url_in(std::string_view text);
 
 }  // namespace tortilla

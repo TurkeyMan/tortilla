@@ -32,6 +32,8 @@ private:
     std::unique_ptr<rap::window> window_;
     std::function<void()> closed_;
     std::string module_;  // the folder name last derived from the URL
+    // The clipboard's answer comes later (GTK); it checks this is still there.
+    std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
 
     rap::combo* url_ = nullptr;
     rap::entry* directory_ = nullptr;

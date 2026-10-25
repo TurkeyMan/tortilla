@@ -534,6 +534,53 @@ int main(int argc, char** argv)
                   ac[0].parents == std::vector<tortilla::oid>{ac[1].id},
               "path log: two files' commits, the newer's parent rewritten to the older");
         check(walked({"missing.txt"}).empty(), "path log: a path no commit changed");
+
+        // Follow renames: a file's history from before its move.
+        const std::string moved = std::string(argv[1]) + "/follow";
+        std::filesystem::create_directories(moved);
+        const std::string g = "cd '" + moved + "' && git -c user.name=Ada -c user.email=ada@x ";
+        sh("git init -q '" + moved + "'");
+        sh("printf 'one\\ntwo\\nthree\\nfour\\n' > '" + moved + "/old.txt' && " + g + "add . && " +
+           g + "commit -qm made");
+        sh(g + "mv old.txt new.txt && " + g + "commit -qm moved");
+        sh("printf 'five\\n' >> '" + moved + "/new.txt' && " + g + "commit -qam grown");
+        auto m = tortilla::repo::open(moved);
+        auto follow = [&](bool on)
+        {
+            std::vector<tortilla::commit> out;
+            if (m)
+                (void)m->walk({.paths = {"new.txt"}, .follow = on},
+                              [&](tortilla::commit&& c)
+                              {
+                                  out.push_back(std::move(c));
+                                  return true;
+                              });
+            return out;
+        };
+        const auto plain = follow(false), followed = follow(true);
+        check(plain.size() == 2, "path log: without following, the history stops at the move");
+        check(followed.size() == 3 && followed[2].summary == "made" &&
+                  followed[1].parents.size() == 1 && followed[1].parents[0] == followed[2].id &&
+                  followed[2].parents.empty(),
+              "path log: following the rename reaches the commit that made it, as a line");
+    }
+
+    // Clone's URL from the clipboard [spec 7.1.2].
+    {
+        using tortilla::clone_url_in;
+        check(clone_url_in("https://github.com/TurkeyMan/tortilla.git") ==
+                  "https://github.com/TurkeyMan/tortilla.git",
+              "clipboard URL: plain https");
+        check(clone_url_in("  \"git@github.com:a/b.git\"\nsecond line") == "git@github.com:a/b.git",
+              "clipboard URL: first line, quotes stripped");
+        check(clone_url_in("git clone --depth 1 -b main ssh://host/r.git dir") ==
+                  "ssh://host/r.git",
+              "clipboard URL: a git clone command, options skipped");
+        check(clone_url_in("C:\\repos\\thing") == "C:\\repos\\thing",
+              "clipboard URL: a drive-letter path");
+        check(clone_url_in("hello world").empty() && clone_url_in("").empty() &&
+                  clone_url_in("ftp://example.com/x").empty(),
+              "clipboard URL: not one");
     }
 
     // Clean up: git clean's arguments, and its dry run read back.
