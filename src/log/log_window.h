@@ -68,6 +68,8 @@ private:
                      bool show_failure = true);
     void refs_changed();
     void open_settings(settings_page);
+    std::string title_text() const;
+    bool path_limited() const;
     void difftool(std::vector<std::string> revisions, std::vector<std::string> paths = {});
     void confirm_then_run(const std::string& question, const std::string& title,
                           std::vector<std::vector<std::string>> commands);
@@ -130,6 +132,9 @@ private:
     std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
     repo repo_;  // UI-thread repository for details and file lists
     std::string path_;
+    // The path the log was opened for, repository-relative, which the
+    // history is limited to unless Show Whole Project; "" for the top.
+    std::string rel_path_;
     log_model log_;
     std::unique_ptr<repo_worker> files_worker_;  // the selected commit's files
     changes_view files_;  // the selected commit's (or the working tree's) files
@@ -147,6 +152,7 @@ private:
     rap::canvas* avatar_canvas_ = nullptr;
     rap::label* status_ = nullptr;
     rap::check* all_branches_ = nullptr;
+    rap::check* whole_project_ = nullptr;
     rap::button* statistics_ = nullptr;
     rap::menu_button* walk_ = nullptr;
     rap::menu_button* view_ = nullptr;

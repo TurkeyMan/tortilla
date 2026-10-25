@@ -316,18 +316,12 @@ std::expected<void, std::string> repo::walk(const walk_options& opts,
 
     std::vector<commit> all;
     std::unordered_map<oid, size_t, oid_hash> index;
-    git_oid id;
-    while (git_revwalk_next(&id, w.p) == 0)
+    // A commit's fields; `parents` as the walk found them.
+    auto add = [&](const owned_commit& c, std::vector<oid> parents)
     {
-        owned_commit c;
-        if (git_commit_lookup(&c.p, repo_, &id) != 0) continue;
-
-        unsigned n = git_commit_parentcount(c.p);
         commit out;
-        out.id = to_oid(&id);
-        out.parents.reserve(n);
-        for (unsigned i = 0; i < n; ++i) out.parents.push_back(to_oid(git_commit_parent_id(c.p, i)));
-        if (opts.first_parent && n > 1) out.parents.resize(1);
+        out.id = to_oid(git_commit_id(c.p));
+        out.parents = std::move(parents);
         if (const char* s = git_commit_summary(c.p)) out.summary = s;
         if (const char* m = git_commit_message(c.p)) out.message = m;
         if (const git_signature* author = git_commit_author(c.p))
@@ -346,6 +340,67 @@ std::expected<void, std::string> repo::walk(const walk_options& opts,
         }
         index[out.id] = all.size();
         all.push_back(std::move(out));
+    };
+
+    if (!opts.paths.empty())
+    {
+        // Limited to paths: git's history simplification, which libgit2
+        // lacks. rev-list --parents gives each commit that changed them with
+        // its parents rewritten to the nearest such, so the graph joins up.
+        std::vector<std::string> args{"rev-list", "--parents"};
+        if (opts.first_parent) args.push_back("--first-parent");
+        if (many && !opts.tips.empty())
+            for (const oid& tip : opts.tips) args.push_back(tip.hex());
+        else if (opts.refs == walk_refs::all)
+            args.push_back("--all");
+        else if (opts.refs == walk_refs::basic)
+            args.insert(args.end(), {"--branches", "--remotes", "--tags"});
+        else if (opts.refs == walk_refs::local)
+            args.push_back("--branches");
+        else
+            args.push_back(opts.rev.empty() ? std::string("HEAD") : opts.rev);
+        args.push_back("--");
+        args.insert(args.end(), opts.paths.begin(), opts.paths.end());
+        const git_result r =
+            run_git(workdir().empty() ? git_dir() : workdir(), args, git_output::stdout_only);
+        // An empty repository has no HEAD: no commits, as below.
+        if (!r.ok() && head_id()) return std::unexpected(r.output);
+        for (size_t at = 0; at < r.output.size();)
+        {
+            size_t end = r.output.find('\n', at);
+            if (end == std::string::npos) end = r.output.size();
+            std::string_view line(r.output.data() + at, end - at);
+            at = end + 1;
+            std::vector<oid> ids;
+            for (size_t p = 0; p + GIT_OID_SHA1_HEXSIZE <= line.size();
+                 p += GIT_OID_SHA1_HEXSIZE + 1)
+            {
+                git_oid o;
+                if (git_oid_fromstrn(&o, line.data() + p, GIT_OID_SHA1_HEXSIZE) != 0) break;
+                ids.push_back(to_oid(&o));
+            }
+            if (ids.empty()) continue;
+            const git_oid first = to_git(ids.front());
+            owned_commit c;
+            if (git_commit_lookup(&c.p, repo_, &first) == 0)
+                add(c, std::vector<oid>(ids.begin() + 1, ids.end()));
+        }
+    }
+    else
+    {
+        git_oid id;
+        while (git_revwalk_next(&id, w.p) == 0)
+        {
+            owned_commit c;
+            if (git_commit_lookup(&c.p, repo_, &id) != 0) continue;
+            const unsigned n = git_commit_parentcount(c.p);
+            std::vector<oid> parents;
+            parents.reserve(n);
+            for (unsigned i = 0; i < n; ++i)
+                parents.push_back(to_oid(git_commit_parent_id(c.p, i)));
+            if (opts.first_parent && n > 1) parents.resize(1);
+            add(c, std::move(parents));
+        }
     }
 
     std::vector<unsigned> children(all.size(), 0);

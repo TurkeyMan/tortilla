@@ -126,6 +126,10 @@ struct walk_options
     // With refs other than head: the ref tips to start from, when the caller already
     // has them (from refs()); empty = list the refs here.
     std::vector<oid> tips;
+    // Repository-relative paths the history is limited to, as git log -- <paths>
+    // has it (only commits that changed them, parents rewritten to join those
+    // up); empty = the whole repository.
+    std::vector<std::string> paths;
 };
 
 class repo

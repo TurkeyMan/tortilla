@@ -12,6 +12,7 @@
 
 #include <rapport/sys.h>
 
+#include <algorithm>
 #include <ctime>
 #include <filesystem>
 #include <numeric>
@@ -132,6 +133,30 @@ log_window::log_window(rap::ui& ui, repo repo, std::string path)
               .open_settings = [this](settings_page page) { open_settings(page); },
               .selection_changed = [this] { update_status(); }})
 {
+    std::error_code ec;
+    const auto root = rap::sys::path_from_utf8(repo_.workdir());
+    const auto rel = std::filesystem::relative(
+        std::filesystem::absolute(rap::sys::path_from_utf8(path_), ec), root, ec);
+    if (!repo_.workdir().empty() && !ec && !rel.empty() && rel != "." && *rel.begin() != "..")
+    {
+        rel_path_ = rap::sys::path_to_utf8(rel);
+        std::ranges::replace(rel_path_, '\\', '/');
+    }
+}
+
+// The repository's folder, or the path the history is limited to [spec 1.9.7].
+std::string log_window::title_text() const
+{
+    std::string title = repo_.workdir();
+    if (title.size() > 1 && title.back() == '/') title.pop_back();
+    if (path_limited()) title += "/" + rel_path_;
+    title = rap::sys::path_to_utf8(rap::sys::path_from_utf8(title).make_preferred());
+    return rap::i18n::format(_("{0} - Log Messages - Tortilla"), title);
+}
+
+bool log_window::path_limited() const
+{
+    return !rel_path_.empty() && !(whole_project_ && whole_project_->checked());
 }
 
 void log_window::build()
@@ -139,12 +164,8 @@ void log_window::build()
     using namespace rap::layout;
     namespace a = rap;
 
-    std::string title = repo_.workdir();
-    if (title.size() > 1 && title.back() == '/') title.pop_back();
-    title = rap::sys::path_to_utf8(rap::sys::path_from_utf8(title).make_preferred());
-
     window_ = ui_.create(window{
-        rap::i18n::format(_("{0} - Log Messages - Tortilla"), title),
+        title_text(),
         {vbox{
             // Filter bar [spec 1.2, row 1]
             hbox{
@@ -231,8 +252,20 @@ void log_window::build()
             label{}.selectable().ellipsize().bind(status_),
             hbox{
                 vbox{
-                    // TODO: enabled once the log can be opened for a path.
-                    check{_("Show _Whole Project")}.enabled(false),
+                    // Per repository, as in TortoiseGit [spec 1.9.7]; only
+                    // with a path to leave out.
+                    check{_("Show _Whole Project"),
+                          settings::get().value("log.wholeProject." + repo_.workdir()) == "1"}
+                        .bind(whole_project_)
+                        .enabled(!rel_path_.empty())
+                        .on_toggled(
+                            [this](bool on)
+                            {
+                                settings::get().set("log.wholeProject." + repo_.workdir(),
+                                                    on ? "1" : "0");
+                                window_->set_title(title_text());
+                                reload();
+                            }),
                     check{_("_All Branches")}
                         .bind(all_branches_)
                         .on_toggled(
@@ -243,13 +276,19 @@ void log_window::build()
                             }),
                 },
                 // TODO: path filter.
-                entry{}.placeholder(std::string("   ") + _("Filter paths")).enabled(false).stretch(),
+                entry{}
+                    .placeholder(std::string("   ") + _("Filter paths"))
+                    .enabled(false)
+                    .stretch(),
             },
             hbox{
-                button{_("Refresh")}.tooltip(_("Reload the log (F5)")).on_click([this] { reload(); }),
+                button{_("Refresh")}
+                    .tooltip(_("Reload the log (F5)"))
+                    .on_click([this] { reload(); }),
                 button{_("S_tatistics")}.bind(statistics_).enabled(false),
                 progress_bar{}.bind(progress_).stretch(),
-                menu_button{_("Walk Be_havior")}.bind(walk_).on_menu([this] { return walk_menu(); }),
+                menu_button{_("Walk Be_havior")}.bind(walk_).on_menu([this]
+                                                                     { return walk_menu(); }),
                 menu_button{_("_View")}.bind(view_).on_menu([this] { return view_menu(); }),
                 spacer{},
                 button{_("OK")}.on_click(
@@ -499,6 +538,7 @@ void log_window::reload()
     walk_options opts = walk_options_;
     opts.since = since_;
     opts.until = until_;
+    if (path_limited()) opts.paths = {rel_path_};
     log_.load(path_, opts, [this](const std::string& e) { loaded(e); });
     if (!filter_.text.empty()) log_.set_filter(filter_);
 }

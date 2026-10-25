@@ -510,6 +510,32 @@ int main(int argc, char** argv)
         sh(git + "stash drop -q");
     }
 
+    // A log of a path: only the commits that changed it, their parents
+    // rewritten to join those up (A, B, F1 and C each added their file).
+    {
+        auto r = tortilla::repo::open(repo);
+        auto walked = [&](std::vector<std::string> paths)
+        {
+            std::vector<tortilla::commit> out;
+            if (r)
+                (void)r->walk({.paths = std::move(paths)},
+                              [&](tortilla::commit&& c)
+                              {
+                                  out.push_back(std::move(c));
+                                  return true;
+                              });
+            return out;
+        };
+        const auto f1 = walked({"F1.txt"});
+        check(f1.size() == 1 && f1[0].summary == "F1 subject" && f1[0].parents.empty(),
+              "path log: one file's one commit, no parent before it");
+        const auto ac = walked({"A.txt", "C.txt"});
+        check(ac.size() == 2 && ac[0].summary == "C subject" && ac[1].summary == "A subject" &&
+                  ac[0].parents == std::vector<tortilla::oid>{ac[1].id},
+              "path log: two files' commits, the newer's parent rewritten to the older");
+        check(walked({"missing.txt"}).empty(), "path log: a path no commit changed");
+    }
+
     // Clean up: git clean's arguments, and its dry run read back.
     {
         using tortilla::clean_options;

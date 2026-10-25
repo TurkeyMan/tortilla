@@ -178,6 +178,7 @@ private:
     bool loading_ = false;
     walk_refs walk_refs_ = walk_refs::head;  // the loaded walk's
     std::string walk_rev_;
+    std::vector<std::string> walk_paths_;  // the history's paths; the working tree row's too
 
     // Filtering: the matching commit indices, in order.
     struct term

@@ -181,12 +181,21 @@ void log_model::start_status()
         ui_.post([this] { status_ = {}; });
     };
     std::string dir = repo_->workdir();
+    // A log of a path: its changes only, run from the top so the paths
+    // come out repository-relative as usual.
+    auto limited = [this](std::vector<std::string> args)
+    {
+        if (walk_paths_.empty()) return args;
+        args.push_back("--");
+        for (const std::string& p : walk_paths_) args.push_back(":(top)" + p);
+        return args;
+    };
     status_[0] = git_process::start(
-        ui_, dir, k_status_args, [out](const std::string& c) { out->first += c; }, finished,
-        git_output::stdout_only);
+        ui_, dir, limited(k_status_args), [out](const std::string& c) { out->first += c; },
+        finished, git_output::stdout_only);
     status_[1] = git_process::start(
-        ui_, dir, k_numstat_args, [out](const std::string& c) { out->second += c; }, finished,
-        git_output::stdout_only);
+        ui_, dir, limited(k_numstat_args), [out](const std::string& c) { out->second += c; },
+        finished, git_output::stdout_only);
 }
 
 void log_model::stop_actions()
@@ -273,6 +282,7 @@ void log_model::load(const std::string& path, const walk_options& opts,
     path_ = path;
     walk_refs_ = opts.refs;
     walk_rev_ = opts.rev;
+    walk_paths_ = opts.paths;
 
     auto repo = repo::open(path);
     if (!repo)
