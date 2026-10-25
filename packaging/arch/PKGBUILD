@@ -105,7 +105,7 @@ package_tortilla-rapport-qt6() {
 package_tortilla-core() {
   pkgdesc='A fast, native git client (the application; install tortilla, or tortilla-gtk4, tortilla-qt or tortilla-gtk3)'
   license=(GPL-3.0-only)
-  depends=("tortilla-rapport=$pkgver-$pkgrel" libgit2 git hicolor-icon-theme gcc-libs glibc)
+  depends=("tortilla-rapport=$pkgver-$pkgrel" libgit2 git git-lfs hicolor-icon-theme gcc-libs glibc)
   optdepends=('tortilla-nautilus: entries in the context menu of Nautilus (GNOME Files)'
               'tortilla-nemo: entries in the context menu of Nemo'
               'tortilla-caja: entries in the context menu of Caja'

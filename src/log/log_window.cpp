@@ -3,6 +3,7 @@
 #include "branch/browse_refs.h"
 
 #include "git/command.h"
+#include "git/lfs.h"
 #include "i18n.h"
 #include "settings.h"
 #include "ui/menu_text.h"
@@ -107,6 +108,7 @@ log_window::open(rap::ui& ui, const std::string& path, bool all_branches)
     if (all_branches) w->set_walk(walk_refs::all);
     w->reload();
     w->watch_repository();
+    warn_if_lfs_missing(ui, w->window_.get(), w->repo_.workdir());
     return w;
 }
 

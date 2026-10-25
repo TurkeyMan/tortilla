@@ -1,6 +1,7 @@
 #include "clone_dialog.h"
 
 #include "git/command.h"
+#include "git/lfs.h"
 #include "git/remotes.h"
 #include "i18n.h"
 #include "log/log_window.h"
@@ -216,9 +217,17 @@ void clone_dialog::ok()
          .offered = [](bool ok) { return !ok; }},
     };
     const size_t running = windows::hold({});
+    const bool bare = bare_->checked();
     run_progress_dialog(
         ui_, nullptr, _("Clone"), rap::sys::path_to_utf8(where), {c},
-        [running](bool) { windows::release(running); }, std::move(follow_ups));
+        [&ui, running, dir, bare](bool ok)
+        {
+            // Without git-lfs, LFS files came as pointers: said before
+            // Tortilla may close.
+            if (!ok || bare) return windows::release(running);
+            warn_if_lfs_missing(ui, nullptr, dir, [running] { windows::release(running); });
+        },
+        std::move(follow_ups));
     // close() only hides it: what closing means (its release) is ours.
     window_->close();
     if (closed_) closed_();

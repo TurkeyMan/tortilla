@@ -6,6 +6,7 @@
 #include "git/command.h"
 #include "git/diff_tool.h"
 #include "git/ignore_patterns.h"
+#include "git/lfs.h"
 #include "git/ref_list.h"
 #include "git/reflog.h"
 #include "git/remotes.h"
@@ -508,6 +509,21 @@ int main(int argc, char** argv)
         sh(git + "stash drop -q");
     }
 
+    // A repository uses Git LFS by its attributes, nested ones too, whether
+    // or not git-lfs is installed (no filter is set up here).
+    {
+        const std::string dir = std::string(argv[1]) + "/lfs-attributes";
+        std::filesystem::create_directories(dir + "/assets");
+        sh("git init -q '" + dir + "'");
+        sh("printf 'x' > '" + dir + "/a.txt' && cd '" + dir + "' && git add a.txt");
+        check(!tortilla::uses_lfs(dir), "LFS: a repository without the lfs filter");
+        sh("printf '*.bin filter=lfs diff=lfs merge=lfs -text\\n' > '" + dir +
+           "/assets/.gitattributes'");
+        sh("printf 'x' > '" + dir + "/assets/b.bin' && cd '" + dir + "' && git add .");
+        check(tortilla::uses_lfs(dir), "LFS: a nested .gitattributes's filter=lfs");
+        check(!tortilla::uses_lfs(dir + "/missing"), "LFS: no repository");
+    }
+
     // Git LFS, where git-lfs is installed: Tortilla's git does the LFS part
     // itself. A clone and a push move the files, the working tree lists see
     // a file as git does, and a revision's file is the file, not its pointer.
@@ -546,6 +562,8 @@ int main(int argc, char** argv)
         using namespace std::string_literals;
         check(read(work + "/a.bin") == "two\0binary!"s,
               "LFS: a clone checks out the file, not its pointer");
+        check(tortilla::uses_lfs(work) && tortilla::lfs_installed() && !tortilla::lfs_missing(work),
+              "LFS: nothing missing with git-lfs installed");
         check(tortilla::run_git(work, {"show", "HEAD:a.bin"}, tortilla::git_output::stdout_only)
                   .output.starts_with("version https://git-lfs"),
               "LFS: the commit holds a pointer");

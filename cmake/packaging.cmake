@@ -145,8 +145,9 @@ set(CPACK_DEBIAN_CORE_PACKAGE_SECTION libs)
 # The core loads these when first asked (HTTP, decoding images), not at start.
 set(CPACK_DEBIAN_CORE_PACKAGE_RECOMMENDS
     "libcurl4t64 | libcurl4 | libcurl3t64-gnutls, libgdk-pixbuf-2.0-0")
-# The app shells out to git for everything but the revision walk.
-set(CPACK_DEBIAN_TORTILLA_PACKAGE_DEPENDS git)
+# The app shells out to git for everything but the revision walk, and git
+# needs git-lfs for a repository that uses Git LFS.
+set(CPACK_DEBIAN_TORTILLA_PACKAGE_DEPENDS "git, git-lfs")
 list(TRANSFORM tortilla_shells PREPEND tortilla- OUTPUT_VARIABLE shell_packages)
 list(JOIN shell_packages ", " shell_packages)
 set(CPACK_DEBIAN_TORTILLA_PACKAGE_SUGGESTS "${shell_packages}")
@@ -187,7 +188,7 @@ foreach(c IN LISTS CPACK_COMPONENTS_ALL)
         list(APPEND requires "${pkg_${dep}} = ${TORTILLA_PACKAGE_VERSION}")
     endforeach()
     if(c STREQUAL tortilla)
-        list(APPEND requires git)
+        list(APPEND requires git git-lfs)
     elseif(c MATCHES "^tortilla-shell-(.*)")
         list(APPEND requires ${fm_rpm_${CMAKE_MATCH_1}})
     elseif(c IN_LIST tortilla_toolkits)

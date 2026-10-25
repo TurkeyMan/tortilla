@@ -76,6 +76,7 @@ add_library(tortilla_git STATIC
     src/git/ignore_patterns.cpp
     src/git/ref_list.cpp
     src/git/reflog.cpp
+    src/git/lfs.cpp
     src/changes/working_tree.cpp)
 target_include_directories(tortilla_git PUBLIC src)
 target_link_libraries(tortilla_git PUBLIC ${TORTILLA_LIBGIT2} rapport::rapport)

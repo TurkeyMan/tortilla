@@ -1430,6 +1430,26 @@ msgstr "„{0}“ umbenennen:"
 msgid "could not start git: {0}"
 msgstr "git konnte nicht gestartet werden: {0}"
 
+#: src/git/lfs.cpp:54
+msgid "Git LFS"
+msgstr "Git LFS"
+
+#: src/git/lfs.cpp:56
+#, c++-format
+msgid ""
+"{0} stores some files with Git LFS, but git-lfs isn't installed, so those "
+"files are checked out as small pointer files.\n"
+"\n"
+"Install Git LFS (https://git-lfs.com), then run “git lfs pull” in the "
+"repository."
+msgstr ""
+"{0} speichert einige Dateien mit Git LFS, aber git-lfs ist nicht "
+"installiert. Diese Dateien sind daher nur als kleine Zeigerdateien "
+"ausgecheckt.\n"
+"\n"
+"Installieren Sie Git LFS (https://git-lfs.com) und führen Sie dann „git lfs "
+"pull“ im Repository aus."
+
 #: src/git/merge_tool.cpp:173
 #, c++-format
 msgid "“{0}” isn't in conflict."
