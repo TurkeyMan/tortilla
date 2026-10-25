@@ -49,7 +49,7 @@ std::vector<rap::column> columns()
     c[name] = {.title = _("Branch Name"), .width = 24_ch, .sortable = true};
     c[tracked] = {.title = _("Tracked branch"), .width = 18_ch, .sortable = true};
     c[author_date] = {.title = _("Last Author Date"), .width = 19_ch, .sortable = true};
-    c[subject] = {.title = _("Last Commit"), .width = 300_px, .stretch = true, .sortable = true};
+    c[subject] = {.title = _("Last Commit"), .width = 300_px, .sortable = true};  // fixed, as TortoiseGit has it
     c[author] = {.title = _("Last Author"), .width = 16_ch, .sortable = true};
     c[commit_date] = {.title = _("Date Last Commit"), .width = 19_ch, .sortable = true};
     c[committer] = {.title = _("Last Committer"), .width = 16_ch, .sortable = true};
