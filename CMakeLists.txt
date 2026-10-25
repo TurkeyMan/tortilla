@@ -95,6 +95,7 @@ add_executable(tortilla
     src/changes/conflict_editor.cpp
     src/ui/stash_dialog.cpp
     src/ui/reset_dialog.cpp
+    src/ui/remotes_page.cpp
     src/rebase/rebase_window.cpp
     src/ui/compare.cpp
     src/ui/progress_dialog.cpp

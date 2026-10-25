@@ -31,6 +31,8 @@ private:
     void remote_changed();
     std::string remote() const;  // the chosen remote's name, or the URL; "" for all remotes
     int first_remote() const;
+    void manage_remotes();
+    void refresh_remotes();
     bool by_url() const;
     bool all_remotes() const;
     void ok();

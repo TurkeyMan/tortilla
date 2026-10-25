@@ -7,6 +7,7 @@
 #include "remote/pull_fetch_dialog.h"
 #include "settings.h"
 #include "ui/progress_dialog.h"
+#include "ui/settings_dialog.h"
 #include "ui/windows.h"
 
 #include <rapport/sys.h>
@@ -91,24 +92,26 @@ void push_dialog::build(const std::string& preselected)
     window_ = ui_.create(dialog{
         title(workdir_, _("{0} - Push - Tortilla")),
         {vbox{
-            group{
-                _("Ref"),
-                vbox{
-                    check{_("_Push all branches"), settings::get().value(key + ".all") == "1"}
-                        .bind(all_branches_)
-                        .on_toggled([this](bool) { update_state(); }),
-                    form{
-                        {_("Local"), combo{local_branches(workdir_), branch.empty() ? "HEAD" : branch}
-                                      .bind(local_)
-                                      .width(40_ch)
-                                      .on_changed([this](const std::string&) { local_changed(); })},
-                        {_("Remote branch"), combo{}.bind(remote_branch_)},
-                    },
-                }},
+            group{_("Ref"),
+                  vbox{
+                      check{_("_Push all branches"), settings::get().value(key + ".all") == "1"}
+                          .bind(all_branches_)
+                          .on_toggled([this](bool) { update_state(); }),
+                      form{
+                          {_("Local"),
+                           combo{local_branches(workdir_), branch.empty() ? "HEAD" : branch}
+                               .bind(local_)
+                               .width(40_ch)
+                               .on_changed([this](const std::string&) { local_changed(); })},
+                          {_("Remote branch"), combo{}.bind(remote_branch_)},
+                      },
+                  }},
             group{_("Destination"),
                   form{
-                      {_("Remote"), drop_down{items, current}.bind(remote_).on_changed(
-                                     [this](int) { update_state(); })},
+                      {_("Remote"),
+                       hbox{drop_down{items, current}.bind(remote_).stretch().on_changed(
+                                [this](int) { update_state(); }),
+                            button{_("_Manage")}.on_click([this] { manage_remotes(); })}},
                       {_("URL"), combo{}.bind(url_)},
                   }},
             group{_("Options"),
@@ -117,9 +120,10 @@ void push_dialog::build(const std::string& preselected)
                           check{_("Force _with lease")}
                               .bind(force_with_lease_)
                               .on_toggled([this](bool) { update_state(); }),
-                          check{_("_Force")}.bind(force_).on_toggled([this](bool) { update_state(); }),
+                          check{_("_Force")}.bind(force_).on_toggled([this](bool)
+                                                                     { update_state(); }),
                           check{_("Include _Tags")}.bind(tags_).on_toggled([this](bool)
-                                                                        { update_state(); }),
+                                                                           { update_state(); }),
                           spacer{},
                       },
                       check{_("_Set upstream/track remote branch")}.bind(set_upstream_),
@@ -284,6 +288,33 @@ void push_dialog::push()
     // close() only hides it: what closing means (its release) is ours.
     window_->close();
     if (closed_) closed_();
+}
+
+// Settings' Remotes page [spec 7, "Manage"]; the drop-down after, keeping
+// what was chosen when it's still there.
+void push_dialog::manage_remotes()
+{
+    show_settings(ui_, window_.get(), workdir_, settings_page::remotes, {},
+                  [this] { refresh_remotes(); });
+}
+
+void push_dialog::refresh_remotes()
+{
+    const bool url = by_url(), all = all_remotes();
+    const int was = remote_->current() - first_remote();
+    const std::string name = was >= 0 && was < int(remotes_.size()) ? remotes_[size_t(was)] : "";
+    remotes_ = remote_names(workdir_);
+    std::vector<std::string> items;
+    if (first_remote() == 1) items.push_back(_(k_all));
+    items.insert(items.end(), remotes_.begin(), remotes_.end());
+    items.push_back(_(k_url_item));
+    remote_->set_items(items);
+    int current = remotes_.empty() || url ? int(items.size()) - 1 : first_remote();
+    if (all && first_remote() == 1) current = 0;
+    for (size_t i = 0; i < remotes_.size(); ++i)
+        if (remotes_[i] == name) current = first_remote() + int(i);
+    remote_->set_current(current);
+    update_state();
 }
 
 }  // namespace tortilla

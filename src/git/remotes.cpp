@@ -174,4 +174,27 @@ std::string clone_url_in(std::string_view text)
     return drive ? std::string(s) : std::string();
 }
 
+std::vector<std::vector<std::string>> save_remote_commands(const std::string& from,
+                                                           const remote_settings& to)
+{
+    std::vector<std::vector<std::string>> commands;
+    if (from.empty())
+        commands.push_back({"remote", "add", "--", to.name, to.url});
+    else
+    {
+        if (to.name != from) commands.push_back({"remote", "rename", "--", from, to.name});
+        commands.push_back({"remote", "set-url", "--", to.name, to.url});
+    }
+    const std::string key = "remote." + to.name + ".";
+    commands.push_back(to.push_url.empty()
+                           ? std::vector<std::string>{"config", "--unset-all", key + "pushurl"}
+                           : std::vector<std::string>{"config", key + "pushurl", to.push_url});
+    commands.push_back(to.tag_opt.empty()
+                           ? std::vector<std::string>{"config", "--unset", key + "tagOpt"}
+                           : std::vector<std::string>{"config", key + "tagOpt", to.tag_opt});
+    commands.push_back(to.prune ? std::vector<std::string>{"config", key + "prune", "true"}
+                                : std::vector<std::string>{"config", "--unset", key + "prune"});
+    return commands;
+}
+
 }  // namespace tortilla

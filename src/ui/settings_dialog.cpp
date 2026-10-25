@@ -9,6 +9,7 @@
 #include "shell/fm_actions.h"
 #include "shell/menu_icons.h"
 #include "shell/menu_table.h"
+#include "ui/remotes_page.h"
 
 #include <rapport/sys.h>
 
@@ -556,22 +557,36 @@ void show_settings(rap::ui& ui, rap::window* parent, const std::string& repo_dir
     using namespace rap::layout;
     // Lazy pages don't size the dialog, so it has a size of its own.
     st->window = ui.create(
-        dialog{_("Settings - Tortilla"),
-               {vbox{
-                   tabs{
-                       // Weak: the window that keeps these is the state's own.
-                       page{_("General"), lazy{[weak, build] { return build(weak, general_page); }}},
-                       page{_("Context Menu"),
-                            lazy{[weak, build] { return build(weak, context_menu_page); }}},
-                       page{_("Diff Viewer"),
-                            lazy{[weak, build] { return build(weak, diff_viewer_page); }}},
-                       page{_("Network"), lazy{[weak, build] { return build(weak, network_page); }}},
-                   }
-                       .sidebar()
-                       .bind(page_tabs)
-                       .stretch(),
-                   buttons{ok, cancel},
-               }}}
+        dialog{
+            _("Settings - Tortilla"),
+            {vbox{
+                tabs{
+                    // Weak: the window that keeps these is the state's own.
+                    page{_("General"), lazy{[weak, build] { return build(weak, general_page); }}},
+                    page{_("Context Menu"),
+                         lazy{[weak, build] { return build(weak, context_menu_page); }}},
+                    page{_("Diff Viewer"),
+                         lazy{[weak, build] { return build(weak, diff_viewer_page); }}},
+                    page{_("Network"), lazy{[weak, build] { return build(weak, network_page); }}},
+                    page{_("Remotes"), lazy{[weak, &ui]
+                                            {
+                                                auto s = weak.lock();
+                                                if (!s) return rap::node{};
+                                                return remotes_page(
+                                                    ui,
+                                                    [weak]
+                                                    {
+                                                        auto s = weak.lock();
+                                                        return s ? s->window.get() : nullptr;
+                                                    },
+                                                    s->repo_dir);
+                                            }}},
+                }
+                    .sidebar()
+                    .bind(page_tabs)
+                    .stretch(),
+                buttons{ok, cancel},
+            }}}
             .size(96_ch, 30_lines),
         parent);
 

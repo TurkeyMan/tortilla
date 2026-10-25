@@ -565,6 +565,35 @@ int main(int argc, char** argv)
               "path log: following the rename reaches the commit that made it, as a line");
     }
 
+    // Settings' Remotes page: what Save runs, run on a repository.
+    {
+        const std::string dir = std::string(argv[1]) + "/remotes";
+        sh("git init -q '" + dir + "'");
+        auto apply = [&](const std::string& from, const tortilla::remote_settings& to)
+        {
+            for (const auto& args : tortilla::save_remote_commands(from, to))
+                if (const auto r = tortilla::run_git(dir, args); !r.ok() && r.exit_code != 5)
+                    return false;
+            return true;
+        };
+        auto value = [&](const std::string& key) { return tortilla::config_value(dir, key); };
+        check(apply({}, {.name = "up",
+                         .url = "https://example.com/a.git",
+                         .tag_opt = "--no-tags",
+                         .prune = true}) &&
+                  value("remote.up.url") == "https://example.com/a.git" &&
+                  value("remote.up.tagOpt") == "--no-tags" && value("remote.up.prune") == "true",
+              "remotes: added, with tags and prune");
+        check(apply("up", {.name = "origin",
+                           .url = "https://example.com/b.git",
+                           .push_url = "ssh://example.com/b.git"}) &&
+                  tortilla::remote_names(dir) == std::vector<std::string>{"origin"} &&
+                  value("remote.origin.url") == "https://example.com/b.git" &&
+                  value("remote.origin.pushurl") == "ssh://example.com/b.git" &&
+                  value("remote.origin.tagOpt").empty() && value("remote.origin.prune").empty(),
+              "remotes: renamed and changed, the options unset");
+    }
+
     // Clone's URL from the clipboard [spec 7.1.2].
     {
         using tortilla::clone_url_in;

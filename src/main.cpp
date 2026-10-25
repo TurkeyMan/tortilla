@@ -29,7 +29,7 @@
 //   tortilla compare file1 file2       two files, anywhere, in the diff tool
 //   tortilla conflicteditor file       a conflicted file in the merge tool
 //   tortilla diff [path] rev [rev2]   a commit, or rev..rev2, as a unified diff
-//   tortilla settings [path] [diff|menu|network]  the Settings dialog (at that page)
+//   tortilla settings [path] [diff|menu|network|remotes]  the Settings dialog (at that page)
 //   tortilla --which-ui       show the detected desktop and backend order
 //   tortilla --register-shell / --unregister-shell [--all-users]
 //                             add or remove the file manager's context menu,
@@ -276,12 +276,13 @@ int main(int argc, char** argv)
 
     if (command == "settings")
     {
-        // tortilla settings [path] [diff|menu|network]: the page to open on.
+        // tortilla settings [path] [diff|menu|network|remotes]: the page to open on.
         const std::string page = args.size() > 1 ? args[1] : "";
         tortilla::show_settings(**ui, nullptr, path,
                                 page == "diff"      ? tortilla::settings_page::diff_viewer
                                 : page == "menu"    ? tortilla::settings_page::context_menu
                                 : page == "network" ? tortilla::settings_page::network
+                                : page == "remotes" ? tortilla::settings_page::remotes
                                                     : tortilla::settings_page::general,
                                 {}, [&] { (*ui)->quit(); });
         return (*ui)->run();

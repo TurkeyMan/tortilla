@@ -11,6 +11,7 @@
 #include "settings.h"
 #include "ui/compare.h"
 #include "ui/progress_dialog.h"
+#include "ui/settings_dialog.h"
 #include "ui/windows.h"
 
 #include <rapport/sys.h>
@@ -157,10 +158,13 @@ void pull_fetch_dialog::build()
         {vbox{
             group{_("Remote"),
                   form{
-                      {_("Remote"), drop_down{items, current}.bind(remote_).on_changed(
-                                     [this](int) { remote_changed(); })},
+                      {_("Remote"),
+                       hbox{drop_down{items, current}.bind(remote_).stretch().on_changed(
+                                [this](int) { remote_changed(); }),
+                            button{_("_Manage")}.on_click([this] { manage_remotes(); })}},
                       {_("URL"), combo{url_history()}.bind(url_)},
-                      {_("Remote branch"), combo{{}, remote_branch}.bind(remote_branch_).width(40_ch)},
+                      {_("Remote branch"),
+                       combo{{}, remote_branch}.bind(remote_branch_).width(40_ch)},
                   }},
             group{_("Options"),
                   vbox{
@@ -415,6 +419,33 @@ void pull_fetch_dialog::ok()
 void pull_fetch_dialog::finished()
 {
     if (closed_) closed_();
+}
+
+// Settings' Remotes page [spec 7, "Manage"]; the drop-down after, keeping
+// what was chosen when it's still there.
+void pull_fetch_dialog::manage_remotes()
+{
+    show_settings(ui_, window_.get(), workdir_, settings_page::remotes, {},
+                  [this] { refresh_remotes(); });
+}
+
+void pull_fetch_dialog::refresh_remotes()
+{
+    const bool url = by_url(), all = all_remotes();
+    const int was = remote_->current() - first_remote();
+    const std::string name = was >= 0 && was < int(remotes_.size()) ? remotes_[size_t(was)] : "";
+    remotes_ = remote_names(workdir_);
+    std::vector<std::string> items;
+    if (first_remote() == 1) items.push_back(_(k_all));
+    items.insert(items.end(), remotes_.begin(), remotes_.end());
+    items.push_back(_(k_url_item));
+    remote_->set_items(items);
+    int current = remotes_.empty() || url ? int(items.size()) - 1 : first_remote();
+    if (all && first_remote() == 1) current = 0;
+    for (size_t i = 0; i < remotes_.size(); ++i)
+        if (remotes_[i] == name) current = first_remote() + int(i);
+    remote_->set_current(current);
+    remote_changed();
 }
 
 }  // namespace tortilla

@@ -29,6 +29,8 @@ private:
     void local_changed();  // the remote and branch it pushes to
     void update_state();
     int first_remote() const;
+    void manage_remotes();
+    void refresh_remotes();
     bool by_url() const;
     bool all_remotes() const;
     void ok();

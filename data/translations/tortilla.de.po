@@ -3470,3 +3470,67 @@ msgstr[1] "{0} Elemente in den Papierkorb verschoben."
 #: src/ui/compare.cpp
 msgid "“{0}” and “{1}” are the same."
 msgstr "„{0}“ und „{1}“ sind gleich."
+
+#: src/ui/remotes_page.cpp
+msgid "Remotes"
+msgstr "Remotes"
+
+#: src/ui/remotes_page.cpp
+msgid "A remote needs a name and a URL."
+msgstr "Ein Remote braucht einen Namen und eine URL."
+
+#: src/ui/remotes_page.cpp
+msgid "git couldn't save the remote."
+msgstr "git konnte das Remote nicht speichern."
+
+#: src/ui/remotes_page.cpp
+msgid "Remove the remote “{0}”?"
+msgstr "Das Remote „{0}“ entfernen?"
+
+#: src/ui/remotes_page.cpp
+msgid "Its remote-tracking branches go too; the repository it names isn't touched."
+msgstr "Seine Remote-Tracking-Branches werden mit entfernt; das Repository, auf das es verweist, bleibt unberührt."
+
+#: src/ui/remotes_page.cpp
+msgid "git couldn't remove the remote."
+msgstr "git konnte das Remote nicht entfernen."
+
+#: src/ui/remotes_page.cpp
+msgid "Remotes belong to a repository: open Settings from one to see its remotes."
+msgstr "Remotes gehören zu einem Repository: Öffnen Sie die Einstellungen aus einem Repository heraus, um seine Remotes zu sehen."
+
+#: src/ui/remotes_page.cpp
+msgid "Push URL"
+msgstr "Push-URL"
+
+#: src/ui/remotes_page.cpp
+msgid "the same as the URL"
+msgstr "wie die URL"
+
+#: src/ui/remotes_page.cpp
+msgid "Those on what's fetched (git's default)"
+msgstr "Die am Abgerufenen (gits Standard)"
+
+#: src/ui/remotes_page.cpp
+msgid "_Prune: remove remote-tracking branches gone from the remote, on fetch"
+msgstr "_Bereinigen: beim Abrufen Remote-Tracking-Branches entfernen, die es auf dem Remote nicht mehr gibt"
+
+#: src/ui/remotes_page.cpp
+msgid "_Add New"
+msgstr "_Neu hinzufügen"
+
+#: src/ui/remotes_page.cpp
+msgid "_Save"
+msgstr "_Speichern"
+
+#: src/ui/remotes_page.cpp
+msgid "_Remove"
+msgstr "_Entfernen"
+
+#: src/ui/remotes_page.cpp
+msgid "Changes apply when saved, to this repository's git config."
+msgstr "Änderungen gelten beim Speichern, in der git-Konfiguration dieses Repositorys."
+
+#: src/remote/push_dialog.cpp src/remote/pull_fetch_dialog.cpp
+msgid "_Manage"
+msgstr "_Verwalten"

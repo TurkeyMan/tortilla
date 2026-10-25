@@ -41,6 +41,19 @@ std::string push_remote_of(const std::string& workdir, const std::string& branch
 // ".git" [spec 7.1.2].
 std::string clone_folder_name(std::string url);
 
+// What a remote is set to on Settings' Remotes page.
+struct remote_settings
+{
+    std::string name, url, push_url;  // push_url "": the URL
+    std::string tag_opt;              // "", "--tags" or "--no-tags" (remote.<name>.tagOpt)
+    bool prune = false;               // remote.<name>.prune
+};
+// The git commands that make `to` so: adding it (`from` empty), or renaming
+// and changing the remote `from`. Unsetting what isn't set exits 5, which
+// is no failure.
+std::vector<std::vector<std::string>> save_remote_commands(const std::string& from,
+                                                           const remote_settings& to);
+
 // A URL to clone in clipboard text, or "" [spec 7.1.2]: its first line,
 // quotes stripped, "git clone " unwrapped, when it starts http://,
 // https://, git://, ssh://, git@, or is a drive-letter path.
