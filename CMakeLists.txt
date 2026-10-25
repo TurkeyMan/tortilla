@@ -102,7 +102,8 @@ add_executable(tortilla
     src/branch/merge_dialog.cpp
     src/branch/browse_refs.cpp
     src/ui/create_repo_dialog.cpp
-    src/ui/trust_repository.cpp)
+    src/ui/trust_repository.cpp
+    src/changes/rename_dialog.cpp)
 target_link_libraries(tortilla PRIVATE rapport::rapport tortilla_git)
 if(WIN32)
     enable_language(RC)

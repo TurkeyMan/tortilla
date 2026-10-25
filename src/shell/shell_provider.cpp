@@ -505,6 +505,7 @@ public:
         case run::stash_apply: rap::shell::launch(tortilla_exe(), {"stashapply", folder}); return;
         case run::stash_pop: rap::shell::launch(tortilla_exe(), {"stashpop", folder}); return;
         case run::repo_create: rap::shell::launch(tortilla_exe(), {"repocreate", folder}); return;
+        case run::rename: rap::shell::launch(tortilla_exe(), {"rename", first}); return;
         case run::edit_conflicts: rap::shell::launch(tortilla_exe(), {"conflicteditor", first}); return;
         case run::about: rap::shell::launch(tortilla_exe(), {"about"}); return;
         case run::commit:

@@ -4,7 +4,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: tortilla\n"
 "Report-Msgid-Bugs-To: https://github.com/TurkeyMan/tortilla/issues\n"
-"POT-Creation-Date: 2026-10-25 10:01+0000\n"
+"POT-Creation-Date: 2026-10-25 10:16+0000\n"
 "Language: de\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
@@ -254,7 +254,7 @@ msgstr "Remote-Referenzen werden gelöscht..."
 msgid "Delete"
 msgstr "Löschen"
 
-#: src/branch/browse_refs.cpp:844
+#: src/branch/browse_refs.cpp:844 src/changes/rename_dialog.cpp:143
 msgid "New name:"
 msgstr "Neuer Name:"
 
@@ -1389,6 +1389,42 @@ msgid_plural "Couldn't delete them."
 msgstr[0] "Es konnte nicht gelöscht werden."
 msgstr[1] "Sie konnten nicht gelöscht werden."
 
+#: src/changes/rename_dialog.cpp:81
+msgid "New name must not be empty or the same as the original name!"
+msgstr "Der neue Name darf weder leer noch gleich dem bisherigen sein!"
+
+#: src/changes/rename_dialog.cpp:83
+msgid ""
+"That isn't a valid name: it can't leave the repository or contain < > : \" "
+"| ? *."
+msgstr "Das ist kein gültiger Name: Er darf das Repository nicht verlassen und kein < > : \" | ? * enthalten."
+
+#: src/changes/rename_dialog.cpp:90
+#, c++-format
+msgid "“{0}” already exists."
+msgstr "„{0}“ gibt es schon."
+
+#: src/changes/rename_dialog.cpp:100
+msgid "git couldn't rename it."
+msgstr "git konnte es nicht umbenennen."
+
+#: src/changes/rename_dialog.cpp:120 src/main.cpp:332
+msgid "This needs a working tree."
+msgstr "Dafür wird ein Arbeitsverzeichnis gebraucht."
+
+#: src/changes/rename_dialog.cpp:125
+msgid "Only something inside the repository can be renamed."
+msgstr "Umbenennen lässt sich nur etwas im Repository."
+
+#: src/changes/rename_dialog.cpp:140
+msgid "Rename - Tortilla"
+msgstr "Umbenennen - Tortilla"
+
+#: src/changes/rename_dialog.cpp:142
+#, c++-format
+msgid "Rename “{0}”:"
+msgstr "„{0}“ umbenennen:"
+
 #: src/git/command.cpp:59 src/git/command.cpp:95 src/git/command.cpp:132
 #, c++-format
 msgid "could not start git: {0}"
@@ -2139,37 +2175,38 @@ msgstr "Spalten zurücksetzen"
 msgid "No more revisions found."
 msgstr "Keine weiteren Revisionen gefunden."
 
-#: src/main.cpp:117
-#, c++-format
-msgid "On {0}, {1} fits in better: its own toolkit, theme and dialogs."
-msgstr "Unter {0} passt {1} besser: das eigene Toolkit, Design und die eigenen Dialoge."
-
 #: src/main.cpp:119
 #, c++-format
-msgid "Install the {0} package for it. This is said only once."
-msgstr "Installieren Sie dafür das Paket {0}. Dieser Hinweis erscheint nur einmal."
+msgid "On {0}, {1} fits in better: its own toolkit, theme and dialogs."
+msgstr ""
+"Unter {0} passt {1} besser: das eigene Toolkit, Design und die eigenen "
+"Dialoge."
 
-#: src/main.cpp:225
+#: src/main.cpp:121
+#, c++-format
+msgid "Install the {0} package for it. This is said only once."
+msgstr ""
+"Installieren Sie dafür das Paket {0}. Dieser Hinweis erscheint nur einmal."
+
+#: src/main.cpp:228
 msgid ""
 "Tortilla needs one of its user interfaces: install tortilla-gtk4, tortilla-"
 "qt or tortilla-gtk3, whichever suits your desktop."
-msgstr "Tortilla braucht eine seiner Oberflächen: Installieren Sie tortilla-gtk4, tortilla-qt oder tortilla-gtk3, je nachdem, was zu Ihrem Desktop passt."
+msgstr ""
+"Tortilla braucht eine seiner Oberflächen: Installieren Sie tortilla-gtk4, "
+"tortilla-qt oder tortilla-gtk3, je nachdem, was zu Ihrem Desktop passt."
 
-#: src/main.cpp:315
-msgid "This needs a working tree."
-msgstr "Dafür wird ein Arbeitsverzeichnis gebraucht."
-
-#: src/main.cpp:334
+#: src/main.cpp:351
 #, c++-format
 msgid "{0} - Stash Apply"
 msgstr "{0} - Stash Apply"
 
-#: src/main.cpp:334
+#: src/main.cpp:351
 #, c++-format
 msgid "{0} - Stash Pop"
 msgstr "{0} - Stash Pop"
 
-#: src/main.cpp:556
+#: src/main.cpp:573
 msgid "Could not determine the last committed revision!"
 msgstr "Die zuletzt committete Revision konnte nicht ermittelt werden!"
 

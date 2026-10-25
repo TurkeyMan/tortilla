@@ -20,6 +20,7 @@
 //   tortilla prevdiff [path]           the file against its previous version
 //   tortilla stashsave|stashapply|stashpop [path]  Stash changes, Apply or Pop
 //   tortilla repocreate [folder]       git init there, bare or not
+//   tortilla rename path               git mv it to a new name
 //   tortilla conflicteditor file       a conflicted file in the merge tool
 //   tortilla diff [path] rev [rev2]   a commit, or rev..rev2, as a unified diff
 //   tortilla settings [path] [diff|menu|network]  the Settings dialog (at that page)
@@ -38,6 +39,7 @@
 #include "changes/file_action_window.h"
 #include "changes/ignore_dialog.h"
 #include "changes/remove.h"
+#include "changes/rename_dialog.h"
 #include "git/repo.h"
 #include "git/ssh_client.h"
 #include "i18n.h"
@@ -203,6 +205,7 @@ int main(int argc, char** argv)
                   std::strcmp(argv[i], "refbrowse") == 0 || std::strcmp(argv[i], "prevdiff") == 0 ||
                   std::strcmp(argv[i], "stashsave") == 0 || std::strcmp(argv[i], "stashapply") == 0 ||
                   std::strcmp(argv[i], "stashpop") == 0 || std::strcmp(argv[i], "repocreate") == 0 ||
+                  std::strcmp(argv[i], "rename") == 0 ||
                   std::strcmp(argv[i], "conflicteditor") == 0 || std::strcmp(argv[i], "about") == 0 ||
                   std::strcmp(argv[i], "remove") == 0 || std::strcmp(argv[i], "removekeep") == 0 ||
                   std::strcmp(argv[i], "ignore") == 0))
@@ -287,6 +290,20 @@ int main(int argc, char** argv)
                 (*ui)->quit();
             });
         (*w)->show();
+        (*ui)->run();
+        return code;
+    }
+
+    // Explorer's Rename [spec 4.2, row 36].
+    if (command == "rename")
+    {
+        int code = 1;
+        tortilla::rename_item(**ui, path,
+                              [&](bool renamed)
+                              {
+                                  code = renamed ? 0 : 1;
+                                  (*ui)->quit();
+                              });
         (*ui)->run();
         return code;
     }

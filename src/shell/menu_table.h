@@ -84,6 +84,7 @@ enum class run
     stash_apply,  // tortilla stashapply <folder>
     stash_pop,    // tortilla stashpop <folder>
     repo_create,  // tortilla repocreate <folder>
+    rename,       // tortilla rename <first>
     edit_conflicts,  // tortilla conflicteditor <file>
     about,           // tortilla about
     remove,          // tortilla remove <paths...>
@@ -182,7 +183,7 @@ inline constexpr row k_rows[] = {
      run::resolve,
      "resolve"},
     {"Abort &Merge", {{{GIT | MERGE, 0}, {FIG | MERGE, 0}}}, place::sub, run::merge_abort, "mergeabort"},
-    {"Re&name...", {{{GIT | ONE | IVF, ROOT}, {ROOT | SUB, 0}}}, place::sub, run::none, "rename"},
+    {"Re&name...", {{{GIT | ONE | IVF, ROOT}, {ROOT | SUB, 0}}}, place::sub, run::rename, "rename"},
     {"&Delete",
      {{{GIT | IVF, ADDED | ROOT}, {FIG | ROOT | SUB, 0}}},
      place::sub,
