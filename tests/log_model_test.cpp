@@ -6,6 +6,7 @@
 #include "git/command.h"
 #include "git/diff_tool.h"
 #include "git/ignore_patterns.h"
+#include "git/ref_list.h"
 #include "git/repo_worker.h"
 #include "git/status.h"
 #include "log/log_model.h"
@@ -228,6 +229,59 @@ int main(int argc, char** argv)
               "walk basic refs");
         check(order({.refs = tortilla::walk_refs::all}) == git_order({"--all"}), "walk all includes other refs");
         sh(git + "update-ref -d refs/other/x");
+    }
+
+    // Browse References' refs [spec 10.3] and filter [spec 10.6].
+    {
+        check(tortilla::strip_ref_name("refs/heads/a/b") == "a/b" &&
+                  tortilla::strip_ref_name("refs/remotes/o/x") == "remotes/o/x" &&
+                  tortilla::strip_ref_name("refs/tags/v1") == "tags/v1",
+              "strip_ref_name");
+        using tortilla::ref_filter_matches;
+        const std::string row = "feature/x\nFix the Parser\nAda\nabc123";
+        check(ref_filter_matches("parser ada", row), "filter: terms all present, any case");
+        check(!ref_filter_matches("parser -ada", row), "filter: -term excludes");
+        check(ref_filter_matches("\"the parser\"", row) && !ref_filter_matches("\"parser the\"", row),
+              "filter: quoted phrase");
+        check(ref_filter_matches("!zzz", row) && !ref_filter_matches("!ada", row), "filter: ! negates");
+
+        sh(git + "tag -a -m 'release one' rel1");
+        sh(git + "config branch.main.description 'the trunk'");
+        sh(git + "remote add origin /nowhere");  // the upstream maps through its fetch refspec
+        sh(git + "branch gone-up");
+        sh(git + "config branch.gone-up.remote origin");
+        sh(git + "config branch.gone-up.merge refs/heads/nowhere");
+        sh(git + "checkout -qb feature/x");
+        commit("FX");
+        sh(git + "checkout -q main");
+        const tortilla::ref_list_result all = tortilla::list_refs(repo);
+        auto find = [&](const std::string& full) -> const tortilla::ref_entry*
+        {
+            for (auto& e : all.refs)
+                if (e.full == full) return &e;
+            return nullptr;
+        };
+        const auto* tag = find("refs/tags/rel1");
+        check(all.error.empty() && tag && tag->type == "tag" && tag->author == "Ada" && tag->subject == "release one" &&
+                  tag->author_date > 0,
+              "list_refs: an annotated tag's tagger and message");
+        const auto* main = find("refs/heads/main");
+        check(main && main->description == "the trunk" && main->commit(), "list_refs: a branch's description");
+        const auto* gone = find("refs/heads/gone-up");
+        check(gone && gone->upstream == "(gone: origin/nowhere)", "list_refs: an upstream that isn't there is gone");
+        const auto folders = tortilla::ref_folders(all.refs);
+        check(std::ranges::contains(folders, std::string("refs/heads/feature")) &&
+                  std::ranges::contains(folders, std::string("refs/tags")) &&
+                  !std::ranges::contains(folders, std::string("refs/heads/main")),
+              "ref_folders: folders, not refs");
+        const auto merged = tortilla::list_refs(repo, tortilla::merged_filter::merged);
+        check(std::ranges::none_of(merged.refs, [](auto& e) { return e.full == "refs/heads/feature/x"; }) &&
+                  std::ranges::any_of(merged.refs, [](auto& e) { return e.full == "refs/heads/main"; }),
+              "list_refs: merged into HEAD");
+        sh(git + "branch -D -q feature/x gone-up");
+        sh(git + "tag -d rel1 >/dev/null");
+        sh(git + "config --unset branch.main.description");
+        sh(git + "remote remove origin");
     }
 
     // Refreshing labels after branch/tag changes, without a reload unless

@@ -16,6 +16,7 @@
 //   tortilla branch|tag|switch|merge [path] [rev]  Create Branch/Tag, Switch/Checkout
 //                                     or Merge, rev preselected
 //   tortilla mergeabort [path]         the Abort Merge dialog
+//   tortilla refbrowse [path]          Browse References
 //   tortilla conflicteditor file       a conflicted file in the merge tool
 //   tortilla diff [path] rev [rev2]   a commit, or rev..rev2, as a unified diff
 //   tortilla settings [path] [diff|menu|network]  the Settings dialog (at that page)
@@ -24,6 +25,7 @@
 //                             add or remove the file manager's context menu,
 //                             for this user or (elevated, as the installer
 //                             does) every user
+#include "branch/browse_refs.h"
 #include "branch/create_ref_dialog.h"
 #include "branch/merge_dialog.h"
 #include "branch/switch_dialog.h"
@@ -135,6 +137,7 @@ int main(int argc, char** argv)
                   std::strcmp(argv[i], "push") == 0 || std::strcmp(argv[i], "branch") == 0 ||
                   std::strcmp(argv[i], "tag") == 0 || std::strcmp(argv[i], "switch") == 0 ||
                   std::strcmp(argv[i], "merge") == 0 || std::strcmp(argv[i], "mergeabort") == 0 ||
+                  std::strcmp(argv[i], "refbrowse") == 0 ||
                   std::strcmp(argv[i], "conflicteditor") == 0 || std::strcmp(argv[i], "about") == 0 ||
                   std::strcmp(argv[i], "remove") == 0 || std::strcmp(argv[i], "removekeep") == 0 ||
                   std::strcmp(argv[i], "ignore") == 0))
@@ -192,7 +195,7 @@ int main(int argc, char** argv)
     // runs until the last of them closes.
     if (command == "clone" || command == "fetch" || command == "pull" || command == "push" ||
         command == "branch" || command == "tag" || command == "switch" || command == "merge" ||
-        command == "mergeabort")
+        command == "mergeabort" || command == "refbrowse")
     {
         tortilla::windows::init(**ui);
         // The branch dialogs: the second argument preselects a ref or hash.
@@ -217,6 +220,8 @@ int main(int argc, char** argv)
             return keep(tortilla::merge_dialog::open(**ui, path, rev)) ? (*ui)->run() : 1;
         if (command == "mergeabort")
             return keep(tortilla::abort_merge_dialog::open(**ui, path)) ? (*ui)->run() : 1;
+        if (command == "refbrowse")
+            return keep(tortilla::browse_refs::open(**ui, path, {})) ? (*ui)->run() : 1;
         if (command == "clone")
             tortilla::windows::keep(tortilla::clone_dialog::open(**ui, args.empty() ? "" : args[0],
                                                                  args.size() > 1 ? args[1] : ""));

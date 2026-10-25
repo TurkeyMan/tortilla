@@ -4,12 +4,262 @@ msgid ""
 msgstr ""
 "Project-Id-Version: tortilla\n"
 "Report-Msgid-Bugs-To: https://github.com/TurkeyMan/tortilla/issues\n"
-"POT-Creation-Date: 2026-10-25 01:00+0000\n"
+"POT-Creation-Date: 2026-10-25 02:49+0000\n"
 "Language: de\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+#: src/branch/browse_refs.cpp:49
+#
+msgid "Branch Name"
+msgstr "Branchname"
+
+#: src/branch/browse_refs.cpp:50
+#
+msgid "Tracked branch"
+msgstr "Verfolgter Branch"
+
+#: src/branch/browse_refs.cpp:51
+#
+msgid "Last Author Date"
+msgstr "Letztes Autordatum"
+
+#: src/branch/browse_refs.cpp:52
+#
+msgid "Last Commit"
+msgstr "Letzter Commit"
+
+#: src/branch/browse_refs.cpp:53
+#
+msgid "Last Author"
+msgstr "Letzter Autor"
+
+#: src/branch/browse_refs.cpp:54
+#
+msgid "Date Last Commit"
+msgstr "Datum letzter Commit"
+
+#: src/branch/browse_refs.cpp:55
+#
+msgid "Last Committer"
+msgstr "Letzter Committer"
+
+#: src/branch/browse_refs.cpp:56 src/log/log_actions.cpp:563
+#: src/log/log_model.cpp:136 src/log/log_window.cpp:871
+#: src/log/log_window.cpp:899 src/rebase/rebase_model.cpp:45
+msgid "SHA-1"
+msgstr "SHA-1"
+
+#: src/branch/browse_refs.cpp:57 src/branch/create_ref_dialog.cpp:87
+msgid "Description"
+msgstr "Beschreibung"
+
+#: src/branch/browse_refs.cpp:206
+#, c++-format
+msgid "{0} - Browse references - Tortilla"
+msgstr "{0} - Referenzen durchsuchen - Tortilla"
+
+#: src/branch/browse_refs.cpp:209
+#
+msgid "Filter:"
+msgstr "Filter:"
+
+#: src/branch/browse_refs.cpp:211
+msgid "Filter by Refname, Subject, Authors, SHA-1"
+msgstr "Filtern nach Referenzname, Betreff, Autoren, SHA-1"
+
+#: src/branch/browse_refs.cpp:221 src/changes/commit_window.cpp:182
+#: src/log/log_actions.cpp:539 src/log/log_window.cpp:828
+#: src/log/log_window.cpp:910
+msgid "All"
+msgstr "Alle"
+
+#: src/branch/browse_refs.cpp:221
+msgid "Only merged (to HEAD)"
+msgstr "Nur zusammengeführte (in HEAD)"
+
+#: src/branch/browse_refs.cpp:221
+msgid "Only unmerged (to HEAD)"
+msgstr "Nur nicht zusammengeführte (in HEAD)"
+
+#: src/branch/browse_refs.cpp:262
+#
+msgid "Show _nested refs"
+msgstr "_Verschachtelte Referenzen anzeigen"
+
+#: src/branch/browse_refs.cpp:271
+#
+msgid "Current Branch"
+msgstr "Aktueller Branch"
+
+#: src/branch/browse_refs.cpp:343
+#
+msgid "Couldn't list the references."
+msgstr "Die Referenzen konnten nicht aufgelistet werden."
+
+#: src/branch/browse_refs.cpp:437
+#, c++-format
+msgid "Showing {0} ref(s), {1} ref(s) selected"
+msgstr "{0} Referenz(en) angezeigt, {1} Referenz(en) ausgewählt"
+
+#: src/branch/browse_refs.cpp:483 src/branch/browse_refs.cpp:592
+#
+msgid "Copy ref names"
+msgstr "Referenznamen kopieren"
+
+#: src/branch/browse_refs.cpp:491
+msgid "Select"
+msgstr "Auswählen"
+
+#: src/branch/browse_refs.cpp:494 src/changes/changes_view.cpp:401
+#: src/rebase/rebase_window.cpp:208 src/remote/clone_dialog.cpp:206
+#: src/remote/pull_fetch_dialog.cpp:353
+msgid "Show _log"
+msgstr "_Log anzeigen"
+
+#: src/branch/browse_refs.cpp:497 src/branch/browse_refs.cpp:575
+#, c++-format
+msgid "Fetch from \"{0}\""
+msgstr "Von „{0}“ abrufen (Fetch)"
+
+#: src/branch/browse_refs.cpp:506
+#, c++-format
+msgid "_Merge to \"{0}\"..."
+msgstr "In „{0}“ _zusammenführen..."
+
+#: src/branch/browse_refs.cpp:509 src/log/log_actions.cpp:347
+msgid "Sw_itch/Checkout to this..."
+msgstr "Hierhin _wechseln/auschecken..."
+
+#: src/branch/browse_refs.cpp:515 src/branch/browse_refs.cpp:579
+#
+msgid "Create _Branch..."
+msgstr "_Branch erstellen..."
+
+#: src/branch/browse_refs.cpp:519 src/branch/browse_refs.cpp:771
+#: src/branch/browse_refs.cpp:779 src/branch/browse_refs.cpp:781
+#
+msgid "Edit description"
+msgstr "Beschreibung bearbeiten"
+
+#: src/branch/browse_refs.cpp:520 src/branch/browse_refs.cpp:753
+#: src/branch/browse_refs.cpp:765
+#
+msgid "Rename"
+msgstr "Umbenennen"
+
+#: src/branch/browse_refs.cpp:530 src/branch/browse_refs.cpp:533
+#
+msgid "Unset tracked branch"
+msgstr "Verfolgten Branch entfernen"
+
+#: src/branch/browse_refs.cpp:536
+#
+msgid "Select tracked branch"
+msgstr "Verfolgten Branch wählen"
+
+#: src/branch/browse_refs.cpp:541
+#
+msgid "Delete remote branch"
+msgstr "Remote-Branch löschen"
+
+#: src/branch/browse_refs.cpp:542
+#
+msgid "Delete tag"
+msgstr "Tag löschen"
+
+#: src/branch/browse_refs.cpp:543
+#
+msgid "Delete branch"
+msgstr "Branch löschen"
+
+#: src/branch/browse_refs.cpp:551
+#, c++-format
+msgid "Delete {0} remote branch"
+msgid_plural "Delete {0} remote branches"
+msgstr[0] "{0} Remote-Branch löschen"
+msgstr[1] "{0} Remote-Branches löschen"
+
+#: src/branch/browse_refs.cpp:555
+#, c++-format
+msgid "Delete {0} branch"
+msgid_plural "Delete {0} branches"
+msgstr[0] "{0} Branch löschen"
+msgstr[1] "{0} Branches löschen"
+
+#: src/branch/browse_refs.cpp:558
+#, c++-format
+msgid "Delete {0} tag"
+msgid_plural "Delete {0} tags"
+msgstr[0] "{0} Tag löschen"
+msgstr[1] "{0} Tags löschen"
+
+#: src/branch/browse_refs.cpp:583
+#
+msgid "Create _Tag..."
+msgstr "_Tag erstellen..."
+
+#: src/branch/browse_refs.cpp:587
+#
+msgid "Delete all tags"
+msgstr "Alle Tags löschen"
+
+#: src/branch/browse_refs.cpp:654 src/branch/merge_dialog.cpp:284
+#, c++-format
+msgid "Do you really want to delete \"{0}\"?"
+msgstr "Möchten Sie „{0}“ wirklich löschen?"
+
+#: src/branch/browse_refs.cpp:658
+msgid "This branch is not fully merged into HEAD."
+msgstr "Dieser Branch ist nicht vollständig in HEAD zusammengeführt."
+
+#: src/branch/browse_refs.cpp:664
+#, c++-format
+msgid ""
+"Do you really want to permanently delete the selected ref? It can NOT be "
+"recovered!"
+msgid_plural ""
+"Do you really want to permanently delete the {0} selected refs? It can NOT "
+"be recovered!"
+msgstr[0] "Soll die ausgewählte Referenz wirklich dauerhaft gelöscht werden? Das lässt sich NICHT rückgängig machen!"
+msgstr[1] "Sollen die {0} ausgewählten Referenzen wirklich dauerhaft gelöscht werden? Das lässt sich NICHT rückgängig machen!"
+
+#: src/branch/browse_refs.cpp:670
+msgid ""
+"It has not been checked if these branches have been fully merged into HEAD."
+msgstr "Es wurde nicht geprüft, ob diese Branches vollständig in HEAD zusammengeführt sind."
+
+#: src/branch/browse_refs.cpp:676
+msgid "This action will remove the branches on the remote."
+msgstr "Diese Aktion entfernt die Branches auf dem Remote."
+
+#: src/branch/browse_refs.cpp:702
+msgid "Deleting remote refs..."
+msgstr "Remote-Referenzen werden gelöscht..."
+
+#: src/branch/browse_refs.cpp:712 src/changes/changes_view.cpp:449
+#: src/changes/remove.cpp:71 src/log/log_actions.cpp:523
+#: src/log/log_actions.cpp:537 src/log/log_actions.cpp:545
+msgid "Delete"
+msgstr "Löschen"
+
+#: src/branch/browse_refs.cpp:753
+#
+msgid "New name:"
+msgstr "Neuer Name:"
+
+#: src/branch/browse_refs.cpp:762
+msgid "You cannot change the type of this ref with a rename."
+msgstr "Die Art dieser Referenz lässt sich durch Umbenennen nicht ändern."
+
+#: src/branch/browse_refs.cpp:802
+#, c++-format
+msgid ""
+"This is usually caused when the setting \"remote.{0}.fetch\" does not "
+"include the desired branch."
+msgstr "Das liegt meist daran, dass die Einstellung „remote.{0}.fetch“ den gewünschten Branch nicht einschließt."
 
 #: src/branch/create_ref_dialog.cpp:69 src/branch/create_ref_dialog.cpp:140
 #: src/branch/create_ref_dialog.cpp:167 src/branch/create_ref_dialog.cpp:232
@@ -53,10 +303,6 @@ msgstr "Si_gnieren"
 #: src/branch/create_ref_dialog.cpp:83
 msgid "_Push"
 msgstr "_Push"
-
-#: src/branch/create_ref_dialog.cpp:87
-msgid "Description"
-msgstr "Beschreibung"
 
 #: src/branch/create_ref_dialog.cpp:87
 msgid "Message (makes an annotated tag)"
@@ -170,7 +416,7 @@ msgid "_Squash"
 msgstr "_Squash"
 
 #: src/branch/merge_dialog.cpp:113 src/log/log_actions.cpp:568
-#: src/log/log_window.cpp:848 src/log/log_window.cpp:873
+#: src/log/log_window.cpp:870 src/log/log_window.cpp:895
 msgid "Messages"
 msgstr "Nachrichten"
 
@@ -224,11 +470,6 @@ msgstr "Unabhängige Historie _zusammenführen"
 #: src/branch/merge_dialog.cpp:276
 msgid "Remove _branch"
 msgstr "_Branch entfernen"
-
-#: src/branch/merge_dialog.cpp:284
-#, c++-format
-msgid "Do you really want to delete \"{0}\"?"
-msgstr "Möchten Sie „{0}“ wirklich löschen?"
 
 #: src/branch/merge_dialog.cpp:299 src/log/log_actions.cpp:491
 #: src/remote/push_dialog.cpp:278
@@ -293,7 +534,7 @@ msgstr "{0} - Merge abbrechen"
 msgid "_Retry"
 msgstr "_Wiederholen"
 
-#: src/branch/ref_chooser.cpp:71 src/log/log_window.cpp:166
+#: src/branch/ref_chooser.cpp:71 src/log/log_window.cpp:168
 #: src/remote/clone_dialog.cpp:117
 msgid "Branch"
 msgstr "Branch"
@@ -306,7 +547,7 @@ msgstr "Branch"
 msgid "Commit"
 msgstr "Commit"
 
-#: src/branch/ref_chooser.cpp:71 src/log/log_window.cpp:166
+#: src/branch/ref_chooser.cpp:71 src/log/log_window.cpp:168
 msgid "Tag"
 msgstr "Tag"
 
@@ -502,11 +743,6 @@ msgstr "Auf Eltern-Revision zurücksetzen: {0}"
 msgid "Revert to parent revision"
 msgstr "Auf Eltern-Revision zurücksetzen"
 
-#: src/changes/changes_view.cpp:401 src/rebase/rebase_window.cpp:208
-#: src/remote/clone_dialog.cpp:206 src/remote/pull_fetch_dialog.cpp:353
-msgid "Show _log"
-msgstr "_Log anzeigen"
-
 #: src/changes/changes_view.cpp:402
 msgid "Show log _before rename/copy"
 msgstr "Log _vor Umbenennen/Kopieren anzeigen"
@@ -553,12 +789,6 @@ msgid "Delete {0}? They aren't in git, so this can't be undone."
 msgstr ""
 "{0} löschen? Die Dateien sind nicht in git, daher kann dies nicht rückgängig "
 "gemacht werden."
-
-#: src/changes/changes_view.cpp:449 src/changes/remove.cpp:71
-#: src/log/log_actions.cpp:523 src/log/log_actions.cpp:537
-#: src/log/log_actions.cpp:545
-msgid "Delete"
-msgstr "Löschen"
 
 #: src/changes/changes_view.cpp:463
 msgid "Add to ignore list"
@@ -659,7 +889,7 @@ msgid "Show all _staged files"
 msgstr "Alle _vorgemerkten Dateien anzeigen"
 
 #: src/changes/changes_window.cpp:147 src/changes/commit_window.cpp:212
-#: src/log/log_window.cpp:231
+#: src/log/log_window.cpp:233
 msgid "Show _Whole Project"
 msgstr "_Gesamtes Projekt anzeigen"
 
@@ -677,7 +907,7 @@ msgid "_Refresh"
 msgstr "_Aktualisieren"
 
 #: src/changes/changes_window.cpp:168 src/changes/file_action_window.cpp:211
-#: src/log/log_window.cpp:251
+#: src/log/log_window.cpp:253
 msgid "OK"
 msgstr "OK"
 
@@ -780,11 +1010,6 @@ msgstr ""
 msgid "Check:"
 msgstr "Auswählen:"
 
-#: src/changes/commit_window.cpp:182 src/log/log_actions.cpp:539
-#: src/log/log_window.cpp:806 src/log/log_window.cpp:888
-msgid "All"
-msgstr "Alle"
-
 #: src/changes/commit_window.cpp:184 src/remote/push_dialog.cpp:131
 msgid "None"
 msgstr "Keine"
@@ -817,7 +1042,7 @@ msgstr "Dateien"
 msgid "Submodules"
 msgstr "Submodule"
 
-#: src/changes/commit_window.cpp:204 src/log/log_window.cpp:978
+#: src/changes/commit_window.cpp:204 src/log/log_window.cpp:1000
 msgid "Show _Unversioned Files"
 msgstr "_Unversionierte Dateien anzeigen"
 
@@ -1203,8 +1428,8 @@ msgid "Abort _Merge"
 msgstr "_Merge abbrechen"
 
 #: src/log/log_actions.cpp:230 src/log/log_model.cpp:655
-#: src/log/log_model.cpp:875 src/log/log_window.cpp:601
-#: src/log/log_window.cpp:607
+#: src/log/log_model.cpp:875 src/log/log_window.cpp:603
+#: src/log/log_window.cpp:609
 msgid "Working tree changes"
 msgstr "Änderungen im Arbeitsverzeichnis"
 
@@ -1261,10 +1486,6 @@ msgstr "Zu „{0}“ _wechseln/auschecken"
 #: src/log/log_actions.cpp:340
 msgid "_Switch/Checkout to"
 msgstr "_Wechseln/Auschecken zu"
-
-#: src/log/log_actions.cpp:347
-msgid "Sw_itch/Checkout to this..."
-msgstr "Hierhin _wechseln/auschecken..."
 
 #: src/log/log_actions.cpp:356
 msgid "Create Br_anch at this version..."
@@ -1378,12 +1599,6 @@ msgstr "Alle Daten"
 #: src/log/log_actions.cpp:562
 msgid "Full commit data without changed paths"
 msgstr "Alle Commit-Daten ohne geänderte Pfade"
-
-#: src/log/log_actions.cpp:563 src/log/log_model.cpp:136
-#: src/log/log_window.cpp:849 src/log/log_window.cpp:877
-#: src/rebase/rebase_model.cpp:45
-msgid "SHA-1"
-msgstr "SHA-1"
 
 #: src/log/log_actions.cpp:564
 msgid "Authors (full)"
@@ -1647,147 +1862,147 @@ msgstr "Committer-E-Mail"
 msgid "Commit Date"
 msgstr "Commit-Datum"
 
-#: src/log/log_window.cpp:143
+#: src/log/log_window.cpp:145
 #, c++-format
 msgid "{0} - Log Messages - Tortilla"
 msgstr "{0} - Log-Nachrichten - Tortilla"
 
-#: src/log/log_window.cpp:151
+#: src/log/log_window.cpp:153
 msgid "From:"
 msgstr "Von:"
 
-#: src/log/log_window.cpp:153
+#: src/log/log_window.cpp:155
 msgid "To:"
 msgstr "Bis:"
 
-#: src/log/log_window.cpp:164
+#: src/log/log_window.cpp:166
 msgid "Filter options"
 msgstr "Filteroptionen"
 
-#: src/log/log_window.cpp:165
+#: src/log/log_window.cpp:167
 msgid "Author Email"
 msgstr "Autor-E-Mail"
 
-#: src/log/log_window.cpp:165
+#: src/log/log_window.cpp:167
 msgid "Committer Email"
 msgstr "Committer-E-Mail"
 
-#: src/log/log_window.cpp:165
+#: src/log/log_window.cpp:167
 msgid "Merge Point"
 msgstr "Merge-Punkt"
 
-#: src/log/log_window.cpp:165
+#: src/log/log_window.cpp:167
 msgid "Parent 1"
 msgstr "Eltern-Commit 1"
 
-#: src/log/log_window.cpp:166
+#: src/log/log_window.cpp:168
 msgid "Branch (FF)"
 msgstr "Branch (FF)"
 
-#: src/log/log_window.cpp:166
+#: src/log/log_window.cpp:168
 msgid "Parent 2"
 msgstr "Eltern-Commit 2"
 
-#: src/log/log_window.cpp:166
+#: src/log/log_window.cpp:168
 msgid "Tag (FF)"
 msgstr "Tag (FF)"
 
-#: src/log/log_window.cpp:167
+#: src/log/log_window.cpp:169
 msgid "Selection History"
 msgstr "Auswahlverlauf"
 
-#: src/log/log_window.cpp:170
+#: src/log/log_window.cpp:172
 msgid "Jump up (Alt+Up)"
 msgstr "Nach oben springen (Alt+Pfeil oben)"
 
-#: src/log/log_window.cpp:174
+#: src/log/log_window.cpp:176
 msgid "Jump down (Alt+Down)"
 msgstr "Nach unten springen (Alt+Pfeil unten)"
 
-#: src/log/log_window.cpp:232
+#: src/log/log_window.cpp:234
 msgid "_All Branches"
 msgstr "_Alle Branches"
 
-#: src/log/log_window.cpp:242
+#: src/log/log_window.cpp:244
 msgid "Filter paths"
 msgstr "Pfade filtern"
 
-#: src/log/log_window.cpp:245
+#: src/log/log_window.cpp:247
 msgid "Refresh"
 msgstr "Aktualisieren"
 
-#: src/log/log_window.cpp:245
+#: src/log/log_window.cpp:247
 msgid "Reload the log (F5)"
 msgstr "Log neu laden (F5)"
 
-#: src/log/log_window.cpp:246
+#: src/log/log_window.cpp:248
 msgid "S_tatistics"
 msgstr "S_tatistik"
 
-#: src/log/log_window.cpp:248
+#: src/log/log_window.cpp:250
 msgid "Walk Be_havior"
 msgstr "_Durchlaufverhalten"
 
-#: src/log/log_window.cpp:249
+#: src/log/log_window.cpp:251
 msgid "_View"
 msgstr "_Ansicht"
 
-#: src/log/log_window.cpp:486
+#: src/log/log_window.cpp:488
 msgid "Loading…"
 msgstr "Wird geladen…"
 
-#: src/log/log_window.cpp:511
+#: src/log/log_window.cpp:513
 #, c++-format
 msgid "Error: {0}"
 msgstr "Fehler: {0}"
 
-#: src/log/log_window.cpp:601
+#: src/log/log_window.cpp:603
 msgid "Fetching status..."
 msgstr "Status wird abgerufen..."
 
-#: src/log/log_window.cpp:608
+#: src/log/log_window.cpp:610
 #, c++-format
 msgid "{0} file changed"
 msgid_plural "{0} files changed"
 msgstr[0] "{0} Datei geändert"
 msgstr[1] "{0} Dateien geändert"
 
-#: src/log/log_window.cpp:622
+#: src/log/log_window.cpp:624
 msgid "SHA-1: "
 msgstr "SHA-1: "
 
-#: src/log/log_window.cpp:623
+#: src/log/log_window.cpp:625
 msgid "Author: "
 msgstr "Autor: "
 
-#: src/log/log_window.cpp:624
+#: src/log/log_window.cpp:626
 msgid "Date: "
 msgstr "Datum: "
 
-#: src/log/log_window.cpp:626
+#: src/log/log_window.cpp:628
 msgid "Committer: "
 msgstr "Committer: "
 
-#: src/log/log_window.cpp:628
+#: src/log/log_window.cpp:630
 msgid "Parent: "
 msgstr "Eltern-Commit: "
 
-#: src/log/log_window.cpp:685
+#: src/log/log_window.cpp:687
 #, c++-format
 msgid "Showing {0} revision(s)"
 msgstr "{0} Revision(en) angezeigt"
 
-#: src/log/log_window.cpp:689
+#: src/log/log_window.cpp:691
 #, c++-format
 msgid "Showing {0} revision(s), from revision {1} to revision {2}"
 msgstr "{0} Revision(en) angezeigt, von Revision {1} bis Revision {2}"
 
-#: src/log/log_window.cpp:693
+#: src/log/log_window.cpp:695
 #, c++-format
 msgid "{0} - {1} revision(s) selected, {2} file(s) selected"
 msgstr "{0} - {1} Revision(en) ausgewählt, {2} Datei(en) ausgewählt"
 
-#: src/log/log_window.cpp:712
+#: src/log/log_window.cpp:714
 #, c++-format
 msgid ""
 "{0}; line: {1}(+) {2}(-) files: modified = {3} added = {4} deleted = {5} "
@@ -1796,145 +2011,145 @@ msgstr ""
 "{0}; Zeilen: {1}(+) {2}(-) Dateien: geändert = {3} hinzugefügt = {4} "
 "gelöscht = {5} ersetzt = {6}"
 
-#: src/log/log_window.cpp:741
+#: src/log/log_window.cpp:749
 msgid "<All Branches>"
 msgstr "<Alle Branches>"
 
-#: src/log/log_window.cpp:742
+#: src/log/log_window.cpp:750
 msgid "<Basic Refs>"
 msgstr "<Grundlegende Referenzen>"
 
-#: src/log/log_window.cpp:743
+#: src/log/log_window.cpp:751
 msgid "<Local Branches>"
 msgstr "<Lokale Branches>"
 
-#: src/log/log_window.cpp:759
+#: src/log/log_window.cpp:767
 msgid "<No branch>"
 msgstr "<Kein Branch>"
 
-#: src/log/log_window.cpp:796
+#: src/log/log_window.cpp:804
 msgid "Browse References"
 msgstr "Referenzen durchsuchen"
 
-#: src/log/log_window.cpp:807
+#: src/log/log_window.cpp:829
 msgid "All basic refs"
 msgstr "Alle grundlegenden Referenzen"
 
-#: src/log/log_window.cpp:808
+#: src/log/log_window.cpp:830
 msgid "All local branches"
 msgstr "Alle lokalen Branches"
 
-#: src/log/log_window.cpp:832
+#: src/log/log_window.cpp:854
 msgid "_Branches"
 msgstr "_Branches"
 
-#: src/log/log_window.cpp:833 src/log/log_window.cpp:987
+#: src/log/log_window.cpp:855 src/log/log_window.cpp:1009
 msgid "_Remote branches"
 msgstr "_Remote-Branches"
 
-#: src/log/log_window.cpp:834 src/log/log_window.cpp:986
+#: src/log/log_window.cpp:856 src/log/log_window.cpp:1008
 msgid "_Tags"
 msgstr "_Tags"
 
-#: src/log/log_window.cpp:848 src/log/log_window.cpp:874
+#: src/log/log_window.cpp:870 src/log/log_window.cpp:896
 msgid "Paths"
 msgstr "Pfade"
 
-#: src/log/log_window.cpp:848 src/log/log_window.cpp:872
+#: src/log/log_window.cpp:870 src/log/log_window.cpp:894
 msgid "Subject"
 msgstr "Betreff"
 
-#: src/log/log_window.cpp:849 src/log/log_window.cpp:875
+#: src/log/log_window.cpp:871 src/log/log_window.cpp:897
 msgid "Authors"
 msgstr "Autoren"
 
-#: src/log/log_window.cpp:849 src/log/log_window.cpp:876
+#: src/log/log_window.cpp:871 src/log/log_window.cpp:898
 msgid "Emails"
 msgstr "E-Mails"
 
-#: src/log/log_window.cpp:850 src/log/log_window.cpp:878
+#: src/log/log_window.cpp:872 src/log/log_window.cpp:900
 msgid "Refname"
 msgstr "Referenzname"
 
-#: src/log/log_window.cpp:854
+#: src/log/log_window.cpp:876
 #, c++-format
 msgid "Filter by {0}"
 msgstr "Nach {0} filtern"
 
-#: src/log/log_window.cpp:880
+#: src/log/log_window.cpp:902
 msgid "Toggle filters"
 msgstr "Filter umschalten"
 
-#: src/log/log_window.cpp:897
+#: src/log/log_window.cpp:919
 msgid "Use regular expression"
 msgstr "Regulären Ausdruck verwenden"
 
-#: src/log/log_window.cpp:903
+#: src/log/log_window.cpp:925
 msgid "Case-sensitive"
 msgstr "Groß-/Kleinschreibung beachten"
 
-#: src/log/log_window.cpp:928
+#: src/log/log_window.cpp:950
 #, c++-format
 msgid "Invalid regular expression: {0}"
 msgstr "Ungültiger regulärer Ausdruck: {0}"
 
-#: src/log/log_window.cpp:953
+#: src/log/log_window.cpp:975
 msgid "First Parent"
 msgstr "Erster Eltern-Commit"
 
-#: src/log/log_window.cpp:954
+#: src/log/log_window.cpp:976
 msgid "No _merges"
 msgstr "Keine _Merges"
 
-#: src/log/log_window.cpp:956
+#: src/log/log_window.cpp:978
 msgid "_Follow renames"
 msgstr "_Umbenennungen folgen"
 
-#: src/log/log_window.cpp:957
+#: src/log/log_window.cpp:979
 msgid "Full history"
 msgstr "Vollständige Historie"
 
-#: src/log/log_window.cpp:959
+#: src/log/log_window.cpp:981
 msgid "_Compressed Graph"
 msgstr "_Komprimierter Graph"
 
-#: src/log/log_window.cpp:960
+#: src/log/log_window.cpp:982
 msgid "Show la_beled commits only"
 msgstr "Nur _beschriftete Commits anzeigen"
 
-#: src/log/log_window.cpp:975
+#: src/log/log_window.cpp:997
 msgid "H_ide Unrelated Changed Paths"
 msgstr "Nicht betroffene geänderte Pfade _ausblenden"
 
-#: src/log/log_window.cpp:976
+#: src/log/log_window.cpp:998
 msgid "_Gray Unrelated Changed Paths"
 msgstr "Nicht betroffene geänderte Pfade _grau darstellen"
 
-#: src/log/log_window.cpp:985
+#: src/log/log_window.cpp:1007
 msgid "_Labels"
 msgstr "_Beschriftungen"
 
-#: src/log/log_window.cpp:986
+#: src/log/log_window.cpp:1008
 msgid "_Local branches"
 msgstr "_Lokale Branches"
 
-#: src/log/log_window.cpp:987
+#: src/log/log_window.cpp:1009
 msgid "Other refs"
 msgstr "Andere Referenzen"
 
-#: src/log/log_window.cpp:989
+#: src/log/log_window.cpp:1011
 msgid "View Patch"
 msgstr "Patch anzeigen"
 
-#: src/log/log_window.cpp:991 src/ui/welcome_window.cpp:79
+#: src/log/log_window.cpp:1013 src/ui/welcome_window.cpp:79
 msgid "_Settings..."
 msgstr "_Einstellungen..."
 
-#: src/log/log_window.cpp:1011
+#: src/log/log_window.cpp:1033
 msgid "Reset columns"
 msgstr "Spalten zurücksetzen"
 
-#: src/log/log_window.cpp:1126
+#: src/log/log_window.cpp:1148
 msgid "No more revisions found."
 msgstr "Keine weiteren Revisionen gefunden."
 

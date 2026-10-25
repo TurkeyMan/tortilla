@@ -30,6 +30,8 @@ public:
     open(rap::ui&, const std::string& path, bool all_branches = false);
 
     void show() { window_->show(); }
+    // Shows the history from `rev` (a ref or commit) instead of HEAD.
+    void start_at(const std::string& rev);
     void on_closed(std::function<void()> f) { closed_ = std::move(f); }
 
 private:

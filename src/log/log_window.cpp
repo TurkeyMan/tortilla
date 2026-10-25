@@ -1,5 +1,7 @@
 #include "log_window.h"
 
+#include "branch/browse_refs.h"
+
 #include "git/command.h"
 #include "i18n.h"
 #include "settings.h"
@@ -716,6 +718,12 @@ void log_window::update_status()
 }
 
 // The ref selector shows the current ref, or a mode [spec 1.9.1].
+void log_window::start_at(const std::string& rev)
+{
+    set_walk(walk_refs::head, rev);
+    reload();
+}
+
 void log_window::set_walk(walk_refs refs, std::string rev)
 {
     walk_options_.refs = refs;
@@ -766,8 +774,8 @@ void log_window::update_ref_button()
 }
 
 // TortoiseGit's right-click menu [spec 1.9.1], with the branches and tags
-// to start from in submenus until Browse References exists.
-// TODO: TortoiseGit's left click opens Browse References.
+// to start from in submenus as well.
+// TODO: TortoiseGit's left click opens Browse References straight away.
 rap::menu log_window::ref_menu()
 {
     const std::string head = repo_.head_name();
@@ -793,7 +801,21 @@ rap::menu log_window::ref_menu()
                 git_output::stdout_only)
             .ok();
     rap::menu out{
-        {.label = _("Browse References"), .enabled = false},
+        {.label = _("Browse References"),
+         .action =
+             [this]
+         {
+             // One ref to start from; the log walks from one [spec 1.9.1].
+             const std::string initial = walk_options_.rev.empty() ? std::string() : walk_options_.rev;
+             pick_ref(ui_, window_.get(), repo_.workdir().empty() ? repo_.git_dir() : repo_.workdir(),
+                      {.initial = initial},
+                      [this, alive = std::weak_ptr<bool>(alive_)](const std::string& picked)
+                      {
+                          if (!alive.lock() || picked.empty()) return;
+                          set_walk(walk_refs::head, picked);
+                          reload();
+                      });
+         }},
         {.label = head == "HEAD" ? "HEAD" : "HEAD -> \"" + menu_text(head) + "\"",
          .action = pick(walk_refs::head),
          .checked = at_head,

@@ -499,6 +499,7 @@ public:
         case run::switch_to: rap::shell::launch(tortilla_exe(), {"switch", folder}); return;
         case run::merge: rap::shell::launch(tortilla_exe(), {"merge", folder}); return;
         case run::merge_abort: rap::shell::launch(tortilla_exe(), {"mergeabort", folder}); return;
+        case run::refbrowse: rap::shell::launch(tortilla_exe(), {"refbrowse", folder}); return;
         case run::edit_conflicts: rap::shell::launch(tortilla_exe(), {"conflicteditor", first}); return;
         case run::about: rap::shell::launch(tortilla_exe(), {"about"}); return;
         case run::commit:

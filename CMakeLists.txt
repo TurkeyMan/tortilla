@@ -64,6 +64,7 @@ add_library(tortilla_git STATIC
     src/util/programs.cpp
     src/util/sha256.cpp
     src/git/ignore_patterns.cpp
+    src/git/ref_list.cpp
     src/changes/working_tree.cpp)
 target_include_directories(tortilla_git PUBLIC src)
 target_link_libraries(tortilla_git PUBLIC ${TORTILLA_LIBGIT2} rapport::rapport)
@@ -98,7 +99,8 @@ add_executable(tortilla
     src/branch/ref_chooser.cpp
     src/branch/create_ref_dialog.cpp
     src/branch/switch_dialog.cpp
-    src/branch/merge_dialog.cpp)
+    src/branch/merge_dialog.cpp
+    src/branch/browse_refs.cpp)
 target_link_libraries(tortilla PRIVATE rapport::rapport tortilla_git)
 if(WIN32)
     enable_language(RC)

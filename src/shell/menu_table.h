@@ -78,6 +78,7 @@ enum class run
     switch_to,   // tortilla switch <folder>
     merge,       // tortilla merge <folder>
     merge_abort,  // tortilla mergeabort <folder>
+    refbrowse,    // tortilla refbrowse <folder>
     edit_conflicts,  // tortilla conflicteditor <file>
     about,           // tortilla about
     remove,          // tortilla remove <paths...>
@@ -140,7 +141,7 @@ inline constexpr row k_rows[] = {
      run::none,
      "logsubmodule"},
     {"Show &RefLog", {{{FIG | ONE, 0}, {BARE, 0}}}, place::sub, run::none, "reflog"},
-    {"Browse References", {{{FIG | ONE, 0}, {BARE, 0}}}, place::sub, run::none, "refbrowse"},
+    {"Browse References", {{{FIG | ONE, 0}, {BARE, 0}}}, place::sub, run::refbrowse, "refbrowse"},
     {"Daemon",
      {{{GIT | ONE, ADDED}, {FOLD | FIG | ONE, ADDED}, {FIG | ONE, ADDED}, {BARE, 0}}},
      place::sub,
