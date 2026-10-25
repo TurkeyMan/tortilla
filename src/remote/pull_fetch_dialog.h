@@ -18,12 +18,15 @@ class pull_fetch_dialog
 {
 public:
     static std::expected<std::unique_ptr<pull_fetch_dialog>, std::string>
-    open(rap::ui&, const std::string& path, bool pull);
+    // `remote` preselects that remote (else the branch's own, or the last).
+    open(rap::ui&, const std::string& path, bool pull, const std::string& remote = {});
     void show();
     void on_closed(std::function<void()> f) { closed_ = std::move(f); }
+    // Once the fetch or pull has run and its progress window has closed.
+    void on_done(std::function<void()> f) { done_ = std::move(f); }
 
 private:
-    pull_fetch_dialog(rap::ui&, std::string workdir, bool pull);
+    pull_fetch_dialog(rap::ui&, std::string workdir, bool pull, std::string remote);
     void build();
     void remote_changed();
     std::string remote() const;  // the chosen remote's name, or the URL; "" for all remotes
@@ -37,6 +40,8 @@ private:
     std::string workdir_;
     bool pull_;
     std::string branch_;  // checked out; "" when detached
+    std::string preselect_;  // a remote the caller chose
+    std::function<void()> done_;
     std::vector<std::string> remotes_;
     std::unique_ptr<rap::window> window_;
     std::function<void()> closed_;

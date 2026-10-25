@@ -46,12 +46,12 @@ std::vector<rap::column> columns()
 {
     using namespace rap::literals;
     std::vector<rap::column> c(column_count);
-    c[name] = {.title = _("Branch Name"), .width = 24_ch, .sortable = true};
-    c[tracked] = {.title = _("Tracked branch"), .width = 18_ch, .sortable = true};
-    c[author_date] = {.title = _("Last Author Date"), .width = 19_ch, .sortable = true};
+    c[name] = {.title = _("Branch Name"), .width = 26_ch, .sortable = true};
+    c[tracked] = {.title = _("Tracked branch"), .width = 26_ch, .sortable = true};
+    c[author_date] = {.title = _("Last Author Date"), .width = 23_ch, .sortable = true};
     c[subject] = {.title = _("Last Commit"), .width = 300_px, .sortable = true};  // fixed, as TortoiseGit has it
     c[author] = {.title = _("Last Author"), .width = 16_ch, .sortable = true};
-    c[commit_date] = {.title = _("Date Last Commit"), .width = 19_ch, .sortable = true};
+    c[commit_date] = {.title = _("Date Last Commit"), .width = 23_ch, .sortable = true};
     c[committer] = {.title = _("Last Committer"), .width = 16_ch, .sortable = true};
     c[hash] = {.title = _("SHA-1"), .width = 42_ch, .sortable = true};
     c[description] = {.title = _("Description"), .width = 80_px, .sortable = true};
@@ -208,7 +208,6 @@ void browse_refs::build()
                 hbox{
                     label{_("Filter:")},
                     entry{}
-                        .placeholder(std::string("   ") + _("Filter by Refname, Subject, Authors, SHA-1"))
                         .bind(filter_)
                         .on_changed(
                             [this](const std::string&)
@@ -218,6 +217,10 @@ void browse_refs::build()
                             })
                         .on_activate([this] { fill(); })
                         .stretch(),
+                    menu_button{""}
+                        .icon(rap::icon::named("edit-find-symbolic"))
+                        .on_menu([this] { return filter_menu(); })
+                        .tooltip(_("Filter options")),
                     drop_down{{_("All"), _("Only merged (to HEAD)"), _("Only unmerged (to HEAD)")}, 0}
                         .bind(merged_)
                         .on_changed([this](int) { reload(); }),
@@ -246,10 +249,8 @@ void browse_refs::build()
                             {
                                 rows_->sort_column = col;
                                 rows_->descending = order == rap::sort_order::descending;
-                                rows_->sort();
                                 list_->set_sort_indicator(col, order);
-                                list_->select({});
-                                rows_->set(rows_->items, rows_->base);
+                                set_rows(rows_->items, rows_->base);
                             })
                         .on_context_menu([this](std::optional<size_t> row) { return list_menu(row); })
                         .selection(options_.pick && !options_.multiple ? rap::selection_mode::single
@@ -303,6 +304,13 @@ void browse_refs::build()
                 filter_->focus();
                 return true;
             }
+            // Escape in a filter with text clears it, rather than closing [spec 10.6].
+            if (e.key == rap::key::escape && filter_->has_focus() && !filter_->text().empty())
+            {
+                filter_->set_text({});
+                fill();
+                return true;
+            }
             return false;
         });
     window_->on_finished(
@@ -317,6 +325,7 @@ void browse_refs::build()
             if (closed_) closed_();
         });
     reload(options_.initial.empty() ? std::string("HEAD") : options_.initial);
+    update_filter_cue();
     list_->focus();  // as TortoiseGit has it [spec 10.1]
 }
 
@@ -410,8 +419,7 @@ void browse_refs::fill()
     list_->set_column_visible(description, heads_folder);
     if (base.empty())
     {
-        rows_->set({}, {});
-        update_info();
+        set_rows({}, {});
         return;
     }
     const bool nested = nested_->checked();
@@ -422,13 +430,84 @@ void browse_refs::fill()
         if (!e.full.starts_with(base + "/")) continue;
         const std::string rel = e.full.substr(base.size() + 1);
         if (!nested && rel.find('/') != std::string::npos) continue;
-        if (!filter.empty() &&
-            !ref_filter_matches(filter, rel + '\n' + e.subject + '\n' + e.author + '\n' + e.hash))
-            continue;
+        if (!filter.empty() && !ref_filter_matches(filter, filter_text(e, rel))) continue;
         rows.push_back(&e);
     }
-    rows_->set(std::move(rows), base);
+    set_rows(std::move(rows), base);
+}
+
+// The list's rows, keeping the selected refs selected (TortoiseGit's list
+// keeps them across a sort or a refill).
+void browse_refs::set_rows(std::vector<const ref_entry*> rows, std::string base)
+{
+    std::vector<std::string> keep;
+    for (const ref_entry* e : selection()) keep.push_back(e->full);
+    const std::optional<size_t> current = list_->current();
+    const std::string current_ref = current && *current < rows_->items.size() ? rows_->items[*current]->full : "";
+    rows_->set(std::move(rows), std::move(base));
+    std::vector<size_t> select;
+    for (size_t i = 0; i < rows_->items.size(); ++i)
+    {
+        if (std::ranges::contains(keep, rows_->items[i]->full)) select.push_back(i);
+        if (rows_->items[i]->full == current_ref) list_->set_current(i);
+    }
+    if (!select.empty()) list_->select(select);
     update_info();
+}
+
+// The fields the filter searches, joined [spec 10.6].
+std::string browse_refs::filter_text(const ref_entry& e, const std::string& rel) const
+{
+    std::string text;
+    auto add = [&](unsigned bit, const std::string& s)
+    {
+        if (filter_fields_ & bit) text += (text.empty() ? "" : "\n") + s;
+    };
+    add(field_refname, rel);
+    add(field_subject, e.subject);
+    add(field_authors, e.author);
+    add(field_sha1, e.hash);
+    return text;
+}
+
+// "   Filter by Refname, Subject, Authors, SHA-1", as the fields are.
+void browse_refs::update_filter_cue()
+{
+    std::string fields;
+    for (auto [bit, name] : {std::pair{field_refname, _("Refname")}, std::pair{field_subject, _("Subject")},
+                             std::pair{field_authors, _("Authors")}, std::pair{field_sha1, _("SHA-1")}})
+        if (filter_fields_ & bit) fields += std::string(fields.empty() ? "" : ", ") + name;
+    filter_->set_placeholder(std::string("   ") + rap::i18n::format(_("Filter by {0}"), fields));
+}
+
+// Which fields the filter searches; Toggle filters inverts them [spec 10.6].
+rap::menu browse_refs::filter_menu()
+{
+    auto field = [this](std::string label, unsigned bit) -> rap::menu_item
+    {
+        return {.label = std::move(label),
+                .action =
+                    [this, bit]
+                {
+                    filter_fields_ ^= bit;
+                    update_filter_cue();
+                    fill();
+                },
+                .checked = (filter_fields_ & bit) != 0};
+    };
+    return {field(_("Refname"), field_refname),
+            field(_("Subject"), field_subject),
+            field(_("Authors"), field_authors),
+            field(_("SHA-1"), field_sha1),
+            {},
+            {.label = _("Toggle filters"),
+             .action =
+                 [this]
+             {
+                 filter_fields_ ^= field_all;
+                 update_filter_cue();
+                 fill();
+             }}};
 }
 
 void browse_refs::update_info()
@@ -495,7 +574,8 @@ rap::menu browse_refs::list_menu(std::optional<size_t>)
         if (e.remote_branch())
             if (auto rb = split_remote(workdir_, e.full))
                 m.push_back({.label = rap::i18n::format(_("Fetch from \"{0}\""), menu_text(rb->first)),
-                             .action = [this] { open_dialog(pull_fetch_dialog::open(ui_, workdir_, false)); }});
+                             .action = [this, remote = rb->first]
+                             { open_dialog(pull_fetch_dialog::open(ui_, workdir_, false, remote)); }});
         if (wc && e.commit())
         {
             m.push_back({});
@@ -573,7 +653,7 @@ rap::menu browse_refs::folder_menu(const std::string& f)
         for (const std::string& r : remote_names(workdir_))
             if (rest == r || rest.starts_with(r + "/"))
                 m.push_back({.label = rap::i18n::format(_("Fetch from \"{0}\""), menu_text(r)),
-                             .action = [this] { open_dialog(pull_fetch_dialog::open(ui_, workdir_, false)); }});
+                             .action = [this, r] { open_dialog(pull_fetch_dialog::open(ui_, workdir_, false, r)); }});
     }
     if (under("refs/heads"))
         m.push_back({.label = _("Create _Branch..."),
@@ -609,7 +689,8 @@ void browse_refs::show_log(const std::string& rev)
 }
 
 // A dialog opened from here: kept like any window, and the refs reloaded
-// when it closes (Switch and Merge too, which TortoiseGit doesn't).
+// once what it started has run, its progress window closed (Switch and
+// Merge too, which TortoiseGit doesn't).
 template <class D>
 void browse_refs::open_dialog(std::expected<std::unique_ptr<D>, std::string> dialog)
 {
@@ -618,12 +699,12 @@ void browse_refs::open_dialog(std::expected<std::unique_ptr<D>, std::string> dia
         ui_.message(window_.get(), {.icon = rap::message_spec::icon::error, .title = "Tortilla", .text = dialog.error()});
         return;
     }
-    std::weak_ptr<bool> alive = alive_;
-    windows::keep(std::move(*dialog),
-                  [this, alive]
-                  {
-                      if (alive.lock()) reload();
-                  });
+    (*dialog)->on_done(
+        [this, alive = std::weak_ptr<bool>(alive_)]
+        {
+            if (alive.lock()) reload();
+        });
+    windows::keep(std::move(*dialog));
 }
 
 // Local commands one after another; the first failure is shown.
@@ -718,28 +799,34 @@ namespace
 {
 
 void ask_text(rap::ui& ui, rap::window* parent, const std::string& title, const std::string& prompt,
-              const std::string& initial, std::function<void(const std::string&)> done)
+              const std::string& initial, std::function<void(const std::string&)> done, bool lines = false)
 {
     using namespace rap::layout;
     using namespace rap::literals;
     struct state
     {
         std::unique_ptr<rap::window> window;
-        rap::entry* text = nullptr;
+        rap::entry* line = nullptr;
+        rap::text_view* text = nullptr;
     };
     auto st = std::make_shared<state>();
-    st->window = ui.create(dialog{title, {vbox{label{prompt}, entry{initial}.bind(st->text), buttons{ok, cancel}}}}
-                               .size(60_ch, {}),
-                           parent);
+    st->window = ui.create(
+        lines ? dialog{title, {vbox{label{prompt}, text_view{initial}.bind(st->text).stretch(), buttons{ok, cancel}}}}
+                    .size(60_ch, 8_lines)
+              : dialog{title, {vbox{label{prompt}, entry{initial}.bind(st->line), buttons{ok, cancel}}}}.size(60_ch, {}),
+        parent);
     st->window->on_finished(
         [st, done, &ui](rap::dialog_role role)
         {
-            const std::string value = st->text->text();
+            const std::string value = st->text ? st->text->text() : st->line->text();
             ui.post([st] {});  // the window goes after this returns
             if (role == rap::dialog_role::ok) done(value);
         });
     st->window->show();
-    st->text->focus();
+    if (st->text)
+        st->text->focus();
+    else
+        st->line->focus();
 }
 
 }  // namespace
@@ -775,11 +862,13 @@ void browse_refs::edit_description(const ref_entry& e)
                  std::string t = text;
                  while (!t.empty() && std::isspace(static_cast<unsigned char>(t.back()))) t.pop_back();
                  const std::string key = "branch." + strip_ref_name(e.full) + ".description";
+                 std::erase(t, '\r');
                  if (t.empty())
                      run_then_reload(_("Edit description"), {{"config", "--unset", key}});
                  else
                      run_then_reload(_("Edit description"), {{"config", key, t}});
-             });
+             },
+             true);
 }
 
 // A remote branch, picked here, becomes the branch's upstream [spec 10.8].

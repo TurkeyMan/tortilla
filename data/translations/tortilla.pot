@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: tortilla\n"
 "Report-Msgid-Bugs-To: https://github.com/TurkeyMan/tortilla/issues\n"
-"POT-Creation-Date: 2026-10-25 02:49+0000\n"
+"POT-Creation-Date: 2026-10-25 03:33+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -46,7 +46,8 @@ msgstr ""
 msgid "Last Committer"
 msgstr ""
 
-#: src/branch/browse_refs.cpp:56 src/log/log_actions.cpp:563
+#: src/branch/browse_refs.cpp:56 src/branch/browse_refs.cpp:478
+#: src/branch/browse_refs.cpp:501 src/log/log_actions.cpp:563
 #: src/log/log_model.cpp:136 src/log/log_window.cpp:871
 #: src/log/log_window.cpp:899 src/rebase/rebase_model.cpp:45
 msgid "SHA-1"
@@ -65,142 +66,166 @@ msgstr ""
 msgid "Filter:"
 msgstr ""
 
-#: src/branch/browse_refs.cpp:211
-msgid "Filter by Refname, Subject, Authors, SHA-1"
+#: src/branch/browse_refs.cpp:223 src/log/log_window.cpp:166
+msgid "Filter options"
 msgstr ""
 
-#: src/branch/browse_refs.cpp:221 src/changes/commit_window.cpp:182
+#: src/branch/browse_refs.cpp:224 src/changes/commit_window.cpp:182
 #: src/log/log_actions.cpp:539 src/log/log_window.cpp:828
 #: src/log/log_window.cpp:910
 msgid "All"
 msgstr ""
 
-#: src/branch/browse_refs.cpp:221
+#: src/branch/browse_refs.cpp:224
 msgid "Only merged (to HEAD)"
 msgstr ""
 
-#: src/branch/browse_refs.cpp:221
+#: src/branch/browse_refs.cpp:224
 msgid "Only unmerged (to HEAD)"
 msgstr ""
 
-#: src/branch/browse_refs.cpp:262
+#: src/branch/browse_refs.cpp:263
 msgid "Show _nested refs"
 msgstr ""
 
-#: src/branch/browse_refs.cpp:271
+#: src/branch/browse_refs.cpp:272
 msgid "Current Branch"
 msgstr ""
 
-#: src/branch/browse_refs.cpp:343
+#: src/branch/browse_refs.cpp:352
 msgid "Couldn't list the references."
 msgstr ""
 
-#: src/branch/browse_refs.cpp:437
+#: src/branch/browse_refs.cpp:477 src/branch/browse_refs.cpp:498
+#: src/log/log_window.cpp:872 src/log/log_window.cpp:900
+msgid "Refname"
+msgstr ""
+
+#: src/branch/browse_refs.cpp:477 src/branch/browse_refs.cpp:499
+#: src/log/log_window.cpp:870 src/log/log_window.cpp:894
+msgid "Subject"
+msgstr ""
+
+#: src/branch/browse_refs.cpp:478 src/branch/browse_refs.cpp:500
+#: src/log/log_window.cpp:871 src/log/log_window.cpp:897
+msgid "Authors"
+msgstr ""
+
+#: src/branch/browse_refs.cpp:480 src/log/log_window.cpp:876
+#, c++-format
+msgid "Filter by {0}"
+msgstr ""
+
+#: src/branch/browse_refs.cpp:503 src/log/log_window.cpp:902
+msgid "Toggle filters"
+msgstr ""
+
+#: src/branch/browse_refs.cpp:516
 #, c++-format
 msgid "Showing {0} ref(s), {1} ref(s) selected"
 msgstr ""
 
-#: src/branch/browse_refs.cpp:483 src/branch/browse_refs.cpp:592
+#: src/branch/browse_refs.cpp:562 src/branch/browse_refs.cpp:672
 msgid "Copy ref names"
 msgstr ""
 
-#: src/branch/browse_refs.cpp:491
+#: src/branch/browse_refs.cpp:570
 msgid "Select"
 msgstr ""
 
-#: src/branch/browse_refs.cpp:494 src/changes/changes_view.cpp:401
+#: src/branch/browse_refs.cpp:573 src/changes/changes_view.cpp:401
 #: src/rebase/rebase_window.cpp:208 src/remote/clone_dialog.cpp:206
-#: src/remote/pull_fetch_dialog.cpp:353
+#: src/remote/pull_fetch_dialog.cpp:356
 msgid "Show _log"
 msgstr ""
 
-#: src/branch/browse_refs.cpp:497 src/branch/browse_refs.cpp:575
+#: src/branch/browse_refs.cpp:576 src/branch/browse_refs.cpp:655
 #, c++-format
 msgid "Fetch from \"{0}\""
 msgstr ""
 
-#: src/branch/browse_refs.cpp:506
+#: src/branch/browse_refs.cpp:586
 #, c++-format
 msgid "_Merge to \"{0}\"..."
 msgstr ""
 
-#: src/branch/browse_refs.cpp:509 src/log/log_actions.cpp:347
+#: src/branch/browse_refs.cpp:589 src/log/log_actions.cpp:347
 msgid "Sw_itch/Checkout to this..."
 msgstr ""
 
-#: src/branch/browse_refs.cpp:515 src/branch/browse_refs.cpp:579
+#: src/branch/browse_refs.cpp:595 src/branch/browse_refs.cpp:659
 msgid "Create _Branch..."
 msgstr ""
 
-#: src/branch/browse_refs.cpp:519 src/branch/browse_refs.cpp:771
-#: src/branch/browse_refs.cpp:779 src/branch/browse_refs.cpp:781
+#: src/branch/browse_refs.cpp:599 src/branch/browse_refs.cpp:858
+#: src/branch/browse_refs.cpp:867 src/branch/browse_refs.cpp:869
 msgid "Edit description"
 msgstr ""
 
-#: src/branch/browse_refs.cpp:520 src/branch/browse_refs.cpp:753
-#: src/branch/browse_refs.cpp:765
+#: src/branch/browse_refs.cpp:600 src/branch/browse_refs.cpp:840
+#: src/branch/browse_refs.cpp:852
 msgid "Rename"
 msgstr ""
 
-#: src/branch/browse_refs.cpp:530 src/branch/browse_refs.cpp:533
+#: src/branch/browse_refs.cpp:610 src/branch/browse_refs.cpp:613
 msgid "Unset tracked branch"
 msgstr ""
 
-#: src/branch/browse_refs.cpp:536
+#: src/branch/browse_refs.cpp:616
 msgid "Select tracked branch"
 msgstr ""
 
-#: src/branch/browse_refs.cpp:541
+#: src/branch/browse_refs.cpp:621
 msgid "Delete remote branch"
 msgstr ""
 
-#: src/branch/browse_refs.cpp:542
+#: src/branch/browse_refs.cpp:622
 msgid "Delete tag"
 msgstr ""
 
-#: src/branch/browse_refs.cpp:543
+#: src/branch/browse_refs.cpp:623
 msgid "Delete branch"
 msgstr ""
 
-#: src/branch/browse_refs.cpp:551
+#: src/branch/browse_refs.cpp:631
 #, c++-format
 msgid "Delete {0} remote branch"
 msgid_plural "Delete {0} remote branches"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/branch/browse_refs.cpp:555
+#: src/branch/browse_refs.cpp:635
 #, c++-format
 msgid "Delete {0} branch"
 msgid_plural "Delete {0} branches"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/branch/browse_refs.cpp:558
+#: src/branch/browse_refs.cpp:638
 #, c++-format
 msgid "Delete {0} tag"
 msgid_plural "Delete {0} tags"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/branch/browse_refs.cpp:583
+#: src/branch/browse_refs.cpp:663
 msgid "Create _Tag..."
 msgstr ""
 
-#: src/branch/browse_refs.cpp:587
+#: src/branch/browse_refs.cpp:667
 msgid "Delete all tags"
 msgstr ""
 
-#: src/branch/browse_refs.cpp:654 src/branch/merge_dialog.cpp:284
+#: src/branch/browse_refs.cpp:735 src/branch/merge_dialog.cpp:284
 #, c++-format
 msgid "Do you really want to delete \"{0}\"?"
 msgstr ""
 
-#: src/branch/browse_refs.cpp:658
+#: src/branch/browse_refs.cpp:739
 msgid "This branch is not fully merged into HEAD."
 msgstr ""
 
-#: src/branch/browse_refs.cpp:664
+#: src/branch/browse_refs.cpp:745
 #, c++-format
 msgid ""
 "Do you really want to permanently delete the selected ref? It can NOT be "
@@ -211,34 +236,34 @@ msgid_plural ""
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/branch/browse_refs.cpp:670
+#: src/branch/browse_refs.cpp:751
 msgid ""
 "It has not been checked if these branches have been fully merged into HEAD."
 msgstr ""
 
-#: src/branch/browse_refs.cpp:676
+#: src/branch/browse_refs.cpp:757
 msgid "This action will remove the branches on the remote."
 msgstr ""
 
-#: src/branch/browse_refs.cpp:702
+#: src/branch/browse_refs.cpp:783
 msgid "Deleting remote refs..."
 msgstr ""
 
-#: src/branch/browse_refs.cpp:712 src/changes/changes_view.cpp:449
+#: src/branch/browse_refs.cpp:793 src/changes/changes_view.cpp:449
 #: src/changes/remove.cpp:71 src/log/log_actions.cpp:523
 #: src/log/log_actions.cpp:537 src/log/log_actions.cpp:545
 msgid "Delete"
 msgstr ""
 
-#: src/branch/browse_refs.cpp:753
+#: src/branch/browse_refs.cpp:840
 msgid "New name:"
 msgstr ""
 
-#: src/branch/browse_refs.cpp:762
+#: src/branch/browse_refs.cpp:849
 msgid "You cannot change the type of this ref with a rename."
 msgstr ""
 
-#: src/branch/browse_refs.cpp:802
+#: src/branch/browse_refs.cpp:891
 #, c++-format
 msgid ""
 "This is usually caused when the setting \"remote.{0}.fetch\" does not "
@@ -263,7 +288,7 @@ msgstr ""
 msgid "Base On"
 msgstr ""
 
-#: src/branch/create_ref_dialog.cpp:74 src/remote/pull_fetch_dialog.cpp:162
+#: src/branch/create_ref_dialog.cpp:74 src/remote/pull_fetch_dialog.cpp:165
 #: src/remote/push_dialog.cpp:114
 msgid "Options"
 msgstr ""
@@ -381,7 +406,7 @@ msgstr ""
 msgid "Option"
 msgstr ""
 
-#: src/branch/merge_dialog.cpp:112 src/remote/pull_fetch_dialog.cpp:165
+#: src/branch/merge_dialog.cpp:112 src/remote/pull_fetch_dialog.cpp:168
 msgid "_Squash"
 msgstr ""
 
@@ -390,15 +415,15 @@ msgstr ""
 msgid "Messages"
 msgstr ""
 
-#: src/branch/merge_dialog.cpp:118 src/remote/pull_fetch_dialog.cpp:166
+#: src/branch/merge_dialog.cpp:118 src/remote/pull_fetch_dialog.cpp:169
 msgid "No _Fast Forward"
 msgstr ""
 
-#: src/branch/merge_dialog.cpp:120 src/remote/pull_fetch_dialog.cpp:173
+#: src/branch/merge_dialog.cpp:120 src/remote/pull_fetch_dialog.cpp:176
 msgid "Fast Forward O_nly"
 msgstr ""
 
-#: src/branch/merge_dialog.cpp:124 src/remote/pull_fetch_dialog.cpp:172
+#: src/branch/merge_dialog.cpp:124 src/remote/pull_fetch_dialog.cpp:175
 msgid "No Co_mmit"
 msgstr ""
 
@@ -420,12 +445,12 @@ msgstr ""
 msgid "Could not save merge message"
 msgstr ""
 
-#: src/branch/merge_dialog.cpp:238 src/remote/pull_fetch_dialog.cpp:333
+#: src/branch/merge_dialog.cpp:238 src/remote/pull_fetch_dialog.cpp:336
 msgid "_Resolve..."
 msgstr ""
 
 #: src/branch/merge_dialog.cpp:246 src/branch/switch_dialog.cpp:207
-#: src/changes/file_action_window.cpp:407 src/remote/pull_fetch_dialog.cpp:342
+#: src/changes/file_action_window.cpp:407 src/remote/pull_fetch_dialog.cpp:345
 msgid "_Commit..."
 msgstr ""
 
@@ -562,7 +587,7 @@ msgid "_Merge..."
 msgstr ""
 
 #: src/branch/switch_dialog.cpp:200 src/log/log_actions.cpp:294
-#: src/log/log_actions.cpp:496 src/remote/pull_fetch_dialog.cpp:363
+#: src/log/log_actions.cpp:496 src/remote/pull_fetch_dialog.cpp:366
 #: src/remote/push_dialog.cpp:276
 msgid "_Pull..."
 msgstr ""
@@ -1391,7 +1416,7 @@ msgstr ""
 msgid "Stash changes..."
 msgstr ""
 
-#: src/log/log_actions.cpp:297 src/remote/pull_fetch_dialog.cpp:363
+#: src/log/log_actions.cpp:297 src/remote/pull_fetch_dialog.cpp:366
 #: src/remote/push_dialog.cpp:277
 msgid "F_etch..."
 msgstr ""
@@ -1738,7 +1763,7 @@ msgstr ""
 #: src/log/log_actions.cpp:1044 src/rebase/rebase_window.cpp:249
 #: src/rebase/rebase_window.cpp:256 src/rebase/rebase_window.cpp:456
 #: src/rebase/rebase_window.cpp:482 src/rebase/rebase_window.cpp:511
-#: src/rebase/rebase_window.cpp:530 src/remote/pull_fetch_dialog.cpp:388
+#: src/rebase/rebase_window.cpp:530 src/remote/pull_fetch_dialog.cpp:392
 msgid "Rebase"
 msgstr ""
 
@@ -1790,10 +1815,6 @@ msgstr ""
 
 #: src/log/log_window.cpp:155
 msgid "To:"
-msgstr ""
-
-#: src/log/log_window.cpp:166
-msgid "Filter options"
 msgstr ""
 
 #: src/log/log_window.cpp:167
@@ -1970,29 +1991,8 @@ msgstr ""
 msgid "Paths"
 msgstr ""
 
-#: src/log/log_window.cpp:870 src/log/log_window.cpp:894
-msgid "Subject"
-msgstr ""
-
-#: src/log/log_window.cpp:871 src/log/log_window.cpp:897
-msgid "Authors"
-msgstr ""
-
 #: src/log/log_window.cpp:871 src/log/log_window.cpp:898
 msgid "Emails"
-msgstr ""
-
-#: src/log/log_window.cpp:872 src/log/log_window.cpp:900
-msgid "Refname"
-msgstr ""
-
-#: src/log/log_window.cpp:876
-#, c++-format
-msgid "Filter by {0}"
-msgstr ""
-
-#: src/log/log_window.cpp:902
-msgid "Toggle filters"
 msgstr ""
 
 #: src/log/log_window.cpp:919
@@ -2354,7 +2354,7 @@ msgstr ""
 msgid "Clone Existing Repository"
 msgstr ""
 
-#: src/remote/clone_dialog.cpp:81 src/remote/pull_fetch_dialog.cpp:159
+#: src/remote/clone_dialog.cpp:81 src/remote/pull_fetch_dialog.cpp:162
 #: src/remote/push_dialog.cpp:112
 msgid "URL"
 msgstr ""
@@ -2371,7 +2371,7 @@ msgstr ""
 msgid "Clone into"
 msgstr ""
 
-#: src/remote/clone_dialog.cpp:104 src/remote/pull_fetch_dialog.cpp:186
+#: src/remote/clone_dialog.cpp:104 src/remote/pull_fetch_dialog.cpp:189
 msgid "Depth"
 msgstr ""
 
@@ -2419,118 +2419,118 @@ msgstr ""
 msgid "Pull needs a working tree."
 msgstr ""
 
-#: src/remote/pull_fetch_dialog.cpp:153
+#: src/remote/pull_fetch_dialog.cpp:156
 #, c++-format
 msgid "{0} - Fetch - Tortilla"
 msgstr ""
 
-#: src/remote/pull_fetch_dialog.cpp:153
+#: src/remote/pull_fetch_dialog.cpp:156
 #, c++-format
 msgid "{0} - Pull - Tortilla"
 msgstr ""
 
-#: src/remote/pull_fetch_dialog.cpp:155 src/remote/pull_fetch_dialog.cpp:157
+#: src/remote/pull_fetch_dialog.cpp:158 src/remote/pull_fetch_dialog.cpp:160
 #: src/remote/push_dialog.cpp:110
 msgid "Remote"
 msgstr ""
 
-#: src/remote/pull_fetch_dialog.cpp:160 src/remote/push_dialog.cpp:105
+#: src/remote/pull_fetch_dialog.cpp:163 src/remote/push_dialog.cpp:105
 msgid "Remote branch"
 msgstr ""
 
-#: src/remote/pull_fetch_dialog.cpp:191 src/remote/pull_fetch_dialog.cpp:192
-#: src/remote/pull_fetch_dialog.cpp:222 src/remote/push_dialog.cpp:129
+#: src/remote/pull_fetch_dialog.cpp:194 src/remote/pull_fetch_dialog.cpp:195
+#: src/remote/pull_fetch_dialog.cpp:225 src/remote/push_dialog.cpp:129
 msgid "Default"
 msgstr ""
 
-#: src/remote/pull_fetch_dialog.cpp:191
+#: src/remote/pull_fetch_dialog.cpp:194
 msgid "Tags"
 msgstr ""
 
-#: src/remote/pull_fetch_dialog.cpp:192
+#: src/remote/pull_fetch_dialog.cpp:195
 msgid "Prune"
 msgstr ""
 
-#: src/remote/pull_fetch_dialog.cpp:194
+#: src/remote/pull_fetch_dialog.cpp:197
 msgid "_Launch Rebase After Fetch"
 msgstr ""
 
-#: src/remote/pull_fetch_dialog.cpp:216
+#: src/remote/pull_fetch_dialog.cpp:219
 msgid "Default (none)"
 msgstr ""
 
-#: src/remote/pull_fetch_dialog.cpp:217
+#: src/remote/pull_fetch_dialog.cpp:220
 msgid "Default (all)"
 msgstr ""
 
-#: src/remote/pull_fetch_dialog.cpp:218
+#: src/remote/pull_fetch_dialog.cpp:221
 msgid "Default (reachable)"
 msgstr ""
 
-#: src/remote/pull_fetch_dialog.cpp:219
+#: src/remote/pull_fetch_dialog.cpp:222
 msgid "All (--tags)"
 msgstr ""
 
-#: src/remote/pull_fetch_dialog.cpp:219
+#: src/remote/pull_fetch_dialog.cpp:222
 msgid "None (--no-tags)"
 msgstr ""
 
-#: src/remote/pull_fetch_dialog.cpp:223 src/remote/push_dialog.cpp:130
+#: src/remote/pull_fetch_dialog.cpp:226 src/remote/push_dialog.cpp:130
 #, c++-format
 msgid "Default ({0})"
 msgstr ""
 
-#: src/remote/pull_fetch_dialog.cpp:224
+#: src/remote/pull_fetch_dialog.cpp:227
 msgid "Don't prune (--no-prune)"
 msgstr ""
 
-#: src/remote/pull_fetch_dialog.cpp:224
+#: src/remote/pull_fetch_dialog.cpp:227
 msgid "Prune (--prune)"
 msgstr ""
 
-#: src/remote/pull_fetch_dialog.cpp:242
+#: src/remote/pull_fetch_dialog.cpp:245
 msgid "Fetch"
 msgstr ""
 
-#: src/remote/pull_fetch_dialog.cpp:242 src/remote/pull_fetch_dialog.cpp:252
+#: src/remote/pull_fetch_dialog.cpp:245 src/remote/pull_fetch_dialog.cpp:255
 msgid "Pull"
 msgstr ""
 
-#: src/remote/pull_fetch_dialog.cpp:243
+#: src/remote/pull_fetch_dialog.cpp:246
 msgid "Choose a remote."
 msgstr ""
 
-#: src/remote/pull_fetch_dialog.cpp:243
+#: src/remote/pull_fetch_dialog.cpp:246
 msgid "Enter the URL to pull from."
 msgstr ""
 
-#: src/remote/pull_fetch_dialog.cpp:253
+#: src/remote/pull_fetch_dialog.cpp:256
 msgid "You asked to pull, but did not specify a remote branch."
 msgstr ""
 
-#: src/remote/pull_fetch_dialog.cpp:319
+#: src/remote/pull_fetch_dialog.cpp:322
 msgid "Pulled _Diff"
 msgstr ""
 
-#: src/remote/pull_fetch_dialog.cpp:331
+#: src/remote/pull_fetch_dialog.cpp:334
 msgid "Pulled _Log"
 msgstr ""
 
-#: src/remote/pull_fetch_dialog.cpp:354
+#: src/remote/pull_fetch_dialog.cpp:357
 msgid "_Rebase..."
 msgstr ""
 
-#: src/remote/pull_fetch_dialog.cpp:375
+#: src/remote/pull_fetch_dialog.cpp:378
 #, c++-format
 msgid "{0} - Fetch"
 msgstr ""
 
-#: src/remote/pull_fetch_dialog.cpp:375
+#: src/remote/pull_fetch_dialog.cpp:378
 #, c++-format
 msgid "{0} - Pull"
 msgstr ""
 
-#: src/remote/pull_fetch_dialog.cpp:389
+#: src/remote/pull_fetch_dialog.cpp:393
 msgid ""
 "Current branch is up to date or newer than the fetched branch. Open rebase "
 "anyway?"

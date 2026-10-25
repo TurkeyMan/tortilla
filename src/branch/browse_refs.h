@@ -54,6 +54,10 @@ private:
     void build();
     void reload(std::string select = {});
     void fill();
+    void set_rows(std::vector<const ref_entry*> rows, std::string base);
+    std::string filter_text(const ref_entry&, const std::string& rel) const;
+    void update_filter_cue();
+    rap::menu filter_menu();
     void update_info();
     std::string folder() const;
     std::vector<const ref_entry*> selection() const;
@@ -83,6 +87,16 @@ private:
     std::function<void()> closed_;
     std::function<void(const std::string&)> picked_;
     bool done_ = false;
+    // The filter's fields [spec 10.6], all at first each time.
+    enum : unsigned
+    {
+        field_refname = 1,
+        field_subject = 2,
+        field_authors = 4,
+        field_sha1 = 8,
+        field_all = 15,
+    };
+    unsigned filter_fields_ = field_all;
     bool bare_ = false;
     rap::subscription filter_timer_;
     // Callbacks that outlive the dialog (a child dialog, a confirmation)

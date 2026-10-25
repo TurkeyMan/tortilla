@@ -73,22 +73,23 @@ void remember_url(const std::string& url)
 }  // namespace
 
 std::expected<std::unique_ptr<pull_fetch_dialog>, std::string>
-pull_fetch_dialog::open(rap::ui& ui, const std::string& path, bool pull)
+pull_fetch_dialog::open(rap::ui& ui, const std::string& path, bool pull, const std::string& remote)
 {
     auto repo = repo::open(path.empty() ? "." : path);
     if (!repo) return std::unexpected(repo.error());
     if (pull && repo->bare()) return std::unexpected(std::string(_("Pull needs a working tree.")));
     std::unique_ptr<pull_fetch_dialog> d(new pull_fetch_dialog(
-        ui, repo->workdir().empty() ? repo->git_dir() : repo->workdir(), pull));
+        ui, repo->workdir().empty() ? repo->git_dir() : repo->workdir(), pull, remote));
     d->build();
     return d;
 }
 
-pull_fetch_dialog::pull_fetch_dialog(rap::ui& ui, std::string workdir, bool pull)
+pull_fetch_dialog::pull_fetch_dialog(rap::ui& ui, std::string workdir, bool pull, std::string remote)
     : ui_(ui)
     , workdir_(std::move(workdir))
     , pull_(pull)
     , branch_(current_branch(workdir_))
+    , preselect_(std::move(remote))
     , remotes_(remote_names(workdir_))
 {
 }
@@ -123,14 +124,16 @@ void pull_fetch_dialog::build()
     using namespace rap::literals;
     const std::string key = (pull_ ? "pull." : "fetch.") + workdir_;
 
-    // The remote: the branch's own, else the last used here [spec 7.2.2];
+    // The remote: the caller's, else the branch's own, else the last used here [spec 7.2.2];
     // Fetch with several remotes offers (and defaults to) all of them.
     std::vector<std::string> items;
     if (!pull_ && remotes_.size() > 1) items.push_back(_(k_all));
     items.insert(items.end(), remotes_.begin(), remotes_.end());
     items.push_back(_(k_url_item));
     const upstream up = upstream_of(workdir_, branch_);
-    std::string chosen = up.remote.empty() ? settings::get().value(key + ".remote") : up.remote;
+    std::string chosen = !preselect_.empty() ? preselect_
+                         : up.remote.empty() ? settings::get().value(key + ".remote")
+                                             : up.remote;
     int current = 0;
     for (size_t i = 0; i < remotes_.size(); ++i)
         if (remotes_[i] == chosen) current = first_remote() + int(i);
@@ -373,8 +376,9 @@ void pull_fetch_dialog::ok()
     const size_t running = windows::hold({});
     run_progress_dialog(
         ui_, nullptr, title(workdir_, pull_ ? _("{0} - Pull") : _("{0} - Fetch")), workdir_, {command},
-        [&ui, workdir, rebase_onto, before, forced = rebase_from_config_, running](bool ok)
+        [&ui, workdir, rebase_onto, before, forced = rebase_from_config_, running, done = done_](bool ok)
         {
+            if (done) done();
             if (ok && !rebase_onto.empty())
             {
                 // Then the rebase onto what came, unless there's nothing to
