@@ -66,6 +66,10 @@ _install() {
 # other's library. Its headers aren't packaged.
 package_tortilla-rapport() {
   pkgdesc="Tortilla's copy of rapport, the toolkit-neutral UI library it is built on"
+  # Tortilla's packages before its rapport was its own: removed on upgrade,
+  # so their old backends in /usr/lib/rapport can't be found first.
+  replaces=(librapport librapport-dev)
+  conflicts=(librapport librapport-dev)
   license=(MIT)
   depends=(gcc-libs glibc)
   # Loaded on first use: HTTP, and decoding images.
@@ -80,6 +84,8 @@ package_tortilla-rapport() {
 
 _backend() {
   license=(MIT)
+  replaces=("librapport-$1")
+  conflicts=("librapport-$1")
   _install "$1"
   install -Dm644 "$_root/rapport/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }

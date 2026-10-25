@@ -157,6 +157,18 @@ foreach(fm IN LISTS tortilla_shells)
     set(CPACK_DEBIAN_TORTILLA-SHELL-${FM}_PACKAGE_ENHANCES ${fm_deb_${fm}})
 endforeach()
 set(CPACK_DEBIAN_TORTILLA-SHELL-PCMANFM_PACKAGE_ENHANCES "pcmanfm-qt, pcmanfm")
+# Tortilla's packages before its rapport was its own (librapport,
+# librapport-<toolkit>, librapport-dev) go on upgrade, so their old
+# backends in <libdir>/rapport can't be found first.
+set(CPACK_DEBIAN_CORE_PACKAGE_REPLACES "librapport, librapport-dev")
+set(CPACK_DEBIAN_CORE_PACKAGE_BREAKS "librapport, librapport-dev")
+set(CPACK_RPM_CORE_PACKAGE_OBSOLETES "librapport, librapport-dev")
+foreach(tk IN LISTS tortilla_toolkits)
+    string(TOUPPER ${tk} TK)
+    set(CPACK_DEBIAN_${TK}_PACKAGE_REPLACES librapport-${tk})
+    set(CPACK_DEBIAN_${TK}_PACKAGE_BREAKS librapport-${tk})
+    set(CPACK_RPM_${TK}_PACKAGE_OBSOLETES librapport-${tk})
+endforeach()
 # The backends name no toolkit (shlibdeps would), only what every system
 # has; each tortilla-<toolkit> names its own toolkit instead.
 # Images in a comparison open in IfritView (Settings > Diff Viewer): each
