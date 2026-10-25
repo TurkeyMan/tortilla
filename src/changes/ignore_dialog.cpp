@@ -198,7 +198,9 @@ void show_ignore_dialog(rap::ui& ui, std::vector<std::string> paths, bool by_ext
                 std::vector<std::string> args{"rm", "-r", "-q", "--cached", "--ignore-unmatch", "--"};
                 args.insert(args.end(), s->relative.begin(), s->relative.end());
                 if (const git_result rm = run_git(s->workdir, args); !rm.ok())
-                    return s->fail(_("git couldn't stop tracking it."), rm.output);
+                    return s->fail(N_("git couldn't stop tracking it.", "git couldn't stop tracking them.",
+                                      s->relative.size()),
+                                   rm.output);
             }
             s->finish(true);
         });
