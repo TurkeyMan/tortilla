@@ -154,14 +154,21 @@ The source tree mirrors the packages. Users install `tortilla`, or the
 package for their toolkit if they know it, and it pulls in the rest:
 
 ```
-tortilla      (what most users install) Depends: tortilla-core, every librapport-<tk>
-tortilla-qt   (or the user's toolkit)   Depends: tortilla-core, librapport-qt6, Qt 6
-tortilla-gtk3                           Depends: tortilla-core, librapport-gtk3, GTK 3
-tortilla-gtk4                           Depends: tortilla-core, librapport-gtk4, GTK 4
-tortilla-core   app; links no toolkit   Depends: librapport
-librapport      core: detection, loader
-librapport-<tk> one backend plugin      Depends: librapport (exact version), no toolkit
+tortilla      (what most users install) Depends: tortilla-core, every tortilla-rapport-<tk>
+tortilla-qt   (or the user's toolkit)   Depends: tortilla-core, tortilla-rapport-qt6, Qt 6
+tortilla-gtk3                           Depends: tortilla-core, tortilla-rapport-gtk3, GTK 3
+tortilla-gtk4                           Depends: tortilla-core, tortilla-rapport-gtk4, GTK 4
+tortilla-core   app; links no toolkit   Depends: tortilla-rapport
+tortilla-rapport       rapport's core: detection, loader
+tortilla-rapport-<tk>  one backend plugin  Depends: tortilla-rapport (exact version), no toolkit
 ```
+
+rapport is Tortilla's own copy, installed in `<libdir>/tortilla` (the core, and
+the backends in `rapport/` under it), which `tortilla` finds through its
+RPATH. rapport changes its interface often and its library is always
+`librapport.so.0`, so two apps sharing one system copy would replace each
+other's library whenever they pinned different versions. Each app ships its
+own until rapport's interface settles.
 
 The backends depend on no toolkit, so that `tortilla` installs all three
 without pulling in a toolkit the desktop doesn't use. A desktop has at least

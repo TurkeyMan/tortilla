@@ -11,7 +11,7 @@
 #
 # Maintainer: Manu Evans <turkeyman@gmail.com>
 pkgbase=tortilla
-pkgname=(librapport librapport-dev librapport-gtk3 librapport-gtk4 librapport-qt6
+pkgname=(tortilla-rapport tortilla-rapport-gtk3 tortilla-rapport-gtk4 tortilla-rapport-qt6
          tortilla-core tortilla tortilla-gtk3 tortilla-gtk4 tortilla-qt
          tortilla-nautilus tortilla-nemo tortilla-caja tortilla-thunar tortilla-dolphin
          tortilla-pcmanfm)
@@ -23,8 +23,6 @@ url='https://github.com/TurkeyMan/tortilla'
 license=(GPL-3.0-only MIT)
 makedepends=(cmake ninja git libgit2 gtk3 gtk4 qt6-base
              libnautilus-extension nemo caja thunar kio wayland-protocols)
-# rapport's shell-extension libraries are static, for librapport-dev.
-options=(staticlibs)
 
 _root=$(realpath "$startdir/../..")
 
@@ -63,25 +61,20 @@ _install() {
   DESTDIR="$pkgdir" cmake --install build --component "$1"
 }
 
-package_librapport() {
-  pkgdesc='Toolkit-neutral UI library Tortilla is built on: desktop detection and backend loading'
+# rapport is Tortilla's own copy, in /usr/lib/tortilla: an app on another
+# rapport version keeps its own the same way, so neither replaces the
+# other's library. Its headers aren't packaged.
+package_tortilla-rapport() {
+  pkgdesc="Tortilla's copy of rapport, the toolkit-neutral UI library it is built on"
   license=(MIT)
   depends=(gcc-libs glibc)
   # Loaded on first use: HTTP, and decoding images.
   optdepends=('curl: HTTP (Gravatar pictures)'
               'gdk-pixbuf2: decoding images (Gravatar pictures)'
-              'librapport-gtk4: GTK 4 user interface'
-              'librapport-qt6: Qt 6 user interface'
-              'librapport-gtk3: GTK 3 user interface')
+              'tortilla-rapport-gtk4: GTK 4 user interface'
+              'tortilla-rapport-qt6: Qt 6 user interface'
+              'tortilla-rapport-gtk3: GTK 3 user interface')
   _install core
-  install -Dm644 "$_root/rapport/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
-}
-
-package_librapport-dev() {
-  pkgdesc="rapport's headers and CMake package"
-  license=(MIT)
-  depends=("librapport=$pkgver-$pkgrel")
-  _install dev
   install -Dm644 "$_root/rapport/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }
 
@@ -91,28 +84,28 @@ _backend() {
   install -Dm644 "$_root/rapport/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }
 
-package_librapport-gtk3() {
-  pkgdesc="rapport's GTK 3 backend"
-  depends=("librapport=$pkgver-$pkgrel" gcc-libs glibc)
+package_tortilla-rapport-gtk3() {
+  pkgdesc="The GTK 3 backend of Tortilla's copy of rapport"
+  depends=("tortilla-rapport=$pkgver-$pkgrel" gcc-libs glibc)
   _backend gtk3
 }
 
-package_librapport-gtk4() {
-  pkgdesc="rapport's GTK 4 backend"
-  depends=("librapport=$pkgver-$pkgrel" gcc-libs glibc)
+package_tortilla-rapport-gtk4() {
+  pkgdesc="The GTK 4 backend of Tortilla's copy of rapport"
+  depends=("tortilla-rapport=$pkgver-$pkgrel" gcc-libs glibc)
   _backend gtk4
 }
 
-package_librapport-qt6() {
-  pkgdesc="rapport's Qt 6 backend"
-  depends=("librapport=$pkgver-$pkgrel" gcc-libs glibc)
+package_tortilla-rapport-qt6() {
+  pkgdesc="The Qt 6 backend of Tortilla's copy of rapport"
+  depends=("tortilla-rapport=$pkgver-$pkgrel" gcc-libs glibc)
   _backend qt6
 }
 
 package_tortilla-core() {
   pkgdesc='A fast, native git client (the application; install tortilla, or tortilla-gtk4, tortilla-qt or tortilla-gtk3)'
   license=(GPL-3.0-only)
-  depends=("librapport=$pkgver-$pkgrel" libgit2 git hicolor-icon-theme gcc-libs glibc)
+  depends=("tortilla-rapport=$pkgver-$pkgrel" libgit2 git hicolor-icon-theme gcc-libs glibc)
   optdepends=('tortilla-nautilus: entries in the context menu of Nautilus (GNOME Files)'
               'tortilla-nemo: entries in the context menu of Nemo'
               'tortilla-caja: entries in the context menu of Caja'
@@ -125,8 +118,8 @@ package_tortilla-core() {
 package_tortilla() {
   pkgdesc='A fast, native git client (every user interface; it uses the one that matches your desktop)'
   license=(GPL-3.0-only)
-  depends=("tortilla-core=$pkgver-$pkgrel" "librapport-gtk3=$pkgver-$pkgrel"
-           "librapport-gtk4=$pkgver-$pkgrel" "librapport-qt6=$pkgver-$pkgrel")
+  depends=("tortilla-core=$pkgver-$pkgrel" "tortilla-rapport-gtk3=$pkgver-$pkgrel"
+           "tortilla-rapport-gtk4=$pkgver-$pkgrel" "tortilla-rapport-qt6=$pkgver-$pkgrel")
   optdepends=('ifritview: comparing images, side by side or as their difference')
   _install tortilla_all
 }
@@ -134,7 +127,7 @@ package_tortilla() {
 # $1 the backend, then the toolkit it needs.
 _frontend() {
   license=(GPL-3.0-only)
-  depends=("tortilla-core=$pkgver-$pkgrel" "librapport-$1=$pkgver-$pkgrel" "${@:2}")
+  depends=("tortilla-core=$pkgver-$pkgrel" "tortilla-rapport-$1=$pkgver-$pkgrel" "${@:2}")
   # Images in a comparison open in IfritView (Settings > Diff Viewer). One
   # package for now; each toolkit's own once IfritView splits like this.
   optdepends=('ifritview: comparing images, side by side or as their difference')

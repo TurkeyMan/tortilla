@@ -22,6 +22,16 @@ if(MSVC)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endif()
 
+# On Linux, Tortilla's rapport is its own, in <libdir>/tortilla (the core,
+# and the backends in rapport/ under it): another app on another rapport
+# version (IfritView) keeps its own the same way, so neither replaces the
+# other's library. tortilla finds it through its RPATH (below).
+if(UNIX AND NOT APPLE)
+    include(GNUInstallDirs)
+    set(RAPPORT_INSTALL_LIBDIR ${CMAKE_INSTALL_LIBDIR}/tortilla CACHE STRING
+        "Where Tortilla's own rapport installs, under the prefix")
+endif()
+
 add_subdirectory(rapport)
 
 # Package: tortilla-core (the app; links no toolkit).
@@ -179,6 +189,10 @@ endif()
 if(UNIX AND NOT APPLE)
     include(GNUInstallDirs)
     install(TARGETS tortilla RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT tortilla)
+    cmake_path(ABSOLUTE_PATH RAPPORT_INSTALL_LIBDIR BASE_DIRECTORY ${CMAKE_INSTALL_PREFIX}
+               OUTPUT_VARIABLE rapport_libdir)
+    file(RELATIVE_PATH rapport_from_bin ${CMAKE_INSTALL_FULL_BINDIR} ${rapport_libdir})
+    set_target_properties(tortilla PROPERTIES INSTALL_RPATH "$ORIGIN/${rapport_from_bin}")
     install(DIRECTORY data/icons/hicolor DESTINATION ${CMAKE_INSTALL_DATADIR}/icons
             COMPONENT tortilla)
     # The file managers' menu icons, from the icon theme.
