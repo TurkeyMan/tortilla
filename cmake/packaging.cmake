@@ -122,7 +122,9 @@ set(CPACK_DEBIAN_CORE_PACKAGE_RECOMMENDS
     "libcurl4t64 | libcurl4 | libcurl3t64-gnutls, libgdk-pixbuf-2.0-0")
 # The app shells out to git for everything but the revision walk.
 set(CPACK_DEBIAN_TORTILLA_PACKAGE_DEPENDS git)
-set(CPACK_DEBIAN_TORTILLA_PACKAGE_RECOMMENDS "tortilla-gtk4 | tortilla-qt | tortilla-gtk3")
+# The toolkit is the user's choice (the running desktop isn't something a
+# package manager sees): no toolkit is recommended here, and "tortilla" is
+# a virtual name each toolkit's package provides, so apt asks which.
 list(TRANSFORM tortilla_shells PREPEND tortilla- OUTPUT_VARIABLE shell_packages)
 list(JOIN shell_packages ", " shell_packages)
 set(CPACK_DEBIAN_TORTILLA_PACKAGE_SUGGESTS "${shell_packages}")
@@ -139,6 +141,7 @@ foreach(tk IN LISTS tortilla_toolkits)
     string(TOUPPER ${tk} TK)
     set(ifritview_for_${tk} ifritview)
     set(CPACK_DEBIAN_TORTILLA_${TK}_PACKAGE_RECOMMENDS ${ifritview_for_${tk}})
+    set(CPACK_DEBIAN_TORTILLA_${TK}_PACKAGE_PROVIDES tortilla)
 endforeach()
 set(CPACK_DEBIAN_TORTILLA-SHELL-PCMANFM_PACKAGE_ARCHITECTURE all)
 
@@ -165,7 +168,9 @@ foreach(c IN LISTS CPACK_COMPONENTS_ALL)
     set(CPACK_RPM_${C}_PACKAGE_REQUIRES "${requires}")
 endforeach()
 set(CPACK_RPM_CORE_PACKAGE_SUGGESTS "libcurl, gdk-pixbuf2")
-set(CPACK_RPM_TORTILLA_PACKAGE_SUGGESTS "tortilla-gtk4, ${shell_packages}")
+# No toolkit suggested, and no plain "tortilla": dnf would quietly pick a
+# provider; the user picks tortilla-gtk4, tortilla-qt or tortilla-gtk3.
+set(CPACK_RPM_TORTILLA_PACKAGE_SUGGESTS "${shell_packages}")
 foreach(tk IN LISTS tortilla_toolkits)
     string(TOUPPER ${tk} TK)
     set(CPACK_RPM_TORTILLA_${TK}_PACKAGE_SUGGESTS ${ifritview_for_${tk}})

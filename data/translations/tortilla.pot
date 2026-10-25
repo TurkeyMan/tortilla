@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: tortilla\n"
 "Report-Msgid-Bugs-To: https://github.com/TurkeyMan/tortilla/issues\n"
-"POT-Creation-Date: 2026-10-25 07:22+0000\n"
+"POT-Creation-Date: 2026-10-25 10:01+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -2069,21 +2069,37 @@ msgstr ""
 msgid "No more revisions found."
 msgstr ""
 
-#: src/main.cpp:248
+#: src/main.cpp:117
+#, c++-format
+msgid "On {0}, {1} fits in better: its own toolkit, theme and dialogs."
+msgstr ""
+
+#: src/main.cpp:119
+#, c++-format
+msgid "Install the {0} package for it. This is said only once."
+msgstr ""
+
+#: src/main.cpp:225
+msgid ""
+"Tortilla needs one of its user interfaces: install tortilla-gtk4, tortilla-"
+"qt or tortilla-gtk3, whichever suits your desktop."
+msgstr ""
+
+#: src/main.cpp:315
 msgid "This needs a working tree."
 msgstr ""
 
-#: src/main.cpp:267
+#: src/main.cpp:334
 #, c++-format
 msgid "{0} - Stash Apply"
 msgstr ""
 
-#: src/main.cpp:267
+#: src/main.cpp:334
 #, c++-format
 msgid "{0} - Stash Pop"
 msgstr ""
 
-#: src/main.cpp:489
+#: src/main.cpp:556
 msgid "Could not determine the last committed revision!"
 msgstr ""
 

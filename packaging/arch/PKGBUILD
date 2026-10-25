@@ -121,6 +121,8 @@ package_tortilla-core() {
 _frontend() {
   license=(GPL-3.0-only)
   depends=("tortilla-core=$pkgver-$pkgrel" "librapport-$1=$pkgver-$pkgrel")
+  # pacman -S tortilla asks which toolkit: the user's choice, not a guess.
+  provides=(tortilla)
   # Images in a comparison open in IfritView (Settings > Diff Viewer). One
   # package for now; each toolkit's own once IfritView splits like this.
   optdepends=('ifritview: comparing images, side by side or as their difference')

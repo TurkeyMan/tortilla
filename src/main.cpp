@@ -43,6 +43,7 @@
 #include "i18n.h"
 #include "log/log_window.h"
 #include "rebase/rebase_window.h"
+#include "settings.h"
 #include "remote/clone_dialog.h"
 #include "remote/pull_fetch_dialog.h"
 #include "remote/push_dialog.h"
@@ -68,6 +69,61 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+
+#ifndef _WIN32
+#include <spawn.h>
+#include <sys/wait.h>
+
+extern char** environ;
+
+namespace
+{
+
+// A desktop notification, where there's no console to read a message on
+// (started from a menu); nothing if notify-send isn't there.
+void notify(const std::string& text)
+{
+    const char* args[] = {"notify-send", "--app-name=Tortilla", "Tortilla", text.c_str(), nullptr};
+    pid_t pid = 0;
+    if (posix_spawnp(&pid, "notify-send", nullptr, nullptr, const_cast<char* const*>(args), environ) == 0)
+        waitpid(pid, nullptr, 0);
+}
+
+// The toolkit packages are one per toolkit, picked by the user (the package
+// managers can't see the running desktop). Once per toolkit, when the one
+// that suits this desktop best isn't the one running (its package isn't
+// installed), says which package that is. Not when a backend was chosen.
+void show_toolkit_hint(rap::ui& ui, const rap::load_options& opts)
+{
+    if (!opts.backend.empty() || std::getenv("RAPPORT_BACKEND")) return;
+    const rap::detection d = rap::detect(opts);
+    if (d.preference.empty() || d.desktop.empty()) return;
+    const std::string best = d.preference.front();
+    if (best == ui.backend_name()) return;
+    const std::string package = best == "qt6"    ? "tortilla-qt"
+                                : best == "gtk4" ? "tortilla-gtk4"
+                                : best == "gtk3" ? "tortilla-gtk3"
+                                                 : "";
+    tortilla::settings& st = tortilla::settings::get();
+    const std::string key = "hint.toolkit." + best;
+    if (package.empty() || st.value(key) == "1") return;
+    st.set(key, "1");
+    ui.post(
+        [&ui, desktop = d.desktop, package]
+        {
+            ui.message(nullptr,
+                       {.icon = rap::message_spec::icon::info,
+                        .title = "Tortilla",
+                        .text = rap::i18n::format(_("On {0}, {1} fits in better: its own toolkit, theme and dialogs."),
+                                                  desktop, package),
+                        .detail = rap::i18n::format(_("Install the {0} package for it. This is said only once."),
+                                                    package)},
+                       [](rap::dialog_role) {});
+        });
+}
+
+}  // namespace
+#endif
 
 int main(int argc, char** argv)
 {
@@ -163,8 +219,19 @@ int main(int argc, char** argv)
     if (!ui)
     {
         std::fprintf(stderr, "%s", ui.error().c_str());
+#ifndef _WIN32
+        // Only tortilla-core installed: the toolkit is a package of its own,
+        // chosen to suit the desktop. Said where a menu launch shows it too.
+        const std::string text = _("Tortilla needs one of its user interfaces: install tortilla-gtk4, "
+                                   "tortilla-qt or tortilla-gtk3, whichever suits your desktop.");
+        std::fprintf(stderr, "tortilla: %s\n", text.c_str());
+        notify(text);
+#endif
         return 1;
     }
+#ifndef _WIN32
+    show_toolkit_hint(**ui, opts);
+#endif
 
     // A repository git refuses for its folder's owner (a network share,
     // WSL's files from Windows): offered to trust it first, as TortoiseGit
