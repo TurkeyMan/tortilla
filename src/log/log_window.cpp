@@ -100,9 +100,16 @@ rap::menu_item toggle(std::string label, bool on, std::function<void()> action, 
 }  // namespace
 
 std::expected<std::unique_ptr<log_window>, std::string>
-log_window::open(rap::ui& ui, const std::string& path, bool all_branches)
+log_window::open(rap::ui& ui, const std::string& path, bool all_branches, bool outer)
 {
-    auto repo = repo::open(path);
+    std::string from = path;
+    if (outer)
+    {
+        std::error_code ec;
+        const auto abs = std::filesystem::absolute(rap::sys::path_from_utf8(path), ec);
+        from = rap::sys::path_to_utf8((abs.has_filename() ? abs : abs.parent_path()).parent_path());
+    }
+    auto repo = repo::open(from);
     if (!repo) return std::unexpected(repo.error());
     std::unique_ptr<log_window> w(new log_window(ui, std::move(*repo), path));
     w->build();
@@ -118,7 +125,9 @@ log_window::log_window(rap::ui& ui, repo repo, std::string path)
     , repo_(std::move(repo))
     , path_(std::move(path))
     , log_(ui)
-    , files_worker_(std::make_unique<repo_worker>(ui, path_))
+    // The window's repository, not path_'s (a submodule's folder in the
+    // repository around it is the submodule's own repository).
+    , files_worker_(std::make_unique<repo_worker>(ui, repo_location()))
     , files_({.ui = ui,
               .window = [this] { return window_.get(); },
               .workdir = repo_.workdir(),
@@ -152,6 +161,11 @@ std::string log_window::title_text() const
     if (path_limited()) title += "/" + rel_path_;
     title = rap::sys::path_to_utf8(rap::sys::path_from_utf8(title).make_preferred());
     return rap::i18n::format(_("{0} - Log Messages - Tortilla"), title);
+}
+
+std::string log_window::repo_location() const
+{
+    return repo_.workdir().empty() ? repo_.git_dir() : repo_.workdir();
 }
 
 bool log_window::path_limited() const
@@ -539,7 +553,7 @@ void log_window::reload()
     opts.since = since_;
     opts.until = until_;
     if (path_limited()) opts.paths = {rel_path_};
-    log_.load(path_, opts, [this](const std::string& e) { loaded(e); });
+    log_.load(repo_location(), opts, [this](const std::string& e) { loaded(e); });
     if (!filter_.text.empty()) log_.set_filter(filter_);
 }
 

@@ -24,10 +24,12 @@ namespace tortilla
 class log_window
 {
 public:
-    // `path` is any path inside the repository.
-    // `all_branches` starts with All Branches checked.
+    // `path` is any path inside the repository; the history is limited to
+    // it (Show Whole Project lifts that). `all_branches` starts with All
+    // Branches checked. `outer`: the repository around a submodule at
+    // `path`, rather than the submodule's own (Show log of this folder).
     static std::expected<std::unique_ptr<log_window>, std::string>
-    open(rap::ui&, const std::string& path, bool all_branches = false);
+    open(rap::ui&, const std::string& path, bool all_branches = false, bool outer = false);
 
     void show() { window_->show(); }
     // Shows the history from `rev` (a ref or commit) instead of HEAD.
@@ -70,6 +72,7 @@ private:
     void open_settings(settings_page);
     std::string title_text() const;
     bool path_limited() const;
+    std::string repo_location() const;
     void difftool(std::vector<std::string> revisions, std::vector<std::string> paths = {});
     void confirm_then_run(const std::string& question, const std::string& title,
                           std::vector<std::vector<std::string>> commands);

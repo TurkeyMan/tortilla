@@ -541,6 +541,9 @@ public:
         case run::none:
         case run::ignore: return;  // its submenu's items, above
         case run::log: rap::shell::launch(tortilla_exe(), {"log", first}); return;
+        case run::log_submodule:
+            rap::shell::launch(tortilla_exe(), {"log", "--submodule", first});
+            return;
         case run::diff:
             // Two files: one against the other [spec 4.2, row 12].
             if (sel.paths.size() == 2)

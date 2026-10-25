@@ -93,6 +93,7 @@ enum class run
     remove_keep,     // tortilla removekeep <paths...>
     cleanup,         // tortilla cleanup <paths...>
     diff_later,      // remembers <first>, or tortilla compare <remembered> <first>
+    log_submodule,   // tortilla log --submodule <first>
     ignore,          // a submenu: tortilla ignore [--delete] [--mask] <paths...>
 };
 
@@ -148,7 +149,7 @@ inline constexpr row k_rows[] = {
     {"Show log of this folder",
      {{{FIG | ONE | ROOT | SUB, 0}}},
      place::sub,
-     run::none,
+     run::log_submodule,
      "logsubmodule"},
     {"Show &RefLog", {{{FIG | ONE, 0}, {BARE, 0}}}, place::sub, run::reflog, "reflog"},
     {"Browse References", {{{FIG | ONE, 0}, {BARE, 0}}}, place::sub, run::refbrowse, "refbrowse"},

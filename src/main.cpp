@@ -1,5 +1,7 @@
 // Tortilla: a TortoiseGit-style git GUI.
-//   tortilla [log] [--all] [path]   log window for the repository containing path;
+//   tortilla [log] [--all] [--submodule] [path]   log window for the repository
+//                                     containing path, limited to path; --submodule:
+//                                     the repository around a submodule at path
 //                                     with nothing given and none here, the welcome window
 //   tortilla about                    the welcome window: what Tortilla is, links
 //   tortilla remove|removekeep path...  Delete (to the Recycle Bin), or stop tracking
@@ -160,6 +162,7 @@ int main(int argc, char** argv)
     std::string command = "log";
     bool named = false;  // a command was given (else the log, or the welcome window)
     bool all_branches = false;
+    bool submodule = false;  // the log of a submodule's folder in the repository around it
     std::vector<std::string> args;
     for (int i = 1; i < argc; ++i)
     {
@@ -167,6 +170,8 @@ int main(int argc, char** argv)
             opts.backend = argv[i] + 5;
         else if (std::strcmp(argv[i], "--all") == 0)
             all_branches = true;
+        else if (std::strcmp(argv[i], "--submodule") == 0)
+            submodule = true;
         else if (std::strcmp(argv[i], "--which-ui") == 0)
         {
             auto d = rap::detect(opts);
@@ -669,7 +674,7 @@ int main(int argc, char** argv)
         return (*ui)->run();
     };
     if (command == "about") return welcome();
-    auto log = tortilla::log_window::open(**ui, path, all_branches);
+    auto log = tortilla::log_window::open(**ui, path, all_branches, submodule);
     if (!log)
     {
         if (!named && args.empty()) return welcome();
