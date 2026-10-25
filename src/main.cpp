@@ -199,11 +199,17 @@ int main(int argc, char** argv)
     {
         tortilla::windows::init(**ui);
         // The branch dialogs: the second argument preselects a ref or hash.
-        auto keep = [](auto d)
+        auto keep = [&ui](auto d)
         {
             if (!d)
             {
+                // No console to read it on when started from a file
+                // manager: said in a window too, as the log does.
                 std::fprintf(stderr, "tortilla: %s\n", d.error().c_str());
+                (*ui)->message(nullptr,
+                               {.icon = rap::message_spec::icon::error, .title = "Tortilla", .text = d.error()},
+                               [&ui](rap::dialog_role) { (*ui)->quit(); });
+                (*ui)->run();
                 return false;
             }
             tortilla::windows::keep(std::move(*d));
