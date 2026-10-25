@@ -57,8 +57,9 @@ std::vector<std::filesystem::path> write(const std::filesystem::path& out,
 
 // After Settings saves the menu's placements: the user's set when they
 // differ from the defaults for PCManFM's entries and its menu is installed,
-// else none. Only ever writes or deletes tortilla-user*.desktop. PCManFM-Qt
-// notices the change by the next right-click.
+// else none. Only ever writes or deletes tortilla-user*.desktop. The change
+// shows once PCManFM-Qt restarts (it may not notice files it already read
+// being rewritten).
 void update_user_set(const shell_menu::placements& where);
 
 }  // namespace tortilla::fm_actions

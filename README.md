@@ -53,8 +53,8 @@ a checkout: `cd packaging/arch && makepkg -si`.
 PCManFM's menu is a set of files rather than an extension, so when Settings
 chooses other top-level or hidden entries, Tortilla writes your own copy to
 `~/.local/share/file-manager/actions/tortilla-user*.desktop` (and removes it
-when the choices go back to the defaults). Uninstalling leaves that copy
-behind; delete those files by hand.
+when the choices go back to the defaults); restart PCManFM-Qt to see the
+change. Uninstalling leaves that copy behind; delete those files by hand.
 
 ## Running
 
