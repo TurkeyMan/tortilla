@@ -7,18 +7,20 @@
 #include "branch/merge_dialog.h"
 #include "branch/switch_dialog.h"
 #include "changes/commit_window.h"
+#include "log/reflog_window.h"
 #include "remote/pull_fetch_dialog.h"
 #include "remote/push_dialog.h"
 #include "ui/windows.h"
 
 #include "git/command.h"
-#include "i18n.h"
 #include "git/diff_tool.h"
+#include "i18n.h"
 #include "ui/compare.h"
 #include "ui/diff_window.h"
 #include "ui/menu_items.h"
 #include "ui/menu_text.h"
 #include "ui/progress_dialog.h"
+#include "ui/reset_dialog.h"
 #include "ui/stash_dialog.h"
 #include "util/calendar.h"
 
@@ -58,22 +60,6 @@ std::string format_time(int64_t time, int offset_minutes)
     char buf[32];
     std::strftime(buf, sizeof buf, "%Y-%m-%d %H:%M:%S", &tm);
     return buf;
-}
-
-// A modal dialog that owns its widgets' state until it closes.
-template <class state>
-void run_dialog(rap::ui& ui, rap::window* parent, std::shared_ptr<state> st, rap::window_spec spec,
-                std::function<void(state&)> on_ok)
-{
-    st->window = ui.create(spec, parent);
-    st->window->on_finished(
-        [st, on_ok, &ui](rap::dialog_role role) mutable
-        {
-            auto keep = std::move(st);
-            if (role == rap::dialog_role::ok) on_ok(*keep);
-            ui.post([keep] {});  // destroy after this callback returns
-        });
-    st->window->show();
 }
 
 }  // namespace
@@ -282,7 +268,9 @@ menu log_window::context_menu(std::optional<size_t> clicked)
         {
             m.push_back(
                 item(_("Stash Pop"), [this] { run_git_commands(_("Stash Pop"), {{"stash", "pop"}}); }));
-            m.push_back(todo(_("Stash List")));
+            m.push_back(
+                item(_("Stash List"), [this]
+                     { keep_dialog(reflog_window::open(ui_, repo_.workdir(), "refs/stash")); }));
         }
         separator(m);
 
@@ -995,38 +983,8 @@ rap::list::cell_drag log_window::label_drag()
 // TortoiseGit's Reset dialog: soft / mixed / hard.
 void log_window::reset_to(const commit& c)
 {
-    struct state
-    {
-        std::unique_ptr<rap::window> window;
-        rap::drop_down* type = nullptr;
-    };
-    auto st = std::make_shared<state>();
-    std::string hash = c.id.hex();
-
-    using namespace rap::layout;
-    run_dialog<state>(
-        ui_, window_.get(), st,
-        dialog{
-            _("Reset"),
-            {vbox{
-                label{rap::i18n::format(_("Reset \"{0}\" to {1} {2}"), repo_.head_name(), hash.substr(0, 8), c.summary)},
-                form{
-                    {_("Reset Type"),
-                     drop_down{{_("Soft: Leave working tree and index untouched"),
-                                _("Mixed: Leave working tree untouched, reset index"),
-                                _("Hard: Reset working tree and index (discard all local changes)")},
-                               1}
-                         .bind(st->type)},
-                },
-                buttons{ok, cancel},
-            }}}
-            .resizable(false),
-        [this, hash](state& s)
-        {
-            static const char* modes[] = {"--soft", "--mixed", "--hard"};
-            int i = std::clamp(s.type->current(), 0, 2);
-            run_git_commands(_("Reset"), {{"reset", modes[i], hash}});
-        });
+    tortilla::reset_to(ui_, window_.get(), repo_.workdir(), repo_.head_name(), c.id.hex(),
+                       c.summary, [this](bool) { reload(); });
 }
 
 // TortoiseGit's Merge dialog, reduced to its main options.

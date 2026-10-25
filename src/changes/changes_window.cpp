@@ -2,11 +2,13 @@
 
 #include "changes/commit_window.h"
 #include "i18n.h"
+#include "log/reflog_window.h"
 #include "settings.h"
 #include "ui/diff_window.h"
 #include "ui/progress_dialog.h"
 #include "ui/settings_dialog.h"
 #include "ui/stash_dialog.h"
+#include "ui/windows.h"
 
 #include <rapport/sys.h>
 
@@ -362,7 +364,17 @@ rap::menu changes_window::stash_menu()
                          run_progress_dialog(ui_, window_.get(), _("Stash Apply"), workdir_,
                                              {{"stash", "apply"}}, after);
                      }});
-        m.push_back({.label = _("Stash List"), .enabled = false});
+        m.push_back({.label = _("Stash List"),
+                     .action = [this]
+                     {
+                         auto list = reflog_window::open(ui_, workdir_, "refs/stash");
+                         if (!list)
+                             return ui_.message(window_.get(),
+                                                {.icon = rap::message_spec::icon::error,
+                                                 .title = "Tortilla",
+                                                 .text = list.error()});
+                         windows::keep(std::move(*list));
+                     }});
     }
     return m;
 }

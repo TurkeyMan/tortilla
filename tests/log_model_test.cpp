@@ -7,6 +7,9 @@
 #include "git/diff_tool.h"
 #include "git/ignore_patterns.h"
 #include "git/ref_list.h"
+#include "git/reflog.h"
+#include "git/remotes.h"
+#include "git/repo.h"
 #include "git/repo_worker.h"
 #include "git/status.h"
 #include "log/log_model.h"
@@ -462,6 +465,47 @@ int main(int argc, char** argv)
         };
         check(has("A.txt") && has("untracked.txt"), "reloads: the last options' files");
         std::printf("     (%zu of %d loads delivered)\n", delivered.size(), loads);
+    }
+
+    // Reflogs, for the RefLog dialog.
+    {
+        using tortilla::split_reflog_message;
+        check(split_reflog_message("checkout: moving from main to feat\n", false) ==
+                  std::pair<std::string, std::string>{"checkout", "moving from main to feat"},
+              "reflog: action and message");
+        check(split_reflog_message("commit (amend): fix: typo", false).first == "commit (amend)",
+              "reflog: split at the first colon");
+        check(split_reflog_message("WIP on main: 1a2b3c4 subject", true).first.empty(),
+              "reflog: a stash's message has no action");
+        check(tortilla::short_selector("refs/heads/main", 2) == "main@{2}" &&
+                  tortilla::short_selector("refs/stash", 0) == "stash@{0}" &&
+                  tortilla::short_selector("HEAD", 1) == "HEAD@{1}",
+              "reflog: short selectors");
+
+        auto r = tortilla::repo::open(repo);
+        const auto refs = r ? tortilla::reflog_refs(*r) : std::vector<std::string>{};
+        check(!refs.empty() && refs.front() == "HEAD" &&
+                  std::ranges::contains(refs, "refs/heads/main"),
+              "reflog: HEAD first, then the branches");
+        const auto head =
+            r ? tortilla::read_reflog(*r, "HEAD") : std::unexpected(std::string("no repo"));
+        check(head && !head->empty() && head->front().selector == "HEAD@{0}" &&
+                  head->front().id == tortilla::resolve(repo, "HEAD"),
+              "reflog: HEAD's newest entry is where HEAD is");
+        check(head &&
+                  std::ranges::any_of(
+                      *head, [](const tortilla::reflog_entry& e)
+                      { return e.action == "checkout" && e.message.starts_with("moving from"); }),
+              "reflog: a checkout's entry");
+
+        sh("echo stashed >> '" + repo + "/A.txt' && " + git + "stash -q");
+        r = tortilla::repo::open(repo);
+        const auto stash =
+            r ? tortilla::read_reflog(*r, "refs/stash") : std::unexpected(std::string("no repo"));
+        check(stash && stash->size() == 1 && stash->front().selector == "stash@{0}" &&
+                  stash->front().action.empty() && stash->front().message.starts_with("WIP on"),
+              "reflog: the stash's entry");
+        sh(git + "stash drop -q");
     }
 
     // Git LFS, where git-lfs is installed: Tortilla's git does the LFS part

@@ -3306,3 +3306,75 @@ msgstr "Repository öffnen"
 
 #~ msgid "Filter by Refname, Subject, Authors, SHA-1"
 #~ msgstr "Filtern nach Referenzname, Betreff, Autoren, SHA-1"
+
+#: src/log/reflog_window.cpp
+msgid "Action"
+msgstr "Aktion"
+
+#: src/log/reflog_window.cpp
+msgid "{0} - RefLog - Tortilla"
+msgstr "{0} - RefLog - Tortilla"
+
+#: src/log/reflog_window.cpp
+msgid "Ref:"
+msgstr "Referenz:"
+
+#: src/log/reflog_window.cpp
+msgid "Clear stash"
+msgstr "Stash leeren"
+
+#: src/log/reflog_window.cpp
+msgid "Couldn't read the reflog."
+msgstr "Das Reflog konnte nicht gelesen werden."
+
+#: src/log/reflog_window.cpp
+msgid "Showing {0} entries, {1} selected"
+msgstr "{0} Einträge, {1} ausgewählt"
+
+#: src/log/reflog_window.cpp
+msgid "Show changes"
+msgstr "Änderungen anzeigen"
+
+#: src/log/reflog_window.cpp
+msgid "Compare with previous position"
+msgstr "Mit vorheriger Position vergleichen"
+
+#: src/log/reflog_window.cpp
+msgid "Drop stash"
+msgstr "Stash verwerfen"
+
+#: src/log/reflog_window.cpp
+msgid "Delete entry"
+msgstr "Eintrag löschen"
+
+#: src/log/reflog_window.cpp
+msgid "Do you really want to clear all stashed changes? They can NOT be recovered!"
+msgstr "Wollen Sie wirklich alle gestashten Änderungen löschen? Sie können NICHT wiederhergestellt werden!"
+
+#: src/log/reflog_window.cpp
+msgid "Show _RefLog"
+msgstr "_RefLog anzeigen"
+
+#: src/log/reflog_window.cpp
+msgid "Drop {0} stash"
+msgid_plural "Drop {0} stashes"
+msgstr[0] "{0} Stash verwerfen"
+msgstr[1] "{0} Stashes verwerfen"
+
+#: src/log/reflog_window.cpp
+msgid "Delete {0} entry"
+msgid_plural "Delete {0} entries"
+msgstr[0] "{0} Eintrag löschen"
+msgstr[1] "{0} Einträge löschen"
+
+#: src/log/reflog_window.cpp
+msgid "Do you really want to drop {0}? It can NOT be recovered!"
+msgid_plural "Do you really want to drop these {1} stashes? They can NOT be recovered!"
+msgstr[0] "Wollen Sie {0} wirklich verwerfen? Er kann NICHT wiederhergestellt werden!"
+msgstr[1] "Wollen Sie diese {1} Stashes wirklich verwerfen? Sie können NICHT wiederhergestellt werden!"
+
+#: src/log/reflog_window.cpp
+msgid "Do you really want to delete {0} from the reflog?"
+msgid_plural "Do you really want to delete these {1} entries from the reflog?"
+msgstr[0] "Wollen Sie {0} wirklich aus dem Reflog löschen?"
+msgstr[1] "Wollen Sie diese {1} Einträge wirklich aus dem Reflog löschen?"

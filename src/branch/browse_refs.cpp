@@ -8,6 +8,7 @@
 #include "git/repo.h"
 #include "i18n.h"
 #include "log/log_window.h"
+#include "log/reflog_window.h"
 #include "remote/pull_fetch_dialog.h"
 #include "settings.h"
 #include "ui/menu_text.h"
@@ -575,6 +576,23 @@ rap::menu browse_refs::list_menu(std::optional<size_t>)
             m.push_back({});
         }
         if (e.commit()) m.push_back({.label = _("Show _log"), .action = [this, e] { show_log(e.full); }});
+        if (e.local_branch() || e.remote_branch())
+            m.push_back({.label = _("Show _RefLog"),
+                         .action = [this, e]
+                         {
+                             auto log = reflog_window::open(ui_, workdir_, e.full);
+                             if (!log)
+                                 return ui_.message(window_.get(),
+                                                    {.icon = rap::message_spec::icon::error,
+                                                     .title = "Tortilla",
+                                                     .text = log.error()});
+                             // What it did there (a reset, a branch) shows here after.
+                             windows::keep(std::move(*log),
+                                           [this, alive = std::weak_ptr<bool>(alive_)]
+                                           {
+                                               if (alive.lock()) reload();
+                                           });
+                         }});
         if (e.remote_branch())
             if (auto rb = split_remote(workdir_, e.full))
                 m.push_back({.label = rap::i18n::format(_("Fetch from \"{0}\""), menu_text(rb->first)),

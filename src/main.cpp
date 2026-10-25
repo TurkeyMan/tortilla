@@ -17,6 +17,8 @@
 //                                     or Merge, rev preselected
 //   tortilla mergeabort [path]         the Abort Merge dialog
 //   tortilla refbrowse [path]          Browse References
+//   tortilla reflog [path] [ref]       the RefLog dialog, on HEAD or ref
+//   tortilla stashlist [path]          the RefLog dialog on the stash
 //   tortilla prevdiff [path]           the file against its previous version
 //   tortilla stashsave|stashapply|stashpop [path]  Stash changes, Apply or Pop
 //   tortilla repocreate [folder]       git init there, bare or not
@@ -44,17 +46,18 @@
 #include "git/ssh_client.h"
 #include "i18n.h"
 #include "log/log_window.h"
+#include "log/reflog_window.h"
 #include "rebase/rebase_window.h"
-#include "settings.h"
 #include "remote/clone_dialog.h"
 #include "remote/pull_fetch_dialog.h"
 #include "remote/push_dialog.h"
+#include "settings.h"
 #include "ui/askpass.h"
 #include "ui/compare.h"
-#include "ui/diff_window.h"
-#include "ui/settings_dialog.h"
 #include "ui/create_repo_dialog.h"
+#include "ui/diff_window.h"
 #include "ui/progress_dialog.h"
+#include "ui/settings_dialog.h"
 #include "ui/stash_dialog.h"
 #include "ui/trust_repository.h"
 #include "ui/welcome_window.h"
@@ -203,12 +206,14 @@ int main(int argc, char** argv)
                   std::strcmp(argv[i], "tag") == 0 || std::strcmp(argv[i], "switch") == 0 ||
                   std::strcmp(argv[i], "merge") == 0 || std::strcmp(argv[i], "mergeabort") == 0 ||
                   std::strcmp(argv[i], "refbrowse") == 0 || std::strcmp(argv[i], "prevdiff") == 0 ||
-                  std::strcmp(argv[i], "stashsave") == 0 || std::strcmp(argv[i], "stashapply") == 0 ||
-                  std::strcmp(argv[i], "stashpop") == 0 || std::strcmp(argv[i], "repocreate") == 0 ||
-                  std::strcmp(argv[i], "rename") == 0 ||
-                  std::strcmp(argv[i], "conflicteditor") == 0 || std::strcmp(argv[i], "about") == 0 ||
-                  std::strcmp(argv[i], "remove") == 0 || std::strcmp(argv[i], "removekeep") == 0 ||
-                  std::strcmp(argv[i], "ignore") == 0))
+                  std::strcmp(argv[i], "reflog") == 0 || std::strcmp(argv[i], "stashlist") == 0 ||
+                  std::strcmp(argv[i], "stashsave") == 0 ||
+                  std::strcmp(argv[i], "stashapply") == 0 ||
+                  std::strcmp(argv[i], "stashpop") == 0 ||
+                  std::strcmp(argv[i], "repocreate") == 0 || std::strcmp(argv[i], "rename") == 0 ||
+                  std::strcmp(argv[i], "conflicteditor") == 0 ||
+                  std::strcmp(argv[i], "about") == 0 || std::strcmp(argv[i], "remove") == 0 ||
+                  std::strcmp(argv[i], "removekeep") == 0 || std::strcmp(argv[i], "ignore") == 0))
         {
             command = argv[i];
             named = true;
@@ -359,7 +364,8 @@ int main(int argc, char** argv)
     // runs until the last of them closes.
     if (command == "clone" || command == "fetch" || command == "pull" || command == "push" ||
         command == "branch" || command == "tag" || command == "switch" || command == "merge" ||
-        command == "mergeabort" || command == "refbrowse")
+        command == "mergeabort" || command == "refbrowse" || command == "reflog" ||
+        command == "stashlist")
     {
         tortilla::windows::init(**ui);
         // The branch dialogs: the second argument preselects a ref or hash.
@@ -392,6 +398,11 @@ int main(int argc, char** argv)
             return keep(tortilla::abort_merge_dialog::open(**ui, path)) ? (*ui)->run() : 1;
         if (command == "refbrowse")
             return keep(tortilla::browse_refs::open(**ui, path, {})) ? (*ui)->run() : 1;
+        if (command == "reflog" || command == "stashlist")
+            return keep(tortilla::reflog_window::open(**ui, path,
+                                                      command == "stashlist" ? "refs/stash" : rev))
+                       ? (*ui)->run()
+                       : 1;
         if (command == "clone")
             tortilla::windows::keep(tortilla::clone_dialog::open(**ui, args.empty() ? "" : args[0],
                                                                  args.size() > 1 ? args[1] : ""));

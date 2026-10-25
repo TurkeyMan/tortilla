@@ -75,6 +75,7 @@ add_library(tortilla_git STATIC
     src/util/sha256.cpp
     src/git/ignore_patterns.cpp
     src/git/ref_list.cpp
+    src/git/reflog.cpp
     src/changes/working_tree.cpp)
 target_include_directories(tortilla_git PUBLIC src)
 target_link_libraries(tortilla_git PUBLIC ${TORTILLA_LIBGIT2} rapport::rapport)
@@ -84,12 +85,14 @@ add_executable(tortilla
     src/main.cpp
     src/log/log_window.cpp
     src/log/log_actions.cpp
+    src/log/reflog_window.cpp
     src/changes/changes_view.cpp
     src/changes/changes_window.cpp
     src/changes/commit_window.cpp
     src/changes/file_action_window.cpp
     src/changes/conflict_editor.cpp
     src/ui/stash_dialog.cpp
+    src/ui/reset_dialog.cpp
     src/rebase/rebase_window.cpp
     src/ui/compare.cpp
     src/ui/progress_dialog.cpp

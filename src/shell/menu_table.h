@@ -79,6 +79,8 @@ enum class run
     merge,       // tortilla merge <folder>
     merge_abort,  // tortilla mergeabort <folder>
     refbrowse,    // tortilla refbrowse <folder>
+    reflog,       // tortilla reflog <folder>
+    stash_list,   // tortilla stashlist <folder>
     prevdiff,     // tortilla prevdiff <first>
     stash_save,   // tortilla stashsave <first>
     stash_apply,  // tortilla stashapply <folder>
@@ -146,7 +148,7 @@ inline constexpr row k_rows[] = {
      place::sub,
      run::none,
      "logsubmodule"},
-    {"Show &RefLog", {{{FIG | ONE, 0}, {BARE, 0}}}, place::sub, run::none, "reflog"},
+    {"Show &RefLog", {{{FIG | ONE, 0}, {BARE, 0}}}, place::sub, run::reflog, "reflog"},
     {"Browse References", {{{FIG | ONE, 0}, {BARE, 0}}}, place::sub, run::refbrowse, "refbrowse"},
     {"Daemon",
      {{{GIT | ONE, ADDED}, {FOLD | FIG | ONE, ADDED}, {FIG | ONE, ADDED}, {BARE, 0}}},
@@ -168,7 +170,7 @@ inline constexpr row k_rows[] = {
     {"Stash changes", {{{GIT | ONE, MERGE}}}, place::sub, run::stash_save, "stashsave"},
     {"Stash Apply", {{{FIG | ONE | STASH, 0}}}, place::shift, run::stash_apply, "stashapply"},
     {"Stash Pop", {{{FIG | ONE | STASH, 0}}}, place::sub, run::stash_pop, "stashpop"},
-    {"Stash List", {{{FIG | ONE | STASH, 0}}}, place::sub, run::none, "stashlist"},
+    {"Stash List", {{{FIG | ONE | STASH, 0}}}, place::sub, run::stash_list, "stashlist"},
     separator,
     {"Bisect start", {{{FIG | ONE, BISECT | MERGE}}}, place::sub, run::none, "bisectstart"},
     {"Bisect good", {{{FIG | ONE | BISECT, 0}}}, place::sub, run::none, "bisectgood"},
@@ -182,14 +184,22 @@ inline constexpr row k_rows[] = {
      place::sub,
      run::resolve,
      "resolve"},
-    {"Abort &Merge", {{{GIT | MERGE, 0}, {FIG | MERGE, 0}}}, place::sub, run::merge_abort, "mergeabort"},
+    {"Abort &Merge",
+     {{{GIT | MERGE, 0}, {FIG | MERGE, 0}}},
+     place::sub,
+     run::merge_abort,
+     "mergeabort"},
     {"Re&name...", {{{GIT | ONE | IVF, ROOT}, {ROOT | SUB, 0}}}, place::sub, run::rename, "rename"},
     {"&Delete",
      {{{GIT | IVF, ADDED | ROOT}, {FIG | ROOT | SUB, 0}}},
      place::sub,
      run::remove,
      "remove"},
-    {"&Delete (keep local)", {{{GIT | IVF, ADDED | ROOT}}}, place::sub, run::remove_keep, "removekeep"},
+    {"&Delete (keep local)",
+     {{{GIT | IVF, ADDED | ROOT}}},
+     place::sub,
+     run::remove_keep,
+     "removekeep"},
     {"Re&vert...", {{{GIT, NORMAL}, {FIG, 0}}}, place::sub, run::revert, "revert"},
     {"&Clean up...", {{{FIG | FOLD, 0}}}, place::sub, run::none, "cleanup"},
     separator,
