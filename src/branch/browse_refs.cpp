@@ -282,7 +282,8 @@ void browse_refs::build()
             .size(130_ch, 30_lines),
         parent_);
     st.restore_window("browseRefs.window", *window_);
-    if (auto v = st.numbers("browseRefs.columns"); v.size() == column_count) list_->set_column_widths(v);
+    // (.v2: widths saved before the columns were widened are dropped.)
+    if (auto v = st.numbers("browseRefs.columns.v2"); v.size() == column_count) list_->set_column_widths(v);
     // The folders get a fifth or so at first, as TortoiseGit's fixed tree has.
     if (auto v = st.numbers("browseRefs.panes"); v.size() == 2)
         splitter_->set_sizes(v);
@@ -318,7 +319,8 @@ void browse_refs::build()
         {
             settings& st = settings::get();
             st.save_window("browseRefs.window", *window_);
-            st.set_numbers("browseRefs.columns", list_->column_widths());
+            st.remove("browseRefs.columns");
+            st.set_numbers("browseRefs.columns.v2", list_->column_widths());
             st.set_numbers("browseRefs.panes", splitter_->sizes());
             st.set_numbers("browseRefs.sort", {float(rows_->sort_column), rows_->descending ? 1.f : 0.f});
             if (!done_ && picked_) std::exchange(picked_, {})(std::string());
@@ -855,7 +857,9 @@ void browse_refs::rename(const ref_entry& e)
 
 void browse_refs::edit_description(const ref_entry& e)
 {
-    ask_text(ui_, window_.get(), _("Edit description"), _("Edit description"), e.description,
+    // The description as it is, lines and all (the list's has them joined).
+    const std::string key = "branch." + strip_ref_name(e.full) + ".description";
+    ask_text(ui_, window_.get(), _("Edit description"), _("Edit description"), config_value(workdir_, key),
              [this, e, alive = std::weak_ptr<bool>(alive_)](const std::string& text)
              {
                  if (!alive.lock()) return;
