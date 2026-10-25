@@ -4,6 +4,10 @@
 #include "i18n.h"
 #include "ui/diff_window.h"
 
+#include <rapport/sys.h>
+
+#include <filesystem>
+
 namespace tortilla
 {
 
@@ -12,15 +16,16 @@ namespace
 
 // An image comparison runs on its own: kept until its tool exits, and a
 // failure said in a message.
-void start_image_tool(rap::ui& ui, rap::window* parent, const std::string& dir, std::vector<std::string> args,
-                      std::function<void()> finished)
+void start_image_tool(rap::ui& ui, rap::window* parent, const std::string& dir,
+                      std::vector<std::string> args, std::function<void()> finished,
+                      bool no_index = false)
 {
     static std::vector<std::shared_ptr<git_process>> running;
     auto output = std::make_shared<std::string>();
     auto slot = std::make_shared<std::weak_ptr<git_process>>();
     auto process = git_process::start(
         ui, dir, std::move(args), [output](const std::string& chunk) { *output += chunk; },
-        [&ui, parent, output, slot, finished](int code)
+        [&ui, parent, output, slot, finished, no_index](int code)
         {
             // Let go of it after this callback, which it's running.
             ui.post(
@@ -28,7 +33,8 @@ void start_image_tool(rap::ui& ui, rap::window* parent, const std::string& dir, 
                 {
                     if (auto self = slot->lock()) std::erase(running, self);
                 });
-            if (code == 0) return finished();
+            // With --no-index, git exits 1 for files that differ.
+            if (code == 0 || (no_index && code == 1)) return finished();
             ui.message(parent,
                        {.icon = rap::message_spec::icon::error,
                         .title = "Tortilla",
@@ -41,7 +47,108 @@ void start_image_tool(rap::ui& ui, rap::window* parent, const std::string& dir, 
     running.push_back(std::move(process));
 }
 
+void offer_diff_settings(rap::ui& ui, rap::window* parent, const std::string& text,
+                         std::function<void()> open_settings, std::function<void()> done)
+{
+    ui.message(parent,
+               {.icon = rap::message_spec::icon::question,
+                .title = "Tortilla",
+                .text = text,
+                .detail = _("Choose one on the Diff Viewer page of the Settings."),
+                .buttons = {rap::dialog_role::ok, rap::dialog_role::cancel}},
+               [open_settings, done](rap::dialog_role r)
+               {
+                   if (r == rap::dialog_role::ok && open_settings)
+                       open_settings();
+                   else
+                       done();
+               });
+}
+
 }  // namespace
+
+std::shared_ptr<git_process> compare_files(rap::ui& ui, rap::window* parent,
+                                           const std::string& base, const std::string& mine,
+                                           std::function<void()> open_settings,
+                                           std::function<void()> done)
+{
+    if (!done) done = [] {};
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path a = fs::absolute(rap::sys::path_from_utf8(base), ec);
+    const fs::path b = fs::absolute(rap::sys::path_from_utf8(mine), ec);
+    // git runs beside the second; --no-index compares any two files.
+    const std::string dir = rap::sys::path_to_utf8(b.parent_path());
+    const std::string pa = rap::sys::path_to_utf8(a), pb = rap::sys::path_to_utf8(b);
+    const std::string na = rap::sys::path_to_utf8(a.filename()),
+                      nb = rap::sys::path_to_utf8(b.filename());
+    const std::vector<std::string> sides{"--", pa, pb};
+
+    std::vector<std::string> quiet{"diff", "--no-index", "--quiet"};
+    quiet.insert(quiet.end(), sides.begin(), sides.end());
+    if (run_git(dir, quiet, git_output::stdout_only).exit_code == 0)
+    {
+        ui.message(parent,
+                   {.icon = rap::message_spec::icon::info,
+                    .title = "Tortilla",
+                    .text = rap::i18n::format(_("“{0}” and “{1}” are the same."), na, nb)},
+                   [done](rap::dialog_role) { done(); });
+        return nullptr;
+    }
+
+    if (const std::string image_tool = image_diff_command();
+        !image_tool.empty() && is_image_path(pa) && is_image_path(pb))
+    {
+        start_image_tool(ui, parent, dir,
+                         custom_difftool_args(image_tool, {"--no-index"}, na, nb, {pa, pb}, false),
+                         done, true);
+        return nullptr;
+    }
+
+    std::vector<std::string> args;
+    switch (saved_diff_mode(dir))
+    {
+    case diff_mode::builtin:
+    {
+        std::vector<std::string> diff{"diff", "--no-index"};
+        diff.insert(diff.end(), sides.begin(), sides.end());
+        show_unified_diff(ui, na + " : " + nb, dir, diff, done);
+        return nullptr;
+    }
+    case diff_mode::git:
+        if (git_diff_tool(dir).empty())
+        {
+            offer_diff_settings(ui, parent, _("git has no diff tool configured (diff.tool)."),
+                                open_settings, done);
+            return nullptr;
+        }
+        args = {"difftool", "--no-prompt", "--no-index"};
+        args.insert(args.end(), sides.begin(), sides.end());
+        break;
+    case diff_mode::custom:
+        if (diff_command().empty())
+        {
+            offer_diff_settings(ui, parent, _("No diff program is set."), open_settings, done);
+            return nullptr;
+        }
+        args = custom_difftool_args(diff_command(), {"--no-index"}, na, nb, {pa, pb}, false);
+        break;
+    }
+    auto output = std::make_shared<std::string>();
+    return git_process::start(
+        ui, dir, args, [output](const std::string& chunk) { *output += chunk; },
+        [&ui, parent, output, done](int code)
+        {
+            // Exit 1: the files differ, as --no-index says it.
+            if (code == 0 || code == 1) return done();
+            ui.message(parent,
+                       {.icon = rap::message_spec::icon::error,
+                        .title = "Tortilla",
+                        .text = _("The diff tool failed."),
+                        .detail = *output},
+                       [done](rap::dialog_role) { done(); });
+        });
+}
 
 std::shared_ptr<git_process>
 compare_revisions(rap::ui& ui, rap::window* parent, const std::string& dir,
@@ -67,22 +174,8 @@ compare_revisions(rap::ui& ui, rap::window* parent, const std::string& dir,
         limit.push_back("--");
         limit.insert(limit.end(), paths.begin(), paths.end());
     }
-    auto offer_settings = [&ui, parent, open_settings, done](const std::string& text)
-    {
-        ui.message(parent,
-                   {.icon = rap::message_spec::icon::question,
-                    .title = "Tortilla",
-                    .text = text,
-                    .detail = _("Choose one on the Diff Viewer page of the Settings."),
-                    .buttons = {rap::dialog_role::ok, rap::dialog_role::cancel}},
-                   [open_settings, done](rap::dialog_role r)
-                   {
-                       if (r == rap::dialog_role::ok && open_settings)
-                           open_settings();
-                       else
-                           done();
-                   });
-    };
+    auto offer_settings = [&ui, parent, open_settings, &done](const std::string& text)
+    { offer_diff_settings(ui, parent, text, open_settings, done); };
 
     // Nothing to compare: say so. A diff tool given identical sides (git
     // difftool starts none at all) would otherwise just end, so it looked

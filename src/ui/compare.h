@@ -26,4 +26,12 @@ compare_revisions(rap::ui&, rap::window* parent, const std::string& dir,
                   std::vector<std::string> revisions, std::vector<std::string> paths,
                   std::function<void()> open_settings, std::function<void()> done = {});
 
+// Two files anywhere (in one repository, two, or none), compared as
+// compare_revisions does, through git diff --no-index: Explorer's Diff of
+// two selected files, and Diff later.
+std::shared_ptr<git_process> compare_files(rap::ui&, rap::window* parent, const std::string& base,
+                                           const std::string& mine,
+                                           std::function<void()> open_settings,
+                                           std::function<void()> done = {});
+
 }  // namespace tortilla

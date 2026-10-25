@@ -3466,3 +3466,7 @@ msgid "{0} item moved to the Trash."
 msgid_plural "{0} items moved to the Trash."
 msgstr[0] "{0} Element in den Papierkorb verschoben."
 msgstr[1] "{0} Elemente in den Papierkorb verschoben."
+
+#: src/ui/compare.cpp
+msgid "“{0}” and “{1}” are the same."
+msgstr "„{0}“ und „{1}“ sind gleich."

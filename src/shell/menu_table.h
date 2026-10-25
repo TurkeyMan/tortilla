@@ -92,6 +92,7 @@ enum class run
     remove,          // tortilla remove <paths...>
     remove_keep,     // tortilla removekeep <paths...>
     cleanup,         // tortilla cleanup <paths...>
+    diff_later,      // remembers <first>, or tortilla compare <remembered> <first>
     ignore,          // a submenu: tortilla ignore [--delete] [--mask] <paths...>
 };
 
@@ -136,7 +137,7 @@ inline constexpr row k_rows[] = {
     {"Import SVN Ignore ...", {{{FIG | SVN | ONE, 0}}}, place::shift, run::none, "svnignore"},
     separator,
     {"&Diff", {{{GIT | ONE, 0}, {TWO, FOLD}}}, place::sub, run::diff, "diff"},
-    {"Diff later", {{{ONE, FOLD}}}, place::sub, run::none, "difflater"},
+    {"Diff later", {{{ONE, FOLD}}}, place::sub, run::diff_later, "difflater"},
     {"&Diff with previous version", {{{GIT | ONE, ADDED}}}, place::sub, run::prevdiff, "prevdiff"},
     separator,
     {"Show &log",

@@ -24,6 +24,7 @@
 //   tortilla repocreate [folder]       git init there, bare or not
 //   tortilla rename path               git mv it to a new name
 //   tortilla cleanup [path...]         Clean up: untracked files removed
+//   tortilla compare file1 file2       two files, anywhere, in the diff tool
 //   tortilla conflicteditor file       a conflicted file in the merge tool
 //   tortilla diff [path] rev [rev2]   a commit, or rev..rev2, as a unified diff
 //   tortilla settings [path] [diff|menu|network]  the Settings dialog (at that page)
@@ -213,7 +214,7 @@ int main(int argc, char** argv)
                   std::strcmp(argv[i], "stashapply") == 0 ||
                   std::strcmp(argv[i], "stashpop") == 0 ||
                   std::strcmp(argv[i], "repocreate") == 0 || std::strcmp(argv[i], "rename") == 0 ||
-                  std::strcmp(argv[i], "cleanup") == 0 ||
+                  std::strcmp(argv[i], "cleanup") == 0 || std::strcmp(argv[i], "compare") == 0 ||
                   std::strcmp(argv[i], "conflicteditor") == 0 ||
                   std::strcmp(argv[i], "about") == 0 || std::strcmp(argv[i], "remove") == 0 ||
                   std::strcmp(argv[i], "removekeep") == 0 || std::strcmp(argv[i], "ignore") == 0))
@@ -548,6 +549,26 @@ int main(int argc, char** argv)
         }
         (*w)->on_closed([&] { (*ui)->quit(); });
         (*w)->show();
+        return (*ui)->run();
+    }
+
+    // Explorer's Diff of two files, and Diff later [spec 4.4].
+    if (command == "compare")
+    {
+        if (args.size() != 2)
+        {
+            std::fprintf(stderr, "tortilla: compare needs two files\n");
+            return 2;
+        }
+        auto quit = [&] { (*ui)->quit(); };
+        auto tool = tortilla::compare_files(
+            **ui, nullptr, args[0], args[1],
+            [&]
+            {
+                tortilla::show_settings(**ui, nullptr, args[1],
+                                        tortilla::settings_page::diff_viewer, {}, quit);
+            },
+            quit);
         return (*ui)->run();
     }
 

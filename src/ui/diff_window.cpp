@@ -176,8 +176,10 @@ public:
 
         git_result r = run_git(dir, git_args, git_output::stdout_only);
         content_ = r.output;
+        // git diff --no-index (two files) exits 1 when they differ.
+        const bool diff = r.ok() || r.exit_code == 1;
         text_->set_text(content_,
-                       r.ok() ? diff_spans(content_) : std::vector<rap::text_view::span>{});
+                        diff ? diff_spans(content_) : std::vector<rap::text_view::span>{});
         self_ = self;  // alive until closed
         settings::get().restore_window("diff.window", *window_);
         window_->show();

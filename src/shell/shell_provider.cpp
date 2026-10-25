@@ -397,6 +397,57 @@ std::vector<menu_item> ignore_items(const selection& sel, std::string_view row_i
     return out;
 }
 
+// Diff later [spec 4.4]: the file remembered for the next Diff with,
+// beside the settings (TortoiseGit keeps it in the registry).
+fs::path diff_later_file()
+{
+    const fs::path settings = settings_file();
+    return settings.empty() ? settings : settings.parent_path() / "difflater";
+}
+
+fs::path read_diff_later()
+{
+    std::ifstream in(diff_later_file(), std::ios::binary);
+    std::string line;
+    std::getline(in, line);
+    line = trim(line);
+    return fs::path(std::u8string(line.begin(), line.end()));
+}
+
+void write_diff_later(const fs::path& p)
+{
+    const fs::path file = diff_later_file();
+    if (file.empty()) return;
+    std::error_code ec;
+    if (p.empty())
+    {
+        fs::remove(file, ec);
+        return;
+    }
+    fs::create_directories(file.parent_path(), ec);
+    std::ofstream(file, std::ios::binary) << utf8(p) << '\n';
+}
+
+// `Diff with "<path>"`, the path shortened to fit as TortoiseGit's
+// PathCompactPathEx does (39 characters): its start, "...", and its name.
+std::string diff_with_label(const fs::path& p)
+{
+    std::string s = utf8(p);
+    constexpr size_t k_max = 39;
+    if (s.size() > k_max)
+    {
+        const std::string name = utf8(p.filename());
+        const std::string root = utf8(p.root_path());
+        if (root.size() + 4 + name.size() <= k_max)
+            s = root + "..." + std::string(1, char(fs::path::preferred_separator)) + name;
+        else
+            s = "..." + name.substr(name.size() - std::min(name.size(), k_max - 3));
+    }
+    std::string escaped;
+    for (char c : s) escaped += c == '&' ? "&&" : std::string(1, c);
+    return "Diff with \"" + escaped + "\"";
+}
+
 class tortilla_provider : public rap::shell::provider
 {
 public:
@@ -422,8 +473,11 @@ public:
             if (!matches(r, f)) continue;
             std::string label = r.label;
             if (std::string_view(r.id) == "commit") label = commit_label(state_);
-            // Diff of two files isn't Tortilla's yet, only of one item.
-            const bool runs = r.command != run::none && (r.command != run::diff || (f & ONE));
+            // Once a file is remembered, the entry compares with it.
+            if (r.command == run::diff_later)
+                if (const fs::path saved = read_diff_later(); !saved.empty())
+                    label = diff_with_label(saved);
+            const bool runs = r.command != run::none;
             // Drawn by src/shell/menu_icons.cpp, one per Settings entry.
             menu_item item{.id = r.id, .label = label, .icon = icon(group_of(r.id)), .enabled = runs};
             if (r.command == run::ignore)
@@ -487,7 +541,28 @@ public:
         case run::none:
         case run::ignore: return;  // its submenu's items, above
         case run::log: rap::shell::launch(tortilla_exe(), {"log", first}); return;
-        case run::diff: rap::shell::launch(tortilla_exe(), {"diff", first}); return;
+        case run::diff:
+            // Two files: one against the other [spec 4.2, row 12].
+            if (sel.paths.size() == 2)
+                rap::shell::launch(tortilla_exe(),
+                                   {"compare", utf8(sel.paths[0]), utf8(sel.paths[1])});
+            else
+                rap::shell::launch(tortilla_exe(), {"diff", first});
+            return;
+        case run::diff_later:
+        {
+            // Ctrl forgets the remembered file [spec 4.4]; the first click
+            // remembers this one, the next compares it with the remembered.
+            const fs::path saved = read_diff_later();
+#ifdef _WIN32
+            if (GetKeyState(VK_CONTROL) < 0) return write_diff_later({});
+#endif
+            if (saved.empty()) return write_diff_later(state_.first);
+            write_diff_later({});
+            if (saved != state_.first)
+                rap::shell::launch(tortilla_exe(), {"compare", utf8(saved), first});
+            return;
+        }
         case run::rebase: rap::shell::launch(tortilla_exe(), {"rebase", folder}); return;
         case run::settings: rap::shell::launch(tortilla_exe(), {"settings", first}); return;
         case run::clone: rap::shell::launch(tortilla_exe(), {"clone", folder}); return;
