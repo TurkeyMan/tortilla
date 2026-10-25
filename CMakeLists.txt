@@ -193,18 +193,29 @@ if(UNIX AND NOT APPLE)
     # PCManFM's and PCManFM-Qt's menu: file manager actions, written from the
     # shell menu's labels and the catalogues (tools/make_fm_actions.cpp), and
     # the script their conditions run.
-    add_executable(tortilla-fm-actions tools/make_fm_actions.cpp)
+    # Settings writes the user's own set when its choices differ
+    # (src/shell/fm_actions.h), from the names file packaged beside it.
+    set(fm_condition ${CMAKE_INSTALL_FULL_LIBEXECDIR}/tortilla/fm-condition)
+    set(fm_defines TORTILLA_FM_CONDITION="${fm_condition}"
+                   TORTILLA_FM_PROGRAM="${CMAKE_INSTALL_FULL_BINDIR}/tortilla")
+    target_sources(tortilla PRIVATE src/shell/fm_actions.cpp)
+    target_compile_definitions(tortilla PRIVATE ${fm_defines})
+    add_executable(tortilla-fm-actions tools/make_fm_actions.cpp src/shell/fm_actions.cpp)
     target_include_directories(tortilla-fm-actions PRIVATE src)
     target_link_libraries(tortilla-fm-actions PRIVATE rapport::rapport)
+    target_compile_definitions(tortilla-fm-actions PRIVATE ${fm_defines})
     set(fm_actions ${CMAKE_CURRENT_BINARY_DIR}/file-manager/actions)
-    set(fm_condition ${CMAKE_INSTALL_FULL_LIBEXECDIR}/tortilla/fm-condition)
-    add_custom_command(OUTPUT ${fm_actions}/tortilla.desktop
+    set(fm_names ${CMAKE_CURRENT_BINARY_DIR}/fm-names/fm-names)
+    add_custom_command(OUTPUT ${fm_actions}/tortilla.desktop ${fm_names}
         COMMAND ${CMAKE_COMMAND} -E rm -rf ${fm_actions}
-        COMMAND tortilla-fm-actions ${fm_actions} ${CMAKE_CURRENT_SOURCE_DIR}/data/translations
+        COMMAND tortilla-fm-actions ${fm_actions} ${fm_names}
+                ${CMAKE_CURRENT_SOURCE_DIR}/data/translations
                 ${fm_condition} ${CMAKE_INSTALL_FULL_BINDIR}/tortilla
         DEPENDS tortilla-fm-actions ${TORTILLA_TRANSLATIONS})
     add_custom_target(tortilla-fm-actions-files ALL DEPENDS ${fm_actions}/tortilla.desktop)
     install(DIRECTORY ${fm_actions} DESTINATION ${CMAKE_INSTALL_DATADIR}/file-manager
+            COMPONENT tortilla-shell-pcmanfm)
+    install(FILES ${fm_names} DESTINATION ${CMAKE_INSTALL_DATADIR}/tortilla
             COMPONENT tortilla-shell-pcmanfm)
     install(PROGRAMS data/linux/fm-condition DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/tortilla
             COMPONENT tortilla-shell-pcmanfm)

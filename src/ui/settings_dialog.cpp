@@ -6,6 +6,7 @@
 #include "i18n.h"
 #include "log/action_icons.h"
 #include "settings.h"
+#include "shell/fm_actions.h"
 #include "shell/menu_icons.h"
 #include "shell/menu_table.h"
 
@@ -576,6 +577,10 @@ void show_settings(rap::ui& ui, rap::window* parent, const std::string& repo_dir
                     save(k_top_setting, shows::top);
                     save(k_shift_setting, shows::shift);
                     save(k_hidden_setting, shows::hidden);
+#ifdef TORTILLA_FM_PROGRAM
+                    // PCManFM's menu is files, not an extension reading these.
+                    fm_actions::update_user_set(saved_placements());
+#endif
                     if (keep->hide_outside->checked())
                         settings.set(std::string(k_hide_outside_setting), "1");
                     else

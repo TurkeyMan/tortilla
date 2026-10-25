@@ -50,6 +50,12 @@ manager's: `tortilla-nautilus`, `tortilla-nemo`, `tortilla-caja`,
 PCManFM), then restart the file manager. On Arch you can also build them from
 a checkout: `cd packaging/arch && makepkg -si`.
 
+PCManFM's menu is a set of files rather than an extension, so when Settings
+chooses other top-level or hidden entries, Tortilla writes your own copy to
+`~/.local/share/file-manager/actions/tortilla-user*.desktop` (and removes it
+when the choices go back to the defaults). Uninstalling leaves that copy
+behind; delete those files by hand.
+
 ## Running
 
 ```sh

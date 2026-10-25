@@ -1,11 +1,22 @@
 #!/bin/sh
-# For PCManFM's Tortilla menu (tools/make_fm_actions.cpp): prints "true",
-# as the file manager actions spec's ShowIfTrue wants, when PATH is on the
-# asked side of a working tree. Otherwise it fails: libfm-qt (PCManFM-Qt)
-# goes by the exit status, not the output, so both menus would show.
-#   fm-condition inside|outside PATH
-p=$2
-[ -d "$p" ] || p=$(dirname -- "$p")
-if git -C "$p" rev-parse --is-inside-work-tree >/dev/null 2>&1; then side=inside; else side=outside; fi
-[ "$side" = "$1" ] || exit 1
+# For PCManFM's Tortilla menu (src/shell/fm_actions.h): prints "true", as
+# the file manager actions spec's ShowIfTrue wants, when PATH is on the
+# asked side of a working tree ("any": either). Otherwise it fails:
+# libfm-qt (PCManFM-Qt) goes by the exit status, not the output.
+# The packaged menu's files step aside while the user's own set exists
+# (Settings writes it when its choices differ); that set passes --user.
+#   fm-condition [--user] inside|outside|any PATH
+if [ "$1" = --user ]; then
+    shift
+else
+    for f in "${XDG_DATA_HOME:-$HOME/.local/share}"/file-manager/actions/tortilla-user*.desktop; do
+        [ -e "$f" ] && exit 1
+    done
+fi
+if [ "$1" != any ]; then
+    p=$2
+    [ -d "$p" ] || p=$(dirname -- "$p")
+    if git -C "$p" rev-parse --is-inside-work-tree >/dev/null 2>&1; then side=inside; else side=outside; fi
+    [ "$side" = "$1" ] || exit 1
+fi
 echo true
