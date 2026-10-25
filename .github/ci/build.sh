@@ -14,9 +14,10 @@ if ! grep -q 'GTK 3 fractional scale: on' build-ci.log; then
 fi
 cmake --build build-ci --parallel "$(nproc)"
 
-# The tests make their own repositories, so git needs an identity.
-git config --global user.name "Tortilla CI"
-git config --global user.email ci@tortilla.invalid
+# The tests make their own repositories, so git needs an identity. Set for
+# this script only, so that a local run leaves the user's own alone.
+export GIT_AUTHOR_NAME="Tortilla CI" GIT_COMMITTER_NAME="Tortilla CI"
+export GIT_AUTHOR_EMAIL=ci@tortilla.invalid GIT_COMMITTER_EMAIL=ci@tortilla.invalid
 for t in tortilla-tests tortilla-rebase-tests; do
   scratch=$(mktemp -d)
   "build-ci/bin/$t" "$scratch"

@@ -43,9 +43,10 @@ Run 'build' {
 }
 $bin = 'build-win/bin/Release'
 
-# The tests make their own repositories: git needs an identity.
-git config --global user.name 'Tortilla CI'
-git config --global user.email 'ci@tortilla.invalid'
+# The tests make their own repositories: git needs an identity. Set for
+# this process only, so that a local run leaves the user's own alone.
+$env:GIT_AUTHOR_NAME = $env:GIT_COMMITTER_NAME = 'Tortilla CI'
+$env:GIT_AUTHOR_EMAIL = $env:GIT_COMMITTER_EMAIL = 'ci@tortilla.invalid'
 foreach ($t in 'tortilla-tests', 'tortilla-rebase-tests') {
     $scratch = New-Item -ItemType Directory (Join-Path $env:RUNNER_TEMP "$t-$(Get-Random)")
     Run $t { & "$bin/$t.exe" $scratch.FullName }
