@@ -11,8 +11,10 @@
 set(TORTILLA_PACKAGE_VERSION ${PROJECT_VERSION} CACHE STRING
     "Version the packages carry (CI sets one from git describe)")
 
-# What the user installs: one per toolkit, pulling in the app and its backend.
-# Empty but for the licence, which also gives CPack something to package.
+# What the user installs: one per toolkit, pulling in the app, its backend
+# and the toolkit; or plain "tortilla" (below), for whoever doesn't know
+# which toolkit their desktop runs. Empty but for the licence, which also
+# gives CPack something to package.
 set(tortilla_toolkits)
 foreach(tk gtk3 gtk4 qt6)
     if(TARGET rapport_${tk})
@@ -22,6 +24,20 @@ foreach(tk gtk3 gtk4 qt6)
                 COMPONENT tortilla_${tk})
     endif()
 endforeach()
+# "tortilla": the app and every backend, but none of the toolkits. A desktop
+# already has at least one of them, and rapport loads the backend that
+# matches it at run time, falling back to whichever it can load.
+install(FILES LICENSE DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/tortilla
+        COMPONENT tortilla_all)
+
+# The toolkit each tortilla-<toolkit> package depends on. The backend
+# packages name none, so that "tortilla" can carry all three.
+set(toolkit_deb_gtk3 "libgtk-3-0t64 | libgtk-3-0")
+set(toolkit_deb_gtk4 libgtk-4-1)
+set(toolkit_deb_qt6 "libqt6widgets6t64 | libqt6widgets6, libqt6printsupport6t64 | libqt6printsupport6, qt6-qpa-plugins")
+set(toolkit_rpm_gtk3 gtk3)
+set(toolkit_rpm_gtk4 gtk4)
+set(toolkit_rpm_qt6 qt6-qtbase-gui)
 
 # A file manager's context menu, one package each (tortilla-nautilus, ...):
 # the extension rapport_add_shell_extension() installs, and the file
@@ -51,7 +67,7 @@ set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "A fast, native git client")
 set(CPACK_RESOURCE_FILE_LICENSE ${CMAKE_CURRENT_SOURCE_DIR}/LICENSE)
 set(CPACK_PACKAGE_DIRECTORY ${CMAKE_BINARY_DIR}/packages)
 # The null backend is for tests, and isn't installed.
-set(CPACK_COMPONENTS_ALL core dev tortilla)
+set(CPACK_COMPONENTS_ALL core dev tortilla tortilla_all)
 foreach(tk IN LISTS tortilla_toolkits)
     list(APPEND CPACK_COMPONENTS_ALL ${tk} tortilla_${tk})
 endforeach()
@@ -64,7 +80,9 @@ set(pkg_core librapport)
 set(pkg_dev librapport-dev)
 set(pkg_tortilla tortilla-core)
 set(CPACK_COMPONENT_DEV_DEPENDS core)
+set(pkg_tortilla_all tortilla)
 set(CPACK_COMPONENT_TORTILLA_DEPENDS core)
+set(CPACK_COMPONENT_TORTILLA_ALL_DEPENDS tortilla ${tortilla_toolkits})
 foreach(tk IN LISTS tortilla_toolkits)
     string(TOUPPER ${tk} TK)
     string(REPLACE qt6 qt app tortilla-${tk})
@@ -85,7 +103,11 @@ set(CPACK_COMPONENT_CORE_DESCRIPTION
 set(CPACK_COMPONENT_DEV_DESCRIPTION "rapport's headers and CMake package, for building against it.")
 set(CPACK_COMPONENT_TORTILLA_DESCRIPTION
     "The Tortilla application, linked to no toolkit. Install tortilla-gtk4,\n"
-    "tortilla-gtk3 or tortilla-qt for the one that matches your desktop.")
+    "tortilla-gtk3 or tortilla-qt for the one that matches your desktop, or\n"
+    "tortilla for all of them.")
+set(CPACK_COMPONENT_TORTILLA_ALL_DESCRIPTION
+    "A fast, native git client, with every user interface: it uses the one\n"
+    "that matches your desktop. Installs no toolkit; your desktop has one.")
 foreach(tk IN LISTS tortilla_toolkits)
     string(TOUPPER ${tk} TK)
     set(CPACK_COMPONENT_${TK}_DESCRIPTION "rapport's ${tk} backend plugin.")
@@ -122,9 +144,6 @@ set(CPACK_DEBIAN_CORE_PACKAGE_RECOMMENDS
     "libcurl4t64 | libcurl4 | libcurl3t64-gnutls, libgdk-pixbuf-2.0-0")
 # The app shells out to git for everything but the revision walk.
 set(CPACK_DEBIAN_TORTILLA_PACKAGE_DEPENDS git)
-# The toolkit is the user's choice (the running desktop isn't something a
-# package manager sees): no toolkit is recommended here, and "tortilla" is
-# a virtual name each toolkit's package provides, so apt asks which.
 list(TRANSFORM tortilla_shells PREPEND tortilla- OUTPUT_VARIABLE shell_packages)
 list(JOIN shell_packages ", " shell_packages)
 set(CPACK_DEBIAN_TORTILLA_PACKAGE_SUGGESTS "${shell_packages}")
@@ -134,15 +153,20 @@ foreach(fm IN LISTS tortilla_shells)
     set(CPACK_DEBIAN_TORTILLA-SHELL-${FM}_PACKAGE_ENHANCES ${fm_deb_${fm}})
 endforeach()
 set(CPACK_DEBIAN_TORTILLA-SHELL-PCMANFM_PACKAGE_ENHANCES "pcmanfm-qt, pcmanfm")
+# The backends name no toolkit (shlibdeps would), only what every system
+# has; each tortilla-<toolkit> names its own toolkit instead.
 # Images in a comparison open in IfritView (Settings > Diff Viewer): each
 # toolkit's package recommends it. One package for now; each toolkit's own
 # (set here) once IfritView splits like Tortilla.
 foreach(tk IN LISTS tortilla_toolkits)
     string(TOUPPER ${tk} TK)
+    set(CPACK_DEBIAN_${TK}_PACKAGE_SHLIBDEPS OFF)
+    set(CPACK_DEBIAN_${TK}_PACKAGE_DEPENDS "libc6, libstdc++6, libgcc-s1")
+    set(CPACK_DEBIAN_TORTILLA_${TK}_PACKAGE_DEPENDS "${toolkit_deb_${tk}}")
     set(ifritview_for_${tk} ifritview)
     set(CPACK_DEBIAN_TORTILLA_${TK}_PACKAGE_RECOMMENDS ${ifritview_for_${tk}})
-    set(CPACK_DEBIAN_TORTILLA_${TK}_PACKAGE_PROVIDES tortilla)
 endforeach()
+set(CPACK_DEBIAN_TORTILLA_ALL_PACKAGE_RECOMMENDS ifritview)
 set(CPACK_DEBIAN_TORTILLA-SHELL-PCMANFM_PACKAGE_ARCHITECTURE all)
 
 # -- .rpm -------------------------------------------------------------------
@@ -163,18 +187,23 @@ foreach(c IN LISTS CPACK_COMPONENTS_ALL)
         list(APPEND requires git)
     elseif(c MATCHES "^tortilla-shell-(.*)")
         list(APPEND requires ${fm_rpm_${CMAKE_MATCH_1}})
+    elseif(c IN_LIST tortilla_toolkits)
+        # As on Debian: no toolkit, so rpmbuild's own requires are off.
+        set(CPACK_RPM_${C}_PACKAGE_AUTOREQ OFF)
+        list(APPEND requires glibc libstdc++ libgcc)
+    elseif(c MATCHES "^tortilla_(.*)" AND CMAKE_MATCH_1 IN_LIST tortilla_toolkits)
+        list(APPEND requires ${toolkit_rpm_${CMAKE_MATCH_1}})
     endif()
     list(JOIN requires ", " requires)
     set(CPACK_RPM_${C}_PACKAGE_REQUIRES "${requires}")
 endforeach()
 set(CPACK_RPM_CORE_PACKAGE_SUGGESTS "libcurl, gdk-pixbuf2")
-# No toolkit suggested, and no plain "tortilla": dnf would quietly pick a
-# provider; the user picks tortilla-gtk4, tortilla-qt or tortilla-gtk3.
 set(CPACK_RPM_TORTILLA_PACKAGE_SUGGESTS "${shell_packages}")
 foreach(tk IN LISTS tortilla_toolkits)
     string(TOUPPER ${tk} TK)
     set(CPACK_RPM_TORTILLA_${TK}_PACKAGE_SUGGESTS ${ifritview_for_${tk}})
 endforeach()
+set(CPACK_RPM_TORTILLA_ALL_PACKAGE_SUGGESTS ifritview)
 list(APPEND CPACK_RPM_EXCLUDE_FROM_AUTO_FILELIST_ADDITION
     ${CMAKE_INSTALL_FULL_DATADIR}/applications
     ${CMAKE_INSTALL_FULL_DATADIR}/icons

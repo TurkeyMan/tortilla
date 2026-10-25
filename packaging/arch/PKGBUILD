@@ -5,10 +5,14 @@
 #   cd packaging/arch && makepkg -s
 #   sudo pacman -U tortilla-gtk4-*.pkg.tar.zst ...   (or tortilla-qt, tortilla-gtk3)
 #
+# Plain "tortilla" carries every backend and no toolkit: the desktop has at
+# least one, and rapport loads the backend that matches it at run time. So
+# the backends depend on no toolkit; each tortilla-<toolkit> names its own.
+#
 # Maintainer: Manu Evans <turkeyman@gmail.com>
 pkgbase=tortilla
 pkgname=(librapport librapport-dev librapport-gtk3 librapport-gtk4 librapport-qt6
-         tortilla-core tortilla-gtk3 tortilla-gtk4 tortilla-qt
+         tortilla-core tortilla tortilla-gtk3 tortilla-gtk4 tortilla-qt
          tortilla-nautilus tortilla-nemo tortilla-caja tortilla-thunar tortilla-dolphin
          tortilla-pcmanfm)
 pkgver=0.1
@@ -89,24 +93,24 @@ _backend() {
 
 package_librapport-gtk3() {
   pkgdesc="rapport's GTK 3 backend"
-  depends=("librapport=$pkgver-$pkgrel" gtk3 glib2 cairo pango gcc-libs glibc)
+  depends=("librapport=$pkgver-$pkgrel" gcc-libs glibc)
   _backend gtk3
 }
 
 package_librapport-gtk4() {
   pkgdesc="rapport's GTK 4 backend"
-  depends=("librapport=$pkgver-$pkgrel" gtk4 glib2 cairo pango graphene gcc-libs glibc)
+  depends=("librapport=$pkgver-$pkgrel" gcc-libs glibc)
   _backend gtk4
 }
 
 package_librapport-qt6() {
   pkgdesc="rapport's Qt 6 backend"
-  depends=("librapport=$pkgver-$pkgrel" qt6-base gcc-libs glibc)
+  depends=("librapport=$pkgver-$pkgrel" gcc-libs glibc)
   _backend qt6
 }
 
 package_tortilla-core() {
-  pkgdesc='A fast, native git client (the application; install tortilla-gtk4, tortilla-qt or tortilla-gtk3)'
+  pkgdesc='A fast, native git client (the application; install tortilla, or tortilla-gtk4, tortilla-qt or tortilla-gtk3)'
   license=(GPL-3.0-only)
   depends=("librapport=$pkgver-$pkgrel" libgit2 git hicolor-icon-theme gcc-libs glibc)
   optdepends=('tortilla-nautilus: entries in the context menu of Nautilus (GNOME Files)'
@@ -118,11 +122,19 @@ package_tortilla-core() {
   _install tortilla
 }
 
+package_tortilla() {
+  pkgdesc='A fast, native git client (every user interface; it uses the one that matches your desktop)'
+  license=(GPL-3.0-only)
+  depends=("tortilla-core=$pkgver-$pkgrel" "librapport-gtk3=$pkgver-$pkgrel"
+           "librapport-gtk4=$pkgver-$pkgrel" "librapport-qt6=$pkgver-$pkgrel")
+  optdepends=('ifritview: comparing images, side by side or as their difference')
+  _install tortilla_all
+}
+
+# $1 the backend, then the toolkit it needs.
 _frontend() {
   license=(GPL-3.0-only)
-  depends=("tortilla-core=$pkgver-$pkgrel" "librapport-$1=$pkgver-$pkgrel")
-  # pacman -S tortilla asks which toolkit: the user's choice, not a guess.
-  provides=(tortilla)
+  depends=("tortilla-core=$pkgver-$pkgrel" "librapport-$1=$pkgver-$pkgrel" "${@:2}")
   # Images in a comparison open in IfritView (Settings > Diff Viewer). One
   # package for now; each toolkit's own once IfritView splits like this.
   optdepends=('ifritview: comparing images, side by side or as their difference')
@@ -131,17 +143,17 @@ _frontend() {
 
 package_tortilla-gtk3() {
   pkgdesc='A fast, native git client (GTK 3)'
-  _frontend gtk3
+  _frontend gtk3 gtk3 glib2 cairo pango
 }
 
 package_tortilla-gtk4() {
   pkgdesc='A fast, native git client (GTK 4)'
-  _frontend gtk4
+  _frontend gtk4 gtk4 glib2 cairo pango graphene
 }
 
 package_tortilla-qt() {
   pkgdesc='A fast, native git client (Qt 6)'
-  _frontend qt6
+  _frontend qt6 qt6-base
 }
 
 # The file managers' context menus. Each loads its extensions when it starts:

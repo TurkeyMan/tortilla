@@ -150,18 +150,23 @@ polish first. Qt is the default first backend.
 
 ## Source layout and packaging
 
-The source tree mirrors the packages. Users install the package for their
-toolkit, and it pulls in the rest:
+The source tree mirrors the packages. Users install `tortilla`, or the
+package for their toolkit if they know it, and it pulls in the rest:
 
 ```
-tortilla-qt   (what the user installs)  Depends: tortilla-core, librapport-qt6
-tortilla-gtk3                           Depends: tortilla-core, librapport-gtk3
-tortilla-gtk4                           Depends: tortilla-core, librapport-gtk4
+tortilla      (what most users install) Depends: tortilla-core, every librapport-<tk>
+tortilla-qt   (or the user's toolkit)   Depends: tortilla-core, librapport-qt6, Qt 6
+tortilla-gtk3                           Depends: tortilla-core, librapport-gtk3, GTK 3
+tortilla-gtk4                           Depends: tortilla-core, librapport-gtk4, GTK 4
 tortilla-core   app; links no toolkit   Depends: librapport
-                                      Recommends: tortilla-qt | tortilla-gtk4 | tortilla-gtk3
-librapport      core: detection, loader Recommends: the backends
-librapport-<tk> one backend plugin      Depends: librapport (exact version), the toolkit
+librapport      core: detection, loader
+librapport-<tk> one backend plugin      Depends: librapport (exact version), no toolkit
 ```
+
+The backends depend on no toolkit, so that `tortilla` installs all three
+without pulling in a toolkit the desktop doesn't use. A desktop has at least
+one; rapport loads the backend that matches it, falling back to any it can
+load. The toolkit packages are where the toolkit dependency lives.
 
 ```
 rapport/core/              librapport + librapport-dev

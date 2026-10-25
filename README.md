@@ -42,9 +42,11 @@ to Explorer's context menu for every user. Tortilla runs git itself, so
 [Git for Windows](https://git-scm.com) needs to be installed too.
 
 On Linux, the releases carry .deb (Debian, Ubuntu), .rpm (Fedora) and Arch
-packages. Install the one for your desktop's toolkit, `tortilla-gtk4`,
-`tortilla-qt` or `tortilla-gtk3`, together with the `tortilla-core` and
-`librapport` packages beside it. For the context menu, add your file
+packages. Install `tortilla`, together with the `tortilla-core` and
+`librapport*` packages beside it: it carries every user interface and uses
+the one that matches your desktop. If you know your desktop's toolkit, you can
+install just its package instead: `tortilla-gtk4`, `tortilla-qt` or
+`tortilla-gtk3`. For the context menu, add your file
 manager's: `tortilla-nautilus`, `tortilla-nemo`, `tortilla-caja`,
 `tortilla-thunar`, `tortilla-dolphin` or `tortilla-pcmanfm` (PCManFM-Qt and
 PCManFM), then restart the file manager. On Arch you can also build them from
