@@ -64,6 +64,11 @@ git_result run_git(const std::string& dir, const std::vector<std::string>& args,
     return r;
 }
 
+git_result revision_file(const std::string& dir, const std::string& rev, const std::string& path)
+{
+    return run_git(dir, {"cat-file", "--filters", rev + ":" + path}, git_output::stdout_only);
+}
+
 void git_canceller::cancel()
 {
     std::lock_guard lock(mutex_);

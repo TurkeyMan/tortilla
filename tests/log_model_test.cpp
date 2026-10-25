@@ -464,6 +464,67 @@ int main(int argc, char** argv)
         std::printf("     (%zu of %d loads delivered)\n", delivered.size(), loads);
     }
 
+    // Git LFS, where git-lfs is installed: Tortilla's git does the LFS part
+    // itself. A clone and a push move the files, the working tree lists see
+    // a file as git does, and a revision's file is the file, not its pointer.
+    if (auto v = rap::sys::process::run("git", std::vector<std::string>{"lfs", "version"});
+        !v || v->exit_code != 0)
+        std::printf("skip Git LFS: git-lfs isn't installed\n");
+    else
+    {
+        const std::string base = std::string(argv[1]) + "/lfs";
+        const std::string origin = base + "/origin.git";
+        const std::string seed = base + "/seed";
+        const std::string work = base + "/work";
+        std::filesystem::create_directories(base);
+        // The filters as `git lfs install` puts them in the user's config,
+        // which the test leaves alone.
+        const std::string lfs = " -c filter.lfs.process='git-lfs filter-process'"
+                                " -c filter.lfs.required=true"
+                                " -c 'filter.lfs.clean=git-lfs clean -- %f'"
+                                " -c 'filter.lfs.smudge=git-lfs smudge -- %f' ";
+        auto in = [](const std::string& dir)
+        { return "cd '" + dir + "' && git -c user.name=Ada -c user.email=ada@example.com "; };
+        sh("git init -q --bare -b main '" + origin + "'");
+        sh("git clone -q" + lfs + "'" + origin + "' '" + seed + "' 2>&1");
+        sh(in(seed) + "lfs install --local >/dev/null");
+        sh(in(seed) + "lfs track '*.bin' >/dev/null");
+        sh("printf 'one\\000binary' > '" + seed + "/a.bin'");
+        sh(in(seed) + "add . && " + in(seed) + "commit -qm one");
+        sh("printf 'two\\000binary!' > '" + seed + "/a.bin'");
+        sh(in(seed) + "commit -qam two && " + in(seed) + "push -q origin HEAD:main 2>&1");
+        sh("git clone -q" + lfs + "'" + origin + "' '" + work + "' 2>&1");
+        auto read = [](const std::string& path)
+        {
+            std::ifstream in(path, std::ios::binary);
+            return std::string((std::istreambuf_iterator<char>(in)), {});
+        };
+        using namespace std::string_literals;
+        check(read(work + "/a.bin") == "two\0binary!"s,
+              "LFS: a clone checks out the file, not its pointer");
+        check(tortilla::run_git(work, {"show", "HEAD:a.bin"}, tortilla::git_output::stdout_only)
+                  .output.starts_with("version https://git-lfs"),
+              "LFS: the commit holds a pointer");
+        check(tortilla::revision_file(work, "HEAD~1", "a.bin").output == "one\0binary"s,
+              "LFS: revision_file gives an older revision's file");
+        check(tortilla::load_working_tree(work, {}).files.empty(),
+              "LFS: a fresh clone has no changes");
+        sh("touch -d 2001-01-01 '" + work + "/a.bin'");
+        check(tortilla::load_working_tree(work, {}).files.empty(),
+              "LFS: a touched file is unchanged");
+        sh("printf 'three' > '" + work + "/a.bin'");
+        const auto changed = tortilla::load_working_tree(work, {}).files;
+        check(changed.size() == 1 && changed[0].path == "a.bin" && changed[0].status == 'M',
+              "LFS: an edited file is modified");
+        sh(in(work) + "commit -qam three && " + in(work) + "push -q origin HEAD:main 2>&1");
+        size_t objects = 0;
+        std::error_code ec;
+        for (auto it = std::filesystem::recursive_directory_iterator(origin + "/lfs/objects", ec);
+             !ec && it != std::filesystem::recursive_directory_iterator(); it.increment(ec))
+            objects += it->is_regular_file();
+        check(objects == 3, "LFS: a push uploads the new file to the remote's LFS store");
+    }
+
     std::printf("%s\n", failures ? "FAILED" : "all passed");
     return failures ? 1 : 0;
 }

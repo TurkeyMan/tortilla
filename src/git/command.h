@@ -34,6 +34,11 @@ struct git_result
 git_result run_git(const std::string& dir, const std::vector<std::string>& args,
                  git_output = git_output::all);
 
+// A file as it is in `rev`, the way a checkout would write it: through the
+// repository's filters (Git LFS's smudge, line endings), where `git show
+// rev:path` gives the stored blob, which for an LFS file is its pointer.
+git_result revision_file(const std::string& dir, const std::string& rev, const std::string& path);
+
 // Lets another thread stop a series of run_git calls: cancel() kills the git
 // running now, and every later call fails at once.
 class git_canceller

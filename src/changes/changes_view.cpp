@@ -540,8 +540,7 @@ void changes_view::open_file(const file_change& f, bool choose)
         rap::sys::path_from_utf8(host_.workdir) / rap::sys::path_from_utf8(f.path);
     if (source_.what == changes_source::revision)
     {
-        git_result r =
-            run_git(host_.workdir, {"show", source_.hash + ":" + f.path}, git_output::stdout_only);
+        git_result r = revision_file(host_.workdir, source_.hash, f.path);
         std::error_code ec;
         const std::filesystem::path dir =
             std::filesystem::temp_directory_path(ec) / "tortilla" / source_.hash.substr(0, 8);
@@ -620,8 +619,7 @@ void changes_view::save_revisions(const std::string& rev, std::vector<file_chang
             std::string failed;
             for (const file_change& f : files)
             {
-                git_result r =
-                    run_git(host_.workdir, {"show", rev + ":" + f.path}, git_output::stdout_only);
+                git_result r = revision_file(host_.workdir, rev, f.path);
                 if (!r.ok() || !write_file(folder / rap::sys::path_from_utf8(f.path), r.output))
                     failed += f.path + "\n";
             }
@@ -650,8 +648,7 @@ void changes_view::save_revision(const std::string& rev, const file_change& file
         [this, rev, path = file.path](std::vector<std::string> picked)
         {
             if (picked.empty()) return;
-            git_result r =
-                run_git(host_.workdir, {"show", rev + ":" + path}, git_output::stdout_only);
+            git_result r = revision_file(host_.workdir, rev, path);
             if (!r.ok() || !write_file(rap::sys::path_from_utf8(picked.front()), r.output))
                 host_.ui.message(host_.window(), {.icon = rap::message_spec::icon::error,
                                                   .title = _("Save revision to"),
