@@ -6,6 +6,14 @@
 
 #include <rapport/sys.h>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
+#include <cctype>
 #include <filesystem>
 #include <system_error>
 #include <tuple>
@@ -50,6 +58,94 @@ void save_diff_settings(diff_mode mode, const std::string& command, bool folders
                                                   : "custom");
     st.set("diff.command", command);
     st.set("diff.folders", folders ? "1" : "0");
+}
+
+image_mode saved_image_mode()
+{
+    const std::string mode = settings::get().value("image.mode");
+    if (mode == "text") return image_mode::text;
+    if (mode == "ifritview") return image_mode::ifritview;
+    if (mode == "custom") return image_mode::custom;
+    return find_ifritview().empty() ? image_mode::text : image_mode::ifritview;
+}
+
+std::string image_command()
+{
+    return settings::get().value("image.command");
+}
+
+void save_image_settings(image_mode mode, const std::string& command)
+{
+    settings& st = settings::get();
+    st.set("image.mode", mode == image_mode::text        ? "text"
+                         : mode == image_mode::ifritview ? "ifritview"
+                                                         : "custom");
+    st.set("image.command", command);
+}
+
+std::string image_diff_command()
+{
+    switch (saved_image_mode())
+    {
+    case image_mode::text: return {};
+    case image_mode::custom: return image_command();
+    case image_mode::ifritview:
+    {
+        // One window comparing the two, titled with their names; it returns
+        // when that closes, so git's temporary files outlive it.
+        const std::string exe = find_ifritview();
+        return exe.empty() ? std::string() : "\"" + forward_slashes(exe) + "\" --diff %base %mine --labels %bname %yname";
+    }
+    }
+    return {};
+}
+
+std::string find_ifritview()
+{
+#ifdef _WIN32
+    // Its installer's App Paths entry, else its InstallDir, else the usual folder.
+    auto read = [](const wchar_t* key, const wchar_t* value) -> std::wstring
+    {
+        wchar_t buf[1024];
+        DWORD size = sizeof buf;
+        if (RegGetValueW(HKEY_LOCAL_MACHINE, key, value, RRF_RT_REG_SZ, nullptr, buf, &size) != ERROR_SUCCESS)
+            return {};
+        return buf;
+    };
+    std::wstring exe = read(L"Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\ifritview.exe", nullptr);
+    if (exe.empty())
+        if (std::wstring dir = read(L"Software\\IfritView", L"InstallDir"); !dir.empty()) exe = dir + L"\\ifritview.exe";
+    std::error_code ec;
+    if (!exe.empty() && fs::exists(fs::path(exe), ec)) return rap::sys::path_to_utf8(fs::path(exe));
+    // An install that wrote neither: where installers put it.
+    for (const std::string& root : install_roots())
+    {
+        const fs::path p = rap::sys::path_from_utf8(root) / "IfritView" / "ifritview.exe";
+        if (fs::exists(p, ec)) return rap::sys::path_to_utf8(p);
+    }
+    return {};
+#else
+    return find_program("ifritview");
+#endif
+}
+
+bool is_image_path(const std::string& path)
+{
+    // What IfritView compares, the formats a repository holds; raw camera
+    // files too.
+    static const char* const extensions[] = {
+        "png", "jpg", "jpeg", "jpe", "jfif", "gif", "bmp", "dib", "tif", "tiff", "webp", "avif",
+        "heic", "heif", "jxl", "exr", "hdr", "psd", "tga", "ico", "cur", "qoi", "svg", "dds",
+        "ktx", "ktx2", "pnm", "pbm", "pgm", "ppm", "pam", "pcx",
+        "cr2", "cr3", "crw", "nef", "nrw", "arw", "srf", "sr2", "raf", "orf", "rw2", "pef", "dng",
+        "rwl", "3fr", "erf", "kdc", "mef", "mos", "mrw", "x3f", "iiq", "srw", "fff", "dcr"};
+    const size_t dot = path.rfind('.');
+    if (dot == std::string::npos || path.find('/', dot) != std::string::npos) return false;
+    std::string ext = path.substr(dot + 1);
+    for (char& c : ext) c = char(std::tolower(static_cast<unsigned char>(c)));
+    for (const char* e : extensions)
+        if (ext == e) return true;
+    return false;
 }
 
 namespace

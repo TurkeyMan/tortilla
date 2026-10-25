@@ -45,6 +45,9 @@ struct state
     rap::entry* diff_command = nullptr;
     rap::widget* custom_help = nullptr;
     std::vector<detected_tool> tools;
+    // Comparing images: with the text tool, IfritView, or Custom.
+    rap::drop_down* image_select = nullptr;
+    rap::entry* image_command = nullptr;
     // Resolving conflicts: each merge tool found, then Custom.
     rap::drop_down* merge_select = nullptr;
     rap::entry* merge_command = nullptr;
@@ -394,6 +397,14 @@ rap::node diff_viewer_page(std::shared_ptr<state> st)
         if (!custom && choice >= 0)
             s->merge_command->set_text(s->merge_tools[size_t(choice)].command);
     };
+    // Comparing images: IfritView recommended, and where to get it when
+    // it isn't installed.
+    const bool ifritview = !find_ifritview().empty();
+    const int image_current = int(saved_image_mode());
+    auto image_chosen = [weak](int choice)
+    {
+        if (auto s = weak.lock(); s && s->image_command) s->image_command->set_visible(choice == 2);
+    };
     return vbox{
         group{
             _("Comparing revisions"),
@@ -413,6 +424,28 @@ rap::node diff_viewer_page(std::shared_ptr<state> st)
                     .handle(st->custom_help)
                     .visible(custom),
             }},
+        group{_("Comparing images"),
+              vbox{
+                  form{
+                      {_("Compare with"),
+                       drop_down{{_("The diff tool above"),
+                                  ifritview ? std::string("IfritView") : std::string(_("IfritView (not installed)")),
+                                  _("Custom...")},
+                                 image_current}
+                           .bind(st->image_select)
+                           .on_changed(image_chosen)},
+                      {_("Command"), entry{image_command()}
+                                      .bind(st->image_command)
+                                      .placeholder(_("program %base %mine"))
+                                      .visible(image_current == 2)},
+                  },
+                  label{_("IfritView: a fast image viewer that compares two images side by side, by swipe, or "
+                          "as their difference, pixel for pixel.")}
+                      .wrap(),
+                  label{_("Get IfritView")}
+                      .link([] { rap::sys::open_url("https://github.com/TurkeyMan/ifritview"); })
+                      .visible(!ifritview),
+              }},
         group{_("Resolving conflicts"),
               vbox{
                   form{
@@ -619,6 +652,9 @@ void show_settings(rap::ui& ui, rap::window* parent, const std::string& repo_dir
                                                        : diff_mode(std::max(choice, 0)),
                                            keep->diff_command->text());
                 }
+                if (keep->image_select)
+                    save_image_settings(image_mode(std::max(keep->image_select->current(), 0)),
+                                        keep->image_command->text());
                 if (keep->merge_select)
                 {
                     const int choice = keep->merge_select->current();

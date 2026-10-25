@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: tortilla\n"
 "Report-Msgid-Bugs-To: https://github.com/TurkeyMan/tortilla/issues\n"
-"POT-Creation-Date: 2026-10-25 06:47+0000\n"
+"POT-Creation-Date: 2026-10-25 07:22+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -2205,7 +2205,7 @@ msgstr ""
 msgid "Commit Message"
 msgstr ""
 
-#: src/rebase/rebase_window.cpp:190 src/ui/settings_dialog.cpp:128
+#: src/rebase/rebase_window.cpp:190 src/ui/settings_dialog.cpp:131
 msgid "Log"
 msgstr ""
 
@@ -2639,32 +2639,36 @@ msgstr ""
 msgid "{0} - Push"
 msgstr ""
 
-#: src/ui/compare.cpp:25
+#: src/ui/compare.cpp:35
+msgid "The image diff tool failed."
+msgstr ""
+
+#: src/ui/compare.cpp:61 src/ui/compare.cpp:137
 msgid "working tree"
 msgstr ""
 
-#: src/ui/compare.cpp:40
+#: src/ui/compare.cpp:76
 msgid "Choose one on the Diff Viewer page of the Settings."
 msgstr ""
 
-#: src/ui/compare.cpp:64
+#: src/ui/compare.cpp:100
 #, c++-format
 msgid "“{0}” has no changes to compare."
 msgstr ""
 
-#: src/ui/compare.cpp:66
+#: src/ui/compare.cpp:102
 msgid "There are no changes to compare."
 msgstr ""
 
-#: src/ui/compare.cpp:86
+#: src/ui/compare.cpp:164
 msgid "git has no diff tool configured (diff.tool)."
 msgstr ""
 
-#: src/ui/compare.cpp:103
+#: src/ui/compare.cpp:181
 msgid "No diff program is set."
 msgstr ""
 
-#: src/ui/compare.cpp:118
+#: src/ui/compare.cpp:196
 msgid "The diff tool failed."
 msgstr ""
 
@@ -2791,212 +2795,234 @@ msgstr ""
 msgid "_Abort"
 msgstr ""
 
-#: src/ui/settings_dialog.cpp:106
+#: src/ui/settings_dialog.cpp:109
 #, c++-format
 msgid "System default ({0})"
 msgstr ""
 
-#: src/ui/settings_dialog.cpp:122 src/ui/settings_dialog.cpp:124
+#: src/ui/settings_dialog.cpp:125 src/ui/settings_dialog.cpp:127
 msgid "Language"
 msgstr ""
 
-#: src/ui/settings_dialog.cpp:125
+#: src/ui/settings_dialog.cpp:128
 msgid "Applies the next time Tortilla starts."
 msgstr ""
 
-#: src/ui/settings_dialog.cpp:130
+#: src/ui/settings_dialog.cpp:133
 msgid "Action icons"
 msgstr ""
 
-#: src/ui/settings_dialog.cpp:132
+#: src/ui/settings_dialog.cpp:135
 msgid "Bevelled"
 msgstr ""
 
-#: src/ui/settings_dialog.cpp:132
+#: src/ui/settings_dialog.cpp:135
 msgid "Classic"
 msgstr ""
 
-#: src/ui/settings_dialog.cpp:132
+#: src/ui/settings_dialog.cpp:135
 msgid "Glyphs"
 msgstr ""
 
-#: src/ui/settings_dialog.cpp:132
+#: src/ui/settings_dialog.cpp:135
 msgid "Line"
 msgstr ""
 
-#: src/ui/settings_dialog.cpp:212
+#: src/ui/settings_dialog.cpp:215
 #, c++-format
 msgid "{0} (not yet in Tortilla)"
 msgstr ""
 
-#: src/ui/settings_dialog.cpp:236
+#: src/ui/settings_dialog.cpp:239
 msgid "Submenu"
 msgstr ""
 
-#: src/ui/settings_dialog.cpp:236
+#: src/ui/settings_dialog.cpp:239
 msgid "Top level"
 msgstr ""
 
-#: src/ui/settings_dialog.cpp:237
+#: src/ui/settings_dialog.cpp:240
 msgid "Hidden"
 msgstr ""
 
-#: src/ui/settings_dialog.cpp:237
+#: src/ui/settings_dialog.cpp:240
 msgid "With Shift"
 msgstr ""
 
-#: src/ui/settings_dialog.cpp:242
+#: src/ui/settings_dialog.cpp:245
 msgid "Bisect"
 msgstr ""
 
-#: src/ui/settings_dialog.cpp:243
+#: src/ui/settings_dialog.cpp:246
 msgid "Merge, Abort Merge"
 msgstr ""
 
-#: src/ui/settings_dialog.cpp:294
+#: src/ui/settings_dialog.cpp:297
 msgid ""
 "Top-level entries appear directly in the file manager's context menu, with "
 "\"Git\" before them; the rest are in its Tortilla submenu. Greyed entries "
 "aren't in Tortilla yet."
 msgstr ""
 
-#: src/ui/settings_dialog.cpp:300
+#: src/ui/settings_dialog.cpp:303
 msgid "Entry"
 msgstr ""
 
-#: src/ui/settings_dialog.cpp:301
+#: src/ui/settings_dialog.cpp:304
 msgid "Shows"
 msgstr ""
 
-#: src/ui/settings_dialog.cpp:308
+#: src/ui/settings_dialog.cpp:311
 msgid "Selected entries show:"
 msgstr ""
 
-#: src/ui/settings_dialog.cpp:320
+#: src/ui/settings_dialog.cpp:323
 msgid "Restore defaults"
 msgstr ""
 
-#: src/ui/settings_dialog.cpp:331
+#: src/ui/settings_dialog.cpp:334
 msgid "Hide the menu outside repositories (Shift shows it)"
 msgstr ""
 
-#: src/ui/settings_dialog.cpp:334
+#: src/ui/settings_dialog.cpp:337
 msgid ""
 "No menu for these paths, one a line (end one with \\ for a folder and all in "
 "it, or with * for every path that starts so):"
 msgstr ""
 
-#: src/ui/settings_dialog.cpp:348
+#: src/ui/settings_dialog.cpp:351
 msgid "Tortilla's unified diff viewer"
 msgstr ""
 
-#: src/ui/settings_dialog.cpp:349
+#: src/ui/settings_dialog.cpp:352
 msgid "git difftool (no diff.tool configured)"
 msgstr ""
 
-#: src/ui/settings_dialog.cpp:350
+#: src/ui/settings_dialog.cpp:353
 #, c++-format
 msgid "git difftool (diff.tool: {0})"
 msgstr ""
 
-#: src/ui/settings_dialog.cpp:352 src/ui/settings_dialog.cpp:381
-#: src/ui/settings_dialog.cpp:451
+#: src/ui/settings_dialog.cpp:355 src/ui/settings_dialog.cpp:384
+#: src/ui/settings_dialog.cpp:433 src/ui/settings_dialog.cpp:484
 msgid "Custom..."
 msgstr ""
 
-#: src/ui/settings_dialog.cpp:399
+#: src/ui/settings_dialog.cpp:410
 msgid "Comparing revisions"
 msgstr ""
 
-#: src/ui/settings_dialog.cpp:402
+#: src/ui/settings_dialog.cpp:413 src/ui/settings_dialog.cpp:430
 msgid "Compare with"
 msgstr ""
 
-#: src/ui/settings_dialog.cpp:404 src/ui/settings_dialog.cpp:422
-#: src/ui/settings_dialog.cpp:483
+#: src/ui/settings_dialog.cpp:415 src/ui/settings_dialog.cpp:437
+#: src/ui/settings_dialog.cpp:455 src/ui/settings_dialog.cpp:516
 msgid "Command"
 msgstr ""
 
-#: src/ui/settings_dialog.cpp:406
+#: src/ui/settings_dialog.cpp:417 src/ui/settings_dialog.cpp:439
 #, c-format
 msgid "program %base %mine"
 msgstr ""
 
-#: src/ui/settings_dialog.cpp:409
+#: src/ui/settings_dialog.cpp:420
 msgid ""
 "%base and %mine are the two sides compared: folders when a whole commit is "
 "compared. %bname and %yname are their names. Without placeholders the two "
 "sides go at the end of the command."
 msgstr ""
 
-#: src/ui/settings_dialog.cpp:416
+#: src/ui/settings_dialog.cpp:427
+msgid "Comparing images"
+msgstr ""
+
+#: src/ui/settings_dialog.cpp:431
+msgid "The diff tool above"
+msgstr ""
+
+#: src/ui/settings_dialog.cpp:432
+msgid "IfritView (not installed)"
+msgstr ""
+
+#: src/ui/settings_dialog.cpp:442
+msgid ""
+"IfritView: a fast image viewer that compares two images side by side, by "
+"swipe, or as their difference, pixel for pixel."
+msgstr ""
+
+#: src/ui/settings_dialog.cpp:445
+msgid "Get IfritView"
+msgstr ""
+
+#: src/ui/settings_dialog.cpp:449
 msgid "Resolving conflicts"
 msgstr ""
 
-#: src/ui/settings_dialog.cpp:419
+#: src/ui/settings_dialog.cpp:452
 msgid "Merge with"
 msgstr ""
 
-#: src/ui/settings_dialog.cpp:426
+#: src/ui/settings_dialog.cpp:459
 msgid "program %base %theirs %mine %merged"
 msgstr ""
 
-#: src/ui/settings_dialog.cpp:429
+#: src/ui/settings_dialog.cpp:462
 msgid ""
 "%base, %theirs and %mine are the conflict's three sides and %merged the file "
 "to save; %bname, %tname, %yname and %mname their titles. Without "
 "placeholders the four files go at the end."
 msgstr ""
 
-#: src/ui/settings_dialog.cpp:448
+#: src/ui/settings_dialog.cpp:481
 msgid "git's own (ssh)"
 msgstr ""
 
-#: src/ui/settings_dialog.cpp:449
+#: src/ui/settings_dialog.cpp:482
 #, c++-format
 msgid "git's own ({0})"
 msgstr ""
 
-#: src/ui/settings_dialog.cpp:478 src/ui/settings_dialog.cpp:481
+#: src/ui/settings_dialog.cpp:511 src/ui/settings_dialog.cpp:514
 msgid "SSH client"
 msgstr ""
 
-#: src/ui/settings_dialog.cpp:488
+#: src/ui/settings_dialog.cpp:521
 msgid ""
 "Run for each remote as git's GIT_SSH_COMMAND: git adds the host and the\n"
 "command to run there. plink and TortoiseGitPlink are known by their names."
 msgstr ""
 
-#: src/ui/settings_dialog.cpp:494
+#: src/ui/settings_dialog.cpp:527
 msgid ""
 "\n"
 "Git for Windows rewrites absolute Linux paths (/...) in it: for WSL ssh,\n"
 "write them from home (~/...)."
 msgstr ""
 
-#: src/ui/settings_dialog.cpp:501
+#: src/ui/settings_dialog.cpp:534
 msgid ""
 "Used by the git Tortilla runs (fetch, pull, push, clone); the repository's "
 "core.sshCommand applies only with git's own."
 msgstr ""
 
-#: src/ui/settings_dialog.cpp:526
+#: src/ui/settings_dialog.cpp:559
 msgid "Settings - Tortilla"
 msgstr ""
 
-#: src/ui/settings_dialog.cpp:530
+#: src/ui/settings_dialog.cpp:563
 msgid "General"
 msgstr ""
 
-#: src/ui/settings_dialog.cpp:531
+#: src/ui/settings_dialog.cpp:564
 msgid "Context Menu"
 msgstr ""
 
-#: src/ui/settings_dialog.cpp:533
+#: src/ui/settings_dialog.cpp:566
 msgid "Diff Viewer"
 msgstr ""
 
-#: src/ui/settings_dialog.cpp:535
+#: src/ui/settings_dialog.cpp:568
 msgid "Network"
 msgstr ""
 

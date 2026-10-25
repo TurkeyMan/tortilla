@@ -7,6 +7,42 @@
 namespace tortilla
 {
 
+namespace
+{
+
+// An image comparison runs on its own: kept until its tool exits, and a
+// failure said in a message.
+void start_image_tool(rap::ui& ui, rap::window* parent, const std::string& dir, std::vector<std::string> args,
+                      std::function<void()> finished)
+{
+    static std::vector<std::shared_ptr<git_process>> running;
+    auto output = std::make_shared<std::string>();
+    auto slot = std::make_shared<std::weak_ptr<git_process>>();
+    auto process = git_process::start(
+        ui, dir, std::move(args), [output](const std::string& chunk) { *output += chunk; },
+        [&ui, parent, output, slot, finished](int code)
+        {
+            // Let go of it after this callback, which it's running.
+            ui.post(
+                [slot]
+                {
+                    if (auto self = slot->lock()) std::erase(running, self);
+                });
+            if (code == 0) return finished();
+            ui.message(parent,
+                       {.icon = rap::message_spec::icon::error,
+                        .title = "Tortilla",
+                        .text = _("The image diff tool failed."),
+                        .detail = *output},
+                       [finished](rap::dialog_role) { finished(); });
+        });
+    if (!process) return finished();
+    *slot = process;
+    running.push_back(std::move(process));
+}
+
+}  // namespace
+
 std::shared_ptr<git_process>
 compare_revisions(rap::ui& ui, rap::window* parent, const std::string& dir,
                   std::vector<std::string> revisions, std::vector<std::string> paths,
@@ -66,6 +102,48 @@ compare_revisions(rap::ui& ui, rap::window* parent, const std::string& dir,
                                     : std::string(_("There are no changes to compare."))},
                        [done](rap::dialog_role) { done(); });
             return nullptr;
+        }
+    }
+
+    // Image files go to the image tool, each in a window of its own
+    // (IfritView compares two images); the rest to the text tool, as before.
+    if (const std::string image_tool = image_diff_command(); !image_tool.empty())
+    {
+        std::vector<std::string> names{"diff", "--name-only", "-z"};
+        names.insert(names.end(), revisions.begin(), revisions.end());
+        names.insert(names.end(), limit.begin(), limit.end());
+        const git_result changed = run_git(dir, names, git_output::stdout_only);
+        std::vector<std::string> images, others;
+        for (size_t at = 0; at < changed.output.size();)
+        {
+            size_t end = changed.output.find('\0', at);
+            if (end == std::string::npos) end = changed.output.size();
+            std::string path = changed.output.substr(at, end - at);
+            at = end + 1;
+            if (!path.empty()) (is_image_path(path) ? images : others).push_back(std::move(path));
+        }
+        if (!images.empty())
+        {
+            // `done` once every comparison started here has finished.
+            auto remaining = std::make_shared<size_t>(images.size() + (others.empty() ? 0 : 1));
+            done = [remaining, done]
+            {
+                if (--*remaining == 0) done();
+            };
+            for (const std::string& image : images)
+            {
+                const std::string b = image + " (" + name(revisions.front()) + ")";
+                const std::string m = image + " (" +
+                                      (revisions.size() > 1 ? name(revisions[1]) : std::string(_("working tree"))) +
+                                      ")";
+                start_image_tool(ui, parent, dir, custom_difftool_args(image_tool, revisions, b, m, {image}, false),
+                                 done);
+            }
+            // Only images: that's all. Otherwise the rest, by name.
+            if (others.empty()) return nullptr;
+            paths = others;
+            limit = {"--"};
+            limit.insert(limit.end(), paths.begin(), paths.end());
         }
     }
 

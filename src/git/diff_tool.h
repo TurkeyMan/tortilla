@@ -31,6 +31,28 @@ std::string diff_command();
 bool diff_folders();
 void save_diff_settings(diff_mode, const std::string& command, bool folders = true);
 
+// Comparing images [Settings > Diff Viewer]: image files in a comparison go
+// to a tool of their own (IfritView, or a command with the placeholders
+// above), the rest to the text tool. Kept as "image.mode" ("text": with the
+// text tool, "ifritview", "custom") and "image.command".
+enum class image_mode
+{
+    text,
+    ifritview,
+    custom,
+};
+// The saved mode; with none saved, IfritView when it's installed.
+image_mode saved_image_mode();
+std::string image_command();
+void save_image_settings(image_mode, const std::string& command);
+// The command image files are compared with, placeholders and all; "" when
+// they go to the text tool (or IfritView isn't there after all).
+std::string image_diff_command();
+// IfritView's program, or "" when it isn't installed.
+std::string find_ifritview();
+// Whether a path names an image the image tool compares, by its extension.
+bool is_image_path(const std::string& path);
+
 // git's diff.tool for `repo_dir`, or "" if unset.
 std::string git_diff_tool(const std::string& repo_dir);
 
