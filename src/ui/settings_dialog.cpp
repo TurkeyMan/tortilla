@@ -290,9 +290,10 @@ rap::node context_menu_page(std::shared_ptr<state> st)
     std::string no_menu = settings::get().value(std::string(k_no_menu_setting));
     std::replace(no_menu.begin(), no_menu.end(), '\t', '\n');
     return vbox{
-        label{_("Top-level entries appear directly in the file manager's context menu, with\n"
-                "\"Git\" before them; the rest are in its Tortilla submenu. Greyed entries\n"
-                "aren't in Tortilla yet.")},
+        label{_("Top-level entries appear directly in the file manager's context menu, with "
+                "\"Git\" before them; the rest are in its Tortilla submenu. Greyed entries "
+                "aren't in Tortilla yet.")}
+            .wrap(),
         // The last column stretches: it keeps the right edge as the page
         // (built when first shown) takes its size.
         list{{{.title = _("Entry"), .width = 44_ch, .painted = true},
@@ -330,7 +331,8 @@ rap::node context_menu_page(std::shared_ptr<state> st)
               settings::get().value(std::string(k_hide_outside_setting)) == "1"}
             .bind(st->hide_outside),
         label{_("No menu for these paths, one a line (end one with \\ for a folder and all in "
-                "it,\nor with * for every path that starts so):")},
+                "it, or with * for every path that starts so):")}
+            .wrap(),
         text_view{no_menu}.bind(st->no_menu).height(3_lines),
     };
 }
@@ -403,9 +405,10 @@ rap::node diff_viewer_page(std::shared_ptr<state> st)
                                     .placeholder(_("program %base %mine"))
                                     .visible(custom)},
                 },
-                label{_("%base and %mine are the two sides compared: folders when a whole commit is\n"
-                        "compared. %bname and %yname are their names. Without placeholders the two\n"
+                label{_("%base and %mine are the two sides compared: folders when a whole commit is "
+                        "compared. %bname and %yname are their names. Without placeholders the two "
                         "sides go at the end of the command.")}
+                    .wrap()
                     .handle(st->custom_help)
                     .visible(custom),
             }},
@@ -423,10 +426,9 @@ rap::node diff_viewer_page(std::shared_ptr<state> st)
                                       .visible(merge_custom)},
                   },
                   label{_("%base, %theirs and %mine are the conflict's three sides and %merged the "
-                          "file to save;\n"
-                          "%bname, %tname, %yname and %mname their titles. Without placeholders the "
-                          "four\n"
-                          "files go at the end.")}
+                          "file to save; %bname, %tname, %yname and %mname their titles. Without "
+                          "placeholders the four files go at the end.")}
+                      .wrap()
                       .handle(st->merge_help)
                       .visible(merge_custom),
               }},
@@ -495,8 +497,9 @@ rap::node network_page(std::shared_ptr<state> st)
                     .handle(st->ssh_help)
                     .visible(custom),
             }},
-        label{_("Used by the git Tortilla runs (fetch, pull, push, clone); the repository's\n"
-                "core.sshCommand applies only with git's own.")},
+        label{_("Used by the git Tortilla runs (fetch, pull, push, clone); the repository's "
+                "core.sshCommand applies only with git's own.")}
+            .wrap(),
         spacer{},
     };
 }

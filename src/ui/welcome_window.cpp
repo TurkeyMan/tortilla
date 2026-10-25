@@ -62,12 +62,14 @@ void welcome_window::build()
                 canvas{}
                     .on_paint([this](rap::painter& p, rap::size_f size) { paint_header(p, size); })
                     .height(rap::extent{k_mascot_size + 8, rap::extent::unit::px}),
-                label{_("Tortilla is a git client that lives where your files do: right-click any\n"
-                        "folder in your file manager to commit, pull, push, browse the history or\n"
-                        "untangle a merge.")},
-                label{_("It began with a simple wish: TortoiseGit's way of working, without the\n"
-                        "waiting, on every desktop. So every window is your system's own, and\n"
-                        "everything on screen keeps up with your display, however long the history.")},
+                label{_("Tortilla is a git client that lives where your files do: right-click any "
+                        "folder in your file manager to commit, pull, push, browse the history or "
+                        "untangle a merge.")}
+                    .wrap(),
+                label{_("It began with a simple wish: TortoiseGit's way of working, without the "
+                        "waiting, on every desktop. So every window is your system's own, and "
+                        "everything on screen keeps up with your display, however long the history.")}
+                    .wrap(),
                 label{_("To start, right-click a folder and look for Tortilla, or open one here.")},
                 hbox{
                     button{_("_Open repository...")}.on_click([this] { open_repository(); }),

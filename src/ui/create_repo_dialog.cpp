@@ -115,10 +115,10 @@ struct state
             dialog{rap::i18n::format(_("{0} - Git Init - Tortilla"), shown),
                    {vbox{
                        check{_("Make it _Bare (No working directories)"), dot_git}.bind(bare),
-                       // Broken by hand: rapport's labels don't wrap.
-                       label{_("If you plan to work inside this folder, leave this unchecked.\nTypically a bare "
-                               "repo can only have changes 'pushed' to it.\n(By convention, a bare repo folder "
-                               "should have a name that ends with '.git')")},
+                       label{_("If you plan to work inside this folder, leave this unchecked. Typically a bare "
+                               "repo can only have changes 'pushed' to it. (By convention, a bare repo folder "
+                               "should have a name that ends with '.git')")}
+                           .wrap(),
                        buttons{ok, cancel},
                    }}}
                 .size(60_ch, {}),

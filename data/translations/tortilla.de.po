@@ -4,44 +4,37 @@ msgid ""
 msgstr ""
 "Project-Id-Version: tortilla\n"
 "Report-Msgid-Bugs-To: https://github.com/TurkeyMan/tortilla/issues\n"
-"POT-Creation-Date: 2026-10-25 05:37+0000\n"
+"POT-Creation-Date: 2026-10-25 06:03+0000\n"
 "Language: de\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=(n != 1);\n"
 
-#
 #: src/branch/browse_refs.cpp:49
 msgid "Branch Name"
 msgstr "Branchname"
 
-#
 #: src/branch/browse_refs.cpp:50
 msgid "Tracked branch"
 msgstr "Verfolgter Branch"
 
-#
 #: src/branch/browse_refs.cpp:51
 msgid "Last Author Date"
 msgstr "Letztes Autordatum"
 
-#
 #: src/branch/browse_refs.cpp:52
 msgid "Last Commit"
 msgstr "Letzter Commit"
 
-#
 #: src/branch/browse_refs.cpp:53
 msgid "Last Author"
 msgstr "Letzter Autor"
 
-#
 #: src/branch/browse_refs.cpp:54
 msgid "Date Last Commit"
 msgstr "Datum letzter Commit"
 
-#
 #: src/branch/browse_refs.cpp:55
 msgid "Last Committer"
 msgstr "Letzter Committer"
@@ -62,7 +55,6 @@ msgstr "Beschreibung"
 msgid "{0} - Browse references - Tortilla"
 msgstr "{0} - Referenzen durchsuchen - Tortilla"
 
-#
 #: src/branch/browse_refs.cpp:209
 msgid "Filter:"
 msgstr "Filter:"
@@ -85,17 +77,14 @@ msgstr "Nur zusammengeführte (in HEAD)"
 msgid "Only unmerged (to HEAD)"
 msgstr "Nur nicht zusammengeführte (in HEAD)"
 
-#
 #: src/branch/browse_refs.cpp:263
 msgid "Show _nested refs"
 msgstr "_Verschachtelte Referenzen anzeigen"
 
-#
 #: src/branch/browse_refs.cpp:274
 msgid "Current Branch"
 msgstr "Aktueller Branch"
 
-#
 #: src/branch/browse_refs.cpp:356
 msgid "Couldn't list the references."
 msgstr "Die Referenzen konnten nicht aufgelistet werden."
@@ -129,7 +118,6 @@ msgstr "Filter umschalten"
 msgid "Showing {0} ref(s), {1} ref(s) selected"
 msgstr "{0} Referenz(en) angezeigt, {1} Referenz(en) ausgewählt"
 
-#
 #: src/branch/browse_refs.cpp:566 src/branch/browse_refs.cpp:676
 msgid "Copy ref names"
 msgstr "Referenznamen kopieren"
@@ -158,44 +146,36 @@ msgstr "In „{0}“ _zusammenführen..."
 msgid "Sw_itch/Checkout to this..."
 msgstr "Hierhin _wechseln/auschecken..."
 
-#
 #: src/branch/browse_refs.cpp:599 src/branch/browse_refs.cpp:663
 msgid "Create _Branch..."
 msgstr "_Branch erstellen..."
 
-#
 #: src/branch/browse_refs.cpp:603 src/branch/browse_refs.cpp:864
 #: src/branch/browse_refs.cpp:873 src/branch/browse_refs.cpp:875
 msgid "Edit description"
 msgstr "Beschreibung bearbeiten"
 
-#
 #: src/branch/browse_refs.cpp:604 src/branch/browse_refs.cpp:844
 #: src/branch/browse_refs.cpp:856
 msgid "Rename"
 msgstr "Umbenennen"
 
-#
 #: src/branch/browse_refs.cpp:614 src/branch/browse_refs.cpp:617
 msgid "Unset tracked branch"
 msgstr "Verfolgten Branch entfernen"
 
-#
 #: src/branch/browse_refs.cpp:620
 msgid "Select tracked branch"
 msgstr "Verfolgten Branch wählen"
 
-#
 #: src/branch/browse_refs.cpp:625
 msgid "Delete remote branch"
 msgstr "Remote-Branch löschen"
 
-#
 #: src/branch/browse_refs.cpp:626
 msgid "Delete tag"
 msgstr "Tag löschen"
 
-#
 #: src/branch/browse_refs.cpp:627
 msgid "Delete branch"
 msgstr "Branch löschen"
@@ -221,12 +201,10 @@ msgid_plural "Delete {0} tags"
 msgstr[0] "{0} Tag löschen"
 msgstr[1] "{0} Tags löschen"
 
-#
 #: src/branch/browse_refs.cpp:667
 msgid "Create _Tag..."
 msgstr "_Tag erstellen..."
 
-#
 #: src/branch/browse_refs.cpp:671
 msgid "Delete all tags"
 msgstr "Alle Tags löschen"
@@ -276,7 +254,6 @@ msgstr "Remote-Referenzen werden gelöscht..."
 msgid "Delete"
 msgstr "Löschen"
 
-#
 #: src/branch/browse_refs.cpp:844
 msgid "New name:"
 msgstr "Neuer Name:"
@@ -2150,7 +2127,7 @@ msgstr "Andere Referenzen"
 msgid "View Patch"
 msgstr "Patch anzeigen"
 
-#: src/log/log_window.cpp:1013 src/ui/welcome_window.cpp:79
+#: src/log/log_window.cpp:1013 src/ui/welcome_window.cpp:81
 msgid "_Settings..."
 msgstr "_Einstellungen..."
 
@@ -2162,7 +2139,6 @@ msgstr "Spalten zurücksetzen"
 msgid "No more revisions found."
 msgstr "Keine weiteren Revisionen gefunden."
 
-#
 #: src/main.cpp:223
 msgid "This needs a working tree."
 msgstr "Dafür wird ein Arbeitsverzeichnis gebraucht."
@@ -2177,7 +2153,6 @@ msgstr "{0} - Stash Apply"
 msgid "{0} - Stash Pop"
 msgstr "{0} - Stash Pop"
 
-#
 #: src/main.cpp:464
 msgid "Could not determine the last committed revision!"
 msgstr "Die zuletzt committete Revision konnte nicht ermittelt werden!"
@@ -2806,12 +2781,15 @@ msgstr "{0} - Git Init - Tortilla"
 msgid "Make it _Bare (No working directories)"
 msgstr "_Bare-Repository (ohne Arbeitsverzeichnis)"
 
-#: src/ui/create_repo_dialog.cpp:119
+#: src/ui/create_repo_dialog.cpp:118
 msgid ""
-"If you plan to work inside this folder, leave this unchecked.\n"
-"Typically a bare repo can only have changes 'pushed' to it.\n"
-"(By convention, a bare repo folder should have a name that ends with '.git')"
-msgstr "Wer in diesem Ordner arbeiten möchte, lässt dies leer.\nIn ein Bare-Repository werden Änderungen meist nur per Push übertragen.\n(Üblicherweise endet der Name eines Bare-Repository-Ordners auf „.git“.)"
+"If you plan to work inside this folder, leave this unchecked. Typically a "
+"bare repo can only have changes 'pushed' to it. (By convention, a bare repo "
+"folder should have a name that ends with '.git')"
+msgstr ""
+"Wer in diesem Ordner arbeiten möchte, lässt dies leer. In ein Bare-"
+"Repository werden Änderungen meist nur per Push übertragen. (Üblicherweise "
+"endet der Name eines Bare-Repository-Ordners auf „.git“.)"
 
 #: src/ui/create_repo_dialog.cpp:138
 #, c++-format
@@ -2820,7 +2798,11 @@ msgid ""
 "{0}\n"
 "is not empty!\n"
 "Are you sure you want to initialize a git repository inside that folder?"
-msgstr "Der Zielordner\n{0}\nist nicht leer!\nSoll darin wirklich ein Git-Repository angelegt werden?"
+msgstr ""
+"Der Zielordner\n"
+"{0}\n"
+"ist nicht leer!\n"
+"Soll darin wirklich ein Git-Repository angelegt werden?"
 
 #: src/ui/create_repo_dialog.cpp:166
 #, c++-format
@@ -2829,7 +2811,11 @@ msgid ""
 "{0}\n"
 "is a special folder and is not supposed to be a repository root!\n"
 "Are you sure you want to initialize a git repository inside that folder?"
-msgstr "Der Zielordner\n{0}\nist ein Systemordner und sollte kein Repository-Stamm sein!\nSoll darin wirklich ein Git-Repository angelegt werden?"
+msgstr ""
+"Der Zielordner\n"
+"{0}\n"
+"ist ein Systemordner und sollte kein Repository-Stamm sein!\n"
+"Soll darin wirklich ein Git-Repository angelegt werden?"
 
 #: src/ui/diff_window.cpp:96 src/ui/progress_dialog.cpp:210
 #, c++-format
@@ -2975,132 +2961,113 @@ msgstr "Zusammenführen, Merge abbrechen"
 
 #: src/ui/settings_dialog.cpp:293
 msgid ""
-"Top-level entries appear directly in the file manager's context menu, with\n"
-"\"Git\" before them; the rest are in its Tortilla submenu. Greyed entries\n"
+"Top-level entries appear directly in the file manager's context menu, with "
+"\"Git\" before them; the rest are in its Tortilla submenu. Greyed entries "
 "aren't in Tortilla yet."
-msgstr ""
-"Einträge der obersten Ebene erscheinen direkt im Kontextmenü des "
-"Dateimanagers,\n"
-"mit vorangestelltem „Git“; die übrigen im Tortilla-Untermenü. Ausgegraute\n"
-"Einträge gibt es in Tortilla noch nicht."
+msgstr "Einträge der obersten Ebene erscheinen direkt im Kontextmenü des Dateimanagers, mit vorangestelltem „Git“; die übrigen im Tortilla-Untermenü. Ausgegraute Einträge gibt es in Tortilla noch nicht."
 
-#: src/ui/settings_dialog.cpp:298
+#: src/ui/settings_dialog.cpp:299
 msgid "Entry"
 msgstr "Eintrag"
 
-#: src/ui/settings_dialog.cpp:299
+#: src/ui/settings_dialog.cpp:300
 msgid "Shows"
 msgstr "Anzeige"
 
-#: src/ui/settings_dialog.cpp:306
+#: src/ui/settings_dialog.cpp:307
 msgid "Selected entries show:"
 msgstr "Ausgewählte Einträge anzeigen:"
 
-#: src/ui/settings_dialog.cpp:318
+#: src/ui/settings_dialog.cpp:319
 msgid "Restore defaults"
 msgstr "Standard wiederherstellen"
 
-#: src/ui/settings_dialog.cpp:329
+#: src/ui/settings_dialog.cpp:330
 msgid "Hide the menu outside repositories (Shift shows it)"
 msgstr "Menü außerhalb von Repositorys ausblenden (Umschalt zeigt es an)"
 
-#: src/ui/settings_dialog.cpp:332
+#: src/ui/settings_dialog.cpp:333
 msgid ""
 "No menu for these paths, one a line (end one with \\ for a folder and all in "
-"it,\n"
-"or with * for every path that starts so):"
-msgstr ""
-"Kein Menü für diese Pfade, einer pro Zeile (mit \\ am Ende für einen Ordner "
-"samt Inhalt,\n"
-"mit * am Ende für alle Pfade, die so beginnen):"
+"it, or with * for every path that starts so):"
+msgstr "Kein Menü für diese Pfade, einer pro Zeile (mit \\ am Ende für einen Ordner samt Inhalt, mit * am Ende für alle Pfade, die so beginnen):"
 
-#: src/ui/settings_dialog.cpp:345
+#: src/ui/settings_dialog.cpp:347
 msgid "Tortilla's unified diff viewer"
 msgstr "Unified-Diff-Betrachter von Tortilla"
 
-#: src/ui/settings_dialog.cpp:346
+#: src/ui/settings_dialog.cpp:348
 msgid "git difftool (no diff.tool configured)"
 msgstr "git difftool (kein diff.tool konfiguriert)"
 
-#: src/ui/settings_dialog.cpp:347
+#: src/ui/settings_dialog.cpp:349
 #, c++-format
 msgid "git difftool (diff.tool: {0})"
 msgstr "git difftool (diff.tool: {0})"
 
-#: src/ui/settings_dialog.cpp:349 src/ui/settings_dialog.cpp:378
-#: src/ui/settings_dialog.cpp:448
+#: src/ui/settings_dialog.cpp:351 src/ui/settings_dialog.cpp:380
+#: src/ui/settings_dialog.cpp:450
 msgid "Custom..."
 msgstr "Benutzerdefiniert..."
 
-#: src/ui/settings_dialog.cpp:396
+#: src/ui/settings_dialog.cpp:398
 msgid "Comparing revisions"
 msgstr "Revisionen vergleichen"
 
-#: src/ui/settings_dialog.cpp:399
+#: src/ui/settings_dialog.cpp:401
 msgid "Compare with"
 msgstr "Vergleichen mit"
 
-#: src/ui/settings_dialog.cpp:401 src/ui/settings_dialog.cpp:418
-#: src/ui/settings_dialog.cpp:480
+#: src/ui/settings_dialog.cpp:403 src/ui/settings_dialog.cpp:421
+#: src/ui/settings_dialog.cpp:482
 msgid "Command"
 msgstr "Befehl"
 
-#: src/ui/settings_dialog.cpp:403
+#: src/ui/settings_dialog.cpp:405
 #, c-format
 msgid "program %base %mine"
 msgstr "Programm %base %mine"
 
-#: src/ui/settings_dialog.cpp:406
+#: src/ui/settings_dialog.cpp:408
 msgid ""
-"%base and %mine are the two sides compared: folders when a whole commit is\n"
-"compared. %bname and %yname are their names. Without placeholders the two\n"
+"%base and %mine are the two sides compared: folders when a whole commit is "
+"compared. %bname and %yname are their names. Without placeholders the two "
 "sides go at the end of the command."
-msgstr ""
-"%base und %mine sind die beiden verglichenen Seiten: Ordner, wenn ein "
-"ganzer\n"
-"Commit verglichen wird. %bname und %yname sind ihre Namen. Ohne Platzhalter\n"
-"werden die beiden Seiten am Ende des Befehls angehängt."
+msgstr "%base und %mine sind die beiden verglichenen Seiten: Ordner, wenn ein ganzer Commit verglichen wird. %bname und %yname sind ihre Namen. Ohne Platzhalter werden die beiden Seiten am Ende des Befehls angehängt."
 
-#: src/ui/settings_dialog.cpp:412
+#: src/ui/settings_dialog.cpp:415
 msgid "Resolving conflicts"
 msgstr "Konflikte auflösen"
 
-#: src/ui/settings_dialog.cpp:415
+#: src/ui/settings_dialog.cpp:418
 msgid "Merge with"
 msgstr "Zusammenführen mit"
 
-#: src/ui/settings_dialog.cpp:422
+#: src/ui/settings_dialog.cpp:425
 msgid "program %base %theirs %mine %merged"
 msgstr "Programm %base %theirs %mine %merged"
 
-#: src/ui/settings_dialog.cpp:425
+#: src/ui/settings_dialog.cpp:428
 msgid ""
 "%base, %theirs and %mine are the conflict's three sides and %merged the file "
-"to save;\n"
-"%bname, %tname, %yname and %mname their titles. Without placeholders the "
-"four\n"
-"files go at the end."
-msgstr ""
-"%base, %theirs und %mine sind die drei Seiten des Konflikts, %merged die zu "
-"speichernde Datei;\n"
-"%bname, %tname, %yname und %mname ihre Titel. Ohne Platzhalter werden die "
-"vier\n"
-"Dateien am Ende angehängt."
+"to save; %bname, %tname, %yname and %mname their titles. Without "
+"placeholders the four files go at the end."
+msgstr "%base, %theirs und %mine sind die drei Seiten des Konflikts, %merged die zu speichernde Datei; %bname, %tname, %yname und %mname ihre Titel. Ohne Platzhalter werden die vier Dateien am Ende angehängt."
 
-#: src/ui/settings_dialog.cpp:445
+#: src/ui/settings_dialog.cpp:447
 msgid "git's own (ssh)"
 msgstr "git-eigener (ssh)"
 
-#: src/ui/settings_dialog.cpp:446
+#: src/ui/settings_dialog.cpp:448
 #, c++-format
 msgid "git's own ({0})"
 msgstr "git-eigener ({0})"
 
-#: src/ui/settings_dialog.cpp:475 src/ui/settings_dialog.cpp:478
+#: src/ui/settings_dialog.cpp:477 src/ui/settings_dialog.cpp:480
 msgid "SSH client"
 msgstr "SSH-Client"
 
-#: src/ui/settings_dialog.cpp:485
+#: src/ui/settings_dialog.cpp:487
 msgid ""
 "Run for each remote as git's GIT_SSH_COMMAND: git adds the host and the\n"
 "command to run there. plink and TortoiseGitPlink are known by their names."
@@ -3110,7 +3077,7 @@ msgstr ""
 "und den dort auszuführenden Befehl an. plink und TortoiseGitPlink werden am "
 "Namen erkannt."
 
-#: src/ui/settings_dialog.cpp:491
+#: src/ui/settings_dialog.cpp:493
 msgid ""
 "\n"
 "Git for Windows rewrites absolute Linux paths (/...) in it: for WSL ssh,\n"
@@ -3120,32 +3087,29 @@ msgstr ""
 "Git for Windows schreibt darin absolute Linux-Pfade (/...) um: Für WSL ssh\n"
 "schreiben Sie sie relativ zum Home-Verzeichnis (~/...)."
 
-#: src/ui/settings_dialog.cpp:498
+#: src/ui/settings_dialog.cpp:500
 msgid ""
-"Used by the git Tortilla runs (fetch, pull, push, clone); the repository's\n"
+"Used by the git Tortilla runs (fetch, pull, push, clone); the repository's "
 "core.sshCommand applies only with git's own."
-msgstr ""
-"Wird von dem git verwendet, das Tortilla ausführt (fetch, pull, push, "
-"clone);\n"
-"core.sshCommand des Repositorys gilt nur mit dem git-eigenen."
+msgstr "Wird von dem git verwendet, das Tortilla ausführt (fetch, pull, push, clone); core.sshCommand des Repositorys gilt nur mit dem git-eigenen."
 
-#: src/ui/settings_dialog.cpp:522
+#: src/ui/settings_dialog.cpp:525
 msgid "Settings - Tortilla"
 msgstr "Einstellungen - Tortilla"
 
-#: src/ui/settings_dialog.cpp:526
+#: src/ui/settings_dialog.cpp:529
 msgid "General"
 msgstr "Allgemein"
 
-#: src/ui/settings_dialog.cpp:527
+#: src/ui/settings_dialog.cpp:530
 msgid "Context Menu"
 msgstr "Kontextmenü"
 
-#: src/ui/settings_dialog.cpp:529
+#: src/ui/settings_dialog.cpp:532
 msgid "Diff Viewer"
 msgstr "Diff-Betrachter"
 
-#: src/ui/settings_dialog.cpp:531
+#: src/ui/settings_dialog.cpp:534
 msgid "Network"
 msgstr "Netzwerk"
 
@@ -3163,66 +3127,55 @@ msgstr "Willkommen bei Tortilla"
 
 #: src/ui/welcome_window.cpp:65
 msgid ""
-"Tortilla is a git client that lives where your files do: right-click any\n"
-"folder in your file manager to commit, pull, push, browse the history or\n"
+"Tortilla is a git client that lives where your files do: right-click any "
+"folder in your file manager to commit, pull, push, browse the history or "
 "untangle a merge."
-msgstr ""
-"Tortilla ist ein Git-Client, der dort wohnt, wo Ihre Dateien sind: Klicken "
-"Sie\n"
-"mit der rechten Maustaste auf einen Ordner, um zu committen, zu pullen und "
-"zu\n"
-"pushen, die Historie zu durchstöbern oder einen Merge zu entwirren."
+msgstr "Tortilla ist ein Git-Client, der dort wohnt, wo Ihre Dateien sind: Klicken Sie mit der rechten Maustaste auf einen Ordner, um zu committen, zu pullen und zu pushen, die Historie zu durchstöbern oder einen Merge zu entwirren."
 
-#: src/ui/welcome_window.cpp:68
+#: src/ui/welcome_window.cpp:69
 msgid ""
-"It began with a simple wish: TortoiseGit's way of working, without the\n"
-"waiting, on every desktop. So every window is your system's own, and\n"
+"It began with a simple wish: TortoiseGit's way of working, without the "
+"waiting, on every desktop. So every window is your system's own, and "
 "everything on screen keeps up with your display, however long the history."
-msgstr ""
-"Alles begann mit einem einfachen Wunsch: die Arbeitsweise von TortoiseGit,\n"
-"ohne Warten, auf jedem Desktop. Darum ist jedes Fenster das Ihres Systems, "
-"und\n"
-"alles auf dem Bildschirm hält mit Ihrer Anzeige Schritt, wie lang die "
-"Historie\n"
-"auch sein mag."
+msgstr "Alles begann mit einem einfachen Wunsch: die Arbeitsweise von TortoiseGit, ohne Warten, auf jedem Desktop. Darum ist jedes Fenster das Ihres Systems, und alles auf dem Bildschirm hält mit Ihrer Anzeige Schritt, wie lang die Historie auch sein mag."
 
-#: src/ui/welcome_window.cpp:71
+#: src/ui/welcome_window.cpp:73
 msgid "To start, right-click a folder and look for Tortilla, or open one here."
 msgstr ""
 "Klicken Sie zum Start mit der rechten Maustaste auf einen Ordner und suchen "
 "Sie\n"
 "Tortilla, oder öffnen Sie hier ein Repository."
 
-#: src/ui/welcome_window.cpp:73
+#: src/ui/welcome_window.cpp:75
 msgid "_Open repository..."
 msgstr "Repository ö_ffnen..."
 
-#: src/ui/welcome_window.cpp:74
+#: src/ui/welcome_window.cpp:76
 msgid "_Clone..."
 msgstr "_Klonen..."
 
-#: src/ui/welcome_window.cpp:97
+#: src/ui/welcome_window.cpp:99
 msgid "Made with care by Manu Evans"
 msgstr "Mit Liebe gemacht von Manu Evans"
 
-#: src/ui/welcome_window.cpp:100
+#: src/ui/welcome_window.cpp:102
 msgid "Licence (GPL 3.0)"
 msgstr "Lizenz (GPL 3.0)"
 
-#: src/ui/welcome_window.cpp:101
+#: src/ui/welcome_window.cpp:103
 msgid "Third-party notices"
 msgstr "Hinweise zu Drittanbietern"
 
-#: src/ui/welcome_window.cpp:129
+#: src/ui/welcome_window.cpp:131
 #, c++-format
 msgid "Version {0}"
 msgstr "Version {0}"
 
-#: src/ui/welcome_window.cpp:132
+#: src/ui/welcome_window.cpp:134
 msgid "Git, wrapped up warm."
 msgstr "Git, warm eingewickelt."
 
-#: src/ui/welcome_window.cpp:138
+#: src/ui/welcome_window.cpp:140
 msgid "Open repository"
 msgstr "Repository öffnen"
 
