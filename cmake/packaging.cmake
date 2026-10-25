@@ -132,6 +132,14 @@ foreach(fm IN LISTS tortilla_shells)
     set(CPACK_DEBIAN_TORTILLA-SHELL-${FM}_PACKAGE_ENHANCES ${fm_deb_${fm}})
 endforeach()
 set(CPACK_DEBIAN_TORTILLA-SHELL-PCMANFM_PACKAGE_ENHANCES "pcmanfm-qt, pcmanfm")
+# Images in a comparison open in IfritView (Settings > Diff Viewer): each
+# toolkit's package recommends it. One package for now; each toolkit's own
+# (set here) once IfritView splits like Tortilla.
+foreach(tk IN LISTS tortilla_toolkits)
+    string(TOUPPER ${tk} TK)
+    set(ifritview_for_${tk} ifritview)
+    set(CPACK_DEBIAN_TORTILLA_${TK}_PACKAGE_RECOMMENDS ${ifritview_for_${tk}})
+endforeach()
 set(CPACK_DEBIAN_TORTILLA-SHELL-PCMANFM_PACKAGE_ARCHITECTURE all)
 
 # -- .rpm -------------------------------------------------------------------
@@ -158,6 +166,10 @@ foreach(c IN LISTS CPACK_COMPONENTS_ALL)
 endforeach()
 set(CPACK_RPM_CORE_PACKAGE_SUGGESTS "libcurl, gdk-pixbuf2")
 set(CPACK_RPM_TORTILLA_PACKAGE_SUGGESTS "tortilla-gtk4, ${shell_packages}")
+foreach(tk IN LISTS tortilla_toolkits)
+    string(TOUPPER ${tk} TK)
+    set(CPACK_RPM_TORTILLA_${TK}_PACKAGE_SUGGESTS ${ifritview_for_${tk}})
+endforeach()
 list(APPEND CPACK_RPM_EXCLUDE_FROM_AUTO_FILELIST_ADDITION
     ${CMAKE_INSTALL_FULL_DATADIR}/applications
     ${CMAKE_INSTALL_FULL_DATADIR}/icons
