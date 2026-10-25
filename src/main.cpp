@@ -53,6 +53,7 @@
 #include "ui/create_repo_dialog.h"
 #include "ui/progress_dialog.h"
 #include "ui/stash_dialog.h"
+#include "ui/trust_repository.h"
 #include "ui/welcome_window.h"
 #include "ui/windows.h"
 
@@ -163,6 +164,30 @@ int main(int argc, char** argv)
     {
         std::fprintf(stderr, "%s", ui.error().c_str());
         return 1;
+    }
+
+    // A repository git refuses for its folder's owner (a network share,
+    // WSL's files from Windows): offered to trust it first, as TortoiseGit
+    // does, for every command that opens one.
+    if (command != "clone" && command != "repocreate" && command != "about" &&
+        !(command == "settings" && args.empty()) && !(command == "log" && !named && args.empty()))
+    {
+        // Usually answered at once; when it asks, the question runs a loop
+        // of its own, which the answer ends.
+        bool go_on = true, decided = false, asking = false;
+        tortilla::ensure_trusted(**ui, path,
+                                 [&](bool ok)
+                                 {
+                                     go_on = ok;
+                                     decided = true;
+                                     if (asking) (*ui)->quit();
+                                 });
+        if (!decided)
+        {
+            asking = true;
+            (*ui)->run();
+        }
+        if (!go_on) return 1;
     }
 
     if (command == "settings")

@@ -4,7 +4,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: tortilla\n"
 "Report-Msgid-Bugs-To: https://github.com/TurkeyMan/tortilla/issues\n"
-"POT-Creation-Date: 2026-10-25 06:03+0000\n"
+"POT-Creation-Date: 2026-10-25 06:47+0000\n"
 "Language: de\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
@@ -2139,21 +2139,21 @@ msgstr "Spalten zurücksetzen"
 msgid "No more revisions found."
 msgstr "Keine weiteren Revisionen gefunden."
 
-#: src/main.cpp:223
+#: src/main.cpp:248
 msgid "This needs a working tree."
 msgstr "Dafür wird ein Arbeitsverzeichnis gebraucht."
 
-#: src/main.cpp:242
+#: src/main.cpp:267
 #, c++-format
 msgid "{0} - Stash Apply"
 msgstr "{0} - Stash Apply"
 
-#: src/main.cpp:242
+#: src/main.cpp:267
 #, c++-format
 msgid "{0} - Stash Pop"
 msgstr "{0} - Stash Pop"
 
-#: src/main.cpp:464
+#: src/main.cpp:489
 msgid "Could not determine the last committed revision!"
 msgstr "Die zuletzt committete Revision konnte nicht ermittelt werden!"
 
@@ -2279,7 +2279,7 @@ msgstr "Dateien mit Konflikten"
 msgid "Commit Message"
 msgstr "Commit-Nachricht"
 
-#: src/rebase/rebase_window.cpp:190 src/ui/settings_dialog.cpp:127
+#: src/rebase/rebase_window.cpp:190 src/ui/settings_dialog.cpp:128
 msgid "Log"
 msgstr "Log"
 
@@ -2897,177 +2897,188 @@ msgstr "Erfolgreich ({0} ms @ {1})"
 msgid "_Abort"
 msgstr "_Abbrechen"
 
-#: src/ui/settings_dialog.cpp:105
+#: src/ui/settings_dialog.cpp:106
 #, c++-format
 msgid "System default ({0})"
 msgstr "Systemstandard ({0})"
 
-#: src/ui/settings_dialog.cpp:121 src/ui/settings_dialog.cpp:123
+#: src/ui/settings_dialog.cpp:122 src/ui/settings_dialog.cpp:124
 msgid "Language"
 msgstr "Sprache"
 
-#: src/ui/settings_dialog.cpp:124
+#: src/ui/settings_dialog.cpp:125
 msgid "Applies the next time Tortilla starts."
 msgstr "Gilt ab dem nächsten Start von Tortilla."
 
-#: src/ui/settings_dialog.cpp:129
+#: src/ui/settings_dialog.cpp:130
 msgid "Action icons"
 msgstr "Aktionssymbole"
 
-#: src/ui/settings_dialog.cpp:131
+#: src/ui/settings_dialog.cpp:132
 msgid "Bevelled"
 msgstr "Abgeschrägt"
 
-#: src/ui/settings_dialog.cpp:131
+#: src/ui/settings_dialog.cpp:132
 msgid "Classic"
 msgstr "Klassisch"
 
-#: src/ui/settings_dialog.cpp:131
+#: src/ui/settings_dialog.cpp:132
 msgid "Glyphs"
 msgstr "Glyphen"
 
-#: src/ui/settings_dialog.cpp:131
+#: src/ui/settings_dialog.cpp:132
 msgid "Line"
 msgstr "Linie"
 
-#: src/ui/settings_dialog.cpp:211
+#: src/ui/settings_dialog.cpp:212
 #, c++-format
 msgid "{0} (not yet in Tortilla)"
 msgstr "{0} (noch nicht in Tortilla)"
 
-#: src/ui/settings_dialog.cpp:235
+#: src/ui/settings_dialog.cpp:236
 msgid "Submenu"
 msgstr "Untermenü"
 
-#: src/ui/settings_dialog.cpp:235
+#: src/ui/settings_dialog.cpp:236
 msgid "Top level"
 msgstr "Oberste Ebene"
 
-#: src/ui/settings_dialog.cpp:236
+#: src/ui/settings_dialog.cpp:237
 msgid "Hidden"
 msgstr "Ausgeblendet"
 
-#: src/ui/settings_dialog.cpp:236
+#: src/ui/settings_dialog.cpp:237
 msgid "With Shift"
 msgstr "Mit Umschalt"
 
-#: src/ui/settings_dialog.cpp:241
+#: src/ui/settings_dialog.cpp:242
 msgid "Bisect"
 msgstr "Bisect"
 
-#: src/ui/settings_dialog.cpp:242
+#: src/ui/settings_dialog.cpp:243
 msgid "Merge, Abort Merge"
 msgstr "Zusammenführen, Merge abbrechen"
 
-#: src/ui/settings_dialog.cpp:293
+#: src/ui/settings_dialog.cpp:294
 msgid ""
 "Top-level entries appear directly in the file manager's context menu, with "
 "\"Git\" before them; the rest are in its Tortilla submenu. Greyed entries "
 "aren't in Tortilla yet."
-msgstr "Einträge der obersten Ebene erscheinen direkt im Kontextmenü des Dateimanagers, mit vorangestelltem „Git“; die übrigen im Tortilla-Untermenü. Ausgegraute Einträge gibt es in Tortilla noch nicht."
+msgstr ""
+"Einträge der obersten Ebene erscheinen direkt im Kontextmenü des "
+"Dateimanagers, mit vorangestelltem „Git“; die übrigen im Tortilla-Untermenü. "
+"Ausgegraute Einträge gibt es in Tortilla noch nicht."
 
-#: src/ui/settings_dialog.cpp:299
+#: src/ui/settings_dialog.cpp:300
 msgid "Entry"
 msgstr "Eintrag"
 
-#: src/ui/settings_dialog.cpp:300
+#: src/ui/settings_dialog.cpp:301
 msgid "Shows"
 msgstr "Anzeige"
 
-#: src/ui/settings_dialog.cpp:307
+#: src/ui/settings_dialog.cpp:308
 msgid "Selected entries show:"
 msgstr "Ausgewählte Einträge anzeigen:"
 
-#: src/ui/settings_dialog.cpp:319
+#: src/ui/settings_dialog.cpp:320
 msgid "Restore defaults"
 msgstr "Standard wiederherstellen"
 
-#: src/ui/settings_dialog.cpp:330
+#: src/ui/settings_dialog.cpp:331
 msgid "Hide the menu outside repositories (Shift shows it)"
 msgstr "Menü außerhalb von Repositorys ausblenden (Umschalt zeigt es an)"
 
-#: src/ui/settings_dialog.cpp:333
+#: src/ui/settings_dialog.cpp:334
 msgid ""
 "No menu for these paths, one a line (end one with \\ for a folder and all in "
 "it, or with * for every path that starts so):"
-msgstr "Kein Menü für diese Pfade, einer pro Zeile (mit \\ am Ende für einen Ordner samt Inhalt, mit * am Ende für alle Pfade, die so beginnen):"
+msgstr ""
+"Kein Menü für diese Pfade, einer pro Zeile (mit \\ am Ende für einen Ordner "
+"samt Inhalt, mit * am Ende für alle Pfade, die so beginnen):"
 
-#: src/ui/settings_dialog.cpp:347
+#: src/ui/settings_dialog.cpp:348
 msgid "Tortilla's unified diff viewer"
 msgstr "Unified-Diff-Betrachter von Tortilla"
 
-#: src/ui/settings_dialog.cpp:348
+#: src/ui/settings_dialog.cpp:349
 msgid "git difftool (no diff.tool configured)"
 msgstr "git difftool (kein diff.tool konfiguriert)"
 
-#: src/ui/settings_dialog.cpp:349
+#: src/ui/settings_dialog.cpp:350
 #, c++-format
 msgid "git difftool (diff.tool: {0})"
 msgstr "git difftool (diff.tool: {0})"
 
-#: src/ui/settings_dialog.cpp:351 src/ui/settings_dialog.cpp:380
-#: src/ui/settings_dialog.cpp:450
+#: src/ui/settings_dialog.cpp:352 src/ui/settings_dialog.cpp:381
+#: src/ui/settings_dialog.cpp:451
 msgid "Custom..."
 msgstr "Benutzerdefiniert..."
 
-#: src/ui/settings_dialog.cpp:398
+#: src/ui/settings_dialog.cpp:399
 msgid "Comparing revisions"
 msgstr "Revisionen vergleichen"
 
-#: src/ui/settings_dialog.cpp:401
+#: src/ui/settings_dialog.cpp:402
 msgid "Compare with"
 msgstr "Vergleichen mit"
 
-#: src/ui/settings_dialog.cpp:403 src/ui/settings_dialog.cpp:421
-#: src/ui/settings_dialog.cpp:482
+#: src/ui/settings_dialog.cpp:404 src/ui/settings_dialog.cpp:422
+#: src/ui/settings_dialog.cpp:483
 msgid "Command"
 msgstr "Befehl"
 
-#: src/ui/settings_dialog.cpp:405
+#: src/ui/settings_dialog.cpp:406
 #, c-format
 msgid "program %base %mine"
 msgstr "Programm %base %mine"
 
-#: src/ui/settings_dialog.cpp:408
+#: src/ui/settings_dialog.cpp:409
 msgid ""
 "%base and %mine are the two sides compared: folders when a whole commit is "
 "compared. %bname and %yname are their names. Without placeholders the two "
 "sides go at the end of the command."
-msgstr "%base und %mine sind die beiden verglichenen Seiten: Ordner, wenn ein ganzer Commit verglichen wird. %bname und %yname sind ihre Namen. Ohne Platzhalter werden die beiden Seiten am Ende des Befehls angehängt."
+msgstr ""
+"%base und %mine sind die beiden verglichenen Seiten: Ordner, wenn ein ganzer "
+"Commit verglichen wird. %bname und %yname sind ihre Namen. Ohne Platzhalter "
+"werden die beiden Seiten am Ende des Befehls angehängt."
 
-#: src/ui/settings_dialog.cpp:415
+#: src/ui/settings_dialog.cpp:416
 msgid "Resolving conflicts"
 msgstr "Konflikte auflösen"
 
-#: src/ui/settings_dialog.cpp:418
+#: src/ui/settings_dialog.cpp:419
 msgid "Merge with"
 msgstr "Zusammenführen mit"
 
-#: src/ui/settings_dialog.cpp:425
+#: src/ui/settings_dialog.cpp:426
 msgid "program %base %theirs %mine %merged"
 msgstr "Programm %base %theirs %mine %merged"
 
-#: src/ui/settings_dialog.cpp:428
+#: src/ui/settings_dialog.cpp:429
 msgid ""
 "%base, %theirs and %mine are the conflict's three sides and %merged the file "
 "to save; %bname, %tname, %yname and %mname their titles. Without "
 "placeholders the four files go at the end."
-msgstr "%base, %theirs und %mine sind die drei Seiten des Konflikts, %merged die zu speichernde Datei; %bname, %tname, %yname und %mname ihre Titel. Ohne Platzhalter werden die vier Dateien am Ende angehängt."
+msgstr ""
+"%base, %theirs und %mine sind die drei Seiten des Konflikts, %merged die zu "
+"speichernde Datei; %bname, %tname, %yname und %mname ihre Titel. Ohne "
+"Platzhalter werden die vier Dateien am Ende angehängt."
 
-#: src/ui/settings_dialog.cpp:447
+#: src/ui/settings_dialog.cpp:448
 msgid "git's own (ssh)"
 msgstr "git-eigener (ssh)"
 
-#: src/ui/settings_dialog.cpp:448
+#: src/ui/settings_dialog.cpp:449
 #, c++-format
 msgid "git's own ({0})"
 msgstr "git-eigener ({0})"
 
-#: src/ui/settings_dialog.cpp:477 src/ui/settings_dialog.cpp:480
+#: src/ui/settings_dialog.cpp:478 src/ui/settings_dialog.cpp:481
 msgid "SSH client"
 msgstr "SSH-Client"
 
-#: src/ui/settings_dialog.cpp:487
+#: src/ui/settings_dialog.cpp:488
 msgid ""
 "Run for each remote as git's GIT_SSH_COMMAND: git adds the host and the\n"
 "command to run there. plink and TortoiseGitPlink are known by their names."
@@ -3077,7 +3088,7 @@ msgstr ""
 "und den dort auszuführenden Befehl an. plink und TortoiseGitPlink werden am "
 "Namen erkannt."
 
-#: src/ui/settings_dialog.cpp:493
+#: src/ui/settings_dialog.cpp:494
 msgid ""
 "\n"
 "Git for Windows rewrites absolute Linux paths (/...) in it: for WSL ssh,\n"
@@ -3087,29 +3098,31 @@ msgstr ""
 "Git for Windows schreibt darin absolute Linux-Pfade (/...) um: Für WSL ssh\n"
 "schreiben Sie sie relativ zum Home-Verzeichnis (~/...)."
 
-#: src/ui/settings_dialog.cpp:500
+#: src/ui/settings_dialog.cpp:501
 msgid ""
 "Used by the git Tortilla runs (fetch, pull, push, clone); the repository's "
 "core.sshCommand applies only with git's own."
-msgstr "Wird von dem git verwendet, das Tortilla ausführt (fetch, pull, push, clone); core.sshCommand des Repositorys gilt nur mit dem git-eigenen."
+msgstr ""
+"Wird von dem git verwendet, das Tortilla ausführt (fetch, pull, push, "
+"clone); core.sshCommand des Repositorys gilt nur mit dem git-eigenen."
 
-#: src/ui/settings_dialog.cpp:525
+#: src/ui/settings_dialog.cpp:526
 msgid "Settings - Tortilla"
 msgstr "Einstellungen - Tortilla"
 
-#: src/ui/settings_dialog.cpp:529
+#: src/ui/settings_dialog.cpp:530
 msgid "General"
 msgstr "Allgemein"
 
-#: src/ui/settings_dialog.cpp:530
+#: src/ui/settings_dialog.cpp:531
 msgid "Context Menu"
 msgstr "Kontextmenü"
 
-#: src/ui/settings_dialog.cpp:532
+#: src/ui/settings_dialog.cpp:533
 msgid "Diff Viewer"
 msgstr "Diff-Betrachter"
 
-#: src/ui/settings_dialog.cpp:534
+#: src/ui/settings_dialog.cpp:535
 msgid "Network"
 msgstr "Netzwerk"
 
@@ -3121,6 +3134,22 @@ msgstr "optional"
 msgid "Include _untracked files"
 msgstr "_Unversionierte Dateien einbeziehen"
 
+#: src/ui/trust_repository.cpp:44
+#, c++-format
+msgid ""
+"Git won't open the repository in\n"
+"{0}\n"
+"because its folder belongs to another user account (a network share, say, or "
+"WSL's files seen from Windows).\n"
+"\n"
+"Trust this repository? Only do so if you trust whoever can change its files: "
+"its configuration can run programs as you."
+msgstr "Git öffnet das Repository in\n{0}\nnicht, weil sein Ordner einem anderen Benutzerkonto gehört (etwa auf einer Netzwerkfreigabe oder WSL-Dateien unter Windows).\n\nDiesem Repository vertrauen? Nur, wenn Sie allen vertrauen, die seine Dateien ändern können: Seine Konfiguration kann Programme unter Ihrem Konto ausführen."
+
+#: src/ui/trust_repository.cpp:59
+msgid "Couldn't add the repository to safe.directory."
+msgstr "Das Repository konnte nicht zu safe.directory hinzugefügt werden."
+
 #: src/ui/welcome_window.cpp:60
 msgid "Welcome to Tortilla"
 msgstr "Willkommen bei Tortilla"
@@ -3130,14 +3159,21 @@ msgid ""
 "Tortilla is a git client that lives where your files do: right-click any "
 "folder in your file manager to commit, pull, push, browse the history or "
 "untangle a merge."
-msgstr "Tortilla ist ein Git-Client, der dort wohnt, wo Ihre Dateien sind: Klicken Sie mit der rechten Maustaste auf einen Ordner, um zu committen, zu pullen und zu pushen, die Historie zu durchstöbern oder einen Merge zu entwirren."
+msgstr ""
+"Tortilla ist ein Git-Client, der dort wohnt, wo Ihre Dateien sind: Klicken "
+"Sie mit der rechten Maustaste auf einen Ordner, um zu committen, zu pullen "
+"und zu pushen, die Historie zu durchstöbern oder einen Merge zu entwirren."
 
 #: src/ui/welcome_window.cpp:69
 msgid ""
 "It began with a simple wish: TortoiseGit's way of working, without the "
 "waiting, on every desktop. So every window is your system's own, and "
 "everything on screen keeps up with your display, however long the history."
-msgstr "Alles begann mit einem einfachen Wunsch: die Arbeitsweise von TortoiseGit, ohne Warten, auf jedem Desktop. Darum ist jedes Fenster das Ihres Systems, und alles auf dem Bildschirm hält mit Ihrer Anzeige Schritt, wie lang die Historie auch sein mag."
+msgstr ""
+"Alles begann mit einem einfachen Wunsch: die Arbeitsweise von TortoiseGit, "
+"ohne Warten, auf jedem Desktop. Darum ist jedes Fenster das Ihres Systems, "
+"und alles auf dem Bildschirm hält mit Ihrer Anzeige Schritt, wie lang die "
+"Historie auch sein mag."
 
 #: src/ui/welcome_window.cpp:73
 msgid "To start, right-click a folder and look for Tortilla, or open one here."
