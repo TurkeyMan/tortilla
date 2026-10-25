@@ -441,7 +441,7 @@ std::string diff_with_label(const fs::path& p)
         if (root.size() + 4 + name.size() <= k_max)
             s = root + "..." + std::string(1, char(fs::path::preferred_separator)) + name;
         else
-            s = "..." + name.substr(name.size() - std::min(name.size(), k_max - 3));
+            s = "..." + name.substr(name.size() - (std::min)(name.size(), k_max - 3));
     }
     std::string escaped;
     for (char c : s) escaped += c == '&' ? "&&" : std::string(1, c);
