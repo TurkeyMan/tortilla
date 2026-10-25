@@ -7,6 +7,11 @@ if grep -E -- '^-- rapport: skipping' build-ci.log | grep -v win32; then
   echo "a toolkit backend or file-manager SDK is missing; install its -dev package in .github/ci/deps-*.sh" >&2
   exit 1
 fi
+# GTK 3 reads the true fractional scale on Wayland only with wayland-protocols.
+if ! grep -q 'GTK 3 fractional scale: on' build-ci.log; then
+  echo "GTK 3 fractional scale is off; install wayland-protocols in .github/ci/deps-*.sh" >&2
+  exit 1
+fi
 cmake --build build-ci --parallel "$(nproc)"
 
 # The tests make their own repositories, so git needs an identity.

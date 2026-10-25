@@ -17,7 +17,7 @@ arch=(x86_64 aarch64)
 url='https://github.com/TurkeyMan/tortilla'
 license=(GPL-3.0-only MIT)
 makedepends=(cmake ninja git libgit2 gtk3 gtk4 qt6-base
-             libnautilus-extension nemo caja thunar kio)
+             libnautilus-extension nemo caja thunar kio wayland-protocols)
 # rapport's shell-extension libraries are static, for librapport-dev.
 options=(staticlibs)
 
