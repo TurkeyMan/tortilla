@@ -74,6 +74,8 @@ private:
     bool path_limited() const;
     std::string repo_location() const;
     void update_walk_button();
+    bool one_file() const;
+    void apply_follow();
     void difftool(std::vector<std::string> revisions, std::vector<std::string> paths = {});
     void confirm_then_run(const std::string& question, const std::string& title,
                           std::vector<std::vector<std::string>> commands);
@@ -157,6 +159,9 @@ private:
     rap::label* status_ = nullptr;
     rap::check* all_branches_ = nullptr;
     rap::check* whole_project_ = nullptr;
+    // All Branches (or basic/local refs) as chosen, while following a file's
+    // renames walks from HEAD instead: restored after, and what's saved.
+    std::optional<walk_refs> refs_before_follow_;
     rap::button* statistics_ = nullptr;
     rap::menu_button* walk_ = nullptr;
     rap::menu_button* view_ = nullptr;

@@ -375,16 +375,18 @@ void log_window::save_layout()
     // 1.9.7]; the rest apply everywhere.
     auto flag = [](bool b) { return std::string(b ? "1" : "0"); };
     // "1" for all; basic and local refs (the box indeterminate) by name.
-    st.set("log.allBranches." + repo_.workdir(), walk_options_.refs == walk_refs::all     ? "1"
-                                                 : walk_options_.refs == walk_refs::basic ? "basic"
-                                                 : walk_options_.refs == walk_refs::local ? "local"
-                                                                                          : "0");
+    const walk_refs refs = refs_before_follow_.value_or(walk_options_.refs);
+    st.set("log.allBranches." + repo_.workdir(), refs == walk_refs::all     ? "1"
+                                                 : refs == walk_refs::basic ? "basic"
+                                                 : refs == walk_refs::local ? "local"
+                                                                            : "0");
     std::string history;
     for (const std::string& r : ref_history_) history += (history.empty() ? "" : " ") + r;
     st.set("log.refHistory." + repo_.workdir(), history);
     st.set("log.walk.firstParent", flag(walk_options_.first_parent));
     st.set("log.walk.noMerges", flag(walk_options_.no_merges));
     st.set("log.walk.fullHistory", flag(walk_options_.full_history));
+    st.set("log.walk.follow", flag(walk_options_.follow));
     st.set("log.view.labels", std::to_string(log_.labels()));
     st.set("log.view.unversioned", flag(show_unversioned_));
     st.set("log.filter.fields", std::to_string(filter_.fields));
@@ -440,6 +442,7 @@ void log_window::restore_layout()
     walk_options_.first_parent = flag("log.walk.firstParent", false);
     walk_options_.no_merges = flag("log.walk.noMerges", false);
     walk_options_.full_history = flag("log.walk.fullHistory", false);
+    walk_options_.follow = flag("log.walk.follow", true);
     update_walk_button();
     update_ref_button();
     log_.set_labels(unsigned(number("log.view.labels", label_all)) & label_all);
@@ -551,10 +554,12 @@ void log_window::reload()
              .ok())
         set_walk(walk_refs::head);
 
+    apply_follow();
     walk_options opts = walk_options_;
     opts.since = since_;
     opts.until = until_;
     if (path_limited()) opts.paths = {rel_path_};
+    opts.follow = walk_options_.follow && one_file();
     log_.load(repo_location(), opts, [this](const std::string& e) { loaded(e); });
     if (!filter_.text.empty()) log_.set_filter(filter_);
 }
@@ -1018,11 +1023,34 @@ void log_window::apply_filter()
 }
 
 // Walk Behavior [spec 1.9.4]; drawn pushed while any option is on.
-// Pushed while any walk option is on.
+// Pushed while any walk option is changed from its default.
 void log_window::update_walk_button()
 {
     walk_->set_pushed(walk_options_.first_parent || walk_options_.no_merges ||
-                      (path_limited() && (walk_options_.follow || walk_options_.full_history)));
+                      (path_limited() && walk_options_.full_history) ||
+                      (one_file() && !walk_options_.follow));
+}
+
+// Following renames, on by default, is for one file's log walked from HEAD
+// [spec 1.9.4]: other refs are set aside meanwhile, and All Branches is off.
+void log_window::apply_follow()
+{
+    const bool following = walk_options_.follow && one_file();
+    if (following && walk_options_.refs != walk_refs::head)
+    {
+        refs_before_follow_ = walk_options_.refs;
+        set_walk(walk_refs::head);
+    }
+    all_branches_->set_enabled(!following);
+}
+
+// A log of one file (not a folder), which renames can be followed for.
+bool log_window::one_file() const
+{
+    std::error_code ec;
+    return path_limited() &&
+           std::filesystem::is_regular_file(
+               rap::sys::path_from_utf8(repo_.workdir()) / rap::sys::path_from_utf8(rel_path_), ec);
 }
 
 rap::menu log_window::walk_menu()
@@ -1036,32 +1064,30 @@ rap::menu log_window::walk_menu()
             reload();
         };
     };
-    // Follow renames is for one file's log [spec 1.9.4]; it walks from HEAD
-    // alone, so All Branches and Show Whole Project are off meanwhile.
-    std::error_code ec;
-    const bool one_file =
-        path_limited() &&
-        std::filesystem::is_regular_file(
-            rap::sys::path_from_utf8(repo_.workdir()) / rap::sys::path_from_utf8(rel_path_), ec);
+    // Follow renames is for one file's log [spec 1.9.4] (apply_follow).
+    const bool file = one_file();
+    const bool following = file && walk_options_.follow;
     return {
         toggle(_("First Parent"), walk_options_.first_parent, flip(&walk_options::first_parent)),
         toggle(_("No _merges"), walk_options_.no_merges, flip(&walk_options::no_merges)),
         toggle(
-            _("_Follow renames"), one_file && walk_options_.follow,
-            [this]
+            _("_Follow renames"), following,
+            [this, following]
             {
-                walk_options_.follow = !walk_options_.follow;
-                if (walk_options_.follow) set_walk(walk_refs::head);
-                all_branches_->set_enabled(!walk_options_.follow);
-                whole_project_->set_enabled(!walk_options_.follow && !rel_path_.empty());
+                walk_options_.follow = !following;
+                if (!walk_options_.follow && refs_before_follow_)
+                {
+                    set_walk(*refs_before_follow_);
+                    refs_before_follow_.reset();
+                }
                 update_walk_button();
                 reload();
             },
-            one_file),
+            file),
         // Without history simplification: merges that left the path as one
         // side had it are shown too.
         toggle(_("Full history"), path_limited() && walk_options_.full_history,
-               flip(&walk_options::full_history), path_limited() && !walk_options_.follow),
+               flip(&walk_options::full_history), path_limited()),
         rap::menu_item::separator(),
         toggle(_("_Compressed Graph"), false, {}, false),
         toggle(_("Show la_beled commits only"), false, {}, false),
