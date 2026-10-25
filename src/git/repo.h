@@ -130,6 +130,8 @@ struct walk_options
     // has it (only commits that changed them, parents rewritten to join those
     // up); empty = the whole repository.
     std::vector<std::string> paths;
+    bool follow = false;        // with one file in paths: across its renames (git log --follow)
+    bool full_history = false;  // with paths: --full-history, no history simplification
 };
 
 class repo

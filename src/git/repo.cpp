@@ -347,7 +347,12 @@ std::expected<void, std::string> repo::walk(const walk_options& opts,
         // Limited to paths: git's history simplification, which libgit2
         // lacks. rev-list --parents gives each commit that changed them with
         // its parents rewritten to the nearest such, so the graph joins up.
+        // Following renames is git log's alone; its history of one file is
+        // a line, each commit's parent the one listed after it.
+        const bool follow = opts.follow && opts.paths.size() == 1;
         std::vector<std::string> args{"rev-list", "--parents"};
+        if (follow) args = {"log", "--follow", "--format=%H"};
+        if (opts.full_history && !follow) args.push_back("--full-history");
         if (opts.first_parent) args.push_back("--first-parent");
         if (many && !opts.tips.empty())
             for (const oid& tip : opts.tips) args.push_back(tip.hex());
@@ -365,6 +370,7 @@ std::expected<void, std::string> repo::walk(const walk_options& opts,
             run_git(workdir().empty() ? git_dir() : workdir(), args, git_output::stdout_only);
         // An empty repository has no HEAD: no commits, as below.
         if (!r.ok() && head_id()) return std::unexpected(r.output);
+        std::vector<std::vector<oid>> lines;
         for (size_t at = 0; at < r.output.size();)
         {
             size_t end = r.output.find('\n', at);
@@ -379,11 +385,19 @@ std::expected<void, std::string> repo::walk(const walk_options& opts,
                 if (git_oid_fromstrn(&o, line.data() + p, GIT_OID_SHA1_HEXSIZE) != 0) break;
                 ids.push_back(to_oid(&o));
             }
-            if (ids.empty()) continue;
-            const git_oid first = to_git(ids.front());
+            if (!ids.empty()) lines.push_back(std::move(ids));
+        }
+        for (size_t i = 0; i < lines.size(); ++i)
+        {
+            if (follow)
+            {
+                lines[i].resize(1);
+                if (i + 1 < lines.size()) lines[i].push_back(lines[i + 1].front());
+            }
+            const git_oid first = to_git(lines[i].front());
             owned_commit c;
             if (git_commit_lookup(&c.p, repo_, &first) == 0)
-                add(c, std::vector<oid>(ids.begin() + 1, ids.end()));
+                add(c, std::vector<oid>(lines[i].begin() + 1, lines[i].end()));
         }
     }
     else

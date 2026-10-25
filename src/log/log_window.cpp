@@ -384,6 +384,7 @@ void log_window::save_layout()
     st.set("log.refHistory." + repo_.workdir(), history);
     st.set("log.walk.firstParent", flag(walk_options_.first_parent));
     st.set("log.walk.noMerges", flag(walk_options_.no_merges));
+    st.set("log.walk.fullHistory", flag(walk_options_.full_history));
     st.set("log.view.labels", std::to_string(log_.labels()));
     st.set("log.view.unversioned", flag(show_unversioned_));
     st.set("log.filter.fields", std::to_string(filter_.fields));
@@ -438,7 +439,8 @@ void log_window::restore_layout()
                                : walk_refs::head);
     walk_options_.first_parent = flag("log.walk.firstParent", false);
     walk_options_.no_merges = flag("log.walk.noMerges", false);
-    walk_->set_pushed(walk_options_.first_parent || walk_options_.no_merges);
+    walk_options_.full_history = flag("log.walk.fullHistory", false);
+    update_walk_button();
     update_ref_button();
     log_.set_labels(unsigned(number("log.view.labels", label_all)) & label_all);
     show_unversioned_ = flag("log.view.unversioned", true);
@@ -1016,6 +1018,13 @@ void log_window::apply_filter()
 }
 
 // Walk Behavior [spec 1.9.4]; drawn pushed while any option is on.
+// Pushed while any walk option is on.
+void log_window::update_walk_button()
+{
+    walk_->set_pushed(walk_options_.first_parent || walk_options_.no_merges ||
+                      (path_limited() && (walk_options_.follow || walk_options_.full_history)));
+}
+
 rap::menu log_window::walk_menu()
 {
     auto flip = [this](bool walk_options::* field)
@@ -1023,16 +1032,36 @@ rap::menu log_window::walk_menu()
         return [this, field]
         {
             walk_options_.*field = !(walk_options_.*field);
-            walk_->set_pushed(walk_options_.first_parent || walk_options_.no_merges);
+            update_walk_button();
             reload();
         };
     };
+    // Follow renames is for one file's log [spec 1.9.4]; it walks from HEAD
+    // alone, so All Branches and Show Whole Project are off meanwhile.
+    std::error_code ec;
+    const bool one_file =
+        path_limited() &&
+        std::filesystem::is_regular_file(
+            rap::sys::path_from_utf8(repo_.workdir()) / rap::sys::path_from_utf8(rel_path_), ec);
     return {
         toggle(_("First Parent"), walk_options_.first_parent, flip(&walk_options::first_parent)),
         toggle(_("No _merges"), walk_options_.no_merges, flip(&walk_options::no_merges)),
-        // TODO: the rest of the walk options.
-        toggle(_("_Follow renames"), false, {}, false),
-        toggle(_("Full history"), false, {}, false),
+        toggle(
+            _("_Follow renames"), one_file && walk_options_.follow,
+            [this]
+            {
+                walk_options_.follow = !walk_options_.follow;
+                if (walk_options_.follow) set_walk(walk_refs::head);
+                all_branches_->set_enabled(!walk_options_.follow);
+                whole_project_->set_enabled(!walk_options_.follow && !rel_path_.empty());
+                update_walk_button();
+                reload();
+            },
+            one_file),
+        // Without history simplification: merges that left the path as one
+        // side had it are shown too.
+        toggle(_("Full history"), path_limited() && walk_options_.full_history,
+               flip(&walk_options::full_history), path_limited() && !walk_options_.follow),
         rap::menu_item::separator(),
         toggle(_("_Compressed Graph"), false, {}, false),
         toggle(_("Show la_beled commits only"), false, {}, false),

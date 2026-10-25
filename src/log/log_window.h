@@ -73,6 +73,7 @@ private:
     std::string title_text() const;
     bool path_limited() const;
     std::string repo_location() const;
+    void update_walk_button();
     void difftool(std::vector<std::string> revisions, std::vector<std::string> paths = {});
     void confirm_then_run(const std::string& question, const std::string& title,
                           std::vector<std::vector<std::string>> commands);
