@@ -508,54 +508,6 @@ uint8_t repo::actions(const oid& id) const
     return mask;
 }
 
-std::expected<std::vector<file_change>, std::string>
-repo::working_tree_changes(const std::atomic<bool>* stop) const
-{
-    owned_object head_tree;
-    // An unborn branch has no HEAD tree; diff against the empty tree then.
-    git_revparse_single(&head_tree.p, repo_, "HEAD^{tree}");
-
-    git_diff_options opts = GIT_DIFF_OPTIONS_INIT;
-    opts.flags = GIT_DIFF_INCLUDE_UNTRACKED;
-    // Called before each file comparison; non-zero aborts the diff.
-    opts.progress_cb = +[](const git_diff*, const char*, const char*, void* p) -> int
-    {
-        auto* stop = static_cast<const std::atomic<bool>*>(p);
-        return stop && *stop ? GIT_EUSER : 0;
-    };
-    opts.payload = const_cast<std::atomic<bool>*>(stop);
-    owned_diff diff;
-    if (git_diff_tree_to_workdir_with_index(&diff.p, repo_, reinterpret_cast<git_tree*>(head_tree.p),
-                                            &opts) != 0)
-        return std::unexpected(stop && *stop ? std::string("cancelled") : last_git_error());
-    git_diff_find_options find = GIT_DIFF_FIND_OPTIONS_INIT;
-    find.flags = GIT_DIFF_FIND_RENAMES;
-    git_diff_find_similar(diff.p, &find);
-
-    std::vector<file_change> out;
-    for (size_t i = 0, n = git_diff_num_deltas(diff.p); i < n; ++i)
-    {
-        if (stop && *stop) return std::unexpected("cancelled");
-        const git_diff_delta* d = git_diff_get_delta(diff.p, i);
-        file_change f;
-        f.path = d->new_file.path;
-        if (d->status == GIT_DELTA_RENAMED) f.old_path = d->old_file.path;
-        f.status = d->status == GIT_DELTA_UNTRACKED ? '?' : git_diff_status_char(d->status);
-        // Line counts read both sides of the file; untracked files and
-        // directories have nothing to count against.
-        owned_patch patch;
-        if (d->status != GIT_DELTA_UNTRACKED && git_patch_from_diff(&patch.p, diff.p, i) == 0 &&
-            patch.p)
-        {
-            size_t context;
-            git_patch_line_stats(&context, &f.added, &f.removed, patch.p);
-            f.binary = git_patch_get_delta(patch.p)->flags & GIT_DIFF_FLAG_BINARY;
-        }
-        out.push_back(std::move(f));
-    }
-    return out;
-}
-
 bool repo::is_ancestor(const oid& ancestor, const oid& descendant) const
 {
     git_oid a = to_git(ancestor), d = to_git(descendant);

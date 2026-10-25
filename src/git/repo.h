@@ -3,7 +3,6 @@
 #pragma once
 
 #include <array>
-#include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <expected>
@@ -191,11 +190,6 @@ public:
     bool is_ancestor(const oid& ancestor, const oid& descendant) const;
     // Cheap summary of changes() (no line counts): a mask of Action bits.
     uint8_t actions(const oid&) const;
-    // HEAD against the index and working tree. Untracked directories are
-    // listed as one entry each (not recursed: build trees can hold tens of
-    // thousands of files). `stop` aborts it from another thread.
-    std::expected<std::vector<file_change>, std::string>
-    working_tree_changes(const std::atomic<bool>* stop = nullptr) const;
 
     git_repository* raw() const { return repo_; }
 
