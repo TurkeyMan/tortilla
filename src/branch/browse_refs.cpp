@@ -269,14 +269,16 @@ void browse_refs::build()
                                 fill();
                             }),
                     label{}.bind(info_).stretch(),
-                    button{_("Current Branch")}.on_click(
-                        [this]
-                        {
-                            // The short name, or the hash when detached [spec 10.12].
-                            std::string b = current_branch(workdir_);
-                            finish(b.empty() || b == "HEAD" ? resolve(workdir_, "HEAD") : b);
-                        }),
-                    buttons{dialog_button{rap::dialog_role::ok, ""}.on_click([this] { ok(); }), cancel},
+                    // Current Branch in the dialog's own buttons, so each
+                    // platform places it with OK and Cancel.
+                    buttons{dialog_button{rap::dialog_role::none, _("Current Branch")}.on_click(
+                                [this]
+                                {
+                                    // The short name, or the hash when detached [spec 10.12].
+                                    std::string b = current_branch(workdir_);
+                                    finish(b.empty() || b == "HEAD" ? resolve(workdir_, "HEAD") : b);
+                                }),
+                            dialog_button{rap::dialog_role::ok, ""}.on_click([this] { ok(); }), cancel},
                 },
             }}}
             .size(130_ch, 30_lines),
