@@ -245,7 +245,9 @@ int main(int argc, char** argv)
               "filter: quoted phrase");
         check(ref_filter_matches("!zzz", row) && !ref_filter_matches("!ada", row), "filter: ! negates");
 
-        sh(git + "tag -a -m 'release one' rel1");
+        // The tagger is the committer identity, which the environment
+        // (makepkg sets one) takes over from the repository's.
+        sh("GIT_COMMITTER_NAME=Ada GIT_COMMITTER_EMAIL=ada@example.com " + git + "tag -a -m 'release one' rel1");
         sh(git + "config branch.main.description 'the trunk'");
         sh(git + "remote add origin /nowhere");  // the upstream maps through its fetch refspec
         sh(git + "branch gone-up");
