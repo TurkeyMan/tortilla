@@ -3658,3 +3658,485 @@ In Sync, the "In conflict" tab is also filled with only UNMERGED rows and activa
 - How TortoiseGitMerge behaves when the base file is empty (added-by-both). Only the file preparation was traced.
 - `DeleteConflictDlg`'s "Show log" button in a non-rebase merge uses `mineHash`, which `GetConflictTitles` sets only in the rebase branch. The log then probably opens with an empty revision; this was not verified.
 - The Help topics (`HIDD_RESOLVE_CONFLICT`, `HIDD_RESOLVESUBMODULECONFLICT`, `HIDD_SETTINGSPROGSMERGE`) were not examined beyond the manual text cited.
+
+## 10. Browse References (`CBrowseRefsDlg`, `IDD_BROWSE_REFS`)
+
+One resizable dialog. On the left is a tree of ref **folders** (`refs`, `heads`, `remotes/<remote>`, `tags`, and any other namespace, nested by `/` path segments). On the right is a list of the **refs** (leaves) under the selected folder. It runs in two modes:
+
+- **Browse mode** (`/command:refbrowse`) is a ref manager. Its context menus show logs, diff refs, switch, merge, create, rename and delete branches and tags, and set or unset upstreams.
+- **Picker mode** (`CBrowseRefsDlg::PickRef`) is the "Browse References" chooser that a dozen other dialogs use. It shows the same window, with picking added.
+
+Nothing in the list is owner-drawn. There is no bold current branch, no ahead/behind count and no icons. The dialog has no drag and drop.
+
+New citation keys (same commit as section 0):
+
+| Key | File |
+|---|---|
+| **BRD** | `src/TortoiseProc/BrowseRefsDlg.cpp` |
+| **BRH** | `src/TortoiseProc/BrowseRefsDlg.h` |
+| **BRDF** | `src/TortoiseProc/BrowseRefsDlgFilter.cpp` (the per-row filter predicate) |
+| **FH** | `src/TortoiseProc/FilterHelper.cpp` (search-string parser shared with other filter boxes) |
+| **GRRB** | `src/Git/GitRevRefBrowser.cpp` (loads every ref with its commit data) |
+| **LLU** | `src/TortoiseProc/LoglistUtils.cpp` (date formatting) |
+| **RCLC** | `src/TortoiseProc/ResizableColumnsListCtrl.h` (list base class: header menu, column persistence) |
+| **RBC** | `src/TortoiseProc/Commands/RefBrowseCommand.h` |
+
+`RC`, `POT`, `GIT`, `GIT.h`, `AU`, `CM`, `GLLB.h`, `LD`, `RD` and `CV` are as in sections 0 and 8. Other callers are cited as `File.cpp:line`. `StripRefName(r)` removes a leading `refs/heads/`, or failing that a leading `refs/`, and trims trailing whitespace [GIT:912-919]. So `refs/heads/x` becomes `x`, `refs/remotes/o/x` becomes `remotes/o/x` and `refs/tags/v1` becomes `tags/v1`. `FixBranchName` is as in section 8. `<wd>` is `g_Git.m_CurrentDir`.
+
+### 10.1 Window
+
+- Template: `IDD_BROWSE_REFS DIALOGEX 0,0,465,255`, caption "Browse references". Styles: minimize and maximize boxes, `WS_THICKFRAME` (resizable), `WS_EX_APPWINDOW`. [RC:1916-1920]
+- Actual title: `<repo root> - Browse references - TortoiseGit`, built with `CAppUtils::SetWindowTitle` from the caption (`DialogTitles` and compaction as in 5.3.1). Both modes use the same title. [BRD:330; AU:3554-3565]
+- Size and position are saved and restored (`EnableSaveRestore(L"BrowseRefs")`). The window is marked as not pinnable to the taskbar (`MarkWindowAsUnpinnable`). Dark theme follows the global theme. [BRD:283, 327-328]
+- Initial focus is the **list**. [BRD:342]
+- There is **no splitter**. The tree keeps its template width, and only the list widens.
+
+### 10.2 Control layout
+
+| Control | ID | Type / style | Caption | Rect (DLU) | Anchor [BRD:290-297, 318-320] |
+|---|---|---|---|---|---|
+| Filter label | `IDC_BROWSEREFS_STATIC_FILTER` | LTEXT | "Filter:" | 125,8,37,9 | top-left |
+| Filter box | `IDC_BROWSEREFS_EDIT_FILTER` | `CFilterEdit`, `ES_MULTILINE \| ES_AUTOHSCROLL \| ES_WANTRETURN`. It has an info (magnifier) icon `IDI_LOGFILTER` 19×19 and a cancel X (`IDI_CANCELNORMAL`/`IDI_CANCELPRESSED`, 14×14) [BRD:286-288] | cue text, see 10.6 | 164,7,146,12 | top-left to top-centre (grows by half the width change) |
+| Merge filter | `IDC_BROWSE_REFS_BRANCHFILTER` | drop-list combo | items "All", "Only merged (to HEAD)", "Only unmerged (to HEAD)"; "All" selected [BRD:337-340; RC:3621, 3952, 3953] | 317,7,141,13 | top-centre to top-right |
+| Ref tree | `IDC_TREE_REF` | SysTreeView32, `TVS_HASBUTTONS \| TVS_HASLINES \| TVS_SHOWSELALWAYS`, border, h-scroll. No `TVS_LINESATROOT`, no label editing, no icons | | 7,24,108,207 | top-left to bottom-left (height only) |
+| Ref list | `IDC_LIST_REF_LEAFS` | SysListView32 report, `LVS_SHOWSELALWAYS \| LVS_EDITLABELS`. Extended styles `LVS_EX_INFOTIP \| LVS_EX_DOUBLEBUFFER` [BRD:299], plus `LVS_EX_HEADERDRAGDROP` and, when `FullRowSelect` (default TRUE) is set, `LVS_EX_FULLROWSELECT` [RCLC:86-93]. Picker single mode adds `LVS_SINGLESEL` [BRD:334-335] | | 125,24,333,207 | top-left to bottom-right |
+| Nested refs | `IDC_INCLUDENESTEDREFS` | auto checkbox | "Show &nested refs" | 7,234,107,9 | bottom-left |
+| Info label | `IDC_INFOLABEL` | LTEXT, `SS_NOPREFIX`, `WS_EX_RIGHT` (right-aligned) | "Showing %1!d! ref(s), %2!d! ref(s) selected" [RC:5046] | 115,234,102,14 | bottom-left to bottom-right |
+| Current branch | `IDC_CURRENTBRANCH` | push button | "Current Branch" | 224,234,67,14 | bottom-right |
+| OK | `IDOK` | **default** push button | "OK" | 298,234,50,14 | bottom-right |
+| Cancel | `IDCANCEL` | push button | "Cancel" | 353,234,50,14 | bottom-right |
+| Help | `IDHELP` | push button | "Help" | 408,234,50,14 | bottom-right |
+
+[RC:1922-1932]
+
+- The info label shows the list's item count and selection count. It is updated after every refill and on every `LVN_ITEMCHANGED` state change. [BRD:612, 1469, 1734-1739]
+- All four buttons are visible in **both** modes. The code never hides "Current Branch" or OK, and never relabels anything. For their behaviour in browse mode see 10.12.
+
+### 10.3 Loading (`Refresh(selectRef)`) [BRD:432-511]
+
+`Refresh` runs at start-up and after every modifying action. It rebuilds everything from scratch:
+
+1. **Remotes.** `GetRemoteList(remotes)`. On failure: "Could not get a list of remotes." with the libgit2 error appended (`GetLibGit2LastErr`), error icon. [BRD:434-436]
+2. **What to reselect afterwards.**
+   - When an explicit `selectRef` is given and it is `HEAD`, it becomes `refs/heads/<current branch>`. The current branch is read from the `.git/HEAD` file without the hash fallback. When HEAD is detached, or the file cannot be read, it becomes just `refs/heads`. [BRD:438-446; GIT:921-974]
+   - With no argument, the selection is kept: the **first** selected list row's full ref name, or else the selected tree node's full name. [BRD:448-449, 397-430]
+3. The tree and list are cleared. A single root item labelled **`refs`** is inserted. [BRD:451-456]
+4. **Refs** come from `GitRevRefBrowser::GetGitRevRefMap(map, mergeFilterIndex, err, kindFilter)`. On failure: `"Get refs failed:" + err` (no space after the colon), OK and error icon. [BRD:458-474] The kind filter callback (picker kinds, 10.12) drops:
+   - `refs/heads/*` unless `gPickRef_Head`;
+   - `refs/tags/*` unless `gPickRef_Tag`;
+   - `refs/remotes/*` unless `gPickRef_Remote`;
+   - when the kind is exactly `gPickRef_Remote`, everything not under `refs/remotes/` (so no `refs/stash` and the like). [BRD:459-471]
+
+   Every other namespace (`refs/stash`, `refs/notes/*`, `refs/bisect/*`, …) is always kept.
+
+   The data comes from one of two implementations:
+   - **libgit2** (used when `GIT_CMD_FOREACHREF` is in the libgit2 mask, which it is by default [GIT.h:34], **and** the merge filter is "All") [GRRB:44-193]:
+     - It iterates all references. Symbolic refs (e.g. `refs/remotes/origin/HEAD`) are resolved, and the entry is stored under the symbolic name with the target's data. [GRRB:79-88]
+     - **Annotated tag**: object type `tag`. The hash is the **tag object's** hash. The subject is the first line of the tag message. Author and committer (name, date) are both the **tagger**. [GRRB:90-138]
+     - **Ref to a non-commit object** (tree, blob): only the hash and type are stored, and dates stay 0. [GRRB:140-153]
+     - **Commit**: the subject is the summary, plus author and committer name and date. Names are passed through `.mailmap`. [GRRB:154-168]
+     - **Local branch**: the description comes from `branch.<name>.description` in the local config [GIT:2286-2299], and the upstream from `git_branch_upstream_name`. [GRRB:170-182]
+   - **git.exe** (otherwise, i.e. merge filter "Only merged"/"Only unmerged" or libgit2 disabled) [GRRB:195-265]:
+     - `git.exe for-each-ref [--merged HEAD | --no-merged HEAD] --format="%(refname)%04 %(objectname)%04 %(objecttype)%04 %(upstream)%04 %(subject)%04 %(authorname)%04 %(authoremail)%04 %(authordate:raw)%04 %(committername)%04 %(committeremail)%04 %(committerdate:raw)%04%(creator)%04 %(creatordate:raw)%03"`.
+     - When the author name is empty (annotated tag), author and committer are taken from `%(creator)`/`%(creatordate)`.
+     - `.mailmap` is applied, and descriptions are added for `refs/heads/*`.
+     - The upstream is `%(upstream)`, which git emits only for branches that have one.
+   - The merge filter therefore applies to **all** refs (tags and stash too), and compares against HEAD ("merged" means reachable from HEAD).
+5. **Remote-tracking branch list.** `GetBranchList(BRANCH_REMOTE)`, sorted. It is used only for the "gone" test. On failure: "Loading remote tracking branches failed." [BRD:477-480]
+6. **Tree building.** For each ref (the `std::map` iterates in ordinal order of the full name), the path after `refs/` is split at `/`. Every non-final segment becomes a tree folder, inserted under its parent at the end, so folders appear in first-seen order, which is ordinal order. The final segment is a **leaf**. Leaves never appear in the tree; they are list rows. [BRD:483-501, 552-584, 346-370]
+
+   Per leaf it stores:
+   - hash (40 hex);
+   - **upstream**: `refs/` and then `remotes/` stripped, e.g. `origin/master`. When the stripped `remotes/<…>` name is not in the remote-branch list, the upstream becomes **`(gone: origin/master)`**. An upstream that is a *local* branch (`branch.x.remote = .`) also shows as `(gone: heads/foo)`, because it is never in the remote list (derived from code);
+   - subject, author name and date, committer name and date, description, object type.
+
+   [BRD:488-500]
+7. **Expansion.** Only the root `refs` is expanded (`TVE_EXPAND`). Every other folder starts collapsed, except the ancestors that `Select` makes visible. [BRD:503-504]
+8. **Reselect.** `SelectRef(selectRef, exact=true)`, and if that fails `SelectRef(selectRef, exact=false)`. When there was nothing to select and the map is empty, the root is selected. [BRD:506-510] `SelectRef` [BRD:513-550]:
+   - In non-exact mode the name is first expanded by `FindLeaf`: a depth-first search, in map order, for the first leaf whose full name **ends with** the given string, where the given string also ends with the leaf's own segment name. This is a plain suffix match, not aligned to `/` segments. `master` therefore finds `refs/heads/master` before `refs/remotes/origin/master`. [BRD:372-395, 844-850]
+   - Names not starting with `refs` are rejected. A range like `a..b` (from the Log) or a hash therefore selects **nothing**: no tree item is selected and the list stays empty.
+   - It then walks the folder path. When the walk ends on a **folder** (or on an unknown path, in which case it stops at the deepest existing folder), that folder is selected. When it ends on a **leaf**, the leaf's parent folder is selected, which fills the list (10.5). The matching row is then selected and scrolled into view.
+   - So `HEAD` on branch `feature/x` selects the folder `heads/feature` and the row `x`. On a detached HEAD the `heads` folder is selected with no row.
+
+Refresh keeps only the first selected row. Multi-selection, scroll position and folder expansion are lost.
+
+### 10.4 The tree
+
+- **Structure**: the root `refs`, then one node per path segment that has children, labelled with just that segment. A typical repo shows `refs` › `heads`, `remotes` › `origin`, `tags`. Nested branch folders (`heads/feature`) and other namespaces (`notes`, `bisect`, `pull/123` from forges, …) appear the same way. `refs/stash` is a **leaf directly under the root**, so it is listed only when `refs` itself is selected. [BRD:552-584]
+- **Selecting a node** (`TVN_SELCHANGED`) refills the list for that node (10.5). [BRD:587-593]
+- Nodes are not sorted by the control. Their order is the first-seen order from the ordinal-sorted ref map, so `heads` < `remotes` < `tags` and upper case sorts before lower case.
+- Right-clicking a node first **selects** it, then shows the tree menu (10.7.4). [BRD:859-870]
+
+### 10.5 The list
+
+**Filling** (`FillListCtrlForTreeNode`) [BRD:595-659]:
+
+- It lists the leaves of the selected node, filtered by the filter box (10.6).
+- With **"Show &nested refs"** checked, it also lists the leaves of all descendant folders, recursively. With it unchecked, only direct leaves are listed. [BRD:640-650]
+- The **Name** text is the path relative to the selected node. Examples: at `heads`, `master` and `feature/x` (nested). At the root, `heads/master`, `remotes/origin/HEAD`, `stash`. [BRD:619, 644]
+- The filter is applied to that relative text.
+- After each fill, the list is re-sorted by the current sort column and the header arrow is set. [BRD:652-658]
+- The **"Tracked branch"** and **"Description"** columns are **force-shown when the selected node is `refs/heads` or below**, and force-hidden otherwise. This overrides the user's header-menu choice, and since visibility is persisted it also changes the stored setting. [BRD:609-610; CM:273-293]
+- Column widths are then re-applied (`AdjustColumnWidths`). [BRD:611; RCLC:100-108]
+
+**Columns** (all visible by default, `ColumnManager` container `BrowseRefs`, column version 7) [BRD:301-315; BRH:139-150]:
+
+| # | Header | Shows | Default width |
+|---|---|---|---|
+| 0 | "Branch Name" [RC:4820] (also for tags and other refs) | relative ref name (see above) | auto (`LVSCW_AUTOSIZE_USEHEADER`) |
+| 1 | "Tracked branch" [RC:3927] | upstream as `origin/master`, `(gone: …)`, or empty. Visible only under `refs/heads` | auto |
+| 2 | "Last Author Date" [RC:4027] | author date (tagger date for annotated tags). Empty when 0 | auto |
+| 3 | "Last Commit" [RC:4819] | subject (tag message first line for annotated tags) | 300 px, DPI-scaled |
+| 4 | "Last Author" [RC:4915] | author name (mailmapped) | auto |
+| 5 | "Date Last Commit" [RC:4821] | committer date. Empty when 0 | auto |
+| 6 | "Last Committer" [RC:4026] | committer name | auto |
+| 7 | "SHA-1" [RC:4739] | full 40-hex object hash. For annotated tags it is the **tag object** hash, not the commit's | auto |
+| 8 | "Description" [RC:4945] | `branch.<n>.description`, with `\n` replaced by spaces. Visible only under `refs/heads` | 80 px, DPI-scaled |
+
+[BRD:622-635]
+
+- "Auto" (stored width 0) means the larger of the header text width + 20 px and the widest cell text + 14 px. Column 0 instead uses `LVSCW_AUTOSIZE_USEHEADER`. [CM:240-264]
+- Column order, widths and visibility are stored under `HKCU\Software\TortoiseGit\StatusColumns\BrowseRefs` (`…Version`, `…_Width`, `…_Order` and the visibility DWORD). They are saved on destroy. [CM:113-176; RCLC:33-37, 109-120]
+- **Header right-click** opens the shared column menu ("Reset columns" plus one checkable item per column, as in 1.4). [RCLC:56-67; CM:561-633]
+- Columns can be reordered by dragging. Hidden columns cannot be widened by dragging. [RCLC:70-80]
+
+**Date text**: `CLoglistUtils::FormatDateAndTime(t, fmt, includeTime=true, relative)`, where `fmt` is `DATE_SHORTDATE` unless `LogDateFormat` is 0 (then `DATE_LONGDATE`), and `relative` is `RelativeTimes` (default FALSE). Both are read once in the constructor. [BRD:168-176, 627-628]
+
+- **Absolute** with `UseSystemLocaleForDates` (default TRUE): `GetDateFormat(LOCALE_USER_DEFAULT, fmt)` + space + `GetTimeFormat(LOCALE_USER_DEFAULT, 0)`. Otherwise the fixed form `%Y-%m-%d %H:%M:%S`. [LLU:45-82]
+- **Relative**: the difference to now is formatted with the first rule that applies [LLU:100-130]:
+  - at least 3×365 days: years (days/365);
+  - at least 60 days: months (days/30);
+  - at least 14 days: weeks (days/7);
+  - at least 2 days: days;
+  - at least 2 hours: hours;
+  - at least 2 minutes: minutes;
+  - otherwise seconds.
+
+  Count 1 uses the singular string. The strings are verbatim, including inconsistent case: "%1!d! Year ago"/"%1!d! Years ago", "… Month(s) ago", "… Week(s) ago", "… Day(s) ago", "… Hour(s) ago", "%1!d! Minute ago"/"%1!d! minutes ago", "… Second(s) ago". [POT:73-133, 158] Relative dates in this list have **no** absolute-date tooltip.
+
+**Sorting** [BRD:97-153, 1430-1447]:
+
+- The defaults are column 0, ascending. The column and direction are restored from `RefBrowserSortCol` (default 0) and `RefBrowserSortDesc` (default FALSE), and written back in the destructor. [BRD:162-163, 180-187]
+- Clicking a header sorts by that column. Clicking the **same** column toggles the direction, and a **new** column starts ascending. The header shows `HDF_SORTUP`/`HDF_SORTDOWN`. The column is identified by its logical index, so dragging columns does not change it.
+- Comparison:
+  - **Name** compares the **full** ref name, not the displayed text. Name, upstream, subject, author, committer and description use `StrCmpLogicalW` (case-insensitive, numbers compared numerically). When the Explorer policy `NoStrCmpLogical` is set in HKCU or HKLM, `StrCmpI` is used instead.
+  - Dates compare numerically.
+  - The hash uses `CompareNoCase`.
+  - Descending negates the result.
+
+**Selection**:
+
+- In browse mode and multi-pick mode the list is multi-select. Single-pick mode adds `LVS_SINGLESEL`. [BRD:334-335]
+- The dialog remembers `m_sLastSelected`, the full name of the row whose `LVN_ITEMCHANGED` reported `uNewState == LVIS_SELECTED` exactly. It is used to order the two-ref ranges (10.7.2). [BRD:1457-1470]
+
+### 10.6 Filter box, merge filter and nested refs
+
+- **Cue text**: three spaces, then "Filter by" [RC:4404], a space, and the selected fields joined by ", " in the order "Refname" [RC:3751], "Subject" [RC:4752], "Authors" [RC:4406], "SHA-1" [RC:4408]. The default is `   Filter by Refname, Subject, Authors, SHA-1`. [BRD:1693-1725]
+- **Options menu**: clicking the magnifier icon opens it at the icon's bottom-left. The items are checkable toggles:
+  - "Refname" (`LOGFILTER_REFNAME` 0x80);
+  - "Subject" (0x40);
+  - "Authors" (0x04);
+  - "SHA-1" (0x08);
+  - *separator*;
+  - "Toggle filters" [RC:5041], which sets the selection to `~sel & 0xFFFF`.
+
+  Choosing an item updates the cue and restarts the 1-second timer. There is **no** regex and no case-sensitivity option. The selection starts as `LOGFILTER_ALL` (0xFFFF) every time the dialog opens and is **not persisted**. [BRD:165, 1641-1683; GLLB.h:58-71] "Toggle filters" with everything on turns every field off. Then any non-empty filter text matches **nothing**, unless it starts with `!` (derived: the match text is empty and `Match` returns false on empty text [FH:27-28]).
+- **What is matched** (`CBrowseRefsDlgFilter`): the selected fields are concatenated with `\n` and searched. [BRDF:24-56] The fields are:
+  - the **relative** name as displayed;
+  - the subject;
+  - the **author** name (not the committer);
+  - the full hash.
+
+  The filter is always built with regex **off** and case-**insensitive** [BRD:606]. It uses the same simple syntax as the Log's search box (1.9.2) [FH:205-293]:
+  - space-separated terms must all occur;
+  - `-term` excludes;
+  - `+term` starts an OR alternative;
+  - `"…"` quotes, with `""` as a literal quote;
+  - a leading `!` negates the whole result.
+- **Timing**: every text change (re)starts a **1000 ms** timer, and when it expires the list is refilled for the selected node. The X button (or Esc while the box has focus and is non-empty) clears the text and refills immediately. [BRD:1625-1639, 1685-1691, 1416-1421]
+- **Interaction with the tree**: the filter only filters the **list rows** of the selected node (and its nested folders when "Show nested refs" is on). The tree is never filtered or expanded by it. To search all refs, select `refs` with nested refs on.
+- **Merge filter combo**: a change runs `Refresh()`, which re-queries git with `--merged HEAD`/`--no-merged HEAD` (10.3, step 4). It is not persisted. [BRD:1762-1765]
+- **"Show &nested refs"**: the default comes from `RefBrowserIncludeNestedRefs` (default TRUE). Clicking it writes the value back immediately and runs `Refresh()`. [BRD:178, 322-323, 1741-1746]
+
+### 10.7 Context menus
+
+The list's menu comes from the list itself: `SetListContextMenuHandler`, invoked when `WM_CONTEXTMENU` comes from the list body; the header gets the column menu. The tree's menu comes from the dialog's `OnContextMenu` when the source is the tree. Both build the menu in `ShowContextMenu(point, treeNode, selectedLeaves)`. [BRD:313, 853-887, 910-1136; RCLC:61-67]
+
+The menu is shown at the `WM_CONTEXTMENU` point unchanged. A keyboard-invoked menu (Shift+F10, Apps key) passes (-1,-1), and the code does not translate that, so where the menu then appears was not established.
+
+Right-clicking a row uses the list's normal selection behaviour. Right-clicking empty list space normally clears the selection, which gives the **tree-node menu** of the currently selected folder (10.7.4).
+
+`AreAllFrom(kind)` below means every selected row's full name starts with `refs/remotes/`, `refs/heads/` or `refs/tags/`. "Commit" means the ref's object type is `commit`; annotated tags (type `tag`) and refs to trees are **not** commits. "WC" means the repository is not bare. [BRD:332, 927, 1355-1361]
+
+#### 10.7.1 Exactly one row selected [BRD:918-1019, 1032-1073, 1132-1134]
+
+| # | Label | Shown when | Icon |
+|---|---|---|---|
+| 1 | "Select" [RC:3744] then *separator* | picker mode (`m_bWantPick`) | — |
+| 2 | "Show &log" [POT:8440] | commit | `IDI_LOG` |
+| 3 | "&Browse repository" [POT:383] | always | `IDI_REPOBROWSE` |
+| 4 | "Show &RefLog" [POT:8424] | local or remote branch | `IDI_LOG` |
+| — | *separator* + "Compare with &working tree" [POT:2815] | WC and commit | `IDI_DIFF` |
+| — | *separator* | always | |
+| 5 | "Fetch from "<remote>"" (`IDS_PROC_BROWSEREFS_FETCHFROM` "Fetch from ""%s""" [RC:3721]) then *separator* | remote branch whose name starts with a configured remote + `/` | `IDI_UPDATE` |
+| 6 | "&Merge to "<current branch>"..." [POT:833] | WC, commit, and the row is not `refs/heads/<current branch>`. When HEAD is detached the label reads `&Merge to "(no branch)"...` (`GetCurrentBranch()` without fallback) [GIT:835-843] | `IDI_MERGE` |
+| 7 | "Sw&itch/Checkout to this..." [POT:9070] then *separator* | WC and commit | `IDI_SWITCH` |
+| 8 | "Create &Branch..." [POT:3154] | remote branch | `IDI_COPY` |
+| 9 | "Edit description" [RC:4946] | local branch and commit | `IDI_RENAME` |
+| 10 | "Rename" [RC:3735] | local branch | `IDI_RENAME` |
+| — | *separator* (only if 8–10 added anything) | | |
+| 11 | "Unset tracked branch" [RC:4453] | WC, commit, local branch, and the upstream text is non-empty (this includes `(gone: …)`) | none |
+| 12 | "Select tracked branch" [RC:4454] | WC, commit, local branch | none |
+| — | *separator* (if anything precedes it in this block) | | |
+| 13 | "Delete remote branch" [RC:3782] / "Delete branch" [RC:3792] / "Delete tag" [RC:3762] | row is a remote branch / local branch / tag | `IDI_DELETE` |
+| — | *separator* (if 13 was added) | | |
+| 14 | "Copy ref names" [RC:3893] | always | `IDI_COPYCLIP` |
+
+- The **default (bold) item** is the first item: "Select" in picker mode, else "Show &log" for commits, else "&Browse repository". [BRD:958]
+- `refs/stash`, notes and other namespaces get rows 2, 3, the compare/merge/switch block (if WC and commit) and "Copy ref names" only. They cannot be deleted from here.
+
+Example orders:
+
+- **Local branch** (WC, not current): Show log, Browse repository, Show RefLog, —, Compare with working tree, —, Merge to "main"..., Switch/Checkout to this..., —, Edit description, Rename, —, [Unset tracked branch], Select tracked branch, —, Delete branch, —, Copy ref names.
+- **Remote branch**: Show log, Browse repository, Show RefLog, —, Compare with working tree, —, Fetch from "origin", —, Merge to "main"..., Switch/Checkout to this..., —, Create Branch..., —, Delete remote branch, —, Copy ref names.
+- **Annotated tag**: Browse repository, —, Delete tag, —, Copy ref names.
+
+#### 10.7.2 Exactly two rows selected [BRD:1020-1030]
+
+Let **L** = `m_sLastSelected` and **O** = the other row. `GetTwoSelectedRefs(sel, L, sep)` returns `Strip(sel[1]) + sep + Strip(L)` when `sel[0] == L`, and otherwise `Strip(sel[0]) + sep + Strip(L)`. When L is stale (neither row), the result names `sel[0]` and the stale ref. [BRD:889-897]
+
+1. "Compare selected refs" [RC:3727] (`IDI_DIFF`)
+2. "Show changes as &unified diff" [POT:8516] (`IDI_DIFF`)
+3. "Show log of O..L" (`IDS_SHOWLOG_OF` "Show log of %s" [POT:8604]) (`IDI_LOG`)
+4. "Show log of O...L" (`IDI_LOG`)
+5. *separator* + "Delete %d remote branches" [RC:3785] / "Delete %d branches" [RC:3801] / "Delete %d tags" [RC:4881], when both rows are the same kind
+6. *separator* + "Copy ref names"
+
+There is no "Select" item and no default item.
+
+#### 10.7.3 Three or more rows
+
+Only the delete item (same rules as 10.7.2 item 5, with the count), when all rows are the same kind, and then "Copy ref names" (with a separator before it when the delete item is present). [BRD:1032-1073, 1132-1134]
+
+#### 10.7.4 Tree node, or empty list space (no rows selected) [BRD:1076-1134]
+
+The rules use the node's full name `N` (`IsFrom` = equal to, or under, the prefix):
+
+| Node | Items, in order |
+|---|---|
+| `N` under `refs/remotes` (including `refs/remotes` itself) | "Manage Remotes" [RC:3736] (`IDI_SETTINGS`). Then, if `N` names a configured remote (`refs/remotes/<remote>` or anything below it): "Fetch from "<remote>"" (`IDI_UPDATE`) and "Delete remote tags..." [RC:4943] (`IDI_DELETE`) |
+| `N` under `refs/heads` | "Create &Branch..." [POT:3154] (`IDI_COPY`) |
+| `N` under `refs/tags` | "Create &Tag..." [POT:3170] (`IDI_TAG`), "Delete all tags" [RC:4972] (`IDI_DELETE`). If any remotes exist: *separator* and one "Delete remote tags on "<remote>"..." [RC:5053] per remote, in `GetRemoteList` order (sorted logically when libgit2 is used [GIT:1955-1975]) |
+| every node, last | "Copy ref names", with no separator before it after the groups above |
+
+- The root `refs` and other namespaces (`notes`, …) get only "Copy ref names".
+- Right-clicking blank tree space (no hit) gives a menu with only "Copy ref names". With nothing selected it copies an empty string.
+
+### 10.8 What each command does [BRD:1136-1352]
+
+| Command | Action | Refresh afterwards |
+|---|---|---|
+| Select | `EndDialog(IDOK)`, so the result is the current selection (10.12) | — |
+| Show log | `TortoiseGitProc /command:log /path:"<wd>" /range:<FixBranchName(full ref)>` (separate process, value escaped with `CCmdLineParser::EscapeValue`) | no |
+| Show log of A..B / A...B | `/command:log /path:"<wd>" /range:<A..B>` or `<A...B>` (stripped names as in the label) | no |
+| Browse repository | `/command:repobrowser /path:"<wd>" /rev:<full ref>` | no |
+| Show RefLog | modal `CRefLogDlg` with `m_CurrentBranch = <full ref>` | no |
+| Compare with working tree | `/command:showcompare /path:"<wd>" /revision1:<full ref> /revision2:<working-copy ref>` (`GitRev::GetWorkingCopyRef()`), plus ` /alternative` when **Shift** is held | no |
+| Compare selected refs | modal `CFileDiffDlg` with `SetDiff(nullptr, sel[0] full ref, sel[1] full ref)`. The order is the list order, **not** O/L | no |
+| Show changes as unified diff | `CAppUtils::StartShowUnifiedDiff(…, sel[0] hash, …, sel[1] hash, alternative = Shift held)`. This writes a temp read-only unified diff and opens the unified diff viewer [AU:913-940] | no |
+| Fetch from "<remote>" | `CAppUtils::Fetch(hwnd, remote)`: the Fetch dialog (7.2) with that remote preselected [AU:2725-2735] | **yes** (whatever the dialog returned) |
+| Merge to … | `CAppUtils::Merge(hwnd, &fullRef)` (8.4) | **no** |
+| Switch/Checkout to this... | `CAppUtils::Switch(hwnd, fullRef)` (8.3) | **no** |
+| Create Branch... (remote row) | `CAppUtils::CreateBranchTag(hwnd, isTag=false, &<row's hash>)`. The dialog is preselected with the **hash** (Commit radio), not with the remote branch, so tracking is not prefilled (derived from 8.1 `SelectRef`) | yes |
+| Create Branch... (heads node) | `CreateBranchTag(hwnd, false, nullptr)` | yes |
+| Create Tag... (tags node) | `CreateBranchTag(hwnd, true)` | yes |
+| Edit description | modal `CInputDlg`: title and hint "Edit description", text = current description, log-message width (`m_bUseLogWidth`). On OK: `UpdateBranchDescription`, which strips `\r`, trims, and unsets `branch.<n>.description` when empty or sets it otherwise [AU:1107-1122] | yes, on OK |
+| Rename | starts inline label editing of the selected row (10.10) | — |
+| Unset tracked branch | `UnsetConfigValue("branch.<n>.remote")` and `UnsetConfigValue("branch.<n>.merge")` (local config). Errors are ignored | yes |
+| Select tracked branch | nested `PickRef(false, "", gPickRef_Remote, false)` (remote branches only, single). If the result is empty, does not start with `refs/remotes/`, or cannot be split into a configured remote and a branch, nothing happens. Otherwise runs `git.exe branch --set-upstream-to=<remote>/<branch> -- <n>`. Failure shows `<git output>` + `"\n\nThis is usually caused when the setting \"remote.<remote>.fetch\" does not include the desired branch."` with an error icon; an illegal parameter shows its cause | yes, on success |
+| Delete … / Delete all tags | 10.9 | yes, always (also after "No") |
+| Manage Remotes | modal `CSinglePropSheetDlg` titled "Git Remote Settings" [RC:4882] holding the `CSettingGitRemote` page | yes |
+| Delete remote tags... / on "<remote>"... | modal `CDeleteRemoteTagDlg` with `m_sRemote` = that remote. The remote is passed as an index in the menu ID's high word (`cmd \| idx<<16`) | no |
+| Copy ref names | the selected rows' `StripRefName(full ref)` joined with `\r\n`, put on the clipboard (`WriteAsciiStringToClipboard`) | no |
+
+`eCmd_AddRemote` (opens `CAddRemoteDlg`, then refreshes) is handled but **never added to any menu**, so it is dead code. [BRD:1222-1227]
+
+### 10.9 Deleting refs
+
+**Confirmation** (`ConfirmDeleteRef`): the kind is taken from the **first** row; the menu guarantees all rows are the same kind. The message box has title "TortoiseGit" and **Yes/No** buttons; "Yes" is the default. [BRD:661-724]
+
+| Case | Text | Icon |
+|---|---|---|
+| one local branch | `Do you really want to delete "<name>"?` [RC:4537], where `<name>` has `refs/heads/` removed. If the branch is **not** an ancestor of HEAD (`IsFastForward(ref, "HEAD")` false), `\r\n\r\n` + "This branch is not fully merged into HEAD." [RC:4887-4888] is appended | question, or **warning** when unmerged |
+| one remote branch | same, with `<name>` = `<remote>/<branch>` (`refs/remotes/` removed), the unmerged line when applicable, then `\r\n\r\n` + "This action will remove the branches on the remote." [RC:4891-4892] | warning |
+| several branches | `Do you really want to permanently delete the %d selected refs? It can NOT be recovered!` [RC:4528] + `\r\n\r\n` + "It has not been checked if these branches have been fully merged into HEAD." [RC:4889-4890], + the remote line when they are remote | warning |
+| one tag | `Do you really want to delete "<tag>"?` | question |
+| several tags | the "%d selected refs" text alone | question |
+
+**Execution** (`DoDeleteRefs`/`DoDeleteRef`) [BRD:726-842]:
+
+- **All rows are remote branches.** They are grouped by remote. Rows whose name cannot be split into a configured remote + branch are silently skipped. For each remote:
+  1. Pageant is started with the remote's key when `GIT_SSH` is plink (7.5.4).
+  2. A progress window (`CSysProgressDlg`, no bar) shows "TortoiseGit" / "Deleting remote refs..." [RC:3851] / "Please wait..." [RC:3665].
+  3. It runs `DeleteRemoteRefs(remote, ["refs/heads/<branch>", …])`, which is `git.exe push -- <remote> :refs/heads/<b1> :refs/heads/<b2> …`, possibly split into several invocations by `CMassiveGitTaskBase` (libgit2 push only when `GIT_CMD_PUSH` is in the mask, which it is not by default). [GIT:2089-2133]
+  4. On failure: "Could not delete remote refs." + git error, OK and error icon, and it stops.
+
+  The local remote-tracking ref disappears through git's normal push bookkeeping (not done explicitly here). The single-row path is the same, with the text "Could not delete remote ref." [BRD:796-824]
+- **Local branches and tags.** Each ref is deleted with `DeleteRef(full ref)` and the loop stops at the first failure.
+  - **Local branches are force-deleted.** libgit2 (default, `GIT_CMD_DELETETAGBRANCH` in the mask) uses `git_branch_delete`/`git_tag_delete`. Otherwise git.exe runs `git.exe branch -D -- <n>` or `git.exe tag -d -- <n>`. [GIT:3369-3420]
+  - On failure: "Could not delete reference." + error, OK and error icon. [BRD:825-840]
+  - This is why the confirmation warns about unmerged branches.
+- **"Delete all tags"** (tag folder menu) first selects **every row currently in the list**, then confirms and deletes them like a multi-selection. That set depends on the filter text and the nested-refs checkbox, and is limited to the selected folder (`tags/sub` deletes only that subtree). [BRD:1251-1262] With an empty list, `ConfirmDeleteRef` is reached with no rows: it asserts and then reads `leafs[0]`, which is undefined behaviour (quirk; Tortilla should disable the item or do nothing).
+- After any delete command, `Refresh()` runs whether the user confirmed or not. It reselects the first selected row, or its folder when the row is gone (10.3, step 8).
+
+### 10.10 Inline rename [BRD:1551-1623, 1215-1221, 1381-1390]
+
+- **Starting**: "Rename" in the menu, or **F2** with the list focused, calls `EditLabel` on the first selected row. A slow second click also starts editing (`LVS_EDITLABELS`, standard ListView behaviour).
+- `LVN_BEGINLABELEDIT` **cancels silently** unless the row is under `refs/heads/`. The edit starts with the displayed (relative) name.
+- `LVN_ENDLABELEDIT`:
+  1. Esc or cancel (null text) does nothing.
+  2. A non-branch row shows "At the moment, you can only rename branches." [RC:4883-4884] (title "TortoiseGit", OK, error icon). Since step 1 already refuses those rows, this message is effectively unreachable.
+  3. The new full name is `<selected folder's full name> + "/" + typed text`, so the text is **relative to the selected folder**. With nested refs on, the user can type `feature/y` at `heads` or move a branch between folders.
+  4. When the result does not start with `refs/heads/`, it shows "You cannot change the type of this ref with a rename." [RC:4885-4886]. That happens only when the selected folder is the root `refs` and the text does not start with `heads/`.
+  5. It runs `git.exe branch -m <old short name> -- <new short name>`. A failure (including an empty name) shows git's output in an OK/error box. An illegal parameter shows its cause.
+  6. The edit result is always rejected (`*pResult = FALSE`). The view is rebuilt with `Refresh(selectedTreeRef)`.
+- **Quirk**: the code meant to keep the tree selection tests `if (!hTree)` (inverted), so `selectedTreeRef` is always empty in practice. `Refresh` then falls back to the selected row's **old** full name, which no longer exists, so the old name's folder ends up selected with no row selected. (If no tree item were selected, the inverted branch would dereference a null node.) [BRD:1566-1572, 1605]
+
+### 10.11 Keyboard and mouse [BRD:1363-1428, 1472-1494]
+
+| Input | Effect |
+|---|---|
+| **F5** (anywhere in the dialog) | `Refresh()` |
+| **F2** (list focused) | rename the first selected row (10.10) |
+| **Ctrl+E** (anywhere) | focus the filter box and select its text |
+| **Ctrl+A** (list focused) | select every row (also in single-pick mode; whether `LVS_SINGLESEL` then keeps only one selected was not established) |
+| **Esc** | in the filter box with text: clear the filter. Otherwise the standard dialog cancel |
+| **Enter** | the default button is OK (10.12). A commented-out Ctrl+Enter handler exists [BRD:1369-1380]. The filter box has `ES_MULTILINE \| ES_WANTRETURN`; whether `CFilterEdit` swallows Enter there was not established |
+| **Delete** | **no handler**. Deleting is only possible from the context menu |
+| **Double-click a row** | picker mode: `EndDialog(IDOK)` (pick the selection). Browse mode: when the first selected row is a **tree** object, `/command:repobrowser /path:"<wd>" /rev:<ref>`; otherwise `/command:log /path:"<wd>" /range:<FixBranchName(GetSelectedRef(true,false))>`, where the ref is the full name for one row, or the space-separated short list for several (10.12). Nothing happens without a selection |
+| Click header | sort (10.5) |
+| Right-click | context menus (10.7) |
+
+Touch and pen gestures are enabled on both controls (`CGestureEnabledControlTmpl`); what that wrapper does was not examined. [BRH:193-194]
+
+### 10.12 Picker mode, OK, Current Branch, and callers
+
+**API** [BRH:28-32, 247-248; BRD:1496-1549]:
+
+```cpp
+const int gPickRef_Head = 1, gPickRef_Tag = 2, gPickRef_Remote = 4;
+const int gPickRef_All = 7, gPickRef_NoTag = gPickRef_All & ~gPickRef_Tag;
+static CString PickRef(bool returnAsHash = false, CString initialRef = CString(),
+                       int pickRef_Kind = gPickRef_All, bool pickMultipleRefs = false,
+                       bool showRangeOptionWithTwoRefs = true);
+static bool PickRefForCombo(CHistoryCombo& combo, int pickRef_Kind = gPickRef_All,
+                            int useShortName = gPickRef_Head);
+```
+
+- `returnAsHash` is **ignored** (the parameter is unnamed).
+- An empty `initialRef` becomes `HEAD`. The initial ref is applied by `Refresh` (10.3, step 8). A Log range like `a..b` selects nothing.
+- `pickRef_Kind` filters which refs are loaded (10.3, step 4).
+- With `pickMultipleRefs` false the list is single-select (`m_bPickOne`).
+- The window, title and buttons are **identical** to browse mode. Picker mode differs only in:
+  - the "Select" menu item (single row);
+  - double-click picks;
+  - the OK range menu.
+
+**Result**: `PickRef` returns `""` unless the dialog ends with `IDOK`. Otherwise it returns `m_pickedRef`, which is set either explicitly (range menu, Current Branch) or in `OnDestroy` from `GetSelectedRef(onlyIfLeaf=true)` [BRD:1449-1455, 397-430]:
+
+- one row selected: its **full** ref name, e.g. `refs/heads/master`, `refs/remotes/origin/x`, `refs/tags/v1`, `refs/stash`;
+- several rows selected: their names with a leading `refs/` and then a leading `heads/` removed, joined by **single spaces**, in list order, e.g. `master remotes/origin/x tags/v1`;
+- no row selected: `""`, which callers treat as cancel. Selecting only a tree folder never yields a result.
+
+**OK button** (`OnBnClickedOk`) [BRD:223-278]:
+
+- It closes immediately (`OnOK`) unless all of these hold: multi-pick, `showRangeOptionWithTwoRefs`, and exactly **two** rows selected.
+- In that case it pops up a menu attached to the OK button (`TPM_VERTICAL`, excluding the button's rectangle). With rows X (upper) and Y (lower) it has four items, all with `IDI_LOG`:
+  1. `X Y` (**default**, bold): returns `X Y`;
+  2. `Y..X`;
+  3. `X..Y`;
+  4. `X...Y`.
+
+  Each item returns its own text; for items 2 to 4 the names are `StripRefName`d. Dismissing the menu leaves the dialog open. (Items 2 and 3 are built with "last selected" set to each row in turn, which gives both orders regardless of `m_sLastSelected`.)
+- **Browse mode** (`/command:refbrowse`) has `m_bPickOne` false and `showRange` false, so OK simply closes the dialog.
+
+**"Current Branch" button** [BRD:1727-1732]: sets the result to `GetCurrentBranch(true)` and closes with OK. The result is:
+
+- the **short** branch name (`master`, not `refs/heads/master`);
+- the **40-hex hash** when HEAD is detached;
+- `(no branch)` when HEAD cannot be read. [GIT:835-843, 921-974]
+
+In browse mode it just closes the dialog, because nobody reads the result.
+
+**Cancel** returns `""`. **Help** is handled by the base class (not in this file).
+
+**`PickRefForCombo`** [BRD:1514-1549]:
+
+1. Calls `PickRef(false, <combo's current item text>, kind)`, single select. A cancel returns false.
+2. If `useShortName` is non-zero, the result is shortened to its `GetShortName` form when its type is in the mask: local branch with `gPickRef_Head`, tag (including `^{}`) with `gPickRef_Tag`, remote branch with `gPickRef_Remote`. [GIT:3016-3065]
+3. `CGit::StripRefName(resultRef)` is called, but its return value is **discarded**, so it has no effect (quirk). A remote branch therefore stays `refs/remotes/origin/x` under the default mask.
+4. The result is added to the combo (`CHistoryCombo::AddString`; selection behaviour as in HC) and the function returns true.
+
+**Callers** (all found by searching `src/TortoiseProc` for `PickRef`/`CBrowseRefsDlg`):
+
+| Caller | Call | Notes |
+|---|---|---|
+| `/command:refbrowse` (Explorer "Browse References", 4.2 row 18) | `CBrowseRefsDlg dlg(path); DoModal()` (browse mode), path requirement working tree **or bare** [RBC:26-37] | the `cmdPath` argument is stored but unused; everything uses `<wd>` |
+| Log ref selector (1.9.1) | `PickRef(false, m_LogList.GetRange(), gPickRef_All, true)`. Multi-select with the **range menu**. The result becomes the log range [LD:3271-3289] | |
+| Rebase upstream "..." | `PickRefForCombo(m_UpstreamCtrl)` [RebaseDlg.cpp:2710-2714] | |
+| Rebase Onto | `PickRef(false, m_Onto)` [RebaseDlg.cpp:3015-3038] | |
+| Create Branch/Switch/Merge branch "..." (8.1) | `PickRef(false, m_VersionName, gPickRef_All)` [CV:152] | |
+| Push, source branch | `PickRefForCombo(m_BranchSource, gPickRef_Head \| gPickRef_Tag)` [PushDlg.cpp:513] | |
+| Push, destination branch | `PickRef(false, "<remote>/<branch>", gPickRef_Remote)`. The caller strips `refs/remotes/` and splits at the first `/` into remote and branch [PushDlg.cpp:553-575] | |
+| Sync (via `CBranchCombox`) | local: `PickRefForCombo(local, gPickRef_Head)`. Remote: `PickRef(false, text, gPickRef_Remote)` with the same split, or `PickRefForCombo(remote, gPickRef_Remote)` [BranchCombox.h:84-125] | |
+| Format Patch "Since" | `PickRefForCombo(m_cSince, gPickRef_NoTag)` [FormatPatchDlg.cpp:272-279] | |
+| Revision Graph filter From/To | `PickRef(false, "", gPickRef_All, true, false)`. Multi-select **without** the range menu (OK returns the space-separated list) [RevGraphFilterDlg.cpp:129-145] | |
+| "Commit is on refs" dialog | `PickRef()` [CommitIsOnRefsDlg.cpp:211] | |
+| Diff (`CFileDiffDlg`) revision buttons | `PickRef()` [FileDiffDlg.cpp:1040] | |
+| Browse References itself | "Select tracked branch" (10.8) [BRD:1314] | |
+
+### 10.13 Settings (all `HKCU\Software\TortoiseGit\…`)
+
+| Value | Default | Use | Written by this dialog |
+|---|---|---|---|
+| `RefBrowserSortCol` | 0 | sort column (logical index) | yes, in the destructor [BRD:162, 186] |
+| `RefBrowserSortDesc` | FALSE | sort direction | yes, in the destructor [BRD:163, 187] |
+| `RefBrowserIncludeNestedRefs` | TRUE | "Show nested refs" | yes, on click [BRD:178, 1744] |
+| `StatusColumns\BrowseRefs` (+ `Version`, `_Width`, `_Order`) | all columns visible, version 7 | column visibility, widths and order; ignored unless both the global `StatusColumns\Version` and this container's version match | yes, on destroy [CM:113-176] |
+| `LogDateFormat` | TRUE (short) | date format | no [BRD:169] |
+| `RelativeTimes` | FALSE | relative dates | no [BRD:175] |
+| `UseSystemLocaleForDates` | TRUE | locale vs ISO-like dates | no [LLU:53] |
+| `FullRowSelect` | TRUE | full-row selection in the list | no [RCLC:88] |
+| `DialogTitles` | 0 | title path form | no [AU:3564] |
+| Explorer policy `NoStrCmpLogical` (HKCU, then HKLM) | 0 | logical vs plain sort | no [BRD:101-103] |
+| window placement (`EnableSaveRestore("BrowseRefs")`) | — | size and position | yes [BRD:327] |
+
+These are **not** persisted:
+
+- the filter text and its field selection;
+- the merge-filter combo;
+- the last selected tree node (each open starts from `initialRef`, default HEAD);
+- tree expansion.
+
+### 10.14 Notes for implementers and quirks
+
+- **No visual marking** of the current branch, of HEAD or of upstream status, beyond the "Tracked branch" text and `(gone: …)`. There are no ahead/behind counts anywhere in this dialog.
+- The **Name column's text is relative** to the selected folder, while sorting, the result and all commands use the **full** name.
+- Which menu items appear depends on the **object type**. Annotated tags are not "commits", so they get no Show log, Compare, Merge or Switch from the menu, yet double-click still opens the log for them. Refs to trees open the Repository Browser on double-click.
+- **Merge and Switch do not refresh** the view afterwards. Fetch, Create, Edit description, the upstream items, delete, Manage Remotes and rename do.
+- `m_sLastSelected` is only updated when `uNewState` is exactly `LVIS_SELECTED`. When the control reports selection together with focus (`LVIS_SELECTED|LVIS_FOCUSED`), the value is not updated, and the range labels in 10.7.2 can then name a stale ref. How often Windows sends the combined state for mouse clicks was not established.
+- Upstream to a local branch shows as `(gone: heads/<b>)` (10.3, step 6).
+- `PickRefForCombo` discards `StripRefName`'s return value (10.12).
+- The rename keep-tree-selection test is inverted (10.10).
+- "Delete all tags" on an empty list is undefined behaviour (10.9).
+- The tree folder order is ordinal (case-sensitive) and the list order is logical (case-insensitive). Tortilla may unify these, but should keep the list's default sort as full name, ascending.
+
+### 10.15 Not established from source
+
+- What `CFilterEdit` does with Enter in a multiline box, and whether the info-icon click handler gets valid coordinates on x64 (the source has a FIXME about this [BRD:1643-1645]).
+- What `CRefLogDlg`, `CDeleteRemoteTagDlg`, `CSettingGitRemote` and `CInputDlg` look like. They were not examined; only how they are invoked is given here.
+- The exact format of `GetLibGit2LastErr("Could not get a list of remotes.")`.
+- Where a keyboard-invoked context menu (point -1,-1) appears.
+- Whether Ctrl+A in `LVS_SINGLESEL` mode leaves one or several rows selected.
+- What `CGestureEnabledControlTmpl` adds.
+- The Help topic id.
