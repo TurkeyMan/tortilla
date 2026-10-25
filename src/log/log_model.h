@@ -176,7 +176,8 @@ private:
     unsigned labels_ = label_all;
     action_icon_style icon_style_ = action_icon_style::document;
     bool loading_ = false;
-    bool all_branches_ = false;  // the loaded walk's
+    walk_refs walk_refs_ = walk_refs::head;  // the loaded walk's
+    std::string walk_rev_;
 
     // Filtering: the matching commit indices, in order.
     struct term

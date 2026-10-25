@@ -223,6 +223,20 @@ bool repo::bare() const
 // stack seeded with the childless tips (newest on top), pushing a parent
 // once all its children are out. Parents are pushed in order, so a merge's
 // second parent comes next: merged branches stay together under the merge.
+bool walks_ref(walk_refs refs, std::string_view full_name)
+{
+    switch (refs)
+    {
+    case walk_refs::all: return true;
+    case walk_refs::basic:
+        return full_name.starts_with("refs/heads/") || full_name.starts_with("refs/remotes/") ||
+               full_name.starts_with("refs/tags/");
+    case walk_refs::local: return full_name.starts_with("refs/heads/");
+    case walk_refs::head: break;
+    }
+    return false;
+}
+
 std::expected<void, std::string> repo::walk(const walk_options& opts,
                                             const std::function<bool(commit&&)>& sink) const
 {
@@ -230,7 +244,8 @@ std::expected<void, std::string> repo::walk(const walk_options& opts,
     if (git_revwalk_new(&w.p, repo_) != 0) return std::unexpected(last_git_error());
     git_revwalk_sorting(w.p, GIT_SORT_TIME);
 
-    if (opts.all_branches && !opts.tips.empty())
+    const bool many = opts.refs != walk_refs::head;
+    if (many && !opts.tips.empty())
     {
         for (const oid& tip : opts.tips)
         {
@@ -238,9 +253,10 @@ std::expected<void, std::string> repo::walk(const walk_options& opts,
             git_revwalk_push(w.p, &t);
         }
     }
-    else if (opts.all_branches)
+    else if (many)
     {
-        // Every ref, like git log --all (branches, remotes, tags, stash...).
+        // Every ref in scope; for all, like git log --all (branches,
+        // remotes, tags, stash...).
         owned_iter it;
         if (git_reference_iterator_new(&it.p, repo_) == 0)
         {
@@ -249,14 +265,28 @@ std::expected<void, std::string> repo::walk(const walk_options& opts,
             {
                 owned_ref ref{raw};
                 owned_object target;
-                if (git_reference_peel(&target.p, raw, GIT_OBJECT_COMMIT) == 0)
+                if (walks_ref(opts.refs, git_reference_name(raw)) &&
+                    git_reference_peel(&target.p, raw, GIT_OBJECT_COMMIT) == 0)
                     git_revwalk_push(w.p, git_object_id(target.p));
             }
         }
     }
-    // Pushing HEAD fails in an empty repository; that's just "no commits".
-    git_revwalk_push_head(w.p);
-    if (opts.all_branches)
+    if (!many && !opts.rev.empty())
+    {
+        owned_object target;
+        if (git_revparse_single(&target.p, repo_, opts.rev.c_str()) != 0)
+            return std::unexpected(last_git_error());
+        owned_object commit;
+        if (git_object_peel(&commit.p, target.p, GIT_OBJECT_COMMIT) != 0)
+            return std::unexpected(last_git_error());
+        git_revwalk_push(w.p, git_object_id(commit.p));
+    }
+    else
+    {
+        // Pushing HEAD fails in an empty repository; that's just "no commits".
+        git_revwalk_push_head(w.p);
+    }
+    if (opts.refs == walk_refs::all)
     {
         // --all also covers linked worktrees' HEADs; detached ones can be
         // the only way to reach a commit. Their HEAD files sit in the main

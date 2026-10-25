@@ -15,7 +15,7 @@ int main(int argc, char** argv)
     for (int i = 1; i < argc; ++i)
     {
         if (std::strcmp(argv[i], "--all") == 0)
-            opts.all_branches = true;
+            opts.refs = tortilla::walk_refs::all;
         else if (std::isdigit(static_cast<unsigned char>(argv[i][0])))
             limit = std::stoul(argv[i]);
         else

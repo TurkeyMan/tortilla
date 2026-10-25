@@ -271,7 +271,8 @@ void log_model::load(const std::string& path, const walk_options& opts,
     loading_ = true;
     wt_known_ = false;
     path_ = path;
-    all_branches_ = opts.all_branches;
+    walk_refs_ = opts.refs;
+    walk_rev_ = opts.rev;
 
     auto repo = repo::open(path);
     if (!repo)
@@ -311,7 +312,7 @@ void log_model::load(const std::string& path, const walk_options& opts,
                 return;
             }
 
-            // Labels: with all branches they're also where the walk starts,
+            // Labels: walking several refs, they're also where the walk starts,
             // so they come first; otherwise the history goes first and the
             // labels follow a moment later.
             auto deliver_refs = [&](ref_map refs)
@@ -324,10 +325,12 @@ void log_model::load(const std::string& path, const walk_options& opts,
                     });
             };
             walk_options walk_opts = opts;
-            if (opts.all_branches)
+            if (opts.refs != walk_refs::head)
             {
                 ref_map refs = repo->refs();
-                for (auto& [tip, labels] : refs) walk_opts.tips.push_back(tip);
+                for (auto& [tip, labels] : refs)
+                    if (std::ranges::any_of(labels, [&](const ref& r) { return walks_ref(opts.refs, r.full_name); }))
+                        walk_opts.tips.push_back(tip);
                 deliver_refs(std::move(refs));
             }
 
@@ -349,7 +352,7 @@ void log_model::load(const std::string& path, const walk_options& opts,
                                          return !stop.stop_requested();
                                      });
             flush();
-            if (!opts.all_branches && !stop.stop_requested()) deliver_refs(repo->refs());
+            if (opts.refs == walk_refs::head && !stop.stop_requested()) deliver_refs(repo->refs());
             deliver(
                 [this, done, e = result ? std::string() : result.error()]
                 {
@@ -437,13 +440,27 @@ bool log_model::apply_refs(ref_map next)
         if (const tortilla::commit* c = commit(row)) row_by_id.emplace(c->id, row);
 
     bool reload = false;
-    if (all_branches_)
+    if (walk_refs_ == walk_refs::head && !walk_rev_.empty())
+    {
+        // Started from a ref: reload when it moves.
+        auto names_rev = [&](const ref_map& refs, const oid& id)
+        {
+            auto it = refs.find(id);
+            return it != refs.end() && std::ranges::any_of(it->second, [&](const ref& r)
+                                                           { return r.full_name == walk_rev_; });
+        };
+        for (const oid& id : changed)
+            if (names_rev(refs_, id) != names_rev(next, id)) reload = true;
+    }
+    if (walk_refs_ != walk_refs::head)
     {
         std::unordered_set<oid, oid_hash> parents;  // commits with a child loaded
         for (const tortilla::commit& c : commits_) parents.insert(c.parents.begin(), c.parents.end());
         for (const oid& id : changed)
         {
-            const bool labelled = next.contains(id);
+            auto it = next.find(id);
+            const bool labelled = it != next.end() && std::ranges::any_of(it->second, [&](const ref& r)
+                                                                          { return walks_ref(walk_refs_, r.full_name); });
             bool loaded = false;
             for (const tortilla::commit& c : commits_)
                 if (c.id == id)

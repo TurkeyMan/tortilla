@@ -177,7 +177,8 @@ int main(int argc, char** argv)
         {
             tortilla::log_model m(**ui);
             std::string err = "pending";
-            m.load(repo, {.all_branches = all}, [&](const std::string& e) { err = e; });
+            m.load(repo, {.refs = all ? tortilla::walk_refs::all : tortilla::walk_refs::head},
+                   [&](const std::string& e) { err = e; });
             while (err == "pending")
             {
                 (*ui)->run();
@@ -190,6 +191,43 @@ int main(int argc, char** argv)
             check(ours == tortilla::run_git(repo, args).output,
                   all ? "order matches git --all --topo-order" : "order matches git --topo-order");
         }
+    }
+
+    // The other starting points [spec 1.9.1], against the git log
+    // equivalents: a ref, local branches, basic refs (a commit only another
+    // kind of ref reaches is left out of both).
+    {
+        // Older than the rest: commits of one second tie-break differently.
+        sh(git + "update-ref refs/other/x $(GIT_COMMITTER_DATE=@1000000000 GIT_AUTHOR_DATE=@1000000000 " +
+           git + "commit-tree -m other HEAD^{tree})");
+        auto order = [&](tortilla::walk_options opts)
+        {
+            tortilla::log_model m(**ui);
+            std::string err = "pending";
+            m.load(repo, opts, [&](const std::string& e) { err = e; });
+            while (err == "pending")
+            {
+                (*ui)->run();
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+            std::string ours;
+            for (size_t row = 1; row < m.row_count(); ++row) ours += m.commit(row)->id.hex() + "\n";
+            return ours;
+        };
+        auto git_order = [&](std::vector<std::string> extra)
+        {
+            std::vector<std::string> args{"log", "--topo-order", "--format=%H"};
+            args.insert(args.end(), extra.begin(), extra.end());
+            return tortilla::run_git(repo, args).output;
+        };
+        check(order({.rev = "refs/heads/side"}) == git_order({"refs/heads/side"}), "walk from a ref");
+        check(order({.refs = tortilla::walk_refs::local}) == git_order({"--branches", "HEAD"}),
+              "walk local branches");
+        check(order({.refs = tortilla::walk_refs::basic}) ==
+                  git_order({"--branches", "--remotes", "--tags", "HEAD"}),
+              "walk basic refs");
+        check(order({.refs = tortilla::walk_refs::all}) == git_order({"--all"}), "walk all includes other refs");
+        sh(git + "update-ref -d refs/other/x");
     }
 
     // Refreshing labels after branch/tag changes, without a reload unless
@@ -205,7 +243,7 @@ int main(int argc, char** argv)
         };
         tortilla::log_model m(**ui);
         std::optional<std::string> err;
-        m.load(repo, {.all_branches = true}, [&](const std::string& e) { err = e; });
+        m.load(repo, {.refs = tortilla::walk_refs::all}, [&](const std::string& e) { err = e; });
         pump(err);
         auto refresh = [&]
         {

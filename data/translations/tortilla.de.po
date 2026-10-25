@@ -4,7 +4,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: tortilla\n"
 "Report-Msgid-Bugs-To: https://github.com/TurkeyMan/tortilla/issues\n"
-"POT-Creation-Date: 2026-10-24 18:23+0000\n"
+"POT-Creation-Date: 2026-10-25 01:00+0000\n"
 "Language: de\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
@@ -170,7 +170,7 @@ msgid "_Squash"
 msgstr "_Squash"
 
 #: src/branch/merge_dialog.cpp:113 src/log/log_actions.cpp:568
-#: src/log/log_window.cpp:744 src/log/log_window.cpp:769
+#: src/log/log_window.cpp:848 src/log/log_window.cpp:873
 msgid "Messages"
 msgstr "Nachrichten"
 
@@ -293,7 +293,7 @@ msgstr "{0} - Merge abbrechen"
 msgid "_Retry"
 msgstr "_Wiederholen"
 
-#: src/branch/ref_chooser.cpp:71 src/log/log_window.cpp:170
+#: src/branch/ref_chooser.cpp:71 src/log/log_window.cpp:166
 #: src/remote/clone_dialog.cpp:117
 msgid "Branch"
 msgstr "Branch"
@@ -302,11 +302,11 @@ msgstr "Branch"
 #: src/changes/changes_window.cpp:326 src/changes/commit_window.cpp:122
 #: src/changes/commit_window.cpp:398 src/changes/commit_window.cpp:409
 #: src/changes/commit_window.cpp:441 src/changes/commit_window.cpp:476
-#: src/changes/file_action_window.cpp:514 src/rebase/rebase_window.cpp:388
+#: src/changes/file_action_window.cpp:514 src/rebase/rebase_window.cpp:384
 msgid "Commit"
 msgstr "Commit"
 
-#: src/branch/ref_chooser.cpp:71 src/log/log_window.cpp:170
+#: src/branch/ref_chooser.cpp:71 src/log/log_window.cpp:166
 msgid "Tag"
 msgstr "Tag"
 
@@ -374,261 +374,261 @@ msgstr "Auschecken mit Zusammenführen"
 msgid "{0} - Switch/Checkout"
 msgstr "{0} - Wechseln/Auschecken"
 
-#: src/changes/changes_view.cpp:208 src/changes/remove.cpp:53
+#: src/changes/changes_view.cpp:207 src/changes/remove.cpp:53
 #, c++-format
 msgid "“{0}”"
 msgstr "„{0}“"
 
-#: src/changes/changes_view.cpp:209
+#: src/changes/changes_view.cpp:208
 #, c++-format
 msgid "{0} file"
 msgid_plural "{0} files"
 msgstr[0] "{0} Datei"
 msgstr[1] "{0} Dateien"
 
-#: src/changes/changes_view.cpp:220
+#: src/changes/changes_view.cpp:219
 msgid "Are you sure you want to mark the conflicted file(s) as resolved?"
 msgstr ""
 "Möchten Sie die Datei(en) mit Konflikten wirklich als aufgelöst markieren?"
 
-#: src/changes/changes_view.cpp:222
+#: src/changes/changes_view.cpp:221
 msgid "_Edit conflicts"
 msgstr "Konflikte _bearbeiten"
 
-#: src/changes/changes_view.cpp:225
+#: src/changes/changes_view.cpp:224
 msgid "Resolved"
 msgstr "Aufgelöst"
 
-#: src/changes/changes_view.cpp:226 src/changes/changes_view.cpp:276
+#: src/changes/changes_view.cpp:225 src/changes/changes_view.cpp:275
 #: src/changes/conflict_editor.cpp:134 src/changes/file_action_window.cpp:136
 msgid "Resolve"
 msgstr "Auflösen"
 
-#: src/changes/changes_view.cpp:279
+#: src/changes/changes_view.cpp:278
 msgid "Resolve conflict using “theirs”"
 msgstr "Konflikt mit „Deren“ auflösen"
 
-#: src/changes/changes_view.cpp:280
+#: src/changes/changes_view.cpp:279
 msgid "Resolve conflict using “mine”"
 msgstr "Konflikt mit „Meine“ auflösen"
 
-#: src/changes/changes_view.cpp:286 src/changes/file_action_window.cpp:134
+#: src/changes/changes_view.cpp:285 src/changes/file_action_window.cpp:134
 msgid "Add"
 msgstr "Hinzufügen"
 
-#: src/changes/changes_view.cpp:287 src/changes/changes_view.cpp:300
+#: src/changes/changes_view.cpp:286 src/changes/changes_view.cpp:299
 msgid "Commit..."
 msgstr "Committen..."
 
-#: src/changes/changes_view.cpp:291 src/changes/changes_view.cpp:350
+#: src/changes/changes_view.cpp:290 src/changes/changes_view.cpp:349
 msgid "Compare with b_ase"
 msgstr "Mit _Basis vergleichen"
 
-#: src/changes/changes_view.cpp:292 src/changes/changes_view.cpp:352
+#: src/changes/changes_view.cpp:291 src/changes/changes_view.cpp:351
 #: src/log/log_actions.cpp:227 src/log/log_actions.cpp:266
 #: src/log/log_actions.cpp:404
 msgid "Show changes as _unified diff"
 msgstr "Änderungen als _Unified Diff anzeigen"
 
-#: src/changes/changes_view.cpp:296
+#: src/changes/changes_view.cpp:295
 #, c++-format
 msgid "{0} HEAD..working tree"
 msgstr "{0} HEAD..Arbeitsverzeichnis"
 
-#: src/changes/changes_view.cpp:304
+#: src/changes/changes_view.cpp:303
 msgid "Re_vert..."
 msgstr "Änderungen _verwerfen..."
 
-#: src/changes/changes_view.cpp:320
+#: src/changes/changes_view.cpp:319
 #, c++-format
 msgid "Revert {0}? Their local changes will be lost."
 msgstr "Änderungen an {0} verwerfen? Die lokalen Änderungen gehen verloren."
 
-#: src/changes/changes_view.cpp:321 src/changes/file_action_window.cpp:135
+#: src/changes/changes_view.cpp:320 src/changes/file_action_window.cpp:135
 #: src/changes/file_action_window.cpp:370
 #: src/changes/file_action_window.cpp:493 src/log/log_actions.cpp:371
 #: src/log/log_actions.cpp:431
 msgid "Revert"
 msgstr "Verwerfen"
 
-#: src/changes/changes_view.cpp:323 src/changes/changes_view.cpp:326
+#: src/changes/changes_view.cpp:322 src/changes/changes_view.cpp:325
 msgid "Skip worktree"
 msgstr "Skip-Worktree"
 
-#: src/changes/changes_view.cpp:329 src/changes/changes_view.cpp:332
+#: src/changes/changes_view.cpp:328 src/changes/changes_view.cpp:331
 msgid "Assume Unchanged"
 msgstr "Assume-Unchanged"
 
-#: src/changes/changes_view.cpp:336
+#: src/changes/changes_view.cpp:335
 msgid "Unflag as skip-worktree and assume-unchanged"
 msgstr "Markierung skip-worktree und assume-unchanged entfernen"
 
-#: src/changes/changes_view.cpp:339
+#: src/changes/changes_view.cpp:338
 msgid "Unflag"
 msgstr "Markierung entfernen"
 
-#: src/changes/changes_view.cpp:359 src/log/log_actions.cpp:238
+#: src/changes/changes_view.cpp:358 src/log/log_actions.cpp:238
 msgid "Compare with _working tree"
 msgstr "Mit _Arbeitsverzeichnis vergleichen"
 
-#: src/changes/changes_view.cpp:361
+#: src/changes/changes_view.cpp:360
 #, c++-format
 msgid "Compare parent with working tree: {0}"
 msgstr "Eltern-Commit mit Arbeitsverzeichnis vergleichen: {0}"
 
-#: src/changes/changes_view.cpp:365
+#: src/changes/changes_view.cpp:364
 msgid "Compare two files"
 msgstr "Zwei Dateien vergleichen"
 
-#: src/changes/changes_view.cpp:370
+#: src/changes/changes_view.cpp:369
 msgid "R_evert to this revision"
 msgstr "Auf diese Revision _zurücksetzen"
 
-#: src/changes/changes_view.cpp:373 src/changes/changes_view.cpp:389
+#: src/changes/changes_view.cpp:372 src/changes/changes_view.cpp:388
 #, c++-format
 msgid "Replace {0} in the working tree with the version in {1}?"
 msgstr "{0} im Arbeitsverzeichnis durch die Version aus {1} ersetzen?"
 
-#: src/changes/changes_view.cpp:376
+#: src/changes/changes_view.cpp:375
 msgid "Revert to this revision"
 msgstr "Auf diese Revision zurücksetzen"
 
-#: src/changes/changes_view.cpp:386
+#: src/changes/changes_view.cpp:385
 #, c++-format
 msgid "Revert to parent revision: {0}"
 msgstr "Auf Eltern-Revision zurücksetzen: {0}"
 
-#: src/changes/changes_view.cpp:392
+#: src/changes/changes_view.cpp:391
 msgid "Revert to parent revision"
 msgstr "Auf Eltern-Revision zurücksetzen"
 
-#: src/changes/changes_view.cpp:402 src/rebase/rebase_window.cpp:212
+#: src/changes/changes_view.cpp:401 src/rebase/rebase_window.cpp:208
 #: src/remote/clone_dialog.cpp:206 src/remote/pull_fetch_dialog.cpp:353
 msgid "Show _log"
 msgstr "_Log anzeigen"
 
-#: src/changes/changes_view.cpp:403
+#: src/changes/changes_view.cpp:402
 msgid "Show log _before rename/copy"
 msgstr "Log _vor Umbenennen/Kopieren anzeigen"
 
-#: src/changes/changes_view.cpp:404
+#: src/changes/changes_view.cpp:403
 msgid "_Blame"
 msgstr "_Blame"
 
-#: src/changes/changes_view.cpp:408
+#: src/changes/changes_view.cpp:407
 msgid "Export selection to..."
 msgstr "Auswahl exportieren nach..."
 
-#: src/changes/changes_view.cpp:415
+#: src/changes/changes_view.cpp:414
 msgid "Save revision _to..."
 msgstr "Revision _speichern unter..."
 
-#: src/changes/changes_view.cpp:418
+#: src/changes/changes_view.cpp:417
 msgid "View revision in alternative editor"
 msgstr "Revision in alternativem Editor anzeigen"
 
-#: src/changes/changes_view.cpp:423
+#: src/changes/changes_view.cpp:422
 msgid "_Open"
 msgstr "Ö_ffnen"
 
-#: src/changes/changes_view.cpp:425 src/changes/changes_view.cpp:427
+#: src/changes/changes_view.cpp:424 src/changes/changes_view.cpp:426
 msgid "Open with..."
 msgstr "Öffnen mit..."
 
-#: src/changes/changes_view.cpp:429
+#: src/changes/changes_view.cpp:428
 msgid "Explore to"
 msgstr "Im Dateimanager anzeigen"
 
-#: src/changes/changes_view.cpp:439
+#: src/changes/changes_view.cpp:438
 msgid "Mark for comparison"
 msgstr "Zum Vergleich markieren"
 
-#: src/changes/changes_view.cpp:444
+#: src/changes/changes_view.cpp:443
 msgid "_Delete"
 msgstr "_Löschen"
 
-#: src/changes/changes_view.cpp:447
+#: src/changes/changes_view.cpp:446
 #, c++-format
 msgid "Delete {0}? They aren't in git, so this can't be undone."
 msgstr ""
 "{0} löschen? Die Dateien sind nicht in git, daher kann dies nicht rückgängig "
 "gemacht werden."
 
-#: src/changes/changes_view.cpp:450 src/changes/remove.cpp:71
+#: src/changes/changes_view.cpp:449 src/changes/remove.cpp:71
 #: src/log/log_actions.cpp:523 src/log/log_actions.cpp:537
 #: src/log/log_actions.cpp:545
 msgid "Delete"
 msgstr "Löschen"
 
-#: src/changes/changes_view.cpp:464
+#: src/changes/changes_view.cpp:463
 msgid "Add to ignore list"
 msgstr "Zur Ignorierliste hinzufügen"
 
-#: src/changes/changes_view.cpp:465
+#: src/changes/changes_view.cpp:464
 #, c++-format
 msgid "Could not write {0}."
 msgstr "{0} konnte nicht geschrieben werden."
 
-#: src/changes/changes_view.cpp:481
+#: src/changes/changes_view.cpp:480
 msgid "Ignore item(s) by name"
 msgstr "Element(e) nach Namen ignorieren"
 
-#: src/changes/changes_view.cpp:489
+#: src/changes/changes_view.cpp:488
 msgid "Add to _ignore list"
 msgstr "Zur _Ignorierliste hinzufügen"
 
-#: src/changes/changes_view.cpp:494
+#: src/changes/changes_view.cpp:493
 msgid "full paths"
 msgstr "vollständige Pfade"
 
-#: src/changes/changes_view.cpp:495
+#: src/changes/changes_view.cpp:494
 msgid "relative paths"
 msgstr "relative Pfade"
 
-#: src/changes/changes_view.cpp:496
+#: src/changes/changes_view.cpp:495
 msgid "file/foldernames"
 msgstr "Datei-/Ordnernamen"
 
-#: src/changes/changes_view.cpp:497
+#: src/changes/changes_view.cpp:496
 msgid "Copy all information to clipboard"
 msgstr "Alle Informationen in die Zwischenablage kopieren"
 
-#: src/changes/changes_view.cpp:503
+#: src/changes/changes_view.cpp:502
 #, c++-format
 msgid "column ‘{0}’"
 msgstr "Spalte ‚{0}‘"
 
-#: src/changes/changes_view.cpp:506 src/log/log_actions.cpp:558
+#: src/changes/changes_view.cpp:505 src/log/log_actions.cpp:558
 msgid "Copy to clipboard"
 msgstr "In die Zwischenablage kopieren"
 
-#: src/changes/changes_view.cpp:553 src/changes/changes_view.cpp:563
+#: src/changes/changes_view.cpp:552 src/changes/changes_view.cpp:562
 msgid "Open"
 msgstr "Öffnen"
 
-#: src/changes/changes_view.cpp:554
+#: src/changes/changes_view.cpp:553
 #, c++-format
 msgid "Could not get {0} at {1}."
 msgstr "{0} in {1} konnte nicht abgerufen werden."
 
-#: src/changes/changes_view.cpp:564
+#: src/changes/changes_view.cpp:563
 #, c++-format
 msgid "Could not open {0}."
 msgstr "{0} konnte nicht geöffnet werden."
 
-#: src/changes/changes_view.cpp:614 src/changes/changes_view.cpp:631
+#: src/changes/changes_view.cpp:613 src/changes/changes_view.cpp:630
 msgid "Export selection to"
 msgstr "Auswahl exportieren nach"
 
-#: src/changes/changes_view.cpp:632
+#: src/changes/changes_view.cpp:631
 msgid "Some files could not be exported."
 msgstr "Einige Dateien konnten nicht exportiert werden."
 
-#: src/changes/changes_view.cpp:642 src/changes/changes_view.cpp:658
+#: src/changes/changes_view.cpp:641 src/changes/changes_view.cpp:657
 msgid "Save revision to"
 msgstr "Revision speichern unter"
 
-#: src/changes/changes_view.cpp:659 src/ui/diff_window.cpp:297
+#: src/changes/changes_view.cpp:658 src/ui/diff_window.cpp:297
 #, c++-format
 msgid "Could not save {0}."
 msgstr "{0} konnte nicht gespeichert werden."
@@ -659,7 +659,7 @@ msgid "Show all _staged files"
 msgstr "Alle _vorgemerkten Dateien anzeigen"
 
 #: src/changes/changes_window.cpp:147 src/changes/commit_window.cpp:212
-#: src/log/log_window.cpp:236
+#: src/log/log_window.cpp:231
 msgid "Show _Whole Project"
 msgstr "_Gesamtes Projekt anzeigen"
 
@@ -677,7 +677,7 @@ msgid "_Refresh"
 msgstr "_Aktualisieren"
 
 #: src/changes/changes_window.cpp:168 src/changes/file_action_window.cpp:211
-#: src/log/log_window.cpp:257
+#: src/log/log_window.cpp:251
 msgid "OK"
 msgstr "OK"
 
@@ -781,7 +781,7 @@ msgid "Check:"
 msgstr "Auswählen:"
 
 #: src/changes/commit_window.cpp:182 src/log/log_actions.cpp:539
-#: src/log/log_window.cpp:726 src/log/log_window.cpp:784
+#: src/log/log_window.cpp:806 src/log/log_window.cpp:888
 msgid "All"
 msgstr "Alle"
 
@@ -817,7 +817,7 @@ msgstr "Dateien"
 msgid "Submodules"
 msgstr "Submodule"
 
-#: src/changes/commit_window.cpp:204 src/log/log_window.cpp:874
+#: src/changes/commit_window.cpp:204 src/log/log_window.cpp:978
 msgid "Show _Unversioned Files"
 msgstr "_Unversionierte Dateien anzeigen"
 
@@ -1202,9 +1202,9 @@ msgstr "C_ommitten..."
 msgid "Abort _Merge"
 msgstr "_Merge abbrechen"
 
-#: src/log/log_actions.cpp:230 src/log/log_model.cpp:638
-#: src/log/log_model.cpp:807 src/log/log_window.cpp:581
-#: src/log/log_window.cpp:587
+#: src/log/log_actions.cpp:230 src/log/log_model.cpp:655
+#: src/log/log_model.cpp:875 src/log/log_window.cpp:601
+#: src/log/log_window.cpp:607
 msgid "Working tree changes"
 msgstr "Änderungen im Arbeitsverzeichnis"
 
@@ -1380,7 +1380,7 @@ msgid "Full commit data without changed paths"
 msgstr "Alle Commit-Daten ohne geänderte Pfade"
 
 #: src/log/log_actions.cpp:563 src/log/log_model.cpp:136
-#: src/log/log_window.cpp:745 src/log/log_window.cpp:773
+#: src/log/log_window.cpp:849 src/log/log_window.cpp:877
 #: src/rebase/rebase_model.cpp:45
 msgid "SHA-1"
 msgstr "SHA-1"
@@ -1603,10 +1603,10 @@ msgstr "Reset von „{0}“ auf {1} {2}"
 msgid "Soft: Leave working tree and index untouched"
 msgstr "Soft: Arbeitsverzeichnis und Index unverändert lassen"
 
-#: src/log/log_actions.cpp:1044 src/rebase/rebase_window.cpp:253
-#: src/rebase/rebase_window.cpp:260 src/rebase/rebase_window.cpp:460
-#: src/rebase/rebase_window.cpp:486 src/rebase/rebase_window.cpp:515
-#: src/rebase/rebase_window.cpp:534 src/remote/pull_fetch_dialog.cpp:388
+#: src/log/log_actions.cpp:1044 src/rebase/rebase_window.cpp:249
+#: src/rebase/rebase_window.cpp:256 src/rebase/rebase_window.cpp:456
+#: src/rebase/rebase_window.cpp:482 src/rebase/rebase_window.cpp:511
+#: src/rebase/rebase_window.cpp:530 src/remote/pull_fetch_dialog.cpp:388
 msgid "Rebase"
 msgstr "Rebase"
 
@@ -1647,147 +1647,147 @@ msgstr "Committer-E-Mail"
 msgid "Commit Date"
 msgstr "Commit-Datum"
 
-#: src/log/log_window.cpp:147
+#: src/log/log_window.cpp:143
 #, c++-format
 msgid "{0} - Log Messages - Tortilla"
 msgstr "{0} - Log-Nachrichten - Tortilla"
 
-#: src/log/log_window.cpp:155
+#: src/log/log_window.cpp:151
 msgid "From:"
 msgstr "Von:"
 
-#: src/log/log_window.cpp:157
+#: src/log/log_window.cpp:153
 msgid "To:"
 msgstr "Bis:"
 
-#: src/log/log_window.cpp:168
+#: src/log/log_window.cpp:164
 msgid "Filter options"
 msgstr "Filteroptionen"
 
-#: src/log/log_window.cpp:169
+#: src/log/log_window.cpp:165
 msgid "Author Email"
 msgstr "Autor-E-Mail"
 
-#: src/log/log_window.cpp:169
+#: src/log/log_window.cpp:165
 msgid "Committer Email"
 msgstr "Committer-E-Mail"
 
-#: src/log/log_window.cpp:169
+#: src/log/log_window.cpp:165
 msgid "Merge Point"
 msgstr "Merge-Punkt"
 
-#: src/log/log_window.cpp:169
+#: src/log/log_window.cpp:165
 msgid "Parent 1"
 msgstr "Eltern-Commit 1"
 
-#: src/log/log_window.cpp:170
+#: src/log/log_window.cpp:166
 msgid "Branch (FF)"
 msgstr "Branch (FF)"
 
-#: src/log/log_window.cpp:170
+#: src/log/log_window.cpp:166
 msgid "Parent 2"
 msgstr "Eltern-Commit 2"
 
-#: src/log/log_window.cpp:170
+#: src/log/log_window.cpp:166
 msgid "Tag (FF)"
 msgstr "Tag (FF)"
 
-#: src/log/log_window.cpp:171
+#: src/log/log_window.cpp:167
 msgid "Selection History"
 msgstr "Auswahlverlauf"
 
-#: src/log/log_window.cpp:174
+#: src/log/log_window.cpp:170
 msgid "Jump up (Alt+Up)"
 msgstr "Nach oben springen (Alt+Pfeil oben)"
 
-#: src/log/log_window.cpp:178
+#: src/log/log_window.cpp:174
 msgid "Jump down (Alt+Down)"
 msgstr "Nach unten springen (Alt+Pfeil unten)"
 
-#: src/log/log_window.cpp:237
+#: src/log/log_window.cpp:232
 msgid "_All Branches"
 msgstr "_Alle Branches"
 
-#: src/log/log_window.cpp:248
+#: src/log/log_window.cpp:242
 msgid "Filter paths"
 msgstr "Pfade filtern"
 
-#: src/log/log_window.cpp:251
+#: src/log/log_window.cpp:245
 msgid "Refresh"
 msgstr "Aktualisieren"
 
-#: src/log/log_window.cpp:251
+#: src/log/log_window.cpp:245
 msgid "Reload the log (F5)"
 msgstr "Log neu laden (F5)"
 
-#: src/log/log_window.cpp:252
+#: src/log/log_window.cpp:246
 msgid "S_tatistics"
 msgstr "S_tatistik"
 
-#: src/log/log_window.cpp:254
+#: src/log/log_window.cpp:248
 msgid "Walk Be_havior"
 msgstr "_Durchlaufverhalten"
 
-#: src/log/log_window.cpp:255
+#: src/log/log_window.cpp:249
 msgid "_View"
 msgstr "_Ansicht"
 
-#: src/log/log_window.cpp:473
+#: src/log/log_window.cpp:486
 msgid "Loading…"
 msgstr "Wird geladen…"
 
-#: src/log/log_window.cpp:491
+#: src/log/log_window.cpp:511
 #, c++-format
 msgid "Error: {0}"
 msgstr "Fehler: {0}"
 
-#: src/log/log_window.cpp:581
+#: src/log/log_window.cpp:601
 msgid "Fetching status..."
 msgstr "Status wird abgerufen..."
 
-#: src/log/log_window.cpp:588
+#: src/log/log_window.cpp:608
 #, c++-format
 msgid "{0} file changed"
 msgid_plural "{0} files changed"
 msgstr[0] "{0} Datei geändert"
 msgstr[1] "{0} Dateien geändert"
 
-#: src/log/log_window.cpp:602
+#: src/log/log_window.cpp:622
 msgid "SHA-1: "
 msgstr "SHA-1: "
 
-#: src/log/log_window.cpp:603
+#: src/log/log_window.cpp:623
 msgid "Author: "
 msgstr "Autor: "
 
-#: src/log/log_window.cpp:604
+#: src/log/log_window.cpp:624
 msgid "Date: "
 msgstr "Datum: "
 
-#: src/log/log_window.cpp:606
+#: src/log/log_window.cpp:626
 msgid "Committer: "
 msgstr "Committer: "
 
-#: src/log/log_window.cpp:608
+#: src/log/log_window.cpp:628
 msgid "Parent: "
 msgstr "Eltern-Commit: "
 
-#: src/log/log_window.cpp:665
+#: src/log/log_window.cpp:685
 #, c++-format
 msgid "Showing {0} revision(s)"
 msgstr "{0} Revision(en) angezeigt"
 
-#: src/log/log_window.cpp:669
+#: src/log/log_window.cpp:689
 #, c++-format
 msgid "Showing {0} revision(s), from revision {1} to revision {2}"
 msgstr "{0} Revision(en) angezeigt, von Revision {1} bis Revision {2}"
 
-#: src/log/log_window.cpp:673
+#: src/log/log_window.cpp:693
 #, c++-format
 msgid "{0} - {1} revision(s) selected, {2} file(s) selected"
 msgstr "{0} - {1} Revision(en) ausgewählt, {2} Datei(en) ausgewählt"
 
-#: src/log/log_window.cpp:692
+#: src/log/log_window.cpp:712
 #, c++-format
 msgid ""
 "{0}; line: {1}(+) {2}(-) files: modified = {3} added = {4} deleted = {5} "
@@ -1796,138 +1796,150 @@ msgstr ""
 "{0}; Zeilen: {1}(+) {2}(-) Dateien: geändert = {3} hinzugefügt = {4} "
 "gelöscht = {5} ersetzt = {6}"
 
-#: src/log/log_window.cpp:702
+#: src/log/log_window.cpp:741
 msgid "<All Branches>"
 msgstr "<Alle Branches>"
 
-#: src/log/log_window.cpp:706
+#: src/log/log_window.cpp:742
+msgid "<Basic Refs>"
+msgstr "<Grundlegende Referenzen>"
+
+#: src/log/log_window.cpp:743
+msgid "<Local Branches>"
+msgstr "<Lokale Branches>"
+
+#: src/log/log_window.cpp:759
 msgid "<No branch>"
 msgstr "<Kein Branch>"
 
-#: src/log/log_window.cpp:716
+#: src/log/log_window.cpp:796
 msgid "Browse References"
 msgstr "Referenzen durchsuchen"
 
-#: src/log/log_window.cpp:735
+#: src/log/log_window.cpp:807
 msgid "All basic refs"
 msgstr "Alle grundlegenden Referenzen"
 
-#: src/log/log_window.cpp:736
+#: src/log/log_window.cpp:808
 msgid "All local branches"
 msgstr "Alle lokalen Branches"
 
-#: src/log/log_window.cpp:744 src/log/log_window.cpp:770
+#: src/log/log_window.cpp:832
+msgid "_Branches"
+msgstr "_Branches"
+
+#: src/log/log_window.cpp:833 src/log/log_window.cpp:987
+msgid "_Remote branches"
+msgstr "_Remote-Branches"
+
+#: src/log/log_window.cpp:834 src/log/log_window.cpp:986
+msgid "_Tags"
+msgstr "_Tags"
+
+#: src/log/log_window.cpp:848 src/log/log_window.cpp:874
 msgid "Paths"
 msgstr "Pfade"
 
-#: src/log/log_window.cpp:744 src/log/log_window.cpp:768
+#: src/log/log_window.cpp:848 src/log/log_window.cpp:872
 msgid "Subject"
 msgstr "Betreff"
 
-#: src/log/log_window.cpp:745 src/log/log_window.cpp:771
+#: src/log/log_window.cpp:849 src/log/log_window.cpp:875
 msgid "Authors"
 msgstr "Autoren"
 
-#: src/log/log_window.cpp:745 src/log/log_window.cpp:772
+#: src/log/log_window.cpp:849 src/log/log_window.cpp:876
 msgid "Emails"
 msgstr "E-Mails"
 
-#: src/log/log_window.cpp:746 src/log/log_window.cpp:774
+#: src/log/log_window.cpp:850 src/log/log_window.cpp:878
 msgid "Refname"
 msgstr "Referenzname"
 
-#: src/log/log_window.cpp:750
+#: src/log/log_window.cpp:854
 #, c++-format
 msgid "Filter by {0}"
 msgstr "Nach {0} filtern"
 
-#: src/log/log_window.cpp:776
+#: src/log/log_window.cpp:880
 msgid "Toggle filters"
 msgstr "Filter umschalten"
 
-#: src/log/log_window.cpp:793
+#: src/log/log_window.cpp:897
 msgid "Use regular expression"
 msgstr "Regulären Ausdruck verwenden"
 
-#: src/log/log_window.cpp:799
+#: src/log/log_window.cpp:903
 msgid "Case-sensitive"
 msgstr "Groß-/Kleinschreibung beachten"
 
-#: src/log/log_window.cpp:824
+#: src/log/log_window.cpp:928
 #, c++-format
 msgid "Invalid regular expression: {0}"
 msgstr "Ungültiger regulärer Ausdruck: {0}"
 
-#: src/log/log_window.cpp:849
+#: src/log/log_window.cpp:953
 msgid "First Parent"
 msgstr "Erster Eltern-Commit"
 
-#: src/log/log_window.cpp:850
+#: src/log/log_window.cpp:954
 msgid "No _merges"
 msgstr "Keine _Merges"
 
-#: src/log/log_window.cpp:852
+#: src/log/log_window.cpp:956
 msgid "_Follow renames"
 msgstr "_Umbenennungen folgen"
 
-#: src/log/log_window.cpp:853
+#: src/log/log_window.cpp:957
 msgid "Full history"
 msgstr "Vollständige Historie"
 
-#: src/log/log_window.cpp:855
+#: src/log/log_window.cpp:959
 msgid "_Compressed Graph"
 msgstr "_Komprimierter Graph"
 
-#: src/log/log_window.cpp:856
+#: src/log/log_window.cpp:960
 msgid "Show la_beled commits only"
 msgstr "Nur _beschriftete Commits anzeigen"
 
-#: src/log/log_window.cpp:871
+#: src/log/log_window.cpp:975
 msgid "H_ide Unrelated Changed Paths"
 msgstr "Nicht betroffene geänderte Pfade _ausblenden"
 
-#: src/log/log_window.cpp:872
+#: src/log/log_window.cpp:976
 msgid "_Gray Unrelated Changed Paths"
 msgstr "Nicht betroffene geänderte Pfade _grau darstellen"
 
-#: src/log/log_window.cpp:881
+#: src/log/log_window.cpp:985
 msgid "_Labels"
 msgstr "_Beschriftungen"
 
-#: src/log/log_window.cpp:882
+#: src/log/log_window.cpp:986
 msgid "_Local branches"
 msgstr "_Lokale Branches"
 
-#: src/log/log_window.cpp:882
-msgid "_Tags"
-msgstr "_Tags"
-
-#: src/log/log_window.cpp:883
+#: src/log/log_window.cpp:987
 msgid "Other refs"
 msgstr "Andere Referenzen"
 
-#: src/log/log_window.cpp:883
-msgid "_Remote branches"
-msgstr "_Remote-Branches"
-
-#: src/log/log_window.cpp:885
+#: src/log/log_window.cpp:989
 msgid "View Patch"
 msgstr "Patch anzeigen"
 
-#: src/log/log_window.cpp:887 src/ui/welcome_window.cpp:79
+#: src/log/log_window.cpp:991 src/ui/welcome_window.cpp:79
 msgid "_Settings..."
 msgstr "_Einstellungen..."
 
-#: src/log/log_window.cpp:907
+#: src/log/log_window.cpp:1011
 msgid "Reset columns"
 msgstr "Spalten zurücksetzen"
 
-#: src/log/log_window.cpp:1022
+#: src/log/log_window.cpp:1126
 msgid "No more revisions found."
 msgstr "Keine weiteren Revisionen gefunden."
 
-#: src/rebase/rebase_engine.cpp:70 src/rebase/rebase_window.cpp:219
-#: src/rebase/rebase_window.cpp:386
+#: src/rebase/rebase_engine.cpp:70 src/rebase/rebase_window.cpp:215
+#: src/rebase/rebase_window.cpp:382
 msgid "Start Rebase"
 msgstr "Rebase starten"
 
@@ -1936,11 +1948,11 @@ msgstr "Rebase starten"
 msgid "Fast forward to \"{0}\""
 msgstr "Fast-Forward auf „{0}“"
 
-#: src/rebase/rebase_engine.cpp:340 src/rebase/rebase_window.cpp:426
+#: src/rebase/rebase_engine.cpp:340 src/rebase/rebase_window.cpp:422
 msgid "Finished rebasing."
 msgstr "Rebase abgeschlossen."
 
-#: src/rebase/rebase_engine.cpp:355 src/rebase/rebase_window.cpp:220
+#: src/rebase/rebase_engine.cpp:355 src/rebase/rebase_window.cpp:216
 msgid "Abort"
 msgstr "Abbrechen"
 
@@ -1997,38 +2009,38 @@ msgstr "Upstream:"
 msgid "_Onto"
 msgstr "_Onto"
 
-#: src/rebase/rebase_window.cpp:159 src/rebase/rebase_window.cpp:669
+#: src/rebase/rebase_window.cpp:158 src/rebase/rebase_window.cpp:665
 msgid "_Pick ALL"
 msgstr "ALLE _übernehmen"
 
-#: src/rebase/rebase_window.cpp:161
+#: src/rebase/rebase_window.cpp:160
 msgid "_Up"
 msgstr "Nach _oben"
 
-#: src/rebase/rebase_window.cpp:162
+#: src/rebase/rebase_window.cpp:161
 msgid "_Down"
 msgstr "Nach _unten"
 
-#: src/rebase/rebase_window.cpp:164
+#: src/rebase/rebase_window.cpp:163
 msgid "_Add"
 msgstr "_Hinzufügen"
 
-#: src/rebase/rebase_window.cpp:165
+#: src/rebase/rebase_window.cpp:164
 msgid "_Preserve merges"
 msgstr "Merges _beibehalten"
 
-#: src/rebase/rebase_window.cpp:168
+#: src/rebase/rebase_window.cpp:167
 msgid ""
 "Include merge commits. Reordering commits with merges does not work properly."
 msgstr ""
 "Merge-Commits einbeziehen. Das Umsortieren von Commits mit Merges "
 "funktioniert nicht richtig."
 
-#: src/rebase/rebase_window.cpp:170
+#: src/rebase/rebase_window.cpp:169
 msgid "_Force Rebase"
 msgstr "Rebase _erzwingen"
 
-#: src/rebase/rebase_window.cpp:173
+#: src/rebase/rebase_window.cpp:172
 msgid ""
 "Force the rebase even if the current branch is a descendant of the commit "
 "you are rebasing onto."
@@ -2036,64 +2048,64 @@ msgstr ""
 "Den Rebase erzwingen, auch wenn der aktuelle Branch ein Nachfahre des "
 "Commits ist, auf den Sie rebasen."
 
-#: src/rebase/rebase_window.cpp:177
+#: src/rebase/rebase_window.cpp:176
 msgid "Revision Files"
 msgstr "Dateien der Revision"
 
-#: src/rebase/rebase_window.cpp:182
+#: src/rebase/rebase_window.cpp:180
 msgid "Conflict Files"
 msgstr "Dateien mit Konflikten"
 
-#: src/rebase/rebase_window.cpp:187
+#: src/rebase/rebase_window.cpp:184
 msgid "Commit Message"
 msgstr "Commit-Nachricht"
 
-#: src/rebase/rebase_window.cpp:190 src/ui/settings_dialog.cpp:127
+#: src/rebase/rebase_window.cpp:187 src/ui/settings_dialog.cpp:127
 msgid "Log"
 msgstr "Log"
 
-#: src/rebase/rebase_window.cpp:209
+#: src/rebase/rebase_window.cpp:205
 msgid "Show log"
 msgstr "Log anzeigen"
 
-#: src/rebase/rebase_window.cpp:222
+#: src/rebase/rebase_window.cpp:218
 msgid "Recover to the status before rebase"
 msgstr "Zustand vor dem Rebase wiederherstellen"
 
-#: src/rebase/rebase_window.cpp:224
+#: src/rebase/rebase_window.cpp:220
 msgid "Help"
 msgstr "Hilfe"
 
-#: src/rebase/rebase_window.cpp:244
+#: src/rebase/rebase_window.cpp:240
 #, c++-format
 msgid "Rebasing... ({0}/{1})"
 msgstr "Rebase läuft... ({0}/{1})"
 
-#: src/rebase/rebase_window.cpp:261
+#: src/rebase/rebase_window.cpp:257
 msgid "Cherry-pick failed. Skip this commit?"
 msgstr "Cherry-Pick fehlgeschlagen. Diesen Commit überspringen?"
 
-#: src/rebase/rebase_window.cpp:297
+#: src/rebase/rebase_window.cpp:293
 msgid "Please select branch"
 msgstr "Bitte wählen Sie einen Branch"
 
-#: src/rebase/rebase_window.cpp:299
+#: src/rebase/rebase_window.cpp:295
 msgid "Please select upstream"
 msgstr "Bitte wählen Sie einen Upstream"
 
-#: src/rebase/rebase_window.cpp:301
+#: src/rebase/rebase_window.cpp:297
 #, c++-format
 msgid "No need to rebase: \"{0}\" equals \"{1}\""
 msgstr "Kein Rebase nötig: „{0}“ ist gleich „{1}“"
 
-#: src/rebase/rebase_window.cpp:305
+#: src/rebase/rebase_window.cpp:301
 #, c++-format
 msgid "Branch \"{0}\" is behind \"{1}\": \"{0}\" will fast-forward to \"{1}\""
 msgstr ""
 "Branch „{0}“ liegt hinter „{1}“: „{0}“ wird per Fast-Forward auf „{1}“ "
 "gebracht"
 
-#: src/rebase/rebase_window.cpp:310
+#: src/rebase/rebase_window.cpp:306
 #, c++-format
 msgid ""
 "Current branch \"{0}\" is up to date. To rebase anyway, check \"Force "
@@ -2102,68 +2114,68 @@ msgstr ""
 "Der aktuelle Branch „{0}“ ist auf dem neuesten Stand. Um trotzdem zu "
 "rebasen, aktivieren Sie unten „Rebase erzwingen“."
 
-#: src/rebase/rebase_window.cpp:316
+#: src/rebase/rebase_window.cpp:312
 msgid "Nothing to Rebase"
 msgstr "Nichts zu rebasen"
 
-#: src/rebase/rebase_window.cpp:337
+#: src/rebase/rebase_window.cpp:333
 msgid "Please take a look at the skipped commits"
 msgstr "Bitte sehen Sie sich die übersprungenen Commits an"
 
-#: src/rebase/rebase_window.cpp:339
+#: src/rebase/rebase_window.cpp:335
 #, c++-format
 msgid "{0} commit to rebase onto {1}"
 msgid_plural "{0} commits to rebase onto {1}"
 msgstr[0] "{0} Commit für Rebase auf {1}"
 msgstr[1] "{0} Commits für Rebase auf {1}"
 
-#: src/rebase/rebase_window.cpp:383
+#: src/rebase/rebase_window.cpp:379
 msgid "Continue"
 msgstr "Fortsetzen"
 
-#: src/rebase/rebase_window.cpp:386
+#: src/rebase/rebase_window.cpp:382
 msgid "Start (FastFwd)"
 msgstr "Starten (Fast-Forward)"
 
-#: src/rebase/rebase_window.cpp:389
+#: src/rebase/rebase_window.cpp:385
 msgid "Amend"
 msgstr "Nachbessern"
 
-#: src/rebase/rebase_window.cpp:390
+#: src/rebase/rebase_window.cpp:386
 msgid "Done"
 msgstr "Fertig"
 
-#: src/rebase/rebase_window.cpp:411
+#: src/rebase/rebase_window.cpp:407
 msgid "Conflict: resolve the files, then press Commit"
 msgstr "Konflikt: Lösen Sie die Dateien auf und klicken Sie dann auf „Commit“"
 
-#: src/rebase/rebase_window.cpp:417
+#: src/rebase/rebase_window.cpp:413
 msgid "Edit the commit, then press Amend"
 msgstr "Bearbeiten Sie den Commit und klicken Sie dann auf „Nachbessern“"
 
-#: src/rebase/rebase_window.cpp:418
+#: src/rebase/rebase_window.cpp:414
 msgid "Edit the squashed message, then press Commit"
 msgstr ""
 "Bearbeiten Sie die zusammengefasste Nachricht und klicken Sie dann auf "
 "„Commit“"
 
-#: src/rebase/rebase_window.cpp:421
+#: src/rebase/rebase_window.cpp:417
 msgid "The rebase stopped with an error; see the Log tab, then Abort"
 msgstr ""
 "Der Rebase wurde mit einem Fehler angehalten; siehe Reiter „Log“, dann "
 "„Abbrechen“"
 
-#: src/rebase/rebase_window.cpp:461
+#: src/rebase/rebase_window.cpp:457
 msgid "Your changes were stashed before the rebase. Pop the stash now?"
 msgstr ""
 "Ihre Änderungen wurden vor dem Rebase im Stash gespeichert. Den Stash jetzt "
 "zurückholen (Pop)?"
 
-#: src/rebase/rebase_window.cpp:487
+#: src/rebase/rebase_window.cpp:483
 msgid "Git doesn't know who you are, so it can't create commits."
 msgstr "Git weiß nicht, wer Sie sind, und kann daher keine Commits erstellen."
 
-#: src/rebase/rebase_window.cpp:488
+#: src/rebase/rebase_window.cpp:484
 msgid ""
 "Set your name and email, for example:\n"
 "git config --global user.name \"Your Name\"\n"
@@ -2173,53 +2185,53 @@ msgstr ""
 "git config --global user.name \"Ihr Name\"\n"
 "git config --global user.email sie@example.com"
 
-#: src/rebase/rebase_window.cpp:516
+#: src/rebase/rebase_window.cpp:512
 msgid "The working tree has local changes. Stash them and start the rebase?"
 msgstr ""
 "Das Arbeitsverzeichnis enthält lokale Änderungen. Im Stash speichern und den "
 "Rebase starten?"
 
-#: src/rebase/rebase_window.cpp:535
+#: src/rebase/rebase_window.cpp:531
 msgid "Are you sure you want to abort the rebase process?"
 msgstr "Möchten Sie den Rebase wirklich abbrechen?"
 
-#: src/rebase/rebase_window.cpp:634
+#: src/rebase/rebase_window.cpp:630
 msgid "_Pick"
 msgstr "_Übernehmen"
 
-#: src/rebase/rebase_window.cpp:636
+#: src/rebase/rebase_window.cpp:632
 msgid "_Squash (with commit below)"
 msgstr "_Squash (mit dem Commit darunter)"
 
-#: src/rebase/rebase_window.cpp:639 src/ui/diff_window.cpp:140
+#: src/rebase/rebase_window.cpp:635 src/ui/diff_window.cpp:140
 msgid "_Edit"
 msgstr "_Bearbeiten"
 
-#: src/rebase/rebase_window.cpp:641
+#: src/rebase/rebase_window.cpp:637
 msgid "S_kip"
 msgstr "Ü_berspringen"
 
-#: src/rebase/rebase_window.cpp:647
+#: src/rebase/rebase_window.cpp:643
 msgid "Copy SHA-1 to clipboard"
 msgstr "SHA-1 in die Zwischenablage kopieren"
 
-#: src/rebase/rebase_window.cpp:670
+#: src/rebase/rebase_window.cpp:666
 msgid "_Squash ALL"
 msgstr "ALLE _squashen"
 
-#: src/rebase/rebase_window.cpp:671
+#: src/rebase/rebase_window.cpp:667
 msgid "_Edit ALL"
 msgstr "ALLE _bearbeiten"
 
-#: src/rebase/rebase_window.cpp:672
+#: src/rebase/rebase_window.cpp:668
 msgid "S_kip unselected"
 msgstr "Nicht ausgewählte ü_berspringen"
 
-#: src/rebase/rebase_window.cpp:673
+#: src/rebase/rebase_window.cpp:669
 msgid "S_quash unselected"
 msgstr "Nicht ausgewählte s_quashen"
 
-#: src/rebase/rebase_window.cpp:674
+#: src/rebase/rebase_window.cpp:670
 msgid "E_dit unselected"
 msgstr "Nicht ausgewählte _bearbeiten"
 
@@ -2688,19 +2700,19 @@ msgstr "Eintrag"
 msgid "Shows"
 msgstr "Anzeige"
 
-#: src/ui/settings_dialog.cpp:307
+#: src/ui/settings_dialog.cpp:306
 msgid "Selected entries show:"
 msgstr "Ausgewählte Einträge anzeigen:"
 
-#: src/ui/settings_dialog.cpp:319
+#: src/ui/settings_dialog.cpp:318
 msgid "Restore defaults"
 msgstr "Standard wiederherstellen"
 
-#: src/ui/settings_dialog.cpp:330
+#: src/ui/settings_dialog.cpp:329
 msgid "Hide the menu outside repositories (Shift shows it)"
 msgstr "Menü außerhalb von Repositorys ausblenden (Umschalt zeigt es an)"
 
-#: src/ui/settings_dialog.cpp:333
+#: src/ui/settings_dialog.cpp:332
 msgid ""
 "No menu for these paths, one a line (end one with \\ for a folder and all in "
 "it,\n"
@@ -2710,43 +2722,43 @@ msgstr ""
 "samt Inhalt,\n"
 "mit * am Ende für alle Pfade, die so beginnen):"
 
-#: src/ui/settings_dialog.cpp:346
+#: src/ui/settings_dialog.cpp:345
 msgid "Tortilla's unified diff viewer"
 msgstr "Unified-Diff-Betrachter von Tortilla"
 
-#: src/ui/settings_dialog.cpp:347
+#: src/ui/settings_dialog.cpp:346
 msgid "git difftool (no diff.tool configured)"
 msgstr "git difftool (kein diff.tool konfiguriert)"
 
-#: src/ui/settings_dialog.cpp:348
+#: src/ui/settings_dialog.cpp:347
 #, c++-format
 msgid "git difftool (diff.tool: {0})"
 msgstr "git difftool (diff.tool: {0})"
 
-#: src/ui/settings_dialog.cpp:350 src/ui/settings_dialog.cpp:379
-#: src/ui/settings_dialog.cpp:449
+#: src/ui/settings_dialog.cpp:349 src/ui/settings_dialog.cpp:378
+#: src/ui/settings_dialog.cpp:448
 msgid "Custom..."
 msgstr "Benutzerdefiniert..."
 
-#: src/ui/settings_dialog.cpp:397
+#: src/ui/settings_dialog.cpp:396
 msgid "Comparing revisions"
 msgstr "Revisionen vergleichen"
 
-#: src/ui/settings_dialog.cpp:400
+#: src/ui/settings_dialog.cpp:399
 msgid "Compare with"
 msgstr "Vergleichen mit"
 
-#: src/ui/settings_dialog.cpp:402 src/ui/settings_dialog.cpp:419
-#: src/ui/settings_dialog.cpp:481
+#: src/ui/settings_dialog.cpp:401 src/ui/settings_dialog.cpp:418
+#: src/ui/settings_dialog.cpp:480
 msgid "Command"
 msgstr "Befehl"
 
-#: src/ui/settings_dialog.cpp:404
+#: src/ui/settings_dialog.cpp:403
 #, c-format
 msgid "program %base %mine"
 msgstr "Programm %base %mine"
 
-#: src/ui/settings_dialog.cpp:407
+#: src/ui/settings_dialog.cpp:406
 msgid ""
 "%base and %mine are the two sides compared: folders when a whole commit is\n"
 "compared. %bname and %yname are their names. Without placeholders the two\n"
@@ -2757,19 +2769,19 @@ msgstr ""
 "Commit verglichen wird. %bname und %yname sind ihre Namen. Ohne Platzhalter\n"
 "werden die beiden Seiten am Ende des Befehls angehängt."
 
-#: src/ui/settings_dialog.cpp:413
+#: src/ui/settings_dialog.cpp:412
 msgid "Resolving conflicts"
 msgstr "Konflikte auflösen"
 
-#: src/ui/settings_dialog.cpp:416
+#: src/ui/settings_dialog.cpp:415
 msgid "Merge with"
 msgstr "Zusammenführen mit"
 
-#: src/ui/settings_dialog.cpp:423
+#: src/ui/settings_dialog.cpp:422
 msgid "program %base %theirs %mine %merged"
 msgstr "Programm %base %theirs %mine %merged"
 
-#: src/ui/settings_dialog.cpp:426
+#: src/ui/settings_dialog.cpp:425
 msgid ""
 "%base, %theirs and %mine are the conflict's three sides and %merged the file "
 "to save;\n"
@@ -2783,20 +2795,20 @@ msgstr ""
 "vier\n"
 "Dateien am Ende angehängt."
 
-#: src/ui/settings_dialog.cpp:446
+#: src/ui/settings_dialog.cpp:445
 msgid "git's own (ssh)"
 msgstr "git-eigener (ssh)"
 
-#: src/ui/settings_dialog.cpp:447
+#: src/ui/settings_dialog.cpp:446
 #, c++-format
 msgid "git's own ({0})"
 msgstr "git-eigener ({0})"
 
-#: src/ui/settings_dialog.cpp:476 src/ui/settings_dialog.cpp:479
+#: src/ui/settings_dialog.cpp:475 src/ui/settings_dialog.cpp:478
 msgid "SSH client"
 msgstr "SSH-Client"
 
-#: src/ui/settings_dialog.cpp:486
+#: src/ui/settings_dialog.cpp:485
 msgid ""
 "Run for each remote as git's GIT_SSH_COMMAND: git adds the host and the\n"
 "command to run there. plink and TortoiseGitPlink are known by their names."
@@ -2806,7 +2818,7 @@ msgstr ""
 "und den dort auszuführenden Befehl an. plink und TortoiseGitPlink werden am "
 "Namen erkannt."
 
-#: src/ui/settings_dialog.cpp:492
+#: src/ui/settings_dialog.cpp:491
 msgid ""
 "\n"
 "Git for Windows rewrites absolute Linux paths (/...) in it: for WSL ssh,\n"
@@ -2816,7 +2828,7 @@ msgstr ""
 "Git for Windows schreibt darin absolute Linux-Pfade (/...) um: Für WSL ssh\n"
 "schreiben Sie sie relativ zum Home-Verzeichnis (~/...)."
 
-#: src/ui/settings_dialog.cpp:499
+#: src/ui/settings_dialog.cpp:498
 msgid ""
 "Used by the git Tortilla runs (fetch, pull, push, clone); the repository's\n"
 "core.sshCommand applies only with git's own."
@@ -2825,23 +2837,23 @@ msgstr ""
 "clone);\n"
 "core.sshCommand des Repositorys gilt nur mit dem git-eigenen."
 
-#: src/ui/settings_dialog.cpp:523
+#: src/ui/settings_dialog.cpp:522
 msgid "Settings - Tortilla"
 msgstr "Einstellungen - Tortilla"
 
-#: src/ui/settings_dialog.cpp:527
+#: src/ui/settings_dialog.cpp:526
 msgid "General"
 msgstr "Allgemein"
 
-#: src/ui/settings_dialog.cpp:528
+#: src/ui/settings_dialog.cpp:527
 msgid "Context Menu"
 msgstr "Kontextmenü"
 
-#: src/ui/settings_dialog.cpp:530
+#: src/ui/settings_dialog.cpp:529
 msgid "Diff Viewer"
 msgstr "Diff-Betrachter"
 
-#: src/ui/settings_dialog.cpp:532
+#: src/ui/settings_dialog.cpp:531
 msgid "Network"
 msgstr "Netzwerk"
 

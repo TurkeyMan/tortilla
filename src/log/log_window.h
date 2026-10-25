@@ -43,6 +43,8 @@ private:
     void show_commit(size_t row);
     void update_status();
     void update_ref_button();
+    // Where the walk starts; the All Branches box follows [spec 1.9.1].
+    void set_walk(walk_refs refs, std::string rev = {});
     void schedule_filter();
     void apply_filter();
     void jump(bool up);
@@ -151,6 +153,7 @@ private:
 
     // Options
     walk_options walk_options_;
+    std::vector<std::string> ref_history_;  // refs picked, newest first
     log_filter filter_;
     bool show_unversioned_ = true;
     std::optional<int64_t> since_, until_;  // explicit date limits

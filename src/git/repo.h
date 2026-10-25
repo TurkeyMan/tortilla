@@ -11,6 +11,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -104,13 +105,26 @@ struct file_change
     bool counted = true;  // false: added/removed not known yet
 };
 
+// Where a log walk starts [spec 1.9.1].
+enum class walk_refs
+{
+    head,   // HEAD, or walk_options::rev when set
+    all,    // every ref and worktree HEAD, like git log --all
+    basic,  // local and remote branches and tags, and HEAD ("All basic refs")
+    local,  // local branches and HEAD ("All local branches")
+};
+
+// Whether a walk over `refs` starts at the ref named `full_name`.
+bool walks_ref(walk_refs refs, std::string_view full_name);
+
 struct walk_options
 {
-    bool all_branches = false;             // every local/remote branch and tag, else HEAD only
+    walk_refs refs = walk_refs::head;
+    std::string rev;                       // with head: start here instead (a ref or commit)
     bool first_parent = false;             // --first-parent
     bool no_merges = false;                // --no-merges
     std::optional<int64_t> since, until;  // author time bounds, inclusive
-    // With all_branches: the ref tips to start from, when the caller already
+    // With refs other than head: the ref tips to start from, when the caller already
     // has them (from refs()); empty = list the refs here.
     std::vector<oid> tips;
 };

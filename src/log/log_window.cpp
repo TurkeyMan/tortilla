@@ -1,5 +1,6 @@
 #include "log_window.h"
 
+#include "git/command.h"
 #include "i18n.h"
 #include "settings.h"
 #include "ui/menu_text.h"
@@ -101,12 +102,7 @@ log_window::open(rap::ui& ui, const std::string& path, bool all_branches)
     if (!repo) return std::unexpected(repo.error());
     std::unique_ptr<log_window> w(new log_window(ui, std::move(*repo), path));
     w->build();
-    if (all_branches)
-    {
-        w->walk_options_.all_branches = true;
-        w->all_branches_->set_state(rap::check_state::checked);
-        w->update_ref_button();
-    }
+    if (all_branches) w->set_walk(walk_refs::all);
     w->reload();
     w->watch_repository();
     return w;
@@ -238,8 +234,7 @@ void log_window::build()
                         .on_toggled(
                             [this](bool)
                             {
-                                walk_options_.all_branches = all_branches_->checked();
-                                update_ref_button();
+                                set_walk(all_branches_->checked() ? walk_refs::all : walk_refs::head);
                                 reload();
                             }),
                 },
@@ -322,7 +317,14 @@ void log_window::save_layout()
     // Options. All Branches is per repository, as in TortoiseGit [spec
     // 1.9.7]; the rest apply everywhere.
     auto flag = [](bool b) { return std::string(b ? "1" : "0"); };
-    st.set("log.allBranches." + repo_.workdir(), flag(walk_options_.all_branches));
+    // "1" for all; basic and local refs (the box indeterminate) by name.
+    st.set("log.allBranches." + repo_.workdir(), walk_options_.refs == walk_refs::all     ? "1"
+                                                 : walk_options_.refs == walk_refs::basic ? "basic"
+                                                 : walk_options_.refs == walk_refs::local ? "local"
+                                                                                          : "0");
+    std::string history;
+    for (const std::string& r : ref_history_) history += (history.empty() ? "" : " ") + r;
+    st.set("log.refHistory." + repo_.workdir(), history);
     st.set("log.walk.firstParent", flag(walk_options_.first_parent));
     st.set("log.walk.noMerges", flag(walk_options_.no_merges));
     st.set("log.view.labels", std::to_string(log_.labels()));
@@ -362,11 +364,23 @@ void log_window::restore_layout()
         std::string v = st.value(key);
         return v.empty() ? fallback : std::strtol(v.c_str(), nullptr, 10);
     };
-    walk_options_.all_branches = flag("log.allBranches." + repo_.workdir(), false);
+    // Ref names have no spaces.
+    ref_history_.clear();
+    const std::string history = st.value("log.refHistory." + repo_.workdir());
+    for (size_t at = 0; at < history.size();)
+    {
+        size_t space = history.find(' ', at);
+        if (space == std::string::npos) space = history.size();
+        if (space > at) ref_history_.push_back(history.substr(at, space - at));
+        at = space + 1;
+    }
+    const std::string refs = st.value("log.allBranches." + repo_.workdir());
+    set_walk(refs == "1" ? walk_refs::all
+             : refs == "basic" ? walk_refs::basic
+             : refs == "local" ? walk_refs::local
+                               : walk_refs::head);
     walk_options_.first_parent = flag("log.walk.firstParent", false);
     walk_options_.no_merges = flag("log.walk.noMerges", false);
-    all_branches_->set_state(walk_options_.all_branches ? rap::check_state::checked
-                                                        : rap::check_state::unchecked);
     walk_->set_pushed(walk_options_.first_parent || walk_options_.no_merges);
     update_ref_button();
     log_.set_labels(unsigned(number("log.view.labels", label_all)) & label_all);
@@ -470,6 +484,13 @@ void log_window::reload()
     progress_->set_visible(true);
     pulse_timer_ = ui_.timer(100, true, [this] { progress_->pulse(); });
     status_->set_text(_("Loading…"));
+
+    // A ref picked to start from that has since gone: back to HEAD.
+    if (!walk_options_.rev.empty() &&
+        !run_git(repo_.workdir().empty() ? repo_.git_dir() : repo_.workdir(),
+                 {"rev-parse", "--verify", "-q", walk_options_.rev + "^{commit}"}, git_output::stdout_only)
+             .ok())
+        set_walk(walk_refs::head);
 
     walk_options opts = walk_options_;
     opts.since = since_;
@@ -695,45 +716,129 @@ void log_window::update_status()
 }
 
 // The ref selector shows the current ref, or a mode [spec 1.9.1].
-void log_window::update_ref_button()
+void log_window::set_walk(walk_refs refs, std::string rev)
 {
-    if (walk_options_.all_branches)
-        ref_button_->set_text(_("<All Branches>"));
-    else
+    walk_options_.refs = refs;
+    if (!rev.empty())
     {
-        std::string head = repo_.head_name();
-        ref_button_->set_text(head == "HEAD" ? _("<No branch>") : head);
+        std::erase(ref_history_, rev);
+        ref_history_.insert(ref_history_.begin(), rev);
+        if (ref_history_.size() > 5) ref_history_.resize(5);
     }
+    walk_options_.rev = std::move(rev);
+    // All checks the box; basic or local refs make it indeterminate.
+    all_branches_->set_state(refs == walk_refs::all    ? rap::check_state::checked
+                             : refs == walk_refs::head ? rap::check_state::unchecked
+                                                       : rap::check_state::indeterminate);
+    update_ref_button();
 }
 
-// TODO: TortoiseGit's left click opens Browse References; this offers its
-// right-click menu instead.
+void log_window::update_ref_button()
+{
+    std::string text, full;
+    switch (walk_options_.refs)
+    {
+    case walk_refs::all: text = _("<All Branches>"); break;
+    case walk_refs::basic: text = _("<Basic Refs>"); break;
+    case walk_refs::local: text = _("<Local Branches>"); break;
+    case walk_refs::head:
+        if (!walk_options_.rev.empty())
+        {
+            full = walk_options_.rev;
+            text = full;
+            for (std::string_view prefix : {"refs/heads/", "refs/remotes/", "refs/tags/", "refs/"})
+                if (text.starts_with(prefix))
+                {
+                    text.erase(0, prefix.size());
+                    break;
+                }
+        }
+        else
+        {
+            std::string head = repo_.head_name();
+            text = head == "HEAD" ? _("<No branch>") : head;
+            full = head == "HEAD" ? "HEAD" : "refs/heads/" + head;
+        }
+        break;
+    }
+    ref_button_->set_text(text);
+    ref_button_->set_tooltip(full.empty() ? text : full);
+}
+
+// TortoiseGit's right-click menu [spec 1.9.1], with the branches and tags
+// to start from in submenus until Browse References exists.
+// TODO: TortoiseGit's left click opens Browse References.
 rap::menu log_window::ref_menu()
 {
-    std::string head = repo_.head_name();
-    return {
+    const std::string head = repo_.head_name();
+    const bool at_head = walk_options_.refs == walk_refs::head && walk_options_.rev.empty();
+    auto pick = [this](walk_refs refs, std::string rev = {})
+    {
+        return [this, refs, rev]
+        {
+            set_walk(refs, rev);
+            reload();
+        };
+    };
+    auto mode = [&](std::string label, walk_refs refs)
+    {
+        return rap::menu_item{.label = std::move(label),
+                              .action = pick(refs),
+                              .checked = walk_options_.refs == refs,
+                              .radio = true};
+    };
+    const bool fetch_head =
+        run_git(repo_.workdir().empty() ? repo_.git_dir() : repo_.workdir(),
+                {"rev-parse", "--verify", "-q", "FETCH_HEAD^{commit}"},
+                git_output::stdout_only)
+            .ok();
+    rap::menu out{
         {.label = _("Browse References"), .enabled = false},
         {.label = head == "HEAD" ? "HEAD" : "HEAD -> \"" + menu_text(head) + "\"",
-         .action =
-             [this]
-         {
-             walk_options_.all_branches = false;
-             all_branches_->set_state(rap::check_state::unchecked);
-             update_ref_button();
-             reload();
-         }},
-        {.label = _("All"),
-         .action =
-             [this]
-         {
-             walk_options_.all_branches = true;
-             all_branches_->set_state(rap::check_state::checked);
-             update_ref_button();
-             reload();
-         }},
-        {.label = _("All basic refs"), .enabled = false},
-        {.label = _("All local branches"), .enabled = false},
+         .action = pick(walk_refs::head),
+         .checked = at_head,
+         .radio = true},
+        {.label = "FETCH__HEAD",
+         .action = pick(walk_refs::head, "FETCH_HEAD"),
+         .enabled = fetch_head,
+         .checked = walk_options_.refs == walk_refs::head && walk_options_.rev == "FETCH_HEAD",
+         .radio = true},
+        mode(_("All"), walk_refs::all),
+        mode(_("All basic refs"), walk_refs::basic),
+        mode(_("All local branches"), walk_refs::local),
     };
+
+    // Each branch and tag, by kind, sorted by name.
+    rap::menu local, remote, tags;
+    std::vector<ref> refs;
+    for (auto& [id, labels] : repo_.refs())
+        for (const ref& r : labels)
+            if (r.kind == ref_kind::local_branch || r.kind == ref_kind::remote_branch ||
+                r.kind == ref_kind::tag)
+                refs.push_back(r);
+    std::ranges::sort(refs, {}, &ref::full_name);
+    for (const ref& r : refs)
+    {
+        if (r.full_name.ends_with("/HEAD")) continue;  // origin/HEAD: the default branch's alias
+        rap::menu_item item{.label = menu_text(r.name),
+                            .action = pick(walk_refs::head, r.full_name),
+                            .checked = walk_options_.refs == walk_refs::head &&
+                                       walk_options_.rev == r.full_name,
+                            .radio = true};
+        (r.kind == ref_kind::local_branch ? local : r.kind == ref_kind::remote_branch ? remote : tags)
+            .push_back(std::move(item));
+    }
+    if (!local.empty() || !remote.empty() || !tags.empty()) out.push_back(rap::menu_item::separator());
+    if (!local.empty()) out.push_back({.label = _("_Branches"), .children = std::move(local)});
+    if (!remote.empty()) out.push_back({.label = _("_Remote branches"), .children = std::move(remote)});
+    if (!tags.empty()) out.push_back({.label = _("_Tags"), .children = std::move(tags)});
+
+    // Recently picked, as TortoiseGit lists them under a separator.
+    if (!ref_history_.empty()) out.push_back(rap::menu_item::separator());
+    for (const std::string& r : ref_history_)
+        out.push_back({.label = menu_text(r.size() > 150 ? r.substr(0, 150) : r),
+                       .action = pick(walk_refs::head, r)});
+    return out;
 }
 
 // Cue text lists the selected fields [spec 1.9.2].
