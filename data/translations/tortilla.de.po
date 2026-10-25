@@ -4,7 +4,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: tortilla\n"
 "Report-Msgid-Bugs-To: https://github.com/TurkeyMan/tortilla/issues\n"
-"POT-Creation-Date: 2026-10-25 05:31+0000\n"
+"POT-Creation-Date: 2026-10-25 05:37+0000\n"
 "Language: de\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
@@ -2162,23 +2162,23 @@ msgstr "Spalten zurücksetzen"
 msgid "No more revisions found."
 msgstr "Keine weiteren Revisionen gefunden."
 
-#: src/main.cpp:207
 #
+#: src/main.cpp:223
 msgid "This needs a working tree."
 msgstr "Dafür wird ein Arbeitsverzeichnis gebraucht."
 
-#: src/main.cpp:226
+#: src/main.cpp:242
 #, c++-format
 msgid "{0} - Stash Apply"
 msgstr "{0} - Stash Apply"
 
-#: src/main.cpp:226
+#: src/main.cpp:242
 #, c++-format
 msgid "{0} - Stash Pop"
 msgstr "{0} - Stash Pop"
 
-#: src/main.cpp:448
 #
+#: src/main.cpp:464
 msgid "Could not determine the last committed revision!"
 msgstr "Die zuletzt committete Revision konnte nicht ermittelt werden!"
 
@@ -2787,6 +2787,49 @@ msgstr "Es ist kein Diff-Programm festgelegt."
 #: src/ui/compare.cpp:118
 msgid "The diff tool failed."
 msgstr "Das Diff-Tool ist fehlgeschlagen."
+
+#: src/ui/create_repo_dialog.cpp:95
+msgid "Could not initialize a new repository."
+msgstr "Ein neues Repository konnte nicht angelegt werden."
+
+#: src/ui/create_repo_dialog.cpp:103
+#, c++-format
+msgid "Initialized empty Git repository in {0}."
+msgstr "Leeres Git-Repository in {0} angelegt."
+
+#: src/ui/create_repo_dialog.cpp:115
+#, c++-format
+msgid "{0} - Git Init - Tortilla"
+msgstr "{0} - Git Init - Tortilla"
+
+#: src/ui/create_repo_dialog.cpp:117
+msgid "Make it _Bare (No working directories)"
+msgstr "_Bare-Repository (ohne Arbeitsverzeichnis)"
+
+#: src/ui/create_repo_dialog.cpp:119
+msgid ""
+"If you plan to work inside this folder, leave this unchecked.\n"
+"Typically a bare repo can only have changes 'pushed' to it.\n"
+"(By convention, a bare repo folder should have a name that ends with '.git')"
+msgstr "Wer in diesem Ordner arbeiten möchte, lässt dies leer.\nIn ein Bare-Repository werden Änderungen meist nur per Push übertragen.\n(Üblicherweise endet der Name eines Bare-Repository-Ordners auf „.git“.)"
+
+#: src/ui/create_repo_dialog.cpp:138
+#, c++-format
+msgid ""
+"The target folder\n"
+"{0}\n"
+"is not empty!\n"
+"Are you sure you want to initialize a git repository inside that folder?"
+msgstr "Der Zielordner\n{0}\nist nicht leer!\nSoll darin wirklich ein Git-Repository angelegt werden?"
+
+#: src/ui/create_repo_dialog.cpp:166
+#, c++-format
+msgid ""
+"The target folder\n"
+"{0}\n"
+"is a special folder and is not supposed to be a repository root!\n"
+"Are you sure you want to initialize a git repository inside that folder?"
+msgstr "Der Zielordner\n{0}\nist ein Systemordner und sollte kein Repository-Stamm sein!\nSoll darin wirklich ein Git-Repository angelegt werden?"
 
 #: src/ui/diff_window.cpp:96 src/ui/progress_dialog.cpp:210
 #, c++-format

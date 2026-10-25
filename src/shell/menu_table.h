@@ -83,6 +83,7 @@ enum class run
     stash_save,   // tortilla stashsave <first>
     stash_apply,  // tortilla stashapply <folder>
     stash_pop,    // tortilla stashpop <folder>
+    repo_create,  // tortilla repocreate <folder>
     edit_conflicts,  // tortilla conflicteditor <file>
     about,           // tortilla about
     remove,          // tortilla remove <paths...>
@@ -202,7 +203,7 @@ inline constexpr row k_rows[] = {
     {"Create repositor&y here...",
      {{{FOLD, GIT | FIG | BARE | INACC}, {FOLD | IGN, 0}, {FOLD | EXT, GIT}}},
      place::top,
-     run::none,
+     run::repo_create,
      "repocreate"},
     {"&Add...",
      {{{IVF, GIT}, {GIT | FOLD, 0}, {IGN, 0}, {DELETED, FOLD | ONE}}},

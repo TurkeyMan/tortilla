@@ -19,6 +19,7 @@
 //   tortilla refbrowse [path]          Browse References
 //   tortilla prevdiff [path]           the file against its previous version
 //   tortilla stashsave|stashapply|stashpop [path]  Stash changes, Apply or Pop
+//   tortilla repocreate [folder]       git init there, bare or not
 //   tortilla conflicteditor file       a conflicted file in the merge tool
 //   tortilla diff [path] rev [rev2]   a commit, or rev..rev2, as a unified diff
 //   tortilla settings [path] [diff|menu|network]  the Settings dialog (at that page)
@@ -49,6 +50,7 @@
 #include "ui/compare.h"
 #include "ui/diff_window.h"
 #include "ui/settings_dialog.h"
+#include "ui/create_repo_dialog.h"
 #include "ui/progress_dialog.h"
 #include "ui/stash_dialog.h"
 #include "ui/welcome_window.h"
@@ -143,7 +145,7 @@ int main(int argc, char** argv)
                   std::strcmp(argv[i], "merge") == 0 || std::strcmp(argv[i], "mergeabort") == 0 ||
                   std::strcmp(argv[i], "refbrowse") == 0 || std::strcmp(argv[i], "prevdiff") == 0 ||
                   std::strcmp(argv[i], "stashsave") == 0 || std::strcmp(argv[i], "stashapply") == 0 ||
-                  std::strcmp(argv[i], "stashpop") == 0 ||
+                  std::strcmp(argv[i], "stashpop") == 0 || std::strcmp(argv[i], "repocreate") == 0 ||
                   std::strcmp(argv[i], "conflicteditor") == 0 || std::strcmp(argv[i], "about") == 0 ||
                   std::strcmp(argv[i], "remove") == 0 || std::strcmp(argv[i], "removekeep") == 0 ||
                   std::strcmp(argv[i], "ignore") == 0))
@@ -193,6 +195,20 @@ int main(int argc, char** argv)
                 (*ui)->quit();
             });
         (*w)->show();
+        (*ui)->run();
+        return code;
+    }
+
+    // Explorer's Create repository here [spec 4.2, row 47].
+    if (command == "repocreate")
+    {
+        int code = 1;
+        tortilla::create_repository(**ui, path == "." ? rap::sys::path_to_utf8(std::filesystem::current_path()) : path,
+                                    [&](bool made)
+                                    {
+                                        code = made ? 0 : 1;
+                                        (*ui)->quit();
+                                    });
         (*ui)->run();
         return code;
     }
