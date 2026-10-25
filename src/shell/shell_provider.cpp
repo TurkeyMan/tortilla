@@ -517,14 +517,16 @@ public:
         case run::resolve:
         case run::remove:
         case run::remove_keep:
+        case run::cleanup:
         {
-            std::vector<std::string> args{r->command == run::commit       ? "commit"
-                                          : r->command == run::repostatus ? "repostatus"
-                                          : r->command == run::add        ? "add"
-                                          : r->command == run::revert     ? "revert"
-                                          : r->command == run::remove     ? "remove"
+            std::vector<std::string> args{r->command == run::commit        ? "commit"
+                                          : r->command == run::repostatus  ? "repostatus"
+                                          : r->command == run::add         ? "add"
+                                          : r->command == run::revert      ? "revert"
+                                          : r->command == run::remove      ? "remove"
                                           : r->command == run::remove_keep ? "removekeep"
-                                                                          : "resolve"};
+                                          : r->command == run::cleanup     ? "cleanup"
+                                                                           : "resolve"};
             if (sel.paths.empty())
                 args.push_back(folder);
             else

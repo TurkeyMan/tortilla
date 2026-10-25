@@ -6,6 +6,7 @@
 #include "branch/create_ref_dialog.h"
 #include "branch/merge_dialog.h"
 #include "branch/switch_dialog.h"
+#include "changes/cleanup_dialog.h"
 #include "changes/commit_window.h"
 #include "log/reflog_window.h"
 #include "remote/pull_fetch_dialog.h"
@@ -285,7 +286,9 @@ menu log_window::context_menu(std::optional<size_t> clicked)
                 item(_("F_etch..."), [this]
                      { keep_dialog(pull_fetch_dialog::open(ui_, repo_.workdir(), false)); }));
             separator(m);
-            m.push_back(todo(_("_Clean up...")));
+            m.push_back(item(
+                _("_Clean up..."), [this]
+                { clean_up(ui_, window_.get(), {repo_.workdir()}, [this](bool) { reload(); }); }));
             separator(m);
         }
 

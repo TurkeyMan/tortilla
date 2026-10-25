@@ -91,6 +91,7 @@ enum class run
     about,           // tortilla about
     remove,          // tortilla remove <paths...>
     remove_keep,     // tortilla removekeep <paths...>
+    cleanup,         // tortilla cleanup <paths...>
     ignore,          // a submenu: tortilla ignore [--delete] [--mask] <paths...>
 };
 
@@ -201,7 +202,7 @@ inline constexpr row k_rows[] = {
      run::remove_keep,
      "removekeep"},
     {"Re&vert...", {{{GIT, NORMAL}, {FIG, 0}}}, place::sub, run::revert, "revert"},
-    {"&Clean up...", {{{FIG | FOLD, 0}}}, place::sub, run::none, "cleanup"},
+    {"&Clean up...", {{{FIG | FOLD, 0}}}, place::sub, run::cleanup, "cleanup"},
     separator,
     // (LFS: a submenu only when the repository has <gitdir>/lfs [spec 4.4].)
     separator,

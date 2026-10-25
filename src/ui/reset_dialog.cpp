@@ -1,5 +1,6 @@
 #include "reset_dialog.h"
 
+#include "changes/cleanup_dialog.h"
 #include "i18n.h"
 #include "ui/progress_dialog.h"
 
@@ -47,8 +48,14 @@ void reset_to(rap::ui& ui, rap::window* parent, const std::string& workdir,
             {
                 static const char* modes[] = {"--soft", "--mixed", "--hard"};
                 const int i = std::clamp(keep->type->current(), 0, 2);
+                // After a hard reset, Clean up for what it left untracked.
+                std::vector<progress_follow_up> follow_ups;
+                if (i == 2)
+                    follow_ups.push_back({.label = _("_Clean up..."),
+                                          .after_close = [&ui, parent, workdir]
+                                          { clean_up(ui, parent, {workdir}, [](bool) {}); }});
                 run_progress_dialog(ui, parent, _("Reset"), workdir, {{"reset", modes[i], hash}},
-                                    done);
+                                    done, std::move(follow_ups));
             }
             ui.post([keep] {});  // destroy after this callback returns
         });

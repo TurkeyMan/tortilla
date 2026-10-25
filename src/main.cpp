@@ -23,6 +23,7 @@
 //   tortilla stashsave|stashapply|stashpop [path]  Stash changes, Apply or Pop
 //   tortilla repocreate [folder]       git init there, bare or not
 //   tortilla rename path               git mv it to a new name
+//   tortilla cleanup [path...]         Clean up: untracked files removed
 //   tortilla conflicteditor file       a conflicted file in the merge tool
 //   tortilla diff [path] rev [rev2]   a commit, or rev..rev2, as a unified diff
 //   tortilla settings [path] [diff|menu|network]  the Settings dialog (at that page)
@@ -36,6 +37,7 @@
 #include "branch/merge_dialog.h"
 #include "branch/switch_dialog.h"
 #include "changes/changes_window.h"
+#include "changes/cleanup_dialog.h"
 #include "changes/commit_window.h"
 #include "changes/conflict_editor.h"
 #include "changes/file_action_window.h"
@@ -211,6 +213,7 @@ int main(int argc, char** argv)
                   std::strcmp(argv[i], "stashapply") == 0 ||
                   std::strcmp(argv[i], "stashpop") == 0 ||
                   std::strcmp(argv[i], "repocreate") == 0 || std::strcmp(argv[i], "rename") == 0 ||
+                  std::strcmp(argv[i], "cleanup") == 0 ||
                   std::strcmp(argv[i], "conflicteditor") == 0 ||
                   std::strcmp(argv[i], "about") == 0 || std::strcmp(argv[i], "remove") == 0 ||
                   std::strcmp(argv[i], "removekeep") == 0 || std::strcmp(argv[i], "ignore") == 0))
@@ -481,6 +484,15 @@ int main(int argc, char** argv)
                                      });
         (*ui)->run();
         return code;
+    }
+
+    if (command == "cleanup")
+    {
+        tortilla::windows::init(**ui);
+        const size_t running = tortilla::windows::hold({});
+        tortilla::clean_up(**ui, nullptr, args.empty() ? std::vector<std::string>{path} : args,
+                           [running](bool) { tortilla::windows::release(running); });
+        return (*ui)->run();
     }
 
     if (command == "remove" || command == "removekeep")

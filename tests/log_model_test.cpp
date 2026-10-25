@@ -3,6 +3,7 @@
 // Builds a repo with branches and merges via the git CLI, then loads it
 // through log_model on the null UI backend.
 #include "changes/working_tree.h"
+#include "git/clean.h"
 #include "git/command.h"
 #include "git/diff_tool.h"
 #include "git/ignore_patterns.h"
@@ -507,6 +508,55 @@ int main(int argc, char** argv)
                   stash->front().action.empty() && stash->front().message.starts_with("WIP on"),
               "reflog: the stash's entry");
         sh(git + "stash drop -q");
+    }
+
+    // Clean up: git clean's arguments, and its dry run read back.
+    {
+        using tortilla::clean_options;
+        const std::vector<std::string> plain = tortilla::clean_args({}, true, ".");
+        check(plain == std::vector<std::string>{"-c", "core.quotepath=false", "clean", "-n", "-d"},
+              "clean up: a dry run of untracked files and folders, at the top");
+        check(tortilla::clean_args({.files = clean_options::all, .directories = false}, false,
+                                   "src") == std::vector<std::string>{"-C", "src", "-c",
+                                                                      "core.quotepath=false",
+                                                                      "clean", "-f", "-x"},
+              "clean up: everything untracked in a folder, files only, from inside it");
+        check(tortilla::clean_args({.files = clean_options::ignored}, false, ".")[5] == "-X",
+              "clean up: ignored only");
+        check(tortilla::clean_args({}, false, ".", {"a.txt"}).back() == "a.txt",
+              "clean up: files chosen one by one");
+        check(tortilla::parse_clean_listing(
+                  "Would remove a b.txt\nWould remove \"q\\\"uote\\303\\251.txt\"\n"
+                  "Entering 'sub'\nWould remove junk/\n") ==
+                  std::vector<std::string>{"a b.txt", "q\"uote\xc3\xa9.txt", "sub/junk/"},
+              "clean up: the listing, quoted paths and submodules");
+
+        const std::string dir = std::string(argv[1]) + "/cleanup";
+        std::filesystem::create_directories(dir + "/build");
+        sh("git init -q '" + dir + "' && printf 'build/\\n*.log\\n' > '" + dir + "/.gitignore'");
+        sh("cd '" + dir +
+           "' && git add .gitignore && git -c user.name=Ada -c user.email=ada@x commit -qm init");
+        sh("cd '" + dir +
+           "' && touch new.txt x.log build/out.o && mkdir -p tmp && touch tmp/t.txt");
+        auto listed = [&](clean_options o, std::string folder = ".")
+        {
+            auto r = tortilla::run_git(dir, tortilla::clean_args(o, true, folder),
+                                       tortilla::git_output::stdout_only);
+            auto l = tortilla::parse_clean_listing(r.output);
+            std::ranges::sort(l);
+            return l;
+        };
+        check(listed({}) == std::vector<std::string>{"new.txt", "tmp/"},
+              "clean up: untracked, not ignored");
+        check(listed({.files = clean_options::ignored}) ==
+                  std::vector<std::string>{"build/", "x.log"},
+              "clean up: only ignored");
+        check(listed({.files = clean_options::all, .directories = false}) ==
+                  std::vector<std::string>{"new.txt", "x.log"},
+              "clean up: all untracked files, no folders");
+        // An untracked folder cleaned from inside goes as a whole: "./".
+        check(listed({}, "tmp") == std::vector<std::string>{"./"},
+              "clean up: a folder, from inside it");
     }
 
     // A repository uses Git LFS by its attributes, nested ones too, whether

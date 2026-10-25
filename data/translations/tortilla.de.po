@@ -3398,3 +3398,71 @@ msgid "Do you really want to delete {0} from the reflog?"
 msgid_plural "Do you really want to delete these {1} entries from the reflog?"
 msgstr[0] "Wollen Sie {0} wirklich aus dem Reflog löschen?"
 msgstr[1] "Wollen Sie diese {1} Einträge wirklich aus dem Reflog löschen?"
+
+#: src/changes/cleanup_dialog.cpp
+msgid "Clean up"
+msgstr "Bereinigen"
+
+#: src/changes/cleanup_dialog.cpp
+msgid "Only something inside the repository can be cleaned up."
+msgstr "Nur etwas innerhalb des Repositorys kann bereinigt werden."
+
+#: src/changes/cleanup_dialog.cpp
+msgid "Remove"
+msgstr "Entfernen"
+
+#: src/changes/cleanup_dialog.cpp
+msgid "Untracked files that git doesn't ignore"
+msgstr "Unversionierte Dateien, die git nicht ignoriert"
+
+#: src/changes/cleanup_dialog.cpp
+msgid "Only ignored files"
+msgstr "Nur ignorierte Dateien"
+
+#: src/changes/cleanup_dialog.cpp
+msgid "All untracked files, ignored ones too"
+msgstr "Alle unversionierten Dateien, auch ignorierte"
+
+#: src/changes/cleanup_dialog.cpp
+msgid "Remove untracked _directories"
+msgstr "Unversionierte _Verzeichnisse entfernen"
+
+#: src/changes/cleanup_dialog.cpp
+msgid "Use the _Recycle Bin"
+msgstr "_Papierkorb verwenden"
+
+#: src/changes/cleanup_dialog.cpp
+msgid "Move to the _Trash"
+msgstr "In den _Papierkorb verschieben"
+
+#: src/changes/cleanup_dialog.cpp
+msgid "Include _submodules"
+msgstr "_Submodule einbeziehen"
+
+#: src/changes/cleanup_dialog.cpp
+msgid "Dry _run (only list what would be removed)"
+msgstr "_Probelauf (nur auflisten, was entfernt würde)"
+
+#: src/changes/cleanup_dialog.cpp
+msgid "git couldn't list the untracked files."
+msgstr "git konnte die unversionierten Dateien nicht auflisten."
+
+#: src/changes/cleanup_dialog.cpp
+msgid "Nothing to clean up."
+msgstr "Nichts zu bereinigen."
+
+#: src/changes/cleanup_dialog.cpp
+msgid "Some of them couldn't be removed."
+msgstr "Einige davon konnten nicht entfernt werden."
+
+#: src/changes/cleanup_dialog.cpp
+msgid "{0} item moved to the Recycle Bin."
+msgid_plural "{0} items moved to the Recycle Bin."
+msgstr[0] "{0} Element in den Papierkorb verschoben."
+msgstr[1] "{0} Elemente in den Papierkorb verschoben."
+
+#: src/changes/cleanup_dialog.cpp
+msgid "{0} item moved to the Trash."
+msgid_plural "{0} items moved to the Trash."
+msgstr[0] "{0} Element in den Papierkorb verschoben."
+msgstr[1] "{0} Elemente in den Papierkorb verschoben."
