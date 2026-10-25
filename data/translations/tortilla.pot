@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: tortilla\n"
 "Report-Msgid-Bugs-To: https://github.com/TurkeyMan/tortilla/issues\n"
-"POT-Creation-Date: 2026-10-25 03:37+0000\n"
+"POT-Creation-Date: 2026-10-25 05:31+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -46,8 +46,8 @@ msgstr ""
 msgid "Last Committer"
 msgstr ""
 
-#: src/branch/browse_refs.cpp:56 src/branch/browse_refs.cpp:478
-#: src/branch/browse_refs.cpp:501 src/log/log_actions.cpp:563
+#: src/branch/browse_refs.cpp:56 src/branch/browse_refs.cpp:482
+#: src/branch/browse_refs.cpp:505 src/log/log_actions.cpp:563
 #: src/log/log_model.cpp:136 src/log/log_window.cpp:871
 #: src/log/log_window.cpp:899 src/rebase/rebase_model.cpp:45
 msgid "SHA-1"
@@ -88,144 +88,144 @@ msgstr ""
 msgid "Show _nested refs"
 msgstr ""
 
-#: src/branch/browse_refs.cpp:272
+#: src/branch/browse_refs.cpp:274
 msgid "Current Branch"
 msgstr ""
 
-#: src/branch/browse_refs.cpp:352
+#: src/branch/browse_refs.cpp:356
 msgid "Couldn't list the references."
 msgstr ""
 
-#: src/branch/browse_refs.cpp:477 src/branch/browse_refs.cpp:498
+#: src/branch/browse_refs.cpp:481 src/branch/browse_refs.cpp:502
 #: src/log/log_window.cpp:872 src/log/log_window.cpp:900
 msgid "Refname"
 msgstr ""
 
-#: src/branch/browse_refs.cpp:477 src/branch/browse_refs.cpp:499
+#: src/branch/browse_refs.cpp:481 src/branch/browse_refs.cpp:503
 #: src/log/log_window.cpp:870 src/log/log_window.cpp:894
 msgid "Subject"
 msgstr ""
 
-#: src/branch/browse_refs.cpp:478 src/branch/browse_refs.cpp:500
+#: src/branch/browse_refs.cpp:482 src/branch/browse_refs.cpp:504
 #: src/log/log_window.cpp:871 src/log/log_window.cpp:897
 msgid "Authors"
 msgstr ""
 
-#: src/branch/browse_refs.cpp:480 src/log/log_window.cpp:876
+#: src/branch/browse_refs.cpp:484 src/log/log_window.cpp:876
 #, c++-format
 msgid "Filter by {0}"
 msgstr ""
 
-#: src/branch/browse_refs.cpp:503 src/log/log_window.cpp:902
+#: src/branch/browse_refs.cpp:507 src/log/log_window.cpp:902
 msgid "Toggle filters"
 msgstr ""
 
-#: src/branch/browse_refs.cpp:516
+#: src/branch/browse_refs.cpp:520
 #, c++-format
 msgid "Showing {0} ref(s), {1} ref(s) selected"
 msgstr ""
 
-#: src/branch/browse_refs.cpp:562 src/branch/browse_refs.cpp:672
+#: src/branch/browse_refs.cpp:566 src/branch/browse_refs.cpp:676
 msgid "Copy ref names"
 msgstr ""
 
-#: src/branch/browse_refs.cpp:570
+#: src/branch/browse_refs.cpp:574
 msgid "Select"
 msgstr ""
 
-#: src/branch/browse_refs.cpp:573 src/changes/changes_view.cpp:401
+#: src/branch/browse_refs.cpp:577 src/changes/changes_view.cpp:401
 #: src/rebase/rebase_window.cpp:211 src/remote/clone_dialog.cpp:206
 #: src/remote/pull_fetch_dialog.cpp:356
 msgid "Show _log"
 msgstr ""
 
-#: src/branch/browse_refs.cpp:576 src/branch/browse_refs.cpp:655
+#: src/branch/browse_refs.cpp:580 src/branch/browse_refs.cpp:659
 #, c++-format
 msgid "Fetch from \"{0}\""
 msgstr ""
 
-#: src/branch/browse_refs.cpp:586
+#: src/branch/browse_refs.cpp:590
 #, c++-format
 msgid "_Merge to \"{0}\"..."
 msgstr ""
 
-#: src/branch/browse_refs.cpp:589 src/log/log_actions.cpp:347
+#: src/branch/browse_refs.cpp:593 src/log/log_actions.cpp:347
 msgid "Sw_itch/Checkout to this..."
 msgstr ""
 
-#: src/branch/browse_refs.cpp:595 src/branch/browse_refs.cpp:659
+#: src/branch/browse_refs.cpp:599 src/branch/browse_refs.cpp:663
 msgid "Create _Branch..."
 msgstr ""
 
-#: src/branch/browse_refs.cpp:599 src/branch/browse_refs.cpp:858
-#: src/branch/browse_refs.cpp:867 src/branch/browse_refs.cpp:869
+#: src/branch/browse_refs.cpp:603 src/branch/browse_refs.cpp:864
+#: src/branch/browse_refs.cpp:873 src/branch/browse_refs.cpp:875
 msgid "Edit description"
 msgstr ""
 
-#: src/branch/browse_refs.cpp:600 src/branch/browse_refs.cpp:840
-#: src/branch/browse_refs.cpp:852
+#: src/branch/browse_refs.cpp:604 src/branch/browse_refs.cpp:844
+#: src/branch/browse_refs.cpp:856
 msgid "Rename"
 msgstr ""
 
-#: src/branch/browse_refs.cpp:610 src/branch/browse_refs.cpp:613
+#: src/branch/browse_refs.cpp:614 src/branch/browse_refs.cpp:617
 msgid "Unset tracked branch"
 msgstr ""
 
-#: src/branch/browse_refs.cpp:616
+#: src/branch/browse_refs.cpp:620
 msgid "Select tracked branch"
 msgstr ""
 
-#: src/branch/browse_refs.cpp:621
+#: src/branch/browse_refs.cpp:625
 msgid "Delete remote branch"
 msgstr ""
 
-#: src/branch/browse_refs.cpp:622
+#: src/branch/browse_refs.cpp:626
 msgid "Delete tag"
 msgstr ""
 
-#: src/branch/browse_refs.cpp:623
+#: src/branch/browse_refs.cpp:627
 msgid "Delete branch"
 msgstr ""
 
-#: src/branch/browse_refs.cpp:631
+#: src/branch/browse_refs.cpp:635
 #, c++-format
 msgid "Delete {0} remote branch"
 msgid_plural "Delete {0} remote branches"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/branch/browse_refs.cpp:635
+#: src/branch/browse_refs.cpp:639
 #, c++-format
 msgid "Delete {0} branch"
 msgid_plural "Delete {0} branches"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/branch/browse_refs.cpp:638
+#: src/branch/browse_refs.cpp:642
 #, c++-format
 msgid "Delete {0} tag"
 msgid_plural "Delete {0} tags"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/branch/browse_refs.cpp:663
+#: src/branch/browse_refs.cpp:667
 msgid "Create _Tag..."
 msgstr ""
 
-#: src/branch/browse_refs.cpp:667
+#: src/branch/browse_refs.cpp:671
 msgid "Delete all tags"
 msgstr ""
 
-#: src/branch/browse_refs.cpp:735 src/branch/merge_dialog.cpp:284
+#: src/branch/browse_refs.cpp:739 src/branch/merge_dialog.cpp:284
 #, c++-format
 msgid "Do you really want to delete \"{0}\"?"
 msgstr ""
 
-#: src/branch/browse_refs.cpp:739
+#: src/branch/browse_refs.cpp:743
 msgid "This branch is not fully merged into HEAD."
 msgstr ""
 
-#: src/branch/browse_refs.cpp:745
+#: src/branch/browse_refs.cpp:749
 #, c++-format
 msgid ""
 "Do you really want to permanently delete the selected ref? It can NOT be "
@@ -236,34 +236,34 @@ msgid_plural ""
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/branch/browse_refs.cpp:751
+#: src/branch/browse_refs.cpp:755
 msgid ""
 "It has not been checked if these branches have been fully merged into HEAD."
 msgstr ""
 
-#: src/branch/browse_refs.cpp:757
+#: src/branch/browse_refs.cpp:761
 msgid "This action will remove the branches on the remote."
 msgstr ""
 
-#: src/branch/browse_refs.cpp:783
+#: src/branch/browse_refs.cpp:787
 msgid "Deleting remote refs..."
 msgstr ""
 
-#: src/branch/browse_refs.cpp:793 src/changes/changes_view.cpp:449
+#: src/branch/browse_refs.cpp:797 src/changes/changes_view.cpp:449
 #: src/changes/remove.cpp:71 src/log/log_actions.cpp:523
 #: src/log/log_actions.cpp:537 src/log/log_actions.cpp:545
 msgid "Delete"
 msgstr ""
 
-#: src/branch/browse_refs.cpp:840
+#: src/branch/browse_refs.cpp:844
 msgid "New name:"
 msgstr ""
 
-#: src/branch/browse_refs.cpp:849
+#: src/branch/browse_refs.cpp:853
 msgid "You cannot change the type of this ref with a rename."
 msgstr ""
 
-#: src/branch/browse_refs.cpp:891
+#: src/branch/browse_refs.cpp:897
 #, c++-format
 msgid ""
 "This is usually caused when the setting \"remote.{0}.fetch\" does not "
@@ -2067,6 +2067,24 @@ msgstr ""
 
 #: src/log/log_window.cpp:1148
 msgid "No more revisions found."
+msgstr ""
+
+#: src/main.cpp:207
+msgid "This needs a working tree."
+msgstr ""
+
+#: src/main.cpp:226
+#, c++-format
+msgid "{0} - Stash Apply"
+msgstr ""
+
+#: src/main.cpp:226
+#, c++-format
+msgid "{0} - Stash Pop"
+msgstr ""
+
+#: src/main.cpp:448
+msgid "Could not determine the last committed revision!"
 msgstr ""
 
 #: src/rebase/rebase_engine.cpp:70 src/rebase/rebase_window.cpp:218

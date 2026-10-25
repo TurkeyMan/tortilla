@@ -79,6 +79,10 @@ enum class run
     merge,       // tortilla merge <folder>
     merge_abort,  // tortilla mergeabort <folder>
     refbrowse,    // tortilla refbrowse <folder>
+    prevdiff,     // tortilla prevdiff <first>
+    stash_save,   // tortilla stashsave <first>
+    stash_apply,  // tortilla stashapply <folder>
+    stash_pop,    // tortilla stashpop <folder>
     edit_conflicts,  // tortilla conflicteditor <file>
     about,           // tortilla about
     remove,          // tortilla remove <paths...>
@@ -128,7 +132,7 @@ inline constexpr row k_rows[] = {
     separator,
     {"&Diff", {{{GIT | ONE, 0}, {TWO, FOLD}}}, place::sub, run::diff, "diff"},
     {"Diff later", {{{ONE, FOLD}}}, place::sub, run::none, "difflater"},
-    {"&Diff with previous version", {{{GIT | ONE, ADDED}}}, place::sub, run::none, "prevdiff"},
+    {"&Diff with previous version", {{{GIT | ONE, ADDED}}}, place::sub, run::prevdiff, "prevdiff"},
     separator,
     {"Show &log",
      {{{GIT | ONE, ADDED}, {FOLD | FIG | ONE, ADDED}, {FIG | ONE, ADDED}, {BARE, 0}}},
@@ -159,9 +163,9 @@ inline constexpr row k_rows[] = {
      run::repostatus,
      "repostatus"},
     {"Rebase...", {{{FIG | ONE, BISECT | MERGE}}}, place::sub, run::rebase, "rebase"},
-    {"Stash changes", {{{GIT | ONE, MERGE}}}, place::sub, run::none, "stashsave"},
-    {"Stash Apply", {{{FIG | ONE | STASH, 0}}}, place::shift, run::none, "stashapply"},
-    {"Stash Pop", {{{FIG | ONE | STASH, 0}}}, place::sub, run::none, "stashpop"},
+    {"Stash changes", {{{GIT | ONE, MERGE}}}, place::sub, run::stash_save, "stashsave"},
+    {"Stash Apply", {{{FIG | ONE | STASH, 0}}}, place::shift, run::stash_apply, "stashapply"},
+    {"Stash Pop", {{{FIG | ONE | STASH, 0}}}, place::sub, run::stash_pop, "stashpop"},
     {"Stash List", {{{FIG | ONE | STASH, 0}}}, place::sub, run::none, "stashlist"},
     separator,
     {"Bisect start", {{{FIG | ONE, BISECT | MERGE}}}, place::sub, run::none, "bisectstart"},

@@ -500,6 +500,10 @@ public:
         case run::merge: rap::shell::launch(tortilla_exe(), {"merge", folder}); return;
         case run::merge_abort: rap::shell::launch(tortilla_exe(), {"mergeabort", folder}); return;
         case run::refbrowse: rap::shell::launch(tortilla_exe(), {"refbrowse", folder}); return;
+        case run::prevdiff: rap::shell::launch(tortilla_exe(), {"prevdiff", first}); return;
+        case run::stash_save: rap::shell::launch(tortilla_exe(), {"stashsave", first}); return;
+        case run::stash_apply: rap::shell::launch(tortilla_exe(), {"stashapply", folder}); return;
+        case run::stash_pop: rap::shell::launch(tortilla_exe(), {"stashpop", folder}); return;
         case run::edit_conflicts: rap::shell::launch(tortilla_exe(), {"conflicteditor", first}); return;
         case run::about: rap::shell::launch(tortilla_exe(), {"about"}); return;
         case run::commit:

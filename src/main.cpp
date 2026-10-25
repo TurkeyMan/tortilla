@@ -17,6 +17,8 @@
 //                                     or Merge, rev preselected
 //   tortilla mergeabort [path]         the Abort Merge dialog
 //   tortilla refbrowse [path]          Browse References
+//   tortilla prevdiff [path]           the file against its previous version
+//   tortilla stashsave|stashapply|stashpop [path]  Stash changes, Apply or Pop
 //   tortilla conflicteditor file       a conflicted file in the merge tool
 //   tortilla diff [path] rev [rev2]   a commit, or rev..rev2, as a unified diff
 //   tortilla settings [path] [diff|menu|network]  the Settings dialog (at that page)
@@ -47,6 +49,8 @@
 #include "ui/compare.h"
 #include "ui/diff_window.h"
 #include "ui/settings_dialog.h"
+#include "ui/progress_dialog.h"
+#include "ui/stash_dialog.h"
 #include "ui/welcome_window.h"
 #include "ui/windows.h"
 
@@ -137,7 +141,9 @@ int main(int argc, char** argv)
                   std::strcmp(argv[i], "push") == 0 || std::strcmp(argv[i], "branch") == 0 ||
                   std::strcmp(argv[i], "tag") == 0 || std::strcmp(argv[i], "switch") == 0 ||
                   std::strcmp(argv[i], "merge") == 0 || std::strcmp(argv[i], "mergeabort") == 0 ||
-                  std::strcmp(argv[i], "refbrowse") == 0 ||
+                  std::strcmp(argv[i], "refbrowse") == 0 || std::strcmp(argv[i], "prevdiff") == 0 ||
+                  std::strcmp(argv[i], "stashsave") == 0 || std::strcmp(argv[i], "stashapply") == 0 ||
+                  std::strcmp(argv[i], "stashpop") == 0 ||
                   std::strcmp(argv[i], "conflicteditor") == 0 || std::strcmp(argv[i], "about") == 0 ||
                   std::strcmp(argv[i], "remove") == 0 || std::strcmp(argv[i], "removekeep") == 0 ||
                   std::strcmp(argv[i], "ignore") == 0))
@@ -189,6 +195,39 @@ int main(int argc, char** argv)
         (*w)->show();
         (*ui)->run();
         return code;
+    }
+
+    // Explorer's stash commands [spec 4.2, rows 24-26]: Stash changes asks
+    // for its message; Apply and Pop run in the progress dialog.
+    if (command == "stashsave" || command == "stashapply" || command == "stashpop")
+    {
+        auto repo = tortilla::repo::open(path);
+        if (!repo || repo->bare())
+        {
+            const std::string error = repo ? std::string(_("This needs a working tree.")) : repo.error();
+            std::fprintf(stderr, "tortilla: %s\n", error.c_str());
+            (*ui)->message(nullptr, {.icon = rap::message_spec::icon::error, .title = "Tortilla", .text = error},
+                           [&](rap::dialog_role) { (*ui)->quit(); });
+            (*ui)->run();
+            return 1;
+        }
+        tortilla::windows::init(**ui);
+        const size_t running = tortilla::windows::hold({});
+        auto done = [running](bool) { tortilla::windows::release(running); };
+        if (command == "stashsave")
+            tortilla::stash_changes(**ui, nullptr, repo->workdir(), done);
+        else
+        {
+            const bool pop = command == "stashpop";
+            std::string root = repo->workdir();
+            while (root.size() > 1 && (root.back() == '/' || root.back() == '\\')) root.pop_back();
+            tortilla::run_progress_dialog(
+                **ui, nullptr,
+                rap::i18n::format(pop ? _("{0} - Stash Pop") : _("{0} - Stash Apply"),
+                                  rap::sys::path_to_utf8(rap::sys::path_from_utf8(root).make_preferred())),
+                repo->workdir(), {{"stash", pop ? "pop" : "apply"}}, done);
+        }
+        return (*ui)->run();
     }
 
     // The remote dialogs, and the windows their follow-ups open: the program
@@ -364,10 +403,12 @@ int main(int argc, char** argv)
         return (*ui)->run();
     }
 
-    if (command == "diff" && args.size() < 2)
+    if ((command == "diff" && args.size() < 2) || command == "prevdiff")
     {
         // The working tree against HEAD, under path, with the chosen diff
-        // tool: Explorer's Diff.
+        // tool: Explorer's Diff. prevdiff: against the version before the
+        // last commit that changed the file, or HEAD~1 for a folder
+        // [spec 4.2, row 14; PrevDiffCommand].
         auto repo = tortilla::repo::open(path);
         if (!repo)
         {
@@ -386,8 +427,33 @@ int main(int argc, char** argv)
             paths.push_back(rel);
         }
         auto quit = [&] { (*ui)->quit(); };
+        std::string against = "HEAD";
+        if (command == "prevdiff")
+        {
+            if (std::filesystem::is_directory(rap::sys::path_from_utf8(path), ec))
+                against = "HEAD~1";
+            else
+            {
+                std::vector<std::string> log_args{"log", "-2", "--format=%H", "--"};
+                log_args.insert(log_args.end(), paths.begin(), paths.end());
+                const tortilla::git_result r =
+                    tortilla::run_git(repo->workdir(), log_args, tortilla::git_output::stdout_only);
+                const size_t nl = r.output.find('\n');
+                against = r.ok() && nl != std::string::npos ? r.output.substr(nl + 1, 40) : "";
+                if (against.size() != 40)
+                {
+                    (*ui)->message(nullptr,
+                                   {.icon = rap::message_spec::icon::error,
+                                    .title = "Tortilla",
+                                    .text = _("Could not determine the last committed revision!")},
+                                   [&](rap::dialog_role) { quit(); });
+                    (*ui)->run();
+                    return 1;
+                }
+            }
+        }
         auto tool = tortilla::compare_revisions(
-            **ui, nullptr, repo->workdir(), {"HEAD"}, paths,
+            **ui, nullptr, repo->workdir(), {against}, paths,
             [&]
             {
                 tortilla::show_settings(**ui, nullptr, repo->workdir(),
