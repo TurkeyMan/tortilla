@@ -1,5 +1,8 @@
 #include "rebase_window.h"
 
+#include "branch/browse_refs.h"
+#include "ui/menu_text.h"
+
 #include "changes/working_tree.h"
 #include "git/command.h"
 #include "i18n.h"
@@ -136,9 +139,9 @@ void rebase_window::build(const std::string& upstream)
                     .bind(upstream_)
                     .on_changed([this](int) { reload_list(); })
                     .width(30_ch),
-                // TODO: Browse References and --onto.
-                button{"..."}.enabled(false),
-                button{_("_Onto")}.enabled(false),
+                // Browse References for the upstream, and for --onto [spec 2.8].
+                button{"..."}.tooltip(_("Browse References")).on_click([this] { pick_upstream(); }),
+                button{_("_Onto")}.bind(onto_button_).on_click([this] { toggle_onto(); }),
                 spacer{},
             },
             splitter{
@@ -295,13 +298,13 @@ void rebase_window::reload_list()
         set_status(_("Please select upstream"));
     else if (*branch_head_ == *upstream_head_)
         set_status(rap::i18n::format(_("No need to rebase: \"{0}\" equals \"{1}\""), b, u));
-    else if (repo_.is_ancestor(*branch_head_, *upstream_head_))
+    else if (onto_.empty() && repo_.is_ancestor(*branch_head_, *upstream_head_))
     {
         set_status(rap::i18n::format(
             _("Branch \"{0}\" is behind \"{1}\": \"{0}\" will fast-forward to \"{1}\""), b, u));
         fast_forward_ = can_start_ = true;
     }
-    else if (repo_.is_ancestor(*upstream_head_, *branch_head_) && !force_->checked())
+    else if (onto_.empty() && repo_.is_ancestor(*upstream_head_, *branch_head_) && !force_->checked())
         set_status(rap::i18n::format(
             _("Current branch \"{0}\" is up to date. To rebase anyway, check \"Force Rebase\" below."),
             b));
@@ -334,11 +337,70 @@ void rebase_window::reload_list()
             else
                 set_status(rap::i18n::format(N_("{0} commit to rebase onto {1}",
                                                 "{0} commits to rebase onto {1}", model_.size()),
-                                             model_.size(), u));
+                                             model_.size(), onto_.empty() ? u : onto_));
             list_->set_current(0);
         }
     }
     update_controls();
+}
+
+namespace
+{
+
+// A picked ref as the branch lists name them: main, origin/main, v1.
+std::string short_ref(const std::string& full)
+{
+    for (std::string_view p : {"refs/heads/", "refs/remotes/", "refs/tags/"})
+        if (full.starts_with(p)) return full.substr(p.size());
+    return full;
+}
+
+}  // namespace
+
+// The upstream from Browse References, added to the list if it isn't there.
+void rebase_window::pick_upstream()
+{
+    const std::string current = upstreams_.empty() ? "" : upstreams_[size_t(std::max(0, upstream_->current()))];
+    pick_ref(ui_, window_.get(), repo_.workdir(), {.initial = current},
+             [this, alive = std::weak_ptr<bool>(alive_)](const std::string& picked)
+             {
+                 if (!alive.lock() || picked.empty() || picked.find(' ') != std::string::npos) return;
+                 const std::string name = short_ref(picked);
+                 auto it = std::ranges::find(upstreams_, name);
+                 if (it == upstreams_.end())
+                 {
+                     upstreams_.push_back(name);
+                     upstream_->set_items(upstreams_);
+                     it = upstreams_.end() - 1;
+                 }
+                 upstream_->set_current(int(it - upstreams_.begin()));
+                 reload_list();
+             });
+}
+
+// Onto: picked from Browse References, or, when set, cleared. Not the
+// upstream or the branch itself [spec 2.8].
+void rebase_window::toggle_onto()
+{
+    if (!onto_.empty())
+    {
+        onto_.clear();
+        onto_button_->set_text(_("_Onto"));
+        reload_list();
+        return;
+    }
+    pick_ref(ui_, window_.get(), repo_.workdir(), {},
+             [this, alive = std::weak_ptr<bool>(alive_)](const std::string& picked)
+             {
+                 if (!alive.lock() || picked.empty() || picked.find(' ') != std::string::npos) return;
+                 const std::string name = short_ref(picked);
+                 const std::string b = branches_.empty() ? "" : branches_[size_t(std::max(0, branch_->current()))];
+                 const std::string u = upstreams_.empty() ? "" : upstreams_[size_t(std::max(0, upstream_->current()))];
+                 if (name == u || name == b) return;
+                 onto_ = name;
+                 onto_button_->set_text(rap::i18n::format(_("_Onto: {0}"), menu_text(name)));
+                 reload_list();
+             });
 }
 
 void rebase_window::selection_changed()
@@ -495,9 +557,11 @@ void rebase_window::start_rebase()
         rebase_engine::start_args s{
             .branch = branch,
             .branch_head = *branch_head_,
-            .onto = *upstream_head_,
-            .onto_name =
-                upstreams_.empty() ? "" : upstreams_[size_t(std::max(0, upstream_->current()))],
+            // --onto: the upstream's commits replayed onto another [spec 2.8].
+            .onto = onto_.empty() ? *upstream_head_ : repo_.resolve(onto_).value_or(*upstream_head_),
+            .onto_name = !onto_.empty()      ? onto_
+                         : upstreams_.empty() ? ""
+                                              : upstreams_[size_t(std::max(0, upstream_->current()))],
             .checked_out = head == "HEAD" ? repo_.head_id().value_or(oid{}).hex() : head,
             .fast_forward = fast_forward_,
         };

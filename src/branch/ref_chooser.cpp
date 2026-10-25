@@ -1,5 +1,7 @@
 #include "ref_chooser.h"
 
+#include "branch/browse_refs.h"
+
 #include "git/command.h"
 #include "git/remotes.h"
 #include "i18n.h"
@@ -78,6 +80,21 @@ rap::node ref_chooser::layout(const options& o)
                              if (chosen() == kind::commit) commit_ = t;
                              if (changed_) changed_();
                          }),
+                     // Browse References, to pick the branch [spec 8.1].
+                     button{"..."}
+                         .bind(browse_)
+                         .visible(o.ui != nullptr)
+                         .tooltip(_("Browse References"))
+                         .on_click(
+                             [this]
+                             {
+                                 pick_ref(*options_.ui, options_.window ? options_.window() : nullptr, workdir_,
+                                          {.initial = revision()},
+                                          [this](const std::string& picked)
+                                          {
+                                              if (!picked.empty()) select(picked);
+                                          });
+                             }),
                  }};
 }
 
@@ -109,6 +126,7 @@ void ref_chooser::kind_changed()
         value_->set_text(commit_);
         break;
     }
+    if (browse_) browse_->set_enabled(chosen() == kind::branch);  // only the branch's [spec 8.1]
     if (changed_) changed_();
 }
 

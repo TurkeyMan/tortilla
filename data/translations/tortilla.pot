@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: tortilla\n"
 "Report-Msgid-Bugs-To: https://github.com/TurkeyMan/tortilla/issues\n"
-"POT-Creation-Date: 2026-10-25 03:33+0000\n"
+"POT-Creation-Date: 2026-10-25 03:37+0000\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -134,7 +134,7 @@ msgid "Select"
 msgstr ""
 
 #: src/branch/browse_refs.cpp:573 src/changes/changes_view.cpp:401
-#: src/rebase/rebase_window.cpp:208 src/remote/clone_dialog.cpp:206
+#: src/rebase/rebase_window.cpp:211 src/remote/clone_dialog.cpp:206
 #: src/remote/pull_fetch_dialog.cpp:356
 msgid "Show _log"
 msgstr ""
@@ -522,21 +522,26 @@ msgstr ""
 msgid "_Retry"
 msgstr ""
 
-#: src/branch/ref_chooser.cpp:71 src/log/log_window.cpp:168
+#: src/branch/ref_chooser.cpp:73 src/log/log_window.cpp:168
 #: src/remote/clone_dialog.cpp:117
 msgid "Branch"
 msgstr ""
 
-#: src/branch/ref_chooser.cpp:71 src/changes/changes_window.cpp:164
+#: src/branch/ref_chooser.cpp:73 src/changes/changes_window.cpp:164
 #: src/changes/changes_window.cpp:326 src/changes/commit_window.cpp:122
 #: src/changes/commit_window.cpp:398 src/changes/commit_window.cpp:409
 #: src/changes/commit_window.cpp:441 src/changes/commit_window.cpp:476
-#: src/changes/file_action_window.cpp:514 src/rebase/rebase_window.cpp:384
+#: src/changes/file_action_window.cpp:514 src/rebase/rebase_window.cpp:446
 msgid "Commit"
 msgstr ""
 
-#: src/branch/ref_chooser.cpp:71 src/log/log_window.cpp:168
+#: src/branch/ref_chooser.cpp:73 src/log/log_window.cpp:168
 msgid "Tag"
+msgstr ""
+
+#: src/branch/ref_chooser.cpp:87 src/log/log_window.cpp:804
+#: src/rebase/rebase_window.cpp:143
+msgid "Browse References"
 msgstr ""
 
 #: src/branch/switch_dialog.cpp:43
@@ -1760,10 +1765,10 @@ msgstr ""
 msgid "Soft: Leave working tree and index untouched"
 msgstr ""
 
-#: src/log/log_actions.cpp:1044 src/rebase/rebase_window.cpp:249
-#: src/rebase/rebase_window.cpp:256 src/rebase/rebase_window.cpp:456
-#: src/rebase/rebase_window.cpp:482 src/rebase/rebase_window.cpp:511
-#: src/rebase/rebase_window.cpp:530 src/remote/pull_fetch_dialog.cpp:392
+#: src/log/log_actions.cpp:1044 src/rebase/rebase_window.cpp:252
+#: src/rebase/rebase_window.cpp:259 src/rebase/rebase_window.cpp:518
+#: src/rebase/rebase_window.cpp:544 src/rebase/rebase_window.cpp:575
+#: src/rebase/rebase_window.cpp:594 src/remote/pull_fetch_dialog.cpp:392
 msgid "Rebase"
 msgstr ""
 
@@ -1963,10 +1968,6 @@ msgstr ""
 msgid "<No branch>"
 msgstr ""
 
-#: src/log/log_window.cpp:804
-msgid "Browse References"
-msgstr ""
-
 #: src/log/log_window.cpp:829
 msgid "All basic refs"
 msgstr ""
@@ -2068,8 +2069,8 @@ msgstr ""
 msgid "No more revisions found."
 msgstr ""
 
-#: src/rebase/rebase_engine.cpp:70 src/rebase/rebase_window.cpp:215
-#: src/rebase/rebase_window.cpp:382
+#: src/rebase/rebase_engine.cpp:70 src/rebase/rebase_window.cpp:218
+#: src/rebase/rebase_window.cpp:444
 msgid "Start Rebase"
 msgstr ""
 
@@ -2078,11 +2079,11 @@ msgstr ""
 msgid "Fast forward to \"{0}\""
 msgstr ""
 
-#: src/rebase/rebase_engine.cpp:340 src/rebase/rebase_window.cpp:422
+#: src/rebase/rebase_engine.cpp:340 src/rebase/rebase_window.cpp:484
 msgid "Finished rebasing."
 msgstr ""
 
-#: src/rebase/rebase_engine.cpp:355 src/rebase/rebase_window.cpp:216
+#: src/rebase/rebase_engine.cpp:355 src/rebase/rebase_window.cpp:219
 msgid "Abort"
 msgstr ""
 
@@ -2114,235 +2115,240 @@ msgstr ""
 msgid "ID"
 msgstr ""
 
-#: src/rebase/rebase_window.cpp:42
+#: src/rebase/rebase_window.cpp:45
 msgid "cannot rebase in a bare repository"
 msgstr ""
 
-#: src/rebase/rebase_window.cpp:111
+#: src/rebase/rebase_window.cpp:114
 #, c++-format
 msgid "{0} - Rebase - Tortilla"
 msgstr ""
 
-#: src/rebase/rebase_window.cpp:115
+#: src/rebase/rebase_window.cpp:118
 msgid "Branch:"
 msgstr ""
 
-#: src/rebase/rebase_window.cpp:120
+#: src/rebase/rebase_window.cpp:123
 msgid "Swap branch and upstream"
 msgstr ""
 
-#: src/rebase/rebase_window.cpp:134
+#: src/rebase/rebase_window.cpp:137
 msgid "Upstream:"
 msgstr ""
 
-#: src/rebase/rebase_window.cpp:141
+#: src/rebase/rebase_window.cpp:144 src/rebase/rebase_window.cpp:388
 msgid "_Onto"
 msgstr ""
 
-#: src/rebase/rebase_window.cpp:158 src/rebase/rebase_window.cpp:665
+#: src/rebase/rebase_window.cpp:161 src/rebase/rebase_window.cpp:729
 msgid "_Pick ALL"
 msgstr ""
 
-#: src/rebase/rebase_window.cpp:160
+#: src/rebase/rebase_window.cpp:163
 msgid "_Up"
 msgstr ""
 
-#: src/rebase/rebase_window.cpp:161
+#: src/rebase/rebase_window.cpp:164
 msgid "_Down"
 msgstr ""
 
-#: src/rebase/rebase_window.cpp:163
+#: src/rebase/rebase_window.cpp:166
 msgid "_Add"
 msgstr ""
 
-#: src/rebase/rebase_window.cpp:164
+#: src/rebase/rebase_window.cpp:167
 msgid "_Preserve merges"
 msgstr ""
 
-#: src/rebase/rebase_window.cpp:167
+#: src/rebase/rebase_window.cpp:170
 msgid ""
 "Include merge commits. Reordering commits with merges does not work properly."
 msgstr ""
 
-#: src/rebase/rebase_window.cpp:169
+#: src/rebase/rebase_window.cpp:172
 msgid "_Force Rebase"
 msgstr ""
 
-#: src/rebase/rebase_window.cpp:172
+#: src/rebase/rebase_window.cpp:175
 msgid ""
 "Force the rebase even if the current branch is a descendant of the commit "
 "you are rebasing onto."
 msgstr ""
 
-#: src/rebase/rebase_window.cpp:176
+#: src/rebase/rebase_window.cpp:179
 msgid "Revision Files"
 msgstr ""
 
-#: src/rebase/rebase_window.cpp:180
+#: src/rebase/rebase_window.cpp:183
 msgid "Conflict Files"
 msgstr ""
 
-#: src/rebase/rebase_window.cpp:184
+#: src/rebase/rebase_window.cpp:187
 msgid "Commit Message"
 msgstr ""
 
-#: src/rebase/rebase_window.cpp:187 src/ui/settings_dialog.cpp:127
+#: src/rebase/rebase_window.cpp:190 src/ui/settings_dialog.cpp:127
 msgid "Log"
 msgstr ""
 
-#: src/rebase/rebase_window.cpp:205
+#: src/rebase/rebase_window.cpp:208
 msgid "Show log"
 msgstr ""
 
-#: src/rebase/rebase_window.cpp:218
+#: src/rebase/rebase_window.cpp:221
 msgid "Recover to the status before rebase"
 msgstr ""
 
-#: src/rebase/rebase_window.cpp:220
+#: src/rebase/rebase_window.cpp:223
 msgid "Help"
 msgstr ""
 
-#: src/rebase/rebase_window.cpp:240
+#: src/rebase/rebase_window.cpp:243
 #, c++-format
 msgid "Rebasing... ({0}/{1})"
 msgstr ""
 
-#: src/rebase/rebase_window.cpp:257
+#: src/rebase/rebase_window.cpp:260
 msgid "Cherry-pick failed. Skip this commit?"
 msgstr ""
 
-#: src/rebase/rebase_window.cpp:293
+#: src/rebase/rebase_window.cpp:296
 msgid "Please select branch"
 msgstr ""
 
-#: src/rebase/rebase_window.cpp:295
+#: src/rebase/rebase_window.cpp:298
 msgid "Please select upstream"
 msgstr ""
 
-#: src/rebase/rebase_window.cpp:297
+#: src/rebase/rebase_window.cpp:300
 #, c++-format
 msgid "No need to rebase: \"{0}\" equals \"{1}\""
 msgstr ""
 
-#: src/rebase/rebase_window.cpp:301
+#: src/rebase/rebase_window.cpp:304
 #, c++-format
 msgid "Branch \"{0}\" is behind \"{1}\": \"{0}\" will fast-forward to \"{1}\""
 msgstr ""
 
-#: src/rebase/rebase_window.cpp:306
+#: src/rebase/rebase_window.cpp:309
 #, c++-format
 msgid ""
 "Current branch \"{0}\" is up to date. To rebase anyway, check \"Force "
 "Rebase\" below."
 msgstr ""
 
-#: src/rebase/rebase_window.cpp:312
+#: src/rebase/rebase_window.cpp:315
 msgid "Nothing to Rebase"
 msgstr ""
 
-#: src/rebase/rebase_window.cpp:333
+#: src/rebase/rebase_window.cpp:336
 msgid "Please take a look at the skipped commits"
 msgstr ""
 
-#: src/rebase/rebase_window.cpp:335
+#: src/rebase/rebase_window.cpp:338
 #, c++-format
 msgid "{0} commit to rebase onto {1}"
 msgid_plural "{0} commits to rebase onto {1}"
 msgstr[0] ""
 msgstr[1] ""
 
-#: src/rebase/rebase_window.cpp:379
+#: src/rebase/rebase_window.cpp:401
+#, c++-format
+msgid "_Onto: {0}"
+msgstr ""
+
+#: src/rebase/rebase_window.cpp:441
 msgid "Continue"
 msgstr ""
 
-#: src/rebase/rebase_window.cpp:382
+#: src/rebase/rebase_window.cpp:444
 msgid "Start (FastFwd)"
 msgstr ""
 
-#: src/rebase/rebase_window.cpp:385
+#: src/rebase/rebase_window.cpp:447
 msgid "Amend"
 msgstr ""
 
-#: src/rebase/rebase_window.cpp:386
+#: src/rebase/rebase_window.cpp:448
 msgid "Done"
 msgstr ""
 
-#: src/rebase/rebase_window.cpp:407
+#: src/rebase/rebase_window.cpp:469
 msgid "Conflict: resolve the files, then press Commit"
 msgstr ""
 
-#: src/rebase/rebase_window.cpp:413
+#: src/rebase/rebase_window.cpp:475
 msgid "Edit the commit, then press Amend"
 msgstr ""
 
-#: src/rebase/rebase_window.cpp:414
+#: src/rebase/rebase_window.cpp:476
 msgid "Edit the squashed message, then press Commit"
 msgstr ""
 
-#: src/rebase/rebase_window.cpp:417
+#: src/rebase/rebase_window.cpp:479
 msgid "The rebase stopped with an error; see the Log tab, then Abort"
 msgstr ""
 
-#: src/rebase/rebase_window.cpp:457
+#: src/rebase/rebase_window.cpp:519
 msgid "Your changes were stashed before the rebase. Pop the stash now?"
 msgstr ""
 
-#: src/rebase/rebase_window.cpp:483
+#: src/rebase/rebase_window.cpp:545
 msgid "Git doesn't know who you are, so it can't create commits."
 msgstr ""
 
-#: src/rebase/rebase_window.cpp:484
+#: src/rebase/rebase_window.cpp:546
 msgid ""
 "Set your name and email, for example:\n"
 "git config --global user.name \"Your Name\"\n"
 "git config --global user.email you@example.com"
 msgstr ""
 
-#: src/rebase/rebase_window.cpp:512
+#: src/rebase/rebase_window.cpp:576
 msgid "The working tree has local changes. Stash them and start the rebase?"
 msgstr ""
 
-#: src/rebase/rebase_window.cpp:531
+#: src/rebase/rebase_window.cpp:595
 msgid "Are you sure you want to abort the rebase process?"
 msgstr ""
 
-#: src/rebase/rebase_window.cpp:630
+#: src/rebase/rebase_window.cpp:694
 msgid "_Pick"
 msgstr ""
 
-#: src/rebase/rebase_window.cpp:632
+#: src/rebase/rebase_window.cpp:696
 msgid "_Squash (with commit below)"
 msgstr ""
 
-#: src/rebase/rebase_window.cpp:635 src/ui/diff_window.cpp:140
+#: src/rebase/rebase_window.cpp:699 src/ui/diff_window.cpp:140
 msgid "_Edit"
 msgstr ""
 
-#: src/rebase/rebase_window.cpp:637
+#: src/rebase/rebase_window.cpp:701
 msgid "S_kip"
 msgstr ""
 
-#: src/rebase/rebase_window.cpp:643
+#: src/rebase/rebase_window.cpp:707
 msgid "Copy SHA-1 to clipboard"
 msgstr ""
 
-#: src/rebase/rebase_window.cpp:666
+#: src/rebase/rebase_window.cpp:730
 msgid "_Squash ALL"
 msgstr ""
 
-#: src/rebase/rebase_window.cpp:667
+#: src/rebase/rebase_window.cpp:731
 msgid "_Edit ALL"
 msgstr ""
 
-#: src/rebase/rebase_window.cpp:668
+#: src/rebase/rebase_window.cpp:732
 msgid "S_kip unselected"
 msgstr ""
 
-#: src/rebase/rebase_window.cpp:669
+#: src/rebase/rebase_window.cpp:733
 msgid "S_quash unselected"
 msgstr ""
 
-#: src/rebase/rebase_window.cpp:670
+#: src/rebase/rebase_window.cpp:734
 msgid "E_dit unselected"
 msgstr ""
 

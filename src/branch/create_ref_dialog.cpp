@@ -70,7 +70,7 @@ void create_ref_dialog::build(const std::string& base, const std::string& name, 
         {vbox{
             group{_("Name"), entry{name}.bind(name_).width(40_ch).on_changed([this](const std::string&)
                                                                           { name_changed(); })},
-            base_.layout({.caption = _("Base On"), .head = true}),
+            base_.layout({.caption = _("Base On"), .head = true, .ui = &ui_, .window = [this] { return window_.get(); }}),
             group{_("Options"),
                   hbox{
                       check{_("Trac_k")}.bind(track_).visible(!tag_),

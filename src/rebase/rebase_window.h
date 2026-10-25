@@ -31,6 +31,8 @@ private:
 
     void build(const std::string& upstream);
     void reload_list();
+    void pick_upstream();
+    void toggle_onto();
     void selection_changed();
     void update_controls();
     void set_status(const std::string&, bool warning = false);
@@ -58,6 +60,9 @@ private:
 
     std::vector<std::string> branches_, upstreams_;
     std::optional<oid> branch_head_, upstream_head_;
+    std::string onto_;  // --onto, as picked; "" for the upstream itself
+    // Callbacks that outlive the window (a picker) check this.
+    std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
     bool fast_forward_ = false;
     bool can_start_ = false;
     bool stashed_ = false;
@@ -67,6 +72,7 @@ private:
     rap::drop_down* branch_ = nullptr;
     rap::drop_down* upstream_ = nullptr;
     rap::button* swap_ = nullptr;
+    rap::button* onto_button_ = nullptr;
     rap::list* list_ = nullptr;
     rap::menu_button* set_all_ = nullptr;
     rap::button* up_ = nullptr;

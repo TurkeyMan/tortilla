@@ -104,7 +104,7 @@ void merge_dialog::build(const std::string& from)
         {vbox{
             hbox{label{_("Current branch:")}, label{current.empty() ? _("(no branch)") : current},
                  spacer{}},
-            from_.layout({.caption = _("From"), .skip_current = true}),
+            from_.layout({.caption = _("From"), .skip_current = true, .ui = &ui_, .window = [this] { return window_.get(); }}),
             group{
                 _("Option"),
                 vbox{

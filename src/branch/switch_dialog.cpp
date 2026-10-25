@@ -63,7 +63,7 @@ void switch_dialog::build(const std::string& target)
     window_ = ui_.create(dialog{
         rap::i18n::format(_("{0} - Switch/Checkout - Tortilla"), root),
         {vbox{
-            target_.layout({.caption = _("Switch To")}),
+            target_.layout({.caption = _("Switch To"), .ui = &ui_, .window = [this] { return window_.get(); }}),
             group{_("Option"),
                   vbox{
                       hbox{

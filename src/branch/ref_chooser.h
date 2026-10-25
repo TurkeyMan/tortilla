@@ -28,6 +28,10 @@ public:
         std::string caption;        // "Base On", "Switch To", "From"
         bool head = false;          // HEAD is a choice (Create)
         bool skip_current = false;  // the current branch isn't (Merge)
+        // For the branch's "..." (Browse References as a picker): the ui,
+        // and the dialog it opens over.
+        rap::ui* ui = nullptr;
+        std::function<rap::window*()> window;
     };
 
     explicit ref_chooser(std::string workdir);
@@ -62,6 +66,7 @@ private:
     std::function<void()> changed_;
     rap::drop_down* kind_ = nullptr;
     rap::combo* value_ = nullptr;
+    rap::button* browse_ = nullptr;
 };
 
 }  // namespace tortilla
