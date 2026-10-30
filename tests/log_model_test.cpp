@@ -301,6 +301,8 @@ int main(int argc, char** argv)
         check(save(""), "note: removing a missing one is no error");
         // The notes commits aren't the history the checks below walk.
         (void)tortilla::run_git(repo, {"update-ref", "-d", "refs/notes/commits"});
+    }
+
     // Bisect's commands, run for real on a history of its own: seven
     // commits, the fifth bringing in the "bug", found by marking each
     // revision git checks out as the working tree says.
@@ -356,6 +358,8 @@ int main(int argc, char** argv)
             tortilla::run_git(b, {"rev-parse", "HEAD"}, tortilla::git_output::stdout_only).output;
         check(r.ok() && state() == tortilla::repo::repo_state::none && head.starts_with(ids[6]),
               "bisect reset: back on the branch, bisecting no more");
+    }
+
     // Export: git archive's arguments, and its tar unpacked into a folder,
     // with what plain ustar can't hold (a long path, through pax).
     {

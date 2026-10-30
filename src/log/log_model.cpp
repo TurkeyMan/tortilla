@@ -927,6 +927,8 @@ std::vector<std::string> note_args(const std::string& hash, const std::string& t
     if (std::ranges::all_of(text, [](unsigned char ch) { return std::isspace(ch) != 0; }))
         return {"notes", "remove", "--ignore-missing", hash};
     return {"notes", "add", "-f", "-F", file, hash};
+}
+
 std::optional<bisect_step> parse_bisect_step(std::string_view name)
 {
     if (name == "start") return bisect_step::start;
