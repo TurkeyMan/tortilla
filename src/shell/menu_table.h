@@ -94,6 +94,7 @@ enum class run
     cleanup,         // tortilla cleanup <paths...>
     diff_later,      // remembers <first>, or tortilla compare <remembered> <first>
     log_submodule,   // tortilla log --submodule <first>
+    blame,           // tortilla blame <first>
     ignore,          // a submenu: tortilla ignore [--delete] [--mask] <paths...>
 };
 
@@ -224,7 +225,7 @@ inline constexpr row k_rows[] = {
      place::sub,
      run::add,
      "add"},
-    {"&Blame", {{{GIT | ONE, FOLD | ADDED}}}, place::sub, run::none, "blame"},
+    {"&Blame", {{{GIT | ONE, FOLD | ADDED}}}, place::sub, run::blame, "blame"},
     {"Add to &ignore list", {{{IVF, IGN | GIT | ROOT}}}, place::sub, run::ignore, "ignore"},
     {"Delete and add to &ignore list",
      {{{IVF | GIT, IGN | ROOT}}},

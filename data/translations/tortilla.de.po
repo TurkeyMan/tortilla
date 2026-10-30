@@ -3534,3 +3534,97 @@ msgstr "Änderungen gelten beim Speichern, in der git-Konfiguration dieses Repos
 #: src/remote/push_dialog.cpp src/remote/pull_fetch_dialog.cpp
 msgid "_Manage"
 msgstr "_Verwalten"
+
+#: src/blame/blame_window.cpp
+msgid "Not committed yet"
+msgstr "Noch nicht committet"
+
+#: src/blame/blame_window.cpp
+msgid "Blame needs a file in a repository."
+msgstr "Blame braucht eine Datei in einem Repository."
+
+#: src/blame/blame_window.cpp
+msgid "{0} - Blame - Tortilla"
+msgstr "{0} - Blame - Tortilla"
+
+#: src/blame/blame_window.cpp
+msgid "_Older"
+msgstr "Ä_lter"
+
+#: src/blame/blame_window.cpp
+msgid "The revision before"
+msgstr "Die Revision davor"
+
+#: src/blame/blame_window.cpp
+msgid "_Newer"
+msgstr "_Neuer"
+
+#: src/blame/blame_window.cpp
+msgid "The revision after"
+msgstr "Die Revision danach"
+
+#: src/blame/blame_window.cpp
+msgid "Ignore _whitespace"
+msgstr "_Leerraum ignorieren"
+
+#: src/blame/blame_window.cpp
+msgid "Detect _moved or copied lines"
+msgstr "_Verschobene oder kopierte Zeilen erkennen"
+
+#: src/blame/blame_window.cpp
+msgid "Working tree"
+msgstr "Arbeitsverzeichnis"
+
+#: src/blame/blame_window.cpp
+msgid "({0} of {1})"
+msgstr "({0} von {1})"
+
+#: src/blame/blame_window.cpp
+msgid "Blaming…"
+msgstr "Blame läuft …"
+
+#: src/blame/blame_window.cpp
+msgid "git blame failed: {0}"
+msgstr "git blame ist fehlgeschlagen: {0}"
+
+#: src/blame/blame_window.cpp
+msgid "Not committed yet: the working tree's own change."
+msgstr "Noch nicht committet: eine Änderung im Arbeitsverzeichnis."
+
+#: src/blame/blame_window.cpp
+msgid "as {0}"
+msgstr "als {0}"
+
+#: src/blame/blame_window.cpp
+msgid "“{0}” isn't in the file."
+msgstr "„{0}“ kommt in der Datei nicht vor."
+
+#: src/blame/blame_window.cpp
+msgid "Blame _previous revision"
+msgstr "Blame der _vorherigen Revision"
+
+#: src/blame/blame_window.cpp
+msgid "Show _changes"
+msgstr "Ä_nderungen anzeigen"
+
+#: src/blame/blame_window.cpp
+msgid "Copy SHA-1"
+msgstr "SHA-1 kopieren"
+
+#: src/blame/blame_window.cpp
+msgid "Copy log message"
+msgstr "Log-Nachricht kopieren"
+
+#: src/blame/blame_window.cpp
+msgid "Copy line"
+msgstr "Zeile kopieren"
+
+#: src/blame/blame_window.cpp
+msgid "{0}, before {1}"
+msgstr "{0}, vor {1}"
+
+#: src/blame/blame_window.cpp
+msgid "{0} line"
+msgid_plural "{0} lines"
+msgstr[0] "{0} Zeile"
+msgstr[1] "{0} Zeilen"

@@ -94,6 +94,8 @@ private:
     void edit_conflict(const std::string& path);
     void open_file(const file_change&, bool choose);
     void difftool(std::vector<std::string> revisions, std::vector<std::string> paths);
+    void show_log(const std::string& path, const std::string& rev);
+    void blame(const std::string& path, const std::string& rev);
     void copy_files(int format, std::optional<size_t> column);
     void save_revisions(const std::string& rev, std::vector<file_change> files);
     void save_revision(const std::string& rev, const file_change& file);

@@ -4,13 +4,16 @@
 // can't do yet is shown greyed out in its place.
 #include "changes_view.h"
 
+#include "blame/blame_window.h"
 #include "changes/conflict_editor.h"
 #include "i18n.h"
+#include "log/log_window.h"
 #include "settings.h"
 #include "ui/compare.h"
 #include "ui/diff_window.h"
 #include "ui/menu_items.h"
 #include "ui/menu_text.h"
+#include "ui/windows.h"
 
 #include <rapport/sys.h>
 
@@ -398,9 +401,17 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
     separator(m);
     if (one)
     {
-        m.push_back(todo(_("Show _log")));
-        if (renamed) m.push_back(todo(_("Show log _before rename/copy")));
-        m.push_back(todo(_("_Blame")));
+        const file_change f = files.front();
+        m.push_back(item(_("Show _log"),
+                         [this, f, wc] { show_log(f.path, wc ? std::string() : source_.hash); }));
+        // The old name's history, from before the change.
+        if (renamed)
+            m.push_back(item(_("Show log _before rename/copy"), [this, f, wc]
+                             { show_log(f.old_path, wc ? std::string("HEAD") : source_.parent); }));
+        // The file as it is here: in the working tree, or in this commit.
+        m.push_back(item(
+            _("_Blame"), [this, f, wc] { blame(f.path, wc ? std::string() : source_.hash); },
+            f.status != 'D' && !(wc && f.status == '?')));
     }
     if (!wc && !deleted)
     {
@@ -560,6 +571,32 @@ void changes_view::open_file(const file_change& f, bool choose)
                          {.icon = rap::message_spec::icon::error,
                           .title = _("Open"),
                           .text = rap::i18n::format(_("Could not open {0}."), rap::sys::path_to_utf8(path))});
+}
+
+// The log of one file (repository-relative), at `rev` when given.
+void changes_view::show_log(const std::string& path, const std::string& rev)
+{
+    const std::string file = rap::sys::path_to_utf8(rap::sys::path_from_utf8(host_.workdir) /
+                                                    rap::sys::path_from_utf8(path));
+    auto log = log_window::open(host_.ui, file);
+    if (!log)
+        return host_.ui.message(
+            host_.window(),
+            {.icon = rap::message_spec::icon::error, .title = "Tortilla", .text = log.error()});
+    if (!rev.empty()) (*log)->start_at(rev);
+    windows::keep(std::move(*log));
+}
+
+void changes_view::blame(const std::string& path, const std::string& rev)
+{
+    const std::string file = rap::sys::path_to_utf8(rap::sys::path_from_utf8(host_.workdir) /
+                                                    rap::sys::path_from_utf8(path));
+    auto w = blame_window::open(host_.ui, file, rev);
+    if (!w)
+        return host_.ui.message(
+            host_.window(),
+            {.icon = rap::message_spec::icon::error, .title = "Tortilla", .text = w.error()});
+    windows::keep(std::move(*w));
 }
 
 // With the tool the Diff Viewer page chose (compare.h).

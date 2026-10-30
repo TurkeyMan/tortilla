@@ -103,12 +103,15 @@ std::expected<std::unique_ptr<log_window>, std::string>
 log_window::open(rap::ui& ui, const std::string& path, bool all_branches, bool outer)
 {
     std::string from = path;
-    if (outer)
-    {
-        std::error_code ec;
-        const auto abs = std::filesystem::absolute(rap::sys::path_from_utf8(path), ec);
-        from = rap::sys::path_to_utf8((abs.has_filename() ? abs : abs.parent_path()).parent_path());
-    }
+    std::error_code ec;
+    auto abs = std::filesystem::absolute(rap::sys::path_from_utf8(path), ec);
+    if (outer) abs = (abs.has_filename() ? abs : abs.parent_path()).parent_path();
+    // A path gone from the working tree (a file's name before a rename) is
+    // looked for from the nearest folder that's still there.
+    while (!std::filesystem::exists(abs, ec) && abs.has_parent_path() && abs.parent_path() != abs)
+        abs = abs.parent_path();
+    if (outer || abs != std::filesystem::absolute(rap::sys::path_from_utf8(path), ec))
+        from = rap::sys::path_to_utf8(abs);
     auto repo = repo::open(from);
     if (!repo) return std::unexpected(repo.error());
     std::unique_ptr<log_window> w(new log_window(ui, std::move(*repo), path));

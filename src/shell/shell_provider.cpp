@@ -541,6 +541,7 @@ public:
         case run::none:
         case run::ignore: return;  // its submenu's items, above
         case run::log: rap::shell::launch(tortilla_exe(), {"log", first}); return;
+        case run::blame: rap::shell::launch(tortilla_exe(), {"blame", first}); return;
         case run::log_submodule:
             rap::shell::launch(tortilla_exe(), {"log", "--submodule", first});
             return;

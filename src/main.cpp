@@ -27,6 +27,7 @@
 //   tortilla rename path               git mv it to a new name
 //   tortilla cleanup [path...]         Clean up: untracked files removed
 //   tortilla compare file1 file2       two files, anywhere, in the diff tool
+//   tortilla blame file [rev]          Blame: each line's last commit, through its history
 //   tortilla conflicteditor file       a conflicted file in the merge tool
 //   tortilla diff [path] rev [rev2]   a commit, or rev..rev2, as a unified diff
 //   tortilla settings [path] [diff|menu|network|remotes]  the Settings dialog (at that page)
@@ -35,6 +36,7 @@
 //                             add or remove the file manager's context menu,
 //                             for this user or (elevated, as the installer
 //                             does) every user
+#include "blame/blame_window.h"
 #include "branch/browse_refs.h"
 #include "branch/create_ref_dialog.h"
 #include "branch/merge_dialog.h"
@@ -220,6 +222,7 @@ int main(int argc, char** argv)
                   std::strcmp(argv[i], "stashpop") == 0 ||
                   std::strcmp(argv[i], "repocreate") == 0 || std::strcmp(argv[i], "rename") == 0 ||
                   std::strcmp(argv[i], "cleanup") == 0 || std::strcmp(argv[i], "compare") == 0 ||
+                  std::strcmp(argv[i], "blame") == 0 ||
                   std::strcmp(argv[i], "conflicteditor") == 0 ||
                   std::strcmp(argv[i], "about") == 0 || std::strcmp(argv[i], "remove") == 0 ||
                   std::strcmp(argv[i], "removekeep") == 0 || std::strcmp(argv[i], "ignore") == 0))
@@ -375,7 +378,7 @@ int main(int argc, char** argv)
     if (command == "clone" || command == "fetch" || command == "pull" || command == "push" ||
         command == "branch" || command == "tag" || command == "switch" || command == "merge" ||
         command == "mergeabort" || command == "refbrowse" || command == "reflog" ||
-        command == "stashlist")
+        command == "stashlist" || command == "blame")
     {
         tortilla::windows::init(**ui);
         // The branch dialogs: the second argument preselects a ref or hash.
@@ -408,6 +411,8 @@ int main(int argc, char** argv)
             return keep(tortilla::abort_merge_dialog::open(**ui, path)) ? (*ui)->run() : 1;
         if (command == "refbrowse")
             return keep(tortilla::browse_refs::open(**ui, path, {})) ? (*ui)->run() : 1;
+        if (command == "blame")
+            return keep(tortilla::blame_window::open(**ui, path, rev)) ? (*ui)->run() : 1;
         if (command == "reflog" || command == "stashlist")
             return keep(tortilla::reflog_window::open(**ui, path,
                                                       command == "stashlist" ? "refs/stash" : rev))
