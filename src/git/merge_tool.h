@@ -45,6 +45,10 @@ std::expected<conflict_sides, std::string> write_conflict_sides(const std::strin
 // Removes the files write_conflict_sides wrote.
 void remove_conflict_sides(const conflict_sides&);
 
+// A command line's words: spaces separate them outside quotes, and the
+// quotes go (git's tool and editor settings, run without a shell).
+std::vector<std::string> command_words(const std::string& command);
+
 // The program and arguments to run: `command` split into words, quotes
 // honoured, each placeholder replaced within its word (so no quoting is
 // needed for paths with spaces). Without a file placeholder the four files

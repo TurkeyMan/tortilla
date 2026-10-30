@@ -9,6 +9,7 @@
 #include "git/diff_tool.h"
 #include "git/ignore_patterns.h"
 #include "git/lfs.h"
+#include "git/merge_tool.h"
 #include "git/ref_list.h"
 #include "git/reflog.h"
 #include "git/remotes.h"
@@ -459,6 +460,20 @@ int main(int argc, char** argv)
               "custom diff tool: an added file's missing side is Tortilla's empty file, not "
               "/dev/null");
         if (!ran) std::printf("     git exited %d:\n%s\n", r.exit_code, r.output.c_str());
+    }
+
+    // core.editor as words, for View revision in alternative editor.
+    {
+        using words = std::vector<std::string>;
+        check(tortilla::command_words("code --wait") == words{"code", "--wait"},
+              "command words: split at spaces");
+        check(tortilla::command_words("\"C:\\Program Files\\Notepad++\\notepad++.exe\" "
+                                      "-multiInst  'a b'") ==
+                  words{"C:\\Program Files\\Notepad++\\notepad++.exe", "-multiInst", "a b"},
+              "command words: quotes keep spaces and go, backslashes stay");
+        check(tortilla::command_words("  ").empty(), "command words: none in blanks");
+        check(tortilla::command_words("x \"\"") == words{"x", ""},
+              "command words: an empty quoted one");
     }
 
     // The git runner: synchronous, then streamed on a worker.

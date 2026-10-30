@@ -12,6 +12,7 @@
 
 #include <rapport/rapport.h>
 
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -93,7 +94,21 @@ public:
     void check_where(const std::function<bool(const file_change&)>& which, bool on);
 
 private:
+    // One side of a comparison: a working file (no revision) or a file's
+    // version in a revision.
+    struct version
+    {
+        std::string workdir;
+        std::string path;  // repository-relative
+        std::string rev;   // empty: the working file
+    };
+
     rap::menu context_menu(std::optional<size_t> row, std::optional<size_t> column);
+    version version_of(const file_change&) const;
+    std::optional<std::filesystem::path> file_of(const version&, const std::string& title);
+    void compare(const version& base, const version& mine, const std::string& title);
+    void view_in_editor(const file_change&);
+    void commit(const std::vector<file_change>&);
     void activated(size_t row);
     void edit_conflict(const std::string& path);
     void open_file(const file_change&, bool choose);
@@ -110,6 +125,9 @@ private:
     std::string settings_key_;
     changes_source source_;
     std::shared_ptr<git_process> difftool_;
+    // Mark for comparison: one file for the whole program, so a file in
+    // one window can be compared with one in another [spec 5.2.8].
+    inline static std::optional<version> marked_;
 };
 
 }  // namespace tortilla

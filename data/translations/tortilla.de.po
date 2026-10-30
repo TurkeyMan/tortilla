@@ -794,6 +794,11 @@ msgstr "Im Dateimanager anzeigen"
 msgid "Mark for comparison"
 msgstr "Zum Vergleich markieren"
 
+#: src/changes/changes_view.cpp
+#, c++-format
+msgid "Diff with “{0}”"
+msgstr "Mit „{0}“ vergleichen"
+
 #: src/changes/changes_view.cpp:443
 msgid "_Delete"
 msgstr "_Löschen"

@@ -5,7 +5,9 @@
 #include "changes_view.h"
 
 #include "blame/blame_window.h"
+#include "changes/commit_window.h"
 #include "changes/conflict_editor.h"
+#include "git/merge_tool.h"
 #include "git/remotes.h"
 #include "i18n.h"
 #include "log/log_window.h"
@@ -21,8 +23,10 @@
 #include <algorithm>
 #include <array>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <set>
+#include <thread>
 
 namespace tortilla
 {
@@ -212,6 +216,14 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
     const std::string count =
         one ? rap::i18n::format(_("“{0}”"), files.front().path)
             : rap::i18n::format(N_("{0} file", "{0} files", files.size()), files.size());
+    // The two selected files, each as this list has it.
+    auto compare_two = [&]
+    {
+        if (files.size() == 2)
+            m.push_back(item(_("Compare two files"),
+                             [this, a = version_of(files[0]), b = version_of(files[1])]
+                             { compare(a, b, _("Compare two files")); }));
+    };
 
     if (wc)
     {
@@ -276,7 +288,8 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
         {
             m.push_back(
                 item(_("Add"), [local, paths] { local(_("Add"), {plus({"add", "--"}, paths)}); }));
-            m.push_back(todo(_("Commit...")));
+            m.push_back(item(_("Commit..."), [this, files] { commit(files); }));
+            compare_two();
         }
         else if (!conflicted)
         {
@@ -289,7 +302,8 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
                                                    plus({"diff", "HEAD", "--"}, paths));
                              }));
             separator(m);
-            m.push_back(todo(_("Commit...")));
+            compare_two();
+            m.push_back(item(_("Commit..."), [this, files] { commit(files); }));
             // New files leave the index (the file stays); the rest go
             // back to HEAD, in the index and the working tree.
             m.push_back(item(
@@ -359,7 +373,7 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
                                                menu_text(parent_title)),
                              [this, parent, paths] { difftool({parent}, paths); }));
         separator(m);
-        if (files.size() == 2) m.push_back(todo(_("Compare two files")));
+        compare_two();
         // The working tree's files replaced with this commit's (or its
         // parent's) versions, as TortoiseGit's Revert to revision.
         if (!deleted)
@@ -423,11 +437,12 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
             m.push_back(item(_("Save revision _to..."), [this, hash = source_.hash, f = files.front()]
                              { save_revision(hash, f); }));
         }
-        m.push_back(todo(_("View revision in alternative editor")));
         const file_change& f = files.front();
         // A deleted file has nothing to open in the working tree, nor in
         // the revision that deleted it.
         const bool openable = f.status != 'D';
+        m.push_back(item(
+            _("View revision in alternative editor"), [this, f] { view_in_editor(f); }, openable));
         m.push_back(item(_("_Open"), [this, f] { open_file(f, false); }, openable));
 #ifdef _WIN32
         m.push_back(item(_("Open with..."), [this, f] { open_file(f, true); }, openable));
@@ -444,7 +459,18 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
                                  std::filesystem::exists(path, ec) ? path : path.parent_path());
                          }));
         separator(m);
-        m.push_back(todo(_("Mark for comparison")));
+        const version v = version_of(f);
+        m.push_back(item(_("Mark for comparison"), [v] { marked_ = v; }, openable));
+        // TortoiseGit's "Diff with": the marked file against this one. The
+        // mark stays, for comparing it with more.
+        if (marked_)
+        {
+            const version base = *marked_;
+            const std::string title =
+                base.rev.empty() ? base.path : base.path + ":" + base.rev.substr(0, 8);
+            m.push_back(item(rap::i18n::format(_("Diff with “{0}”"), menu_text(title)),
+                             [this, base, v] { compare(base, v, _("Compare two files")); }));
+        }
     }
     if (wc && unversioned)
     {
@@ -571,6 +597,125 @@ void changes_view::open_file(const file_change& f, bool choose)
                          {.icon = rap::message_spec::icon::error,
                           .title = _("Open"),
                           .text = rap::i18n::format(_("Could not open {0}."), rap::sys::path_to_utf8(path))});
+}
+
+// The file as the list shows it: the working file where the list is the
+// working tree's, else the revision's; a deleted one as it was before.
+changes_view::version changes_view::version_of(const file_change& f) const
+{
+    const bool deleted = f.status == 'D';
+    std::string rev;
+    switch (source_.what)
+    {
+    case changes_source::working_tree: rev = deleted ? "HEAD" : ""; break;
+    case changes_source::revision_to_working_tree: rev = deleted ? source_.parent : ""; break;
+    case changes_source::revision: rev = deleted ? source_.parent : source_.hash; break;
+    }
+    return {host_.workdir, f.path, rev};
+}
+
+// A version as a file a tool can read: the working file, or the revision's
+// written to a temporary file. It keeps its folders there, so two files of
+// one name in a revision don't overwrite each other.
+std::optional<std::filesystem::path> changes_view::file_of(const version& v,
+                                                           const std::string& title)
+{
+    const std::filesystem::path working =
+        rap::sys::path_from_utf8(v.workdir) / rap::sys::path_from_utf8(v.path);
+    if (v.rev.empty()) return working;
+    git_result r = revision_file(v.workdir, v.rev, v.path);
+    std::error_code ec;
+    const std::filesystem::path path = std::filesystem::temp_directory_path(ec) / "tortilla" /
+                                       v.rev.substr(0, 8) / rap::sys::path_from_utf8(v.path);
+    if (r.ok() && write_file(path, r.output)) return path;
+    host_.ui.message(host_.window(), {.icon = rap::message_spec::icon::error,
+                                      .title = title,
+                                      .text = rap::i18n::format(_("Could not get {0} at {1}."),
+                                                                v.path, v.rev.substr(0, 8)),
+                                      .detail = r.ok() ? "" : r.output});
+    return std::nullopt;
+}
+
+// Compare two files, and Diff with a marked one: two files, wherever they
+// are, in the Diff Viewer page's tool (compare.h).
+void changes_view::compare(const version& base, const version& mine, const std::string& title)
+{
+    const auto a = file_of(base, title);
+    if (!a) return;
+    const auto b = file_of(mine, title);
+    if (!b) return;
+    difftool_ = compare_files(host_.ui, host_.window(), rap::sys::path_to_utf8(*a),
+                              rap::sys::path_to_utf8(*b),
+                              [this]
+                              {
+                                  if (host_.open_settings)
+                                      host_.open_settings(settings_page::diff_viewer);
+                              });
+}
+
+// View revision in alternative editor: the file in a text editor rather
+// than its default program. git's editor (core.editor, then $VISUAL and
+// $EDITOR as git takes them) where one is set, else the system's.
+void changes_view::view_in_editor(const file_change& f)
+{
+    const std::string title = _("View revision in alternative editor");
+    const auto path = file_of(version_of(f), title);
+    if (!path) return;
+    std::string editor = config_value(host_.workdir, "core.editor");
+#ifdef _WIN32
+    if (editor.empty()) editor = "notepad.exe";
+#else
+    for (const char* name : {"VISUAL", "EDITOR"})
+        if (const char* e = std::getenv(name); editor.empty() && e) editor = e;
+    // No editor named: the desktop's own for the file's type.
+    if (editor.empty())
+    {
+        if (!rap::sys::open_path(*path))
+            host_.ui.message(host_.window(),
+                             {.icon = rap::message_spec::icon::error,
+                              .title = title,
+                              .text = rap::i18n::format(_("Could not open {0}."),
+                                                        rap::sys::path_to_utf8(*path))});
+        return;
+    }
+#endif
+    std::vector<std::string> args = command_words(editor);
+    if (args.empty()) return;
+    const std::string program = args.front();
+    args.erase(args.begin());
+    args.push_back(rap::sys::path_to_utf8(*path));
+    auto p = rap::sys::process::start(program, args);
+    if (!p)
+        return host_.ui.message(
+            host_.window(),
+            {.icon = rap::message_spec::icon::error,
+             .title = title,
+             .text = rap::i18n::format(_("Could not start {0}: {1}"), program, p.error())});
+    // Not waited for here: the editor stays open as long as the user likes.
+    // A thread drains and reaps it, as dropping the process would kill it.
+    std::thread(
+        [p = std::move(*p)]
+        {
+            char buf[4096];
+            for (size_t n = 1; n;) n = p->read(buf, sizeof buf);
+            p->wait();
+        })
+        .detach();
+}
+
+// Commit...: the Commit window for just these files.
+void changes_view::commit(const std::vector<file_change>& files)
+{
+    std::vector<std::string> paths;
+    for (const file_change& f : files)
+        paths.push_back(rap::sys::path_to_utf8(rap::sys::path_from_utf8(host_.workdir) /
+                                               rap::sys::path_from_utf8(f.path)));
+    auto w = commit_window::open(host_.ui, paths);
+    if (!w)
+        return host_.ui.message(
+            host_.window(),
+            {.icon = rap::message_spec::icon::error, .title = "Tortilla", .text = w.error()});
+    windows::keep(std::move(*w));
 }
 
 // The log of one file (repository-relative), at `rev` when given.

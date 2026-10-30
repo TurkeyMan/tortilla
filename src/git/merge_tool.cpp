@@ -268,14 +268,8 @@ void remove_conflict_sides(const conflict_sides& s)
         if (!p->empty()) fs::remove(rap::sys::path_from_utf8(*p), ec);
 }
 
-std::vector<std::string> merge_tool_command(const std::string& command, const conflict_sides& s,
-                                            const std::string& workdir)
+std::vector<std::string> command_words(const std::string& c)
 {
-    std::string c = command;
-    if (c.find("%base") == std::string::npos && c.find("%mine") == std::string::npos &&
-        c.find("%theirs") == std::string::npos && c.find("%merged") == std::string::npos)
-        c += " %base %theirs %mine %merged";
-    // Words: spaces separate them outside quotes; quotes go.
     std::vector<std::string> words;
     std::string w;
     bool in_word = false;
@@ -299,6 +293,17 @@ std::vector<std::string> merge_tool_command(const std::string& command, const co
             w += ch, in_word = true;
     }
     if (in_word) words.push_back(w);
+    return words;
+}
+
+std::vector<std::string> merge_tool_command(const std::string& command, const conflict_sides& s,
+                                            const std::string& workdir)
+{
+    std::string c = command;
+    if (c.find("%base") == std::string::npos && c.find("%mine") == std::string::npos &&
+        c.find("%theirs") == std::string::npos && c.find("%merged") == std::string::npos)
+        c += " %base %theirs %mine %merged";
+    std::vector<std::string> words = command_words(c);
     for (std::string& word : words)
     {
         // Titles before files: %bname would otherwise be %base + "name".
