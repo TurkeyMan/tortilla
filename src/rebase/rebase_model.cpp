@@ -64,11 +64,10 @@ void rebase_model::set_refs(ref_map refs)
 
 size_t rebase_model::add(size_t at, const std::vector<commit>& commits)
 {
+    // One already listed goes in again: picked twice, say edited down the
+    // first time and its remainder taken the second.
     std::vector<rebase_row> added;
-    for (const commit& c : commits)
-        if (std::ranges::none_of(rows_, [&](const rebase_row& r) { return r.commit.id == c.id; }) &&
-            std::ranges::none_of(added, [&](const rebase_row& r) { return r.commit.id == c.id; }))
-            added.push_back({.commit = c});
+    for (const commit& c : commits) added.push_back({.commit = c});
     at = std::min(at, rows_.size());
     rows_.insert(rows_.begin() + ptrdiff_t(at), added.begin(), added.end());
     if (!added.empty()) notify_inserted(at, added.size());

@@ -49,8 +49,8 @@ public:
     // The branch and tag labels, when they arrive after the rows.
     void set_refs(ref_map refs);
     // Add [spec 2.5]: `commits` (newest first) as picks in front of row
-    // `at` (0, the top, applies them last); any already listed are left
-    // where they are. Returns how many went in.
+    // `at` (0, the top, applies them last), even ones already listed.
+    // Returns how many went in.
     size_t add(size_t at, const std::vector<commit>& commits);
     const std::vector<rebase_row>& rows() const { return rows_; }
     rebase_row& row(size_t i) { return rows_[i]; }

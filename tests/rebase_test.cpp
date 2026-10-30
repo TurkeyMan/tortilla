@@ -180,7 +180,9 @@ int main(int argc, char** argv)
         auto opened = repo::open(h.repo);
         auto side = opened->range(*opened->resolve("main"), *opened->resolve("side"), false);
         check(side && h.model.add(0, *side) == 1 && h.row("X1") == 0, "add: on top");
-        check(h.model.add(0, *side) == 0, "add: one already listed isn't added again");
+        check(h.model.add(2, *side) == 1 && h.model.size() == 5 && h.row("X1") == 0,
+              "add: one already listed goes in again, where it's put");
+        h.model.set_action(2, rebase_action::skip);
         h.start();
         check(h.engine->stage() == rebase_stage::done &&
                   h.subjects() == "X1\nF3\nF2\nF1\nMain two\n",

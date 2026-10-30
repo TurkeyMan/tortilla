@@ -328,9 +328,8 @@ void rebase_window::reload_list()
             for (auto& c : *commits) rows.push_back({.commit = c});
             model_.set(std::move(rows), {});
             can_start_ = true;
-            set_status(rap::i18n::format(N_("{0} commit to rebase onto {1}",
-                                            "{0} commits to rebase onto {1}", model_.size()),
-                                         model_.size(), onto_.empty() ? u : onto_));
+            count_target_ = onto_.empty() ? u : onto_;
+            show_count();
             list_->set_current(0);
             // Then, off the UI thread: the labels, and the commits already
             // upstream (git cherry "-"), which start as Skip. git cherry reads
@@ -652,6 +651,13 @@ void rebase_window::close()
     if (closed_) closed_();
 }
 
+void rebase_window::show_count()
+{
+    set_status(rap::i18n::format(
+        N_("{0} commit to rebase onto {1}", "{0} commits to rebase onto {1}", model_.size()),
+        model_.size(), count_target_));
+}
+
 bool rebase_window::can_add() const
 {
     return !(engine_ && engine_->started()) && !preserve_merges_->checked();
@@ -667,6 +673,7 @@ bool rebase_window::add_commits_at(size_t at, const std::vector<std::string>& ha
             if (auto c = repo_.lookup(*id); c && c->parents.size() <= 1) chosen.push_back(*c);
     const size_t n = model_.add(at, chosen);
     if (!n) return false;
+    show_count();
     std::vector<size_t> rows(n);
     std::iota(rows.begin(), rows.end(), std::min(at, model_.size() - n));
     list_->select(rows);

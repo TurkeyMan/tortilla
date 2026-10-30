@@ -70,6 +70,9 @@ private:
     // Commits added (Add, or dropped from a log) as picks in front of row
     // `at`; false when none went in.
     bool can_add() const;
+    // "N commits to rebase onto X", after the list loads or grows.
+    void show_count();
+    std::string count_target_;
     bool add_commits_at(size_t at, const std::vector<std::string>& hashes);
     bool fast_forward_ = false;
     bool can_start_ = false;
