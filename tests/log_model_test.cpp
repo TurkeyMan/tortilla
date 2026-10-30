@@ -238,6 +238,61 @@ int main(int argc, char** argv)
         check(save(""), "note: removing a missing one is no error");
         // The notes commits aren't the history the checks below walk.
         (void)tortilla::run_git(repo, {"update-ref", "-d", "refs/notes/commits"});
+    // Bisect's commands, run for real on a history of its own: seven
+    // commits, the fifth bringing in the "bug", found by marking each
+    // revision git checks out as the working tree says.
+    {
+        using tortilla::bisect_step;
+        check(tortilla::parse_bisect_step("skip") == bisect_step::skip &&
+                  !tortilla::parse_bisect_step("begin"),
+              "parse_bisect_step: the command line's names");
+        check(tortilla::bisect_args(bisect_step::start, {"bad", "good"}) ==
+                  std::vector<std::string>{"bisect", "start", "bad", "good", "--"},
+              "bisect_args: start takes bad, then good, then ends the revisions");
+        check(tortilla::bisect_args(bisect_step::reset, {"x"}) ==
+                  std::vector<std::string>{"bisect", "reset"},
+              "bisect_args: reset takes no revision");
+        const std::string b = std::string(argv[1]) + "/bisect";
+        std::filesystem::create_directories(b);
+        const std::string in = "git -C '" + b + "' -c user.name=Ada -c user.email=ada@example.com ";
+        sh("git init -q -b main '" + b + "'");
+        std::vector<std::string> ids;
+        for (int i = 1; i <= 7; ++i)
+        {
+            if (i == 5) sh("echo bug > '" + b + "/bug.txt'");
+            sh("echo " + std::to_string(i) + " > '" + b + "/n.txt'");
+            sh(in + "add . && " + in + "commit -qm c" + std::to_string(i));
+            std::string id =
+                tortilla::run_git(b, {"rev-parse", "HEAD"}, tortilla::git_output::stdout_only)
+                    .output;
+            while (!id.empty() && std::isspace(static_cast<unsigned char>(id.back())))
+                id.pop_back();
+            ids.push_back(id);
+        }
+        auto state = [&]
+        {
+            auto r = tortilla::repo::open(b);
+            return r ? r->state() : tortilla::repo::repo_state::none;
+        };
+        tortilla::git_result r =
+            tortilla::run_git(b, tortilla::bisect_args(bisect_step::start, {ids[6], ids[0]}));
+        check(r.ok() && r.output.find("Bisecting:") != std::string::npos,
+              "bisect start: git says how many revisions are left");
+        check(state() == tortilla::repo::repo_state::bisect,
+              "bisect start: the repository is bisecting");
+        // "is the first bad commit", or "first 'bad' commit" in newer gits.
+        int steps = 0;
+        while (r.ok() && r.output.find(" is the first ") == std::string::npos && ++steps < 10)
+            r = tortilla::run_git(b, tortilla::bisect_args(std::filesystem::exists(b + "/bug.txt")
+                                                               ? bisect_step::bad
+                                                               : bisect_step::good));
+        check(r.ok() && r.output.find(ids[4] + " is the first ") != std::string::npos,
+              "bisect good/bad: finds the commit that brought the bug in");
+        r = tortilla::run_git(b, tortilla::bisect_args(bisect_step::reset));
+        std::string head =
+            tortilla::run_git(b, {"rev-parse", "HEAD"}, tortilla::git_output::stdout_only).output;
+        check(r.ok() && state() == tortilla::repo::repo_state::none && head.starts_with(ids[6]),
+              "bisect reset: back on the branch, bisecting no more");
     }
 
     // Hashes are searched too by default, and hex is full of letters like

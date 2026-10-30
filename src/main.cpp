@@ -32,6 +32,8 @@
 //   tortilla showcompare [path] rev1 [rev2]  the files changed between two revisions
 //                                     (or rev1 and the working tree), in a list
 //   tortilla conflicteditor file       a conflicted file in the merge tool
+//   tortilla bisect start|good|bad|skip|reset [path]  git bisect: start asks for the
+//                                     good and bad revisions; the rest mark HEAD, or end it
 //   tortilla diff [path] rev [rev2]   a commit, or rev..rev2, as a unified diff
 //   tortilla settings [path] [diff|menu|network|remotes]  the Settings dialog (at that page)
 //   tortilla --which-ui       show the detected desktop and backend order
@@ -56,6 +58,7 @@
 #include "git/repo.h"
 #include "git/ssh_client.h"
 #include "i18n.h"
+#include "log/bisect_dialog.h"
 #include "log/log_window.h"
 #include "log/reflog_window.h"
 #include "rebase/rebase_window.h"
@@ -230,8 +233,9 @@ int main(int argc, char** argv)
                   std::strcmp(argv[i], "blame") == 0 || std::strcmp(argv[i], "showcompare") == 0 ||
                   std::strcmp(argv[i], "repobrowser") == 0 ||
                   std::strcmp(argv[i], "conflicteditor") == 0 ||
-                  std::strcmp(argv[i], "about") == 0 || std::strcmp(argv[i], "remove") == 0 ||
-                  std::strcmp(argv[i], "removekeep") == 0 || std::strcmp(argv[i], "ignore") == 0))
+                  std::strcmp(argv[i], "bisect") == 0 || std::strcmp(argv[i], "about") == 0 ||
+                  std::strcmp(argv[i], "remove") == 0 || std::strcmp(argv[i], "removekeep") == 0 ||
+                  std::strcmp(argv[i], "ignore") == 0))
         {
             command = argv[i];
             named = true;
@@ -239,7 +243,9 @@ int main(int argc, char** argv)
         else
             args.push_back(argv[i]);
     }
-    std::string path = args.empty() ? "." : args[0];
+    // bisect's step comes before its path.
+    const size_t path_at = command == "bisect" ? 1 : 0;
+    std::string path = args.size() <= path_at ? "." : args[path_at];
 
     auto ui = rap::ui::load(argc, argv, opts);
     if (!ui)
@@ -376,6 +382,40 @@ int main(int argc, char** argv)
                                   rap::sys::path_to_utf8(rap::sys::path_from_utf8(root).make_preferred())),
                 repo->workdir(), {{"stash", pop ? "pop" : "apply"}}, done);
         }
+        return (*ui)->run();
+    }
+
+    // Explorer's Bisect entries [spec 4.2, rows 28-32]: start asks for the
+    // good and bad revisions; the others run on HEAD in the progress dialog.
+    if (command == "bisect")
+    {
+        const std::optional<tortilla::bisect_step> step =
+            args.empty() ? std::nullopt : tortilla::parse_bisect_step(args[0]);
+        auto fail = [&ui](const std::string& error)
+        {
+            std::fprintf(stderr, "tortilla: %s\n", error.c_str());
+            (*ui)->message(
+                nullptr,
+                {.icon = rap::message_spec::icon::error, .title = "Tortilla", .text = error},
+                [&ui](rap::dialog_role) { (*ui)->quit(); });
+            (*ui)->run();
+            return 1;
+        };
+        if (!step) return fail("usage: tortilla bisect start|good|bad|skip|reset [path]");
+        tortilla::windows::init(**ui);
+        if (*step == tortilla::bisect_step::start)
+        {
+            auto d = tortilla::bisect_start_dialog::open(**ui, path);
+            if (!d) return fail(d.error());
+            tortilla::windows::keep(std::move(*d));
+            return (*ui)->run();
+        }
+        auto repo = tortilla::repo::open(path);
+        if (!repo || repo->bare())
+            return fail(repo ? std::string(_("This needs a working tree.")) : repo.error());
+        const size_t running = tortilla::windows::hold({});
+        tortilla::run_bisect(**ui, nullptr, repo->workdir(), *step, {},
+                             [running](bool) { tortilla::windows::release(running); });
         return (*ui)->run();
     }
 

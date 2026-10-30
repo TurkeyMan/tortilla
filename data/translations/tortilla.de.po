@@ -3726,3 +3726,45 @@ msgstr "{0} - Geänderte Dateien - Tortilla"
 #: src/changes/changed_files_window.cpp
 msgid "({0} selected)"
 msgstr "({0} ausgewählt)"
+
+#: src/log/log_actions.cpp
+msgid "Bisect good"
+msgstr "Bisect gut"
+
+#: src/log/log_actions.cpp
+msgid "Bisect bad"
+msgstr "Bisect schlecht"
+
+#: src/log/log_actions.cpp
+msgid "Bisect skip"
+msgstr "Bisect überspringen"
+
+#: src/log/log_actions.cpp
+msgid "Bisect reset"
+msgstr "Bisect zurücksetzen"
+
+#: src/log/log_actions.cpp src/log/bisect_dialog.cpp
+msgid "Bisect start"
+msgstr "Bisect starten"
+
+#: src/log/bisect_dialog.cpp
+#, c++-format
+msgid "{0} - Bisect"
+msgstr "{0} - Bisect"
+
+#: src/log/bisect_dialog.cpp
+#, c++-format
+msgid "{0} - Bisect start - Tortilla"
+msgstr "{0} - Bisect starten - Tortilla"
+
+#: src/log/bisect_dialog.cpp
+msgid "Good"
+msgstr "Gut"
+
+#: src/log/bisect_dialog.cpp
+msgid "Bad"
+msgstr "Schlecht"
+
+#: src/log/bisect_dialog.cpp
+msgid "Both the good and the bad revision are needed."
+msgstr "Sowohl die gute als auch die schlechte Revision werden benötigt."

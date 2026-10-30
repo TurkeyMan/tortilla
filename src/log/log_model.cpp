@@ -927,6 +927,32 @@ std::vector<std::string> note_args(const std::string& hash, const std::string& t
     if (std::ranges::all_of(text, [](unsigned char ch) { return std::isspace(ch) != 0; }))
         return {"notes", "remove", "--ignore-missing", hash};
     return {"notes", "add", "-f", "-F", file, hash};
+std::optional<bisect_step> parse_bisect_step(std::string_view name)
+{
+    if (name == "start") return bisect_step::start;
+    if (name == "good") return bisect_step::good;
+    if (name == "bad") return bisect_step::bad;
+    if (name == "skip") return bisect_step::skip;
+    if (name == "reset") return bisect_step::reset;
+    return std::nullopt;
+}
+
+std::vector<std::string> bisect_args(bisect_step step, const std::vector<std::string>& revs)
+{
+    std::vector<std::string> args{"bisect"};
+    switch (step)
+    {
+    case bisect_step::start: args.push_back("start"); break;
+    case bisect_step::good: args.push_back("good"); break;
+    case bisect_step::bad: args.push_back("bad"); break;
+    case bisect_step::skip: args.push_back("skip"); break;
+    case bisect_step::reset: args.push_back("reset"); return args;
+    }
+    args.insert(args.end(), revs.begin(), revs.end());
+    // Without "--", git takes a revision it can't resolve as the first of
+    // the paths to limit the bisect to and starts anyway; with it, it says so.
+    if (step == bisect_step::start) args.push_back("--");
+    return args;
 }
 
 }  // namespace tortilla

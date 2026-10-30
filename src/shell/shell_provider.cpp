@@ -590,6 +590,20 @@ public:
         case run::rename: rap::shell::launch(tortilla_exe(), {"rename", first}); return;
         case run::edit_conflicts: rap::shell::launch(tortilla_exe(), {"conflicteditor", first}); return;
         case run::about: rap::shell::launch(tortilla_exe(), {"about"}); return;
+        case run::bisect_start:
+        case run::bisect_good:
+        case run::bisect_bad:
+        case run::bisect_skip:
+        case run::bisect_reset:
+        {
+            const char* step = r->command == run::bisect_start  ? "start"
+                               : r->command == run::bisect_good ? "good"
+                               : r->command == run::bisect_bad  ? "bad"
+                               : r->command == run::bisect_skip ? "skip"
+                                                                : "reset";
+            rap::shell::launch(tortilla_exe(), {"bisect", step, folder});
+            return;
+        }
         case run::commit:
         case run::repostatus:
         case run::add:

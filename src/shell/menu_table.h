@@ -97,6 +97,11 @@ enum class run
     blame,           // tortilla blame <first>
     repobrowser,     // tortilla repobrowser <folder>
     ignore,          // a submenu: tortilla ignore [--delete] [--mask] <paths...>
+    bisect_start,    // tortilla bisect start <folder>
+    bisect_good,     // tortilla bisect good <folder>
+    bisect_bad,      // tortilla bisect bad <folder>
+    bisect_skip,     // tortilla bisect skip <folder>
+    bisect_reset,    // tortilla bisect reset <folder>
 };
 
 struct row
@@ -181,11 +186,11 @@ inline constexpr row k_rows[] = {
     {"Stash Pop", {{{FIG | ONE | STASH, 0}}}, place::sub, run::stash_pop, "stashpop"},
     {"Stash List", {{{FIG | ONE | STASH, 0}}}, place::sub, run::stash_list, "stashlist"},
     separator,
-    {"Bisect start", {{{FIG | ONE, BISECT | MERGE}}}, place::sub, run::none, "bisectstart"},
-    {"Bisect good", {{{FIG | ONE | BISECT, 0}}}, place::sub, run::none, "bisectgood"},
-    {"Bisect bad", {{{FIG | ONE | BISECT, 0}}}, place::sub, run::none, "bisectbad"},
-    {"Bisect skip", {{{FIG | ONE | BISECT, 0}}}, place::sub, run::none, "bisectskip"},
-    {"Bisect reset", {{{FIG | ONE | BISECT, 0}}}, place::sub, run::none, "bisectreset"},
+    {"Bisect start", {{{FIG | ONE, BISECT | MERGE}}}, place::sub, run::bisect_start, "bisectstart"},
+    {"Bisect good", {{{FIG | ONE | BISECT, 0}}}, place::sub, run::bisect_good, "bisectgood"},
+    {"Bisect bad", {{{FIG | ONE | BISECT, 0}}}, place::sub, run::bisect_bad, "bisectbad"},
+    {"Bisect skip", {{{FIG | ONE | BISECT, 0}}}, place::sub, run::bisect_skip, "bisectskip"},
+    {"Bisect reset", {{{FIG | ONE | BISECT, 0}}}, place::sub, run::bisect_reset, "bisectreset"},
     separator,
     {"&Edit conflicts", {{{GIT | CONFL, FOLD}}}, place::sub, run::edit_conflicts, "conflicteditor"},
     {"Res&olve...",

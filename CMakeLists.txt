@@ -91,6 +91,7 @@ add_executable(tortilla
     src/log/log_actions.cpp
     src/log/reflog_window.cpp
     src/log/format_patch_dialog.cpp
+    src/log/bisect_dialog.cpp
     src/changes/changes_view.cpp
     src/changes/changes_window.cpp
     src/changes/commit_window.cpp

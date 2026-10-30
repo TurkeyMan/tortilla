@@ -9,6 +9,7 @@
 #include "changes/changed_files_window.h"
 #include "changes/cleanup_dialog.h"
 #include "changes/commit_window.h"
+#include "log/bisect_dialog.h"
 #include "log/format_patch_dialog.h"
 #include "log/reflog_window.h"
 #include "remote/pull_fetch_dialog.h"
@@ -203,6 +204,14 @@ menu log_window::context_menu(std::optional<size_t> clicked)
     const bool has_wc = !repo_.bare();
     const repo::repo_state state = repo_.state();
     const bool merging = state == repo::repo_state::merge;
+    const bool bisecting = state == repo::repo_state::bisect;
+    // In the progress dialog, where git says how many revisions are left;
+    // the log reloads after, to show the new HEAD and git's bisect labels.
+    auto bisect = [this](bisect_step step, std::vector<std::string> revs)
+    {
+        run_bisect(ui_, window_.get(), repo_.workdir(), step, std::move(revs),
+                   [this](bool) { reload(); });
+    };
     const std::string current = repo_.head_name();
     const std::string cur = "\"" + menu_text(current) + "\"";
     bool has_stash = false;
@@ -305,6 +314,26 @@ menu log_window::context_menu(std::optional<size_t> clicked)
                 item(_("Stash List"), [this]
                      { keep_dialog(reflog_window::open(ui_, repo_.workdir(), "refs/stash")); }));
         }
+        separator(m);
+
+        // Group C: bisect. A row git has already marked isn't offered again;
+        // the working tree row marks HEAD, which is git's default.
+        bool bisect_ref = false;
+        if (const std::vector<ref>* all = log_.refs_of(row))
+            for (const ref& r : *all)
+                bisect_ref = bisect_ref || r.full_name.starts_with("refs/bisect/");
+        if (bisecting && !bisect_ref)
+        {
+            std::vector<std::string> revs;
+            if (!wc) revs.push_back(hash);
+            m.push_back(
+                item(_("Bisect good"), [bisect, revs] { bisect(bisect_step::good, revs); }));
+            m.push_back(item(_("Bisect bad"), [bisect, revs] { bisect(bisect_step::bad, revs); }));
+            m.push_back(
+                item(_("Bisect skip"), [bisect, revs] { bisect(bisect_step::skip, revs); }));
+        }
+        if (wc && bisecting)
+            m.push_back(item(_("Bisect reset"), [bisect] { bisect(bisect_step::reset, {}); }));
         separator(m);
 
         // Group D: working tree row
@@ -485,6 +514,14 @@ menu log_window::context_menu(std::optional<size_t> clicked)
                                          _("Revert"), {args});
                                  }));
             }
+            if (bisecting)
+            {
+                std::vector<std::string> revs;
+                for (size_t r : sel)
+                    if (const commit* c = log_.commit(r)) revs.push_back(c->id.hex());
+                m.push_back(
+                    item(_("Bisect skip"), [bisect, revs] { bisect(bisect_step::skip, revs); }));
+            }
             separator(m);
         }
     }
@@ -535,6 +572,14 @@ menu log_window::context_menu(std::optional<size_t> clicked)
                     _("_Format Patch..."), [this, range, what]
                     { tortilla::format_patch(ui_, window_.get(), repo_.workdir(), range, what); }));
             }
+            separator(m);
+        }
+
+        // Bisect start: the older of the two worked, the newer doesn't.
+        if (sel.size() == 2 && picks.size() == 2 && !any_stash && has_wc && !merging && !bisecting)
+        {
+            m.push_back(item(_("Bisect start"), [bisect, good = picks.front(), bad = picks.back()]
+                             { bisect(bisect_step::start, {bad, good}); }));
             separator(m);
         }
     }

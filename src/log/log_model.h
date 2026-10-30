@@ -15,7 +15,9 @@
 #include <atomic>
 #include <condition_variable>
 #include <mutex>
+#include <optional>
 #include <regex>
+#include <string_view>
 #include <thread>
 
 namespace tortilla
@@ -69,6 +71,25 @@ std::vector<std::string> format_patch_args(const patch_range& range, const std::
 // commit's note, or the note taken away when `text` is only blank.
 std::vector<std::string> note_args(const std::string& hash, const std::string& text,
                                    const std::string& file);
+
+// git bisect's steps: the log's and Explorer's Bisect entries [spec 1.11,
+// 4.2 rows 28-32], and `tortilla bisect <step>`.
+enum class bisect_step
+{
+    start,
+    good,
+    bad,
+    skip,
+    reset,
+};
+
+// "start", "good", ... as the command line names them; nullopt otherwise.
+std::optional<bisect_step> parse_bisect_step(std::string_view);
+
+// `git bisect` for `step`. start takes the bad revision then the good one,
+// the order git wants; good, bad and skip the revisions they mark (none:
+// HEAD, the one checked out); reset none.
+std::vector<std::string> bisect_args(bisect_step, const std::vector<std::string>& revs = {});
 
 class log_model : public rap::list_model
 {
