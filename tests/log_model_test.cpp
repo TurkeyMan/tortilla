@@ -569,7 +569,9 @@ int main(int argc, char** argv)
     // Blame: which commit each line comes from, across a rename.
     {
         const std::string dir = std::string(argv[1]) + "/blame";
-        const std::string g = "cd '" + dir + "' && git -c user.name=Ada -c user.email=ada@x ";
+        // The author through the environment, which CI's own (GIT_AUTHOR_NAME)
+        // would override over -c user.name.
+        const std::string g = "cd '" + dir + "' && GIT_AUTHOR_NAME=Ada GIT_AUTHOR_EMAIL=ada@x git -c user.name=Ada -c user.email=ada@x ";
         sh("git init -q '" + dir + "'");
         sh("printf 'one\\ntwo\\nthree\\n' > '" + dir + "/f.txt' && " + g + "add . && " + g +
            "commit -qm first");
