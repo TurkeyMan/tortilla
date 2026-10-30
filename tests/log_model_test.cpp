@@ -3,6 +3,7 @@
 // Builds a repo with branches and merges via the git CLI, then loads it
 // through log_model on the null UI backend.
 #include "changes/working_tree.h"
+#include "git/blame.h"
 #include "git/clean.h"
 #include "git/command.h"
 #include "git/diff_tool.h"
@@ -563,6 +564,54 @@ int main(int argc, char** argv)
                   followed[1].parents.size() == 1 && followed[1].parents[0] == followed[2].id &&
                   followed[2].parents.empty(),
               "path log: following the rename reaches the commit that made it, as a line");
+    }
+
+    // Blame: which commit each line comes from, across a rename.
+    {
+        const std::string dir = std::string(argv[1]) + "/blame";
+        const std::string g = "cd '" + dir + "' && git -c user.name=Ada -c user.email=ada@x ";
+        sh("git init -q '" + dir + "'");
+        sh("printf 'one\\ntwo\\nthree\\n' > '" + dir + "/f.txt' && " + g + "add . && " + g +
+           "commit -qm first");
+        sh("printf 'one\\nTWO\\nthree\\n' > '" + dir + "/f.txt' && " + g + "commit -qam second");
+        sh(g + "mv f.txt g.txt && " + g + "commit -qm moved");
+        auto run = [&](tortilla::blame_options o, std::string path = "g.txt")
+        {
+            const auto r = tortilla::run_git(dir, tortilla::blame_args(path, o),
+                                             tortilla::git_output::stdout_only);
+            return tortilla::parse_blame(r.output);
+        };
+        const auto lines = run({});
+        check(lines.size() == 3 && lines[0].text == "one" && lines[1].text == "TWO" &&
+                  lines[2].text == "three",
+              "blame: every line, in order");
+        check(lines.size() == 3 && lines[0].commit->summary == "first" &&
+                  lines[1].commit->summary == "second" && lines[0].commit == lines[2].commit &&
+                  lines[0].commit->author == "Ada" && lines[0].commit->author_email == "ada@x" &&
+                  lines[0].commit->author_time > 0,
+              "blame: each line's commit, shared by lines from the same one");
+        check(
+            lines.size() == 3 && lines[0].filename == "f.txt" && lines[1].original_line == 2 &&
+                lines[1].commit->previous_filename == "f.txt" &&
+                !lines[1].commit->previous_hash.empty(),
+            "blame: the name and line in the commit, and the commit before it, across the rename");
+        sh("printf 'one\\nTWO\\nthree\\nfour\\n' > '" + dir + "/g.txt'");
+        const auto wt = run({});
+        check(wt.size() == 4 && wt[3].commit->uncommitted() && !wt[0].commit->uncommitted(),
+              "blame: the working tree's own lines are uncommitted");
+        // The slider's revisions: the file's commits, its name in each.
+        const auto revs = tortilla::parse_file_revisions(
+            tortilla::run_git(dir, tortilla::file_revision_args("g.txt"),
+                              tortilla::git_output::stdout_only)
+                .output);
+        check(revs.size() == 3 && revs[0].summary == "moved" && revs[0].path == "g.txt" &&
+                  revs[1].path == "f.txt" && revs[2].summary == "first" &&
+                  revs[2].author == "Ada" && revs[2].time > 0,
+              "blame: the file's revisions, newest first, with its name in each");
+        const auto older = revs.size() == 3 ? run({.revision = revs[1].hash}, revs[1].path)
+                                            : std::vector<tortilla::blame_line>{};
+        check(older.size() == 3 && older[1].commit->summary == "second",
+              "blame: at a revision, by its name there");
     }
 
     // Settings' Remotes page: what Save runs, run on a repository.

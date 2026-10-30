@@ -78,6 +78,7 @@ add_library(tortilla_git STATIC
     src/git/reflog.cpp
     src/git/lfs.cpp
     src/git/clean.cpp
+    src/git/blame.cpp
     src/changes/working_tree.cpp)
 target_include_directories(tortilla_git PUBLIC src)
 target_link_libraries(tortilla_git PUBLIC ${TORTILLA_LIBGIT2} rapport::rapport)
