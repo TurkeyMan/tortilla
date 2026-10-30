@@ -2,6 +2,7 @@
 //   tortilla-tests <scratch dir>
 // Builds a repo with branches and merges via the git CLI, then loads it
 // through log_model on the null UI backend.
+#include "changes/file_model.h"
 #include "changes/working_tree.h"
 #include "git/blame.h"
 #include "git/clean.h"
@@ -67,6 +68,66 @@ int main(int argc, char** argv)
     check(tortilla::sha256_hex(std::string(1000, 'a')) ==
               "41edece42d63e8d9bf515a9ba6932e1c20cbc9f5a5d134645adb5db1b9737ea3",
           "sha256 of 1000 bytes");
+
+    // The log's file list: unrelated paths (outside the log's path) and the
+    // path filter box [spec 1.9.5, 1.11.2].
+    {
+        using tortilla::path_is_related;
+        using tortilla::path_matches_filter;
+        check(path_is_related("src/a.cpp", "src") && path_is_related("src", "src") &&
+                  path_is_related("src/a.cpp", "src/") && path_is_related("x/y", ""),
+              "related: the path itself and inside it");
+        check(!path_is_related("srcs/a.cpp", "src") && !path_is_related("sr", "src") &&
+                  !path_is_related("doc/src/a", "src"),
+              "unrelated: a longer name or elsewhere");
+        check(path_matches_filter("src/Log/Window.cpp", "log/w") && path_matches_filter("a", "") &&
+                  path_matches_filter("README", "readme"),
+              "path filter: a substring, any case");
+        check(!path_matches_filter("src/a.cpp", "b.cpp") && !path_matches_filter("a", "ab"),
+              "path filter: no match");
+
+        tortilla::file_model files;
+        // A status with no colour of its own, so any colour is the grey.
+        auto change = [](std::string path, std::string old_path = {})
+        {
+            return tortilla::file_change{
+                .path = path, .old_path = old_path, .status = 'S', .counted = false};
+        };
+        files.set({change("src/a.cpp"), change("doc/b.md"), change("src/c.h", "old/c.h"),
+                   change("old/d.txt", "src/d.txt"), change("README")});
+        check(files.row_count() == 5, "file view: everything until one is set");
+        files.set_view({.related = "src", .unrelated = tortilla::file_view::gray_unrelated});
+        auto grey = [&](size_t row) { return files.style(row, 0).fg.has_value(); };
+        check(files.row_count() == 5 && !grey(0) && grey(1) && !grey(2) && !grey(3) && grey(4),
+              "file view: unrelated rows greyed, renames by either path");
+        files.set_view({.related = "src", .unrelated = tortilla::file_view::hide_unrelated});
+        check(files.row_count() == 3 && files.files()[0].path == "src/a.cpp" &&
+                  files.files()[2].path == "old/d.txt" && !grey(1),
+              "file view: unrelated rows hidden");
+        // Counts for every file set land on the rows still shown.
+        auto counted = [&](std::string path, size_t added)
+        {
+            auto f = change(path);
+            f.counted = true;
+            f.added = added;
+            return f;
+        };
+        files.set_counts(1, {counted("doc/b.md", 7), counted("src/c.h", 3)});
+        check(files.files()[1].path == "src/c.h" && files.files()[1].added == 3 &&
+                  files.text(1, tortilla::file_model::added) == "3",
+              "file view: counts reach the shown rows");
+        files.set_view(
+            {.related = "src", .unrelated = tortilla::file_view::hide_unrelated, .filter = "C.H"});
+        check(files.row_count() == 1 && files.files()[0].path == "src/c.h",
+              "file view: the path filter with unrelated hidden");
+        files.set_view(
+            {.related = "src", .unrelated = tortilla::file_view::show_unrelated, .filter = ".md"});
+        check(files.row_count() == 1 && files.files()[0].added == 7 && !grey(0),
+              "file view: counts kept for hidden rows");
+        files.set_view({.unrelated = tortilla::file_view::gray_unrelated});
+        check(files.row_count() == 5 && !grey(1) && !grey(4),
+              "file view: nothing unrelated without a path");
+    }
 
     // Ignore patterns, as the Ignore dialog writes them.
     {

@@ -167,6 +167,7 @@ private:
     rap::label* status_ = nullptr;
     rap::check* all_branches_ = nullptr;
     rap::check* whole_project_ = nullptr;
+    rap::entry* path_filter_ = nullptr;
     // All Branches (or basic/local refs) as chosen, while following a file's
     // renames walks from HEAD instead: restored after, and what's saved.
     std::optional<walk_refs> refs_before_follow_;
@@ -181,8 +182,12 @@ private:
     std::vector<std::string> ref_history_;  // refs picked, newest first
     log_filter filter_;
     bool show_unversioned_ = true;
+    // Files outside the log's path in the file list [spec 1.9.5].
+    file_view::unrelated_mode unrelated_ = file_view::gray_unrelated;
+    // The file list's view from those and the path filter box.
+    void update_file_view();
     std::optional<int64_t> since_, until_;  // explicit date limits
-    rap::subscription filter_timer_, pulse_timer_;
+    rap::subscription filter_timer_, pulse_timer_, path_filter_timer_;
     // Reloading when something else changes the repository.
     void watch_repository();
     std::string repository_state() const;

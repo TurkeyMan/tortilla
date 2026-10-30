@@ -82,6 +82,8 @@ public:
     void set_files(std::vector<file_change>, bool show_unversioned = true);
     void set_counts(size_t first, const std::vector<file_change>&);
     void clear() { set_files({}); }
+    // Which files show, and which are greyed (the Log dialog's).
+    void set_view(file_view v) { model_.set_view(std::move(v)); }
 
     const std::vector<file_change>& files() const { return model_.files(); }
     std::vector<size_t> selection() const;

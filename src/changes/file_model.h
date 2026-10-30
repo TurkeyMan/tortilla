@@ -8,10 +8,59 @@
 
 #include <algorithm>
 #include <functional>
+#include <string_view>
 #include <unordered_map>
 
 namespace tortilla
 {
+
+// Whether `path` is the repository-relative `related` path or inside it; ""
+// holds everything. The Log dialog's "unrelated" files are those outside the
+// path it was opened for [spec 1.9.5].
+inline bool path_is_related(std::string_view path, std::string_view related)
+{
+    while (!related.empty() && related.back() == '/') related.remove_suffix(1);
+    if (related.empty()) return true;
+    return path.starts_with(related) &&
+           (path.size() == related.size() || path[related.size()] == '/');
+}
+
+// TortoiseGit's "Filter paths" box: a substring of the path, in any case
+// [spec 1.11.2]. ASCII case only: git compares paths bytewise.
+inline bool path_matches_filter(std::string_view path, std::string_view filter)
+{
+    auto lower = [](char c) { return char(c >= 'A' && c <= 'Z' ? c - 'A' + 'a' : c); };
+    return filter.empty() || !std::ranges::search(path, filter, {}, lower, lower).empty();
+}
+
+// Which of a list's files show, and which are greyed: the Log dialog's
+// View > Hide/Gray Unrelated Changed Paths and its path filter box.
+struct file_view
+{
+    enum unrelated_mode
+    {
+        show_unrelated,
+        gray_unrelated,  // TortoiseGit's default
+        hide_unrelated,
+    };
+    std::string related;  // "" when the log isn't limited to a path
+    unrelated_mode unrelated = gray_unrelated;
+    std::string filter;  // "" for every file
+
+    // A rename or copy counts by either of its paths.
+    bool related_to(const file_change& f) const
+    {
+        return path_is_related(f.path, related) ||
+               (!f.old_path.empty() && path_is_related(f.old_path, related));
+    }
+    bool shows(const file_change& f) const
+    {
+        if (unrelated == hide_unrelated && !related_to(f)) return false;
+        return path_matches_filter(f.path, filter) ||
+               (!f.old_path.empty() && path_matches_filter(f.old_path, filter));
+    }
+    bool grays(const file_change& f) const { return unrelated == gray_unrelated && !related_to(f); }
+};
 
 class file_model : public rap::list_model
 {
@@ -37,20 +86,21 @@ public:
 
     void set(std::vector<file_change> files, bool show_unversioned = true)
     {
-        files_.clear();
-        checked_.clear();
+        all_.clear();
         for (auto& f : files)
-            if (show_unversioned || f.status != '?')
-            {
-                // A box the user set keeps its state across reloads; new
-                // rows start as TortoiseGit's Commit does: changes to
-                // versioned files checked, the rest not [spec 5.4.5].
-                auto it = remembered_.find(f.path);
-                checked_.push_back(it != remembered_.end() ? it->second : starts_checked(f.status));
-                files_.push_back(std::move(f));
-            }
-        notify_reset();
+            if (show_unversioned || f.status != '?') all_.push_back(std::move(f));
+        refilter();
     }
+
+    // Shows (or greys) the files `view` picks from those set; the rows are
+    // rebuilt, as for a new set of files.
+    void set_view(file_view view)
+    {
+        view_ = std::move(view);
+        refilter();
+    }
+    // Files set, hidden ones included.
+    size_t total() const { return all_.size(); }
 
     static bool starts_checked(char status)
     {
@@ -91,8 +141,11 @@ public:
         size_t lo = files_.size(), hi = 0;
         for (size_t i = 0; i < files.size(); ++i)
         {
-            const size_t row = first + i;
-            if (row >= files_.size() || files_[row].path != files[i].path) continue;
+            const size_t at = first + i;
+            if (at >= all_.size() || all_[at].path != files[i].path) continue;
+            all_[at] = files[i];
+            const size_t row = row_of_[at];
+            if (row >= files_.size()) continue;  // hidden by the view
             files_[row] = files[i];
             lo = std::min(lo, row);
             hi = row + 1;
@@ -138,6 +191,8 @@ public:
     rap::text_style style(size_t row, size_t) const override
     {
         if (row >= files_.size()) return {};
+        // Grey comes before the status colours [spec 1.11.2].
+        if (grayed_[row]) return {.fg = rap::theme_color::placeholder_text};
         auto rgb = [](uint8_t r, uint8_t g, uint8_t b)
         { return rap::text_style{.fg = rap::color{r, g, b}}; };
         switch (files_[row].status)
@@ -173,7 +228,34 @@ public:
     }
 
 private:
-    std::vector<file_change> files_;
+    void refilter()
+    {
+        files_.clear();
+        checked_.clear();
+        grayed_.clear();
+        row_of_.assign(all_.size(), size_t(-1));
+        for (size_t i = 0; i < all_.size(); ++i)
+        {
+            const file_change& f = all_[i];
+            if (!view_.shows(f)) continue;
+            // A box the user set keeps its state across reloads; new
+            // rows start as TortoiseGit's Commit does: changes to
+            // versioned files checked, the rest not [spec 5.4.5].
+            auto it = remembered_.find(f.path);
+            checked_.push_back(it != remembered_.end() ? it->second : starts_checked(f.status));
+            grayed_.push_back(view_.grays(f));
+            row_of_[i] = files_.size();
+            files_.push_back(f);
+        }
+        notify_reset();
+    }
+
+    std::vector<file_change> all_;  // as set, less unversioned ones if asked
+    std::vector<size_t> row_of_;    // per all_: its row, or size_t(-1) when hidden
+    // Only the log sets one; other lists show everything.
+    file_view view_{.unrelated = file_view::show_unrelated};
+    std::vector<file_change> files_;                    // the rows
+    std::vector<bool> grayed_;                          // per row
     std::vector<bool> checked_;                         // per row, with checkboxes
     std::unordered_map<std::string, bool> remembered_;  // by path, as the user set them
 };

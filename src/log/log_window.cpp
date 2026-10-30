@@ -281,6 +281,7 @@ void log_window::build()
                                 settings::get().set("log.wholeProject." + repo_.workdir(),
                                                     on ? "1" : "0");
                                 window_->set_title(title_text());
+                                update_file_view();  // nothing is unrelated without a path
                                 reload();
                             }),
                     check{_("_All Branches")}
@@ -292,10 +293,19 @@ void log_window::build()
                                 reload();
                             }),
                 },
-                // TODO: path filter.
+                // The selected commit's files, by path: a second after
+                // typing stops, at once on Enter, cleared by Escape (the
+                // window's keys) [spec 1.11.2].
                 entry{}
+                    .bind(path_filter_)
                     .placeholder(std::string("   ") + _("Filter paths"))
-                    .enabled(false)
+                    .on_changed(
+                        [this](const std::string&)
+                        {
+                            path_filter_timer_ =
+                                ui_.timer(1000, false, [this] { update_file_view(); });
+                        })
+                    .on_activate([this] { update_file_view(); })
                     .stretch(),
             },
             hbox{
@@ -329,7 +339,16 @@ void log_window::build()
     window_->on_key(
         [this](const rap::key_event& e)
         {
-            if (!e.press || e.key != rap::key::f5 || e.modifiers) return false;
+            if (!e.press || e.modifiers) return false;
+            // Escape in the path filter box clears it [spec 1.11.2].
+            if (e.key == rap::key::escape && path_filter_->has_focus() &&
+                !path_filter_->text().empty())
+            {
+                path_filter_->set_text("");
+                update_file_view();
+                return true;
+            }
+            if (e.key != rap::key::f5) return false;
             reload();
             return true;
         });
@@ -392,6 +411,9 @@ void log_window::save_layout()
     st.set("log.walk.follow", flag(walk_options_.follow));
     st.set("log.view.labels", std::to_string(log_.labels()));
     st.set("log.view.unversioned", flag(show_unversioned_));
+    st.set("log.view.unrelated", unrelated_ == file_view::hide_unrelated   ? "hide"
+                                 : unrelated_ == file_view::gray_unrelated ? "gray"
+                                                                           : "show");
     st.set("log.filter.fields", std::to_string(filter_.fields));
     st.set("log.filter.regex", flag(filter_.regex));
     st.set("log.filter.caseSensitive", flag(filter_.case_sensitive));
@@ -450,6 +472,11 @@ void log_window::restore_layout()
     update_ref_button();
     log_.set_labels(unsigned(number("log.view.labels", label_all)) & label_all);
     show_unversioned_ = flag("log.view.unversioned", true);
+    const std::string unrelated = st.value("log.view.unrelated");
+    unrelated_ = unrelated == "hide"   ? file_view::hide_unrelated
+                 : unrelated == "show" ? file_view::show_unrelated
+                                       : file_view::gray_unrelated;
+    update_file_view();
     filter_.fields = unsigned(number("log.filter.fields", filter_all)) & filter_all;
     if (filter_.fields == 0) filter_.fields = filter_all;
     filter_.regex = flag("log.filter.regex", false);
@@ -1044,6 +1071,18 @@ void log_window::apply_filter()
     update_status();
 }
 
+// Unrelated files are those outside the log's path, so there are none in a
+// whole-project log [spec 1.9.5]. Only the list's rows change: the files
+// are kept, so no git runs.
+void log_window::update_file_view()
+{
+    path_filter_timer_.reset();
+    files_.set_view({.related = path_limited() ? rel_path_ : std::string(),
+                     .unrelated = unrelated_,
+                     .filter = path_filter_ ? path_filter_->text() : std::string()});
+    update_status();
+}
+
 // Walk Behavior [spec 1.9.4]; drawn pushed while any option is on.
 // Pushed while any walk option is changed from its default.
 void log_window::update_walk_button()
@@ -1125,10 +1164,20 @@ rap::menu log_window::view_menu()
         return toggle(text, log_.labels() & bit,
                       [this, bit] { log_.set_labels(log_.labels() ^ bit); });
     };
+    // Hide and Gray exclude each other, and both can be off: choosing the
+    // one that's on turns it off.
+    auto unrelated = [this](const char* text, file_view::unrelated_mode mode)
+    {
+        return toggle(text, unrelated_ == mode,
+                      [this, mode]
+                      {
+                          unrelated_ = unrelated_ == mode ? file_view::show_unrelated : mode;
+                          update_file_view();
+                      });
+    };
     return {
-        // Unrelated paths only exist once the log can be opened for a path.
-        toggle(_("H_ide Unrelated Changed Paths"), false, {}, false),
-        toggle(_("_Gray Unrelated Changed Paths"), true, {}, false),
+        unrelated(_("H_ide Unrelated Changed Paths"), file_view::hide_unrelated),
+        unrelated(_("_Gray Unrelated Changed Paths"), file_view::gray_unrelated),
         rap::menu_item::separator(),
         toggle(_("Show _Unversioned Files"), show_unversioned_,
                [this]
