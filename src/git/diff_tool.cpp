@@ -15,6 +15,7 @@
 
 #include <cctype>
 #include <filesystem>
+#include <fstream>
 #include <system_error>
 #include <tuple>
 
@@ -191,17 +192,43 @@ std::string expand_placeholders(const std::string& command, const std::string& b
     return s;
 }
 
+// An empty file in the temporary folder (made once, emptied if something
+// wrote to it), with forward slashes; "" if it can't be made.
+std::string empty_file()
+{
+    std::error_code ec;
+    const std::filesystem::path dir = std::filesystem::temp_directory_path(ec) / "tortilla";
+    if (ec) return {};
+    std::filesystem::create_directories(dir, ec);
+    const std::filesystem::path file = dir / "empty";
+    if (!std::filesystem::exists(file, ec) || std::filesystem::file_size(file, ec) != 0)
+        std::ofstream(file, std::ios::binary | std::ios::trunc);
+    if (!std::filesystem::exists(file, ec)) return {};
+    const std::u8string generic = file.generic_u8string();
+    return std::string(generic.begin(), generic.end());
+}
+
 std::vector<std::string> custom_difftool_args(const std::string& command,
                                               const std::vector<std::string>& revisions,
                                               const std::string& base_name,
                                               const std::string& mine_name,
                                               const std::vector<std::string>& paths, bool folders)
 {
-    // A side that doesn't exist (a file added or deleted) is /dev/null to
-    // git, which most tools can't open (TortoiseGitMerge asks to reload and
-    // shows nothing): an empty file instead.
-    static const std::string empty_sides = "[ \"$LOCAL\" = /dev/null ] && LOCAL=$(mktemp); "
-                                           "[ \"$REMOTE\" = /dev/null ] && REMOTE=$(mktemp); ";
+    // A side that doesn't exist (a file's first revision, or its deletion)
+    // is /dev/null to git, which most tools can't open (TortoiseGitMerge asks
+    // to reload and shows one side): an empty file of ours instead, so the
+    // file shows as all added (or removed). Its path is the platform's own
+    // (C:/... on Windows): Git for Windows' shell would mangle one like
+    // /tmp/x inside an argument such as /base:%base.
+    std::string empty_sides;
+    if (const std::string empty = empty_file(); !empty.empty())
+    {
+        std::string quoted = "'";
+        for (char c : empty) quoted += c == '\'' ? std::string("'\\''") : std::string(1, c);
+        quoted += "'";
+        empty_sides = "[ \"$LOCAL\" = /dev/null ] && LOCAL=" + quoted +
+                      "; [ \"$REMOTE\" = /dev/null ] && REMOTE=" + quoted + "; ";
+    }
     std::vector<std::string> args{"-c",
                                   "difftool.tortilla.cmd=" + empty_sides +
                                       expand_placeholders(command, base_name, mine_name),

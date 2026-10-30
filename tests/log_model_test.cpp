@@ -370,9 +370,10 @@ int main(int argc, char** argv)
                                            {"4b825dc642cb6eb9a060e54bf8d69288fbee4904", first}, "",
                                            "", {"A.txt"}, false),
             tortilla::git_output::stdout_only);
-        check(added.ok() && !added.output.empty() &&
-                  added.output.find("/dev/null") == std::string::npos,
-              "custom diff tool: an added file's missing side is an empty file, not /dev/null");
+        check(added.ok() && added.output.find("/dev/null") == std::string::npos &&
+                  added.output.find(tortilla::empty_file()) != std::string::npos,
+              "custom diff tool: an added file's missing side is Tortilla's empty file, not "
+              "/dev/null");
         if (!ran) std::printf("     git exited %d:\n%s\n", r.exit_code, r.output.c_str());
     }
 

@@ -20,6 +20,7 @@ namespace tortilla
 {
 
 class git_process;
+class repo;
 
 class blame_window
 {
@@ -53,6 +54,7 @@ private:
     void update_slider();
     void update_details();
     std::optional<size_t> selected_line() const;
+    std::string message(const std::string& hash);
     void find_next();
 
     rap::menu line_menu(std::optional<size_t> row);
@@ -62,6 +64,10 @@ private:
 
     rap::ui& ui_;
     std::string workdir_;
+    // For commit messages, read in-process: starting git for one is slow on
+    // Windows, worst over \\wsl.localhost (near a second a click).
+    std::unique_ptr<repo> repo_;
+    std::map<std::string, std::string> messages_;
     std::string path_;            // repository-relative, as opened
     std::string revision_;        // as opened
     std::unique_ptr<rows> rows_;  // before the window: its list goes first

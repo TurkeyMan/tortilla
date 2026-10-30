@@ -173,6 +173,7 @@ blame_window::open(rap::ui& ui, const std::string& path, const std::string& revi
     std::string r = rap::sys::path_to_utf8(rel);
     std::ranges::replace(r, '\\', '/');
     std::unique_ptr<blame_window> w(new blame_window(ui, repo->workdir(), std::move(r), revision));
+    w->repo_ = std::make_unique<tortilla::repo>(std::move(*repo));
     w->build();
     return w;
 }
@@ -443,14 +444,24 @@ void blame_window::update_details()
         details_->set_text(_("Not committed yet: the working tree's own change."));
         return;
     }
-    const git_result message =
-        run_git(workdir_, {"log", "-1", "--format=%B", c->hash}, git_output::stdout_only);
+    const std::string full = message(c->hash);
     std::string text = c->hash + "\n" + c->author + " <" + c->author_email + ">  " +
                        date_text(c->author_time) + "\n";
     if (rows_->lines[*row].filename != path_)
         text += rap::i18n::format(_("as {0}"), rows_->lines[*row].filename) + "\n";
-    text += "\n" + (message.ok() ? message.output : c->summary);
+    text += "\n" + (full.empty() ? c->summary : full);
     details_->set_text(text);
+}
+
+// A commit's whole message, through libgit2 and kept; "" if it can't.
+std::string blame_window::message(const std::string& hash)
+{
+    if (auto it = messages_.find(hash); it != messages_.end()) return it->second;
+    std::string text;
+    if (repo_)
+        if (const auto id = repo_->resolve(hash))
+            if (auto d = repo_->details(*id)) text = d->message;
+    return messages_[hash] = text;
 }
 
 void blame_window::find_next()
@@ -494,9 +505,8 @@ rap::menu blame_window::line_menu(std::optional<size_t> row)
         m.push_back({.label = _("Copy log message"),
                      .action = [this, hash = c.hash]
                      {
-                         const git_result r = run_git(workdir_, {"log", "-1", "--format=%B", hash},
-                                                      git_output::stdout_only);
-                         if (r.ok()) ui_.set_clipboard(r.output);
+                         if (const std::string full = message(hash); !full.empty())
+                             ui_.set_clipboard(full);
                      }});
     }
     m.push_back(

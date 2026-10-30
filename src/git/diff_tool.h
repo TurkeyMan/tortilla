@@ -65,6 +65,11 @@ struct detected_tool
 };
 std::vector<detected_tool> detect_diff_tools();
 
+// An empty file, the side a custom tool gets for one that doesn't exist (a
+// file's first revision or its deletion); a platform path, "" if it can't
+// be made.
+std::string empty_file();
+
 // git arguments that run `command` (placeholders and all) as a one-off
 // difftool comparing `revisions` (as for git diff): folder to folder, or
 // file to file when `paths` names exactly one file.
