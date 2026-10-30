@@ -30,13 +30,6 @@ namespace fs = std::filesystem;
 constexpr const char* k_url_item = T_("Arbitrary URL...");
 constexpr const char* k_all = T_("- all -");
 
-bool has_conflicts(const std::string& workdir)
-{
-    const git_result r =
-        run_git(workdir, {"diff", "--name-only", "--diff-filter=U"}, git_output::stdout_only);
-    return r.ok() && r.output.find_first_not_of(" \r\n") != std::string::npos;
-}
-
 // "<path> - Pull - Tortilla": `what` with the path for {0}.
 std::string title(const std::string& workdir, const char* what)
 {

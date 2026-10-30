@@ -1,6 +1,7 @@
 #include "diff_tool.h"
 
 #include "git/command.h"
+#include "git/remotes.h"
 #include "settings.h"
 #include "util/programs.h"
 
@@ -26,10 +27,7 @@ namespace tortilla
 
 std::string git_diff_tool(const std::string& repo_dir)
 {
-    git_result r = run_git(repo_dir, {"config", "diff.tool"}, git_output::stdout_only);
-    std::string tool = r.ok() ? r.output : "";
-    while (!tool.empty() && (tool.back() == '\n' || tool.back() == '\r')) tool.pop_back();
-    return tool;
+    return config_value(repo_dir, "diff.tool");
 }
 
 diff_mode saved_diff_mode(const std::string& repo_dir)

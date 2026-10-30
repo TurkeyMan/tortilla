@@ -2,14 +2,36 @@
 
 #include "git/command.h"
 #include "i18n.h"
+#include "settings.h"
 
 #include <rapport/sys.h>
+
+#include <git2.h>
 
 #include <filesystem>
 #include <system_error>
 
 namespace tortilla
 {
+namespace
+{
+
+// The repository's top folder (its .git for a bare one) as libgit2 finds
+// it from `dir`; "" if it can't (none, or one it doesn't trust).
+std::string repository_top(const std::string& dir)
+{
+    static const int init = git_libgit2_init();
+    (void)init;
+    git_repository* r = nullptr;
+    if (git_repository_open_ext(&r, dir.c_str(), 0, nullptr) != 0) return {};
+    const char* top =
+        git_repository_workdir(r) ? git_repository_workdir(r) : git_repository_path(r);
+    std::string out = top ? top : "";
+    git_repository_free(r);
+    return out;
+}
+
+}  // namespace
 
 std::optional<std::string> untrusted_repository(const std::string& path)
 {
@@ -18,10 +40,22 @@ std::optional<std::string> untrusted_repository(const std::string& path)
     fs::path dir = rap::sys::path_from_utf8(path.empty() ? "." : path);
     if (!fs::is_directory(dir, ec)) dir = dir.parent_path();
     if (dir.empty() || !fs::is_directory(dir, ec)) return std::nullopt;
+    // Asked before every command, and starting git for it costs near a second
+    // on Windows over \\wsl.localhost: a repository git has found trusted
+    // once (its owner and safe.directory rarely change) isn't asked again.
+    // Its top folder comes from libgit2, which refuses an untrusted one too;
+    // then git is asked, as the first time.
+    const std::string top = repository_top(rap::sys::path_to_utf8(dir));
+    const std::string known = "trusted." + top;
+    if (!top.empty() && settings::get().value(known) == "1") return std::nullopt;
     // git's refusal names the setting to add, in the form it wants (on
     // Windows %(prefix)///server/share/... for a network path).
     const git_result r = run_git(rap::sys::path_to_utf8(dir), {"rev-parse", "--git-dir"});
-    if (r.ok()) return std::nullopt;
+    if (r.ok())
+    {
+        if (!top.empty()) settings::get().set(known, "1");
+        return std::nullopt;
+    }
     const std::string key = "--add safe.directory ";
     const size_t at = r.output.find(key);
     if (at == std::string::npos) return std::nullopt;

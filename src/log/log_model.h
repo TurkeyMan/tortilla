@@ -81,6 +81,9 @@ public:
               std::function<void(const std::string& error)> done);
     void cancel();
     bool loading() const { return loading_; }
+    // Every ref by the commit it names, as last loaded (all of them, whatever
+    // the walk); empty until they arrive.
+    const ref_map& refs() const { return refs_; }
     // Re-reads the refs (branches and tags moved, made or deleted) without
     // walking the history again, repainting only rows whose labels changed.
     // `done(true)` when the commits shown could have changed too (all

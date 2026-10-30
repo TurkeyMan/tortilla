@@ -26,13 +26,6 @@ std::string trimmed(std::string s)
     return s.substr(start);
 }
 
-bool has_conflicts(const std::string& workdir)
-{
-    const git_result r =
-        run_git(workdir, {"diff", "--name-only", "--diff-filter=U"}, git_output::stdout_only);
-    return r.ok() && r.output.find_first_not_of(" \r\n") != std::string::npos;
-}
-
 }  // namespace
 
 std::expected<std::unique_ptr<switch_dialog>, std::string>

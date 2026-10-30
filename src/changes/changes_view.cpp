@@ -6,6 +6,7 @@
 
 #include "blame/blame_window.h"
 #include "changes/conflict_editor.h"
+#include "git/remotes.h"
 #include "i18n.h"
 #include "log/log_window.h"
 #include "settings.h"
@@ -228,20 +229,7 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
                 { confirm_local(question, _("Resolve"), {plus({"add", "-f", "--"}, conflicts)}); }));
             // During a rebase git's "ours" is the branch being rebased onto
             // and "theirs" the commit being replayed: mine is then theirs.
-            const bool rebasing = std::ranges::any_of(
-                std::array{"rebase-merge", "rebase-apply"},
-                [&](const char* d)
-                {
-                    const git_result r =
-                        run_git(dir, {"rev-parse", "--git-path", d}, git_output::stdout_only);
-                    std::string p = r.ok() ? r.output : "";
-                    while (!p.empty() && (p.back() == '\n' || p.back() == '\r')) p.pop_back();
-                    std::error_code ec;
-                    return !p.empty() && std::filesystem::exists(
-                                             std::filesystem::path(rap::sys::path_from_utf8(dir)) /
-                                                 rap::sys::path_from_utf8(p),
-                                             ec);
-                });
+            const bool rebasing = rebase_in_progress(dir);
             auto take = [confirm_local, question, conflicts, dir](int stage)
             {
                 return [=]

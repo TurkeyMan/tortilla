@@ -1,6 +1,7 @@
 #include "ssh_client.h"
 
 #include "git/command.h"
+#include "git/remotes.h"
 #include "i18n.h"
 #include "settings.h"
 #include "util/programs.h"
@@ -73,10 +74,7 @@ std::vector<std::pair<std::string, std::string>> ssh_environment()
 
 std::string git_ssh_command(const std::string& repo_dir)
 {
-    git_result r = run_git(repo_dir, {"config", "core.sshCommand"}, git_output::stdout_only);
-    std::string command = r.ok() ? r.output : "";
-    while (!command.empty() && (command.back() == '\n' || command.back() == '\r'))
-        command.pop_back();
+    std::string command = config_value(repo_dir, "core.sshCommand");
     if (command.empty()) command = rap::sys::env("GIT_SSH_COMMAND").value_or("");
     if (command.empty()) command = rap::sys::env("GIT_SSH").value_or("");
     return command;

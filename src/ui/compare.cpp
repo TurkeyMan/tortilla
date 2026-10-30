@@ -6,7 +6,10 @@
 
 #include <rapport/sys.h>
 
+#include <git2.h>
+
 #include <filesystem>
+#include <optional>
 
 namespace tortilla
 {
@@ -45,6 +48,59 @@ void start_image_tool(rap::ui& ui, rap::window* parent, const std::string& dir,
     if (!process) return finished();
     *slot = process;
     running.push_back(std::move(process));
+}
+
+// The paths that differ between `revisions` (one: against the working
+// tree) under `paths`, through libgit2: these checks run before the tool
+// starts, where starting git costs most (near a second on Windows over
+// \\wsl.localhost). nullopt where git should answer: no paths (a whole
+// tree, where git's index caches are faster) or a revision libgit2 can't
+// resolve.
+std::optional<std::vector<std::string>> changed_paths(const std::string& dir,
+                                                      const std::vector<std::string>& revisions,
+                                                      const std::vector<std::string>& paths)
+{
+    if (paths.empty() || revisions.empty() || revisions.size() > 2) return std::nullopt;
+    static const int init = git_libgit2_init();
+    (void)init;
+    git_repository* raw = nullptr;
+    if (git_repository_open_ext(&raw, dir.c_str(), 0, nullptr) != 0) return std::nullopt;
+    std::unique_ptr<git_repository, decltype(&git_repository_free)> repo(raw, &git_repository_free);
+    std::vector<std::unique_ptr<git_tree, decltype(&git_tree_free)>> trees;
+    for (const std::string& rev : revisions)
+    {
+        // git's empty tree needn't be stored: no tree, to libgit2.
+        if (rev == "4b825dc642cb6eb9a060e54bf8d69288fbee4904")
+        {
+            trees.emplace_back(nullptr, &git_tree_free);
+            continue;
+        }
+        git_object* obj = nullptr;
+        if (git_revparse_single(&obj, repo.get(), rev.c_str()) != 0) return std::nullopt;
+        git_object* tree = nullptr;
+        const int peeled = git_object_peel(&tree, obj, GIT_OBJECT_TREE);
+        git_object_free(obj);
+        if (peeled != 0) return std::nullopt;
+        trees.emplace_back(reinterpret_cast<git_tree*>(tree), &git_tree_free);
+    }
+    std::vector<char*> specs;
+    for (const std::string& p : paths) specs.push_back(const_cast<char*>(p.c_str()));
+    git_diff_options o = GIT_DIFF_OPTIONS_INIT;
+    o.pathspec = {specs.data(), specs.size()};
+    git_diff* diff = nullptr;
+    const int made =
+        trees.size() == 2
+            ? git_diff_tree_to_tree(&diff, repo.get(), trees[0].get(), trees[1].get(), &o)
+            : git_diff_tree_to_workdir_with_index(&diff, repo.get(), trees[0].get(), &o);
+    if (made != 0) return std::nullopt;
+    std::vector<std::string> out;
+    for (size_t i = 0, n = git_diff_num_deltas(diff); i < n; ++i)
+    {
+        const git_diff_delta* d = git_diff_get_delta(diff, i);
+        out.emplace_back(d->new_file.path ? d->new_file.path : d->old_file.path);
+    }
+    git_diff_free(diff);
+    return out;
 }
 
 void offer_diff_settings(rap::ui& ui, rap::window* parent, const std::string& text,
@@ -180,11 +236,13 @@ compare_revisions(rap::ui& ui, rap::window* parent, const std::string& dir,
     // Nothing to compare: say so. A diff tool given identical sides (git
     // difftool starts none at all) would otherwise just end, so it looked
     // like nothing happened [TortoiseGit says "no differences" too].
+    const auto changed = changed_paths(dir, revisions, paths);
     {
         std::vector<std::string> quiet{"diff", "--quiet"};
         quiet.insert(quiet.end(), revisions.begin(), revisions.end());
         quiet.insert(quiet.end(), limit.begin(), limit.end());
-        if (run_git(dir, quiet, git_output::stdout_only).exit_code == 0)
+        if (changed ? changed->empty()
+                    : run_git(dir, quiet, git_output::stdout_only).exit_code == 0)
         {
             ui.message(parent,
                        {.icon = rap::message_spec::icon::info,
@@ -202,19 +260,26 @@ compare_revisions(rap::ui& ui, rap::window* parent, const std::string& dir,
     // (IfritView compares two images); the rest to the text tool, as before.
     if (const std::string image_tool = image_diff_command(); !image_tool.empty())
     {
-        std::vector<std::string> names{"diff", "--name-only", "-z"};
-        names.insert(names.end(), revisions.begin(), revisions.end());
-        names.insert(names.end(), limit.begin(), limit.end());
-        const git_result changed = run_git(dir, names, git_output::stdout_only);
-        std::vector<std::string> images, others;
-        for (size_t at = 0; at < changed.output.size();)
+        std::vector<std::string> listed;
+        if (changed)
+            listed = *changed;
+        else
         {
-            size_t end = changed.output.find('\0', at);
-            if (end == std::string::npos) end = changed.output.size();
-            std::string path = changed.output.substr(at, end - at);
-            at = end + 1;
-            if (!path.empty()) (is_image_path(path) ? images : others).push_back(std::move(path));
+            std::vector<std::string> names{"diff", "--name-only", "-z"};
+            names.insert(names.end(), revisions.begin(), revisions.end());
+            names.insert(names.end(), limit.begin(), limit.end());
+            const git_result r = run_git(dir, names, git_output::stdout_only);
+            for (size_t at = 0; at < r.output.size();)
+            {
+                size_t end = r.output.find('\0', at);
+                if (end == std::string::npos) end = r.output.size();
+                listed.push_back(r.output.substr(at, end - at));
+                at = end + 1;
+            }
         }
+        std::vector<std::string> images, others;
+        for (std::string& path : listed)
+            if (!path.empty()) (is_image_path(path) ? images : others).push_back(std::move(path));
         if (!images.empty())
         {
             // `done` once every comparison started here has finished.

@@ -46,13 +46,6 @@ std::string root_of(std::string workdir)
     return rap::sys::path_to_utf8(rap::sys::path_from_utf8(workdir).make_preferred());
 }
 
-bool has_conflicts(const std::string& workdir)
-{
-    const git_result r =
-        run_git(workdir, {"diff", "--name-only", "--diff-filter=U"}, git_output::stdout_only);
-    return r.ok() && r.output.find_first_not_of(" \r\n") != std::string::npos;
-}
-
 std::string trimmed(std::string s)
 {
     while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back()))) s.pop_back();

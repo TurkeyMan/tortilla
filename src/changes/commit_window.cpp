@@ -1,5 +1,6 @@
 #include "commit_window.h"
 
+#include "git/remotes.h"
 #include "i18n.h"
 #include "settings.h"
 #include "ui/progress_dialog.h"
@@ -106,8 +107,7 @@ commit_window::~commit_window()
 
 std::string commit_window::config(const std::string& key) const
 {
-    git_result r = run_git(workdir_, {"config", key}, git_output::stdout_only);
-    return r.ok() ? trimmed(r.output) : "";
+    return config_value(workdir_, key);
 }
 
 void commit_window::build()

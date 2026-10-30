@@ -869,11 +869,8 @@ rap::menu log_window::ref_menu()
                               .checked = walk_options_.refs == refs,
                               .radio = true};
     };
-    const bool fetch_head =
-        run_git(repo_.workdir().empty() ? repo_.git_dir() : repo_.workdir(),
-                {"rev-parse", "--verify", "-q", "FETCH_HEAD^{commit}"},
-                git_output::stdout_only)
-            .ok();
+    // In process: this menu opens on a click (git would start twice).
+    const bool fetch_head = repo_.resolve("FETCH_HEAD").has_value();
     rap::menu out{
         {.label = _("Browse References"),
          .action =
@@ -907,7 +904,8 @@ rap::menu log_window::ref_menu()
     // Each branch and tag, by kind, sorted by name.
     rap::menu local, remote, tags;
     std::vector<ref> refs;
-    for (auto& [id, labels] : repo_.refs())
+    const ref_map loaded = log_.refs().empty() ? repo_.refs() : ref_map{};
+    for (auto& [id, labels] : log_.refs().empty() ? loaded : log_.refs())
         for (const ref& r : labels)
             if (r.kind == ref_kind::local_branch || r.kind == ref_kind::remote_branch ||
                 r.kind == ref_kind::tag)
