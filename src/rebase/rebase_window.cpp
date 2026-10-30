@@ -687,7 +687,7 @@ void rebase_window::add_commits()
         return ui_.message(
             window_.get(),
             {.icon = rap::message_spec::icon::error, .title = "Tortilla", .text = log.error()});
-    (*log)->pick_commits(_("_Add"),
+    (*log)->pick_commits(_("Add Commits to Rebase"), _("_Add"),
                          [this, alive = std::weak_ptr<bool>(alive_)](std::vector<commit> chosen)
                          {
                              if (!alive.lock()) return;

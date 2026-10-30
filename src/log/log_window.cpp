@@ -163,6 +163,7 @@ std::string log_window::title_text() const
     if (title.size() > 1 && title.back() == '/') title.pop_back();
     if (path_limited()) title += "/" + rel_path_;
     title = rap::sys::path_to_utf8(rap::sys::path_from_utf8(title).make_preferred());
+    if (picked_) return rap::i18n::format(_("{0} - {1} - Tortilla"), title, pick_purpose_);
     return rap::i18n::format(_("{0} - Log Messages - Tortilla"), title);
 }
 
@@ -347,6 +348,13 @@ void log_window::build()
                         window_->close();
                         if (closed_) closed_();
                     }),
+                button{_("Cancel")}.bind(cancel_).on_click(
+                    [this]
+                    {
+                        save_layout();
+                        window_->close();
+                        if (closed_) closed_();
+                    }),
             },
         }}}.size(140_ch, 50_lines));
 
@@ -383,6 +391,7 @@ void log_window::build()
         });
     search_->set_placeholder(filter_cue());
     progress_->set_visible(false);
+    cancel_->set_visible(false);  // picking commits only
     // Today until the loaded range replaces it (not 1970 while loading).
     from_->set_date(local_date(std::time(nullptr)));
     to_->set_date(local_date(std::time(nullptr)));
@@ -683,6 +692,16 @@ void log_window::selection_changed()
         files_.clear();
     }
     update_status();
+    update_pick_button();
+}
+
+void log_window::update_pick_button()
+{
+    if (!picked_) return;
+    bool any = false;
+    for (size_t row : commit_list_->selection())
+        if (const commit* c = log_.commit(row); c && c->parents.size() <= 1) any = true;
+    ok_->set_enabled(any);
 }
 
 // The picture at the canvas's size in device pixels, so it's drawn 1:1.
@@ -846,11 +865,15 @@ void log_window::update_status()
 }
 
 // The ref selector shows the current ref, or a mode [spec 1.9.1].
-void log_window::pick_commits(const std::string& label,
+void log_window::pick_commits(const std::string& purpose, const std::string& label,
                               std::function<void(std::vector<commit>)> chosen)
 {
     picked_ = std::move(chosen);
+    pick_purpose_ = purpose;
     ok_->set_text(label);
+    cancel_->set_visible(true);
+    window_->set_title(title_text());
+    update_pick_button();
 }
 
 void log_window::start_at(const std::string& rev)

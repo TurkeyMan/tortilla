@@ -3972,3 +3972,7 @@ msgstr "Standard (wie konfiguriert)"
 #: src/ui/submodule_dialogs.cpp
 msgid "Checkout"
 msgstr "Checkout"
+
+#: src/rebase/rebase_window.cpp
+msgid "Add Commits to Rebase"
+msgstr "Commits zum Rebase hinzufügen"
