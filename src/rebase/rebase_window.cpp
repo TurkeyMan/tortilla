@@ -53,6 +53,8 @@ rebase_window::rebase_window(rap::ui& ui, repo repo)
     , repo_(std::move(repo))
     , revision_files_(files_host())
     , conflict_files_(files_host())
+    , files_worker_(std::make_unique<repo_worker>(ui, repo_.workdir()))
+    , list_worker_(std::make_unique<repo_worker>(ui, repo_.workdir()))
 {
 }
 
@@ -315,30 +317,41 @@ void rebase_window::reload_list()
             set_status(commits ? std::string(_("Nothing to Rebase")) : commits.error());
         else
         {
-            // Commits already upstream (git cherry "-") start as Skip.
-            git_result cherry = run_git(repo_.workdir(), {"cherry", u, b}, git_output::stdout_only);
             std::vector<rebase_row> rows;
-            bool skipped = false;
-            for (auto& c : *commits)
-            {
-                rebase_row row{.commit = c};
-                if (!preserve_merges_->checked() &&
-                    cherry.output.find("- " + c.id.hex()) != std::string::npos)
-                {
-                    row.action = rebase_action::skip;
-                    skipped = true;
-                }
-                rows.push_back(std::move(row));
-            }
-            model_.set(std::move(rows), repo_.refs());
+            for (auto& c : *commits) rows.push_back({.commit = c});
+            model_.set(std::move(rows), {});
             can_start_ = true;
-            if (skipped)
-                set_status(_("Please take a look at the skipped commits"), true);
-            else
-                set_status(rap::i18n::format(N_("{0} commit to rebase onto {1}",
-                                                "{0} commits to rebase onto {1}", model_.size()),
-                                             model_.size(), onto_.empty() ? u : onto_));
+            set_status(rap::i18n::format(N_("{0} commit to rebase onto {1}",
+                                            "{0} commits to rebase onto {1}", model_.size()),
+                                         model_.size(), onto_.empty() ? u : onto_));
             list_->set_current(0);
+            // Then, off the UI thread: the labels, and the commits already
+            // upstream (git cherry "-"), which start as Skip. git cherry reads
+            // every commit's patch: seconds over \\wsl.localhost. A row set
+            // otherwise meanwhile keeps that.
+            const bool merges = preserve_merges_->checked();
+            list_worker_->submit(
+                [this, u, b, merges](repo& r, const repo_worker::progress&) -> std::function<void()>
+                {
+                    ref_map refs = r.refs();
+                    const std::string cherry =
+                        merges ? std::string()
+                               : run_git(r.workdir(), {"cherry", u, b}, git_output::stdout_only)
+                                     .output;
+                    return [this, refs = std::move(refs), cherry]() mutable
+                    {
+                        model_.set_refs(std::move(refs));
+                        bool skipped = false;
+                        for (size_t i = 0; i < model_.size(); ++i)
+                            if (model_.rows()[i].action == rebase_action::pick &&
+                                cherry.find("- " + model_.rows()[i].commit.id.hex()) !=
+                                    std::string::npos &&
+                                model_.set_action(i, rebase_action::skip))
+                                skipped = true;
+                        if (skipped)
+                            set_status(_("Please take a look at the skipped commits"), true);
+                    };
+                });
         }
     }
     update_controls();
@@ -421,8 +434,24 @@ void rebase_window::selection_changed()
         {.what = changes_source::revision,
          .hash = c.id.hex(),
          .parent = c.parents.empty() ? k_empty_tree : c.parents.front().hex()});
-    auto changes = repo_.changes(c.id);
-    revision_files_.set_files(changes ? std::move(*changes) : std::vector<file_change>{});
+    // On the worker, as the log does: the file list, then its line counts.
+    revision_files_.clear();
+    const oid id = c.id;
+    files_worker_->submit(
+        [this, id](repo& r, const repo_worker::progress& progress) -> std::function<void()>
+        {
+            (void)r.changes(
+                id, {.listed = [&](const std::vector<file_change>& files)
+                     { progress.post([this, files] { revision_files_.set_files(files); }); },
+                     .counted =
+                         [&](size_t first, const std::vector<file_change>& files)
+                     {
+                         progress.post([this, first, files]
+                                       { revision_files_.set_counts(first, files); });
+                     },
+                     .stop = [&] { return progress.stale(); }});
+            return {};
+        });
 }
 
 // Button texts and enabled states by stage [spec 2.7].

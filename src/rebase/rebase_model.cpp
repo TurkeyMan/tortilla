@@ -56,6 +56,12 @@ void rebase_model::set(std::vector<rebase_row> rows, ref_map refs)
     notify_reset();
 }
 
+void rebase_model::set_refs(ref_map refs)
+{
+    refs_ = std::move(refs);
+    if (!rows_.empty()) notify_changed(0, rows_.size());
+}
+
 bool rebase_model::can_set(size_t row, rebase_action a) const
 {
     if (row >= rows_.size()) return false;

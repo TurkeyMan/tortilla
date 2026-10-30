@@ -46,6 +46,8 @@ public:
     static std::vector<rap::column> columns();
 
     void set(std::vector<rebase_row> rows, ref_map refs);
+    // The branch and tag labels, when they arrive after the rows.
+    void set_refs(ref_map refs);
     const std::vector<rebase_row>& rows() const { return rows_; }
     rebase_row& row(size_t i) { return rows_[i]; }
     size_t size() const { return rows_.size(); }

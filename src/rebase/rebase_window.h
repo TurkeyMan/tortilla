@@ -3,6 +3,7 @@
 
 #include "changes/changes_view.h"
 #include "changes/file_model.h"
+#include "git/repo_worker.h"
 #include "rebase/rebase_engine.h"
 #include "rebase/rebase_model.h"
 
@@ -67,6 +68,10 @@ private:
     bool can_start_ = false;
     bool stashed_ = false;
     bool closing_ = false;
+    // Off the UI thread, newest job only (git there is slow on Windows over
+    // \\wsl.localhost): the clicked commit's files, and the list's git
+    // cherry and labels. Last, so they go before what their results touch.
+    std::unique_ptr<repo_worker> files_worker_, list_worker_;
 
     // Widgets
     rap::drop_down* branch_ = nullptr;
