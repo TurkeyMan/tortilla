@@ -171,6 +171,21 @@ int main(int argc, char** argv)
         check(h.model.rows().back().action == rebase_action::pick,
               "moveTo: no squash on the bottom row");
     }
+    // Add: a commit from another branch, picked on top, so applied last.
+    {
+        harness h(**ui, make_repo(root, "add"));
+        const std::string g = "git -C '" + h.repo + "' ";
+        sh(g + "checkout -qb side main && printf 'x\\n' > '" + h.repo + "/x.txt' && " + g +
+           "add . && " + g + "commit -qm X1 && " + g + "checkout -q feature");
+        auto opened = repo::open(h.repo);
+        auto side = opened->range(*opened->resolve("main"), *opened->resolve("side"), false);
+        check(side && h.model.add_on_top(*side) == 1 && h.row("X1") == 0, "add: on top");
+        check(h.model.add_on_top(*side) == 0, "add: one already listed isn't added again");
+        h.start();
+        check(h.engine->stage() == rebase_stage::done &&
+                  h.subjects() == "X1\nF3\nF2\nF1\nMain two\n",
+              "add: applied last, on top of the branch's own");
+    }
     {
         harness h(**ui, make_repo(root, "plain"));
         h.model.set_action(h.row("F2"), rebase_action::skip);

@@ -318,9 +318,17 @@ void log_window::build()
                                                                      { return walk_menu(); }),
                 menu_button{_("_View")}.bind(view_).on_menu([this] { return view_menu(); }),
                 spacer{},
-                button{_("OK")}.on_click(
+                button{_("OK")}.bind(ok_).on_click(
                     [this]
                     {
+                        if (picked_)
+                        {
+                            std::vector<commit> chosen;
+                            for (size_t row : commit_list_->selection())
+                                if (const commit* c = log_.commit(row); c && c->parents.size() <= 1)
+                                    chosen.push_back(*c);
+                            picked_(std::move(chosen));
+                        }
                         save_layout();
                         window_->close();
                         if (closed_) closed_();
@@ -824,6 +832,13 @@ void log_window::update_status()
 }
 
 // The ref selector shows the current ref, or a mode [spec 1.9.1].
+void log_window::pick_commits(const std::string& label,
+                              std::function<void(std::vector<commit>)> chosen)
+{
+    picked_ = std::move(chosen);
+    ok_->set_text(label);
+}
+
 void log_window::start_at(const std::string& rev)
 {
     set_walk(walk_refs::head, rev);

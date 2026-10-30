@@ -64,6 +64,9 @@ private:
     std::string onto_;  // --onto, as picked; "" for the upstream itself
     // Callbacks that outlive the window (a picker) check this.
     std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
+    rap::button* add_ = nullptr;
+    // Add: a log of every branch to pick commits from [spec 2.5].
+    void add_commits();
     bool fast_forward_ = false;
     bool can_start_ = false;
     bool stashed_ = false;

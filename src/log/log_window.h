@@ -38,6 +38,10 @@ public:
     // into view; later reloads keep it selected, as any selection.
     void select_commit(const std::string& rev);
     void on_closed(std::function<void()> f) { closed_ = std::move(f); }
+    // Picking commits for another window (the rebase's Add): OK becomes
+    // `label` and hands it the selected commits, newest first, then closes.
+    // Merges and the working tree row are left out.
+    void pick_commits(const std::string& label, std::function<void(std::vector<commit>)> chosen);
 
 private:
     log_window(rap::ui&, repo, std::string path);
@@ -157,6 +161,8 @@ private:
     changes_view files_;  // the selected commit's (or the working tree's) files
     std::unique_ptr<rap::window> window_;
     std::function<void()> closed_;
+    std::function<void(std::vector<commit>)> picked_;
+    rap::button* ok_ = nullptr;
 
     // Widgets
     rap::menu_button* ref_button_ = nullptr;

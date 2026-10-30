@@ -6,9 +6,11 @@
 #include "changes/working_tree.h"
 #include "git/command.h"
 #include "i18n.h"
+#include "log/log_window.h"
 #include "ui/progress_dialog.h"
 #include "ui/settings_dialog.h"
 #include "ui/welcome_window.h"
+#include "ui/windows.h"
 
 #include <rapport/sys.h>
 
@@ -123,20 +125,24 @@ void rebase_window::build(const std::string& upstream)
                     .bind(branch_)
                     .on_changed([this](int) { reload_list(); })
                     .width(30_ch),
-                button{_("Swap branch and upstream")}.icon(swap_icon).icon_only().bind(swap_).on_click(
-                    [this]
-                    {
-                        // Swap only when both names exist on both sides.
-                        std::string b = branches_[size_t(std::max(0, branch_->current()))];
-                        std::string u = upstreams_[size_t(std::max(0, upstream_->current()))];
-                        auto bi = std::ranges::find(branches_, u);
-                        if (bi == branches_.end()) return;
-                        branch_->set_current(int(bi - branches_.begin()));
-                        auto ui = std::ranges::find(upstreams_, b);
-                        if (ui != upstreams_.end())
-                            upstream_->set_current(int(ui - upstreams_.begin()));
-                        reload_list();
-                    }),
+                button{_("Swap branch and upstream")}
+                    .icon(swap_icon)
+                    .icon_only()
+                    .bind(swap_)
+                    .on_click(
+                        [this]
+                        {
+                            // Swap only when both names exist on both sides.
+                            std::string b = branches_[size_t(std::max(0, branch_->current()))];
+                            std::string u = upstreams_[size_t(std::max(0, upstream_->current()))];
+                            auto bi = std::ranges::find(branches_, u);
+                            if (bi == branches_.end()) return;
+                            branch_->set_current(int(bi - branches_.begin()));
+                            auto ui = std::ranges::find(upstreams_, b);
+                            if (ui != upstreams_.end())
+                                upstream_->set_current(int(ui - upstreams_.begin()));
+                            reload_list();
+                        }),
                 label{_("Upstream:")},
                 drop_down{upstreams_, index_of(upstreams_, wanted)}
                     .bind(upstream_)
@@ -161,12 +167,12 @@ void rebase_window::build(const std::string& upstream)
                 vbox{
                     // Row under the list [spec 2.2]
                     hbox{
-                        menu_button{_("_Pick ALL")}.bind(set_all_).on_menu([this]
-                                                                        { return set_all_menu(); }),
+                        menu_button{_("_Pick ALL")}.bind(set_all_).on_menu(
+                            [this] { return set_all_menu(); }),
                         button{_("_Up")}.bind(up_).on_click([this] { move_rows(true, false); }),
-                        button{_("_Down")}.bind(down_).on_click([this] { move_rows(false, false); }),
-                        // TODO: Add (pick commits from a log).
-                        button{_("_Add")}.enabled(false),
+                        button{_("_Down")}.bind(down_).on_click([this]
+                                                                { move_rows(false, false); }),
+                        button{_("_Add")}.bind(add_).on_click([this] { add_commits(); }),
                         check{_("_Preserve merges")}
                             .bind(preserve_merges_)
                             .on_toggled([this](bool) { reload_list(); })
@@ -179,24 +185,17 @@ void rebase_window::build(const std::string& upstream)
                                        "descendant of the commit you are rebasing onto.")),
                     },
                     tabs{
-                        {_("Revision Files"), vbox{revision_files_.list("rebase.revision")
-                                                    .soft_selection()
-                                                    .stretch()}
-                                               .handle(revision_page_)},
-                        {_("Conflict Files"), vbox{conflict_files_.list("rebase.conflicts")
-                                                    .soft_selection()
-                                                    .stretch()}
-                                               .handle(conflict_page_)},
-                        {_("Commit Message"),
-                         vbox{text_view{}.read_only().bind(message_).stretch()}.handle(
-                             message_page_)},
-                        {_("Log"), vbox{text_view{}
-                                         .monospace()
-                                         .read_only()
-                                         .wrap(false)
-                                         .bind(log_)
-                                         .stretch()}
-                                    .handle(log_page_)},
+                        {_("Revision Files"),
+                         vbox{revision_files_.list("rebase.revision").soft_selection().stretch()}
+                             .handle(revision_page_)},
+                        {_("Conflict Files"),
+                         vbox{conflict_files_.list("rebase.conflicts").soft_selection().stretch()}
+                             .handle(conflict_page_)},
+                        {_("Commit Message"), vbox{text_view{}.read_only().bind(message_).stretch()}
+                                                  .handle(message_page_)},
+                        {_("Log"),
+                         vbox{text_view{}.monospace().read_only().wrap(false).bind(log_).stretch()}
+                             .handle(log_page_)},
                     }
                         .bind(tabs_)
                         .stretch(),
@@ -466,6 +465,9 @@ void rebase_window::update_controls()
     for (rap::widget* w : std::initializer_list<rap::widget*>{branch_, upstream_, swap_, set_all_,
                                                               up_, down_, preserve_merges_, force_})
         w->set_enabled(before);
+    // Added commits are picks: with merges recreated, the list isn't a
+    // plain series to add to [spec 2.5].
+    add_->set_enabled(before && !preserve_merges_->checked());
     list_->set_reorderable(before);
 
     const char* text = _("Continue");
@@ -641,6 +643,22 @@ void rebase_window::close()
     closing_ = true;
     window_->close();
     if (closed_) closed_();
+}
+
+void rebase_window::add_commits()
+{
+    auto log = log_window::open(ui_, repo_.workdir(), true);
+    if (!log)
+        return ui_.message(
+            window_.get(),
+            {.icon = rap::message_spec::icon::error, .title = "Tortilla", .text = log.error()});
+    (*log)->pick_commits(_("_Add"),
+                         [this, alive = std::weak_ptr<bool>(alive_)](std::vector<commit> chosen)
+                         {
+                             if (!alive.lock() || (engine_ && engine_->started())) return;
+                             if (model_.add_on_top(chosen)) list_->select({0});
+                         });
+    windows::keep(std::move(*log));
 }
 
 void rebase_window::move_rows(bool up, bool to_end)

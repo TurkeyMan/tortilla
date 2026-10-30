@@ -48,6 +48,10 @@ public:
     void set(std::vector<rebase_row> rows, ref_map refs);
     // The branch and tag labels, when they arrive after the rows.
     void set_refs(ref_map refs);
+    // Add [spec 2.5]: `commits` (newest first) as picks at the top, so
+    // they're applied last; any already listed are left where they are.
+    // Returns how many went in.
+    size_t add_on_top(const std::vector<commit>& commits);
     const std::vector<rebase_row>& rows() const { return rows_; }
     rebase_row& row(size_t i) { return rows_[i]; }
     size_t size() const { return rows_.size(); }
