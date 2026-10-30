@@ -82,6 +82,7 @@ add_library(tortilla_git STATIC
     src/git/blame.cpp
     src/git/tree_list.cpp
     src/git/archive.cpp
+    src/git/submodule.cpp
     src/changes/working_tree.cpp)
 target_include_directories(tortilla_git PUBLIC src)
 target_link_libraries(tortilla_git PUBLIC ${TORTILLA_LIBGIT2} rapport::rapport)
@@ -102,6 +103,7 @@ add_executable(tortilla
     src/changes/file_action_window.cpp
     src/changes/conflict_editor.cpp
     src/ui/stash_dialog.cpp
+    src/ui/submodule_dialogs.cpp
     src/ui/reset_dialog.cpp
     src/ui/remotes_page.cpp
     src/blame/blame_window.cpp

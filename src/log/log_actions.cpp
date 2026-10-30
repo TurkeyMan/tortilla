@@ -18,6 +18,7 @@
 
 #include "git/command.h"
 #include "git/diff_tool.h"
+#include "git/submodule.h"
 #include "i18n.h"
 #include "ui/compare.h"
 #include "ui/diff_window.h"
@@ -28,6 +29,7 @@
 #include "ui/repo_browser.h"
 #include "ui/reset_dialog.h"
 #include "ui/stash_dialog.h"
+#include "ui/submodule_dialogs.h"
 #include "util/calendar.h"
 
 #include <cstdio>
@@ -347,6 +349,13 @@ menu log_window::context_menu(std::optional<size_t> clicked)
             m.push_back(
                 item(_("F_etch..."), [this]
                      { keep_dialog(pull_fetch_dialog::open(ui_, repo_.workdir(), false)); }));
+            if (has_submodules(repo_.workdir()))
+                m.push_back(item(_("Submodule Update"),
+                                 [this]
+                                 {
+                                     update_submodules(ui_, window_.get(), repo_.workdir(),
+                                                       repo_.workdir(), [this](bool) { reload(); });
+                                 }));
             separator(m);
             m.push_back(item(
                 _("_Clean up..."), [this]

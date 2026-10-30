@@ -27,6 +27,8 @@
 //   tortilla worktrees [path]          the repository's worktrees: add, remove, lock, prune
 //   tortilla prevdiff [path]           the file against its previous version
 //   tortilla stashsave|stashapply|stashpop [path]  Stash changes, Apply or Pop
+//   tortilla subadd|subupdate|subsync [path]  Submodule Add or Update (their dialogs),
+//                                     or Sync, for the working tree at path
 //   tortilla repocreate [folder]       git init there, bare or not
 //   tortilla rename path               git mv it to a new name
 //   tortilla cleanup [path...]         Clean up: untracked files removed
@@ -79,6 +81,7 @@
 #include "ui/repo_browser.h"
 #include "ui/settings_dialog.h"
 #include "ui/stash_dialog.h"
+#include "ui/submodule_dialogs.h"
 #include "ui/trust_repository.h"
 #include "ui/welcome_window.h"
 #include "ui/windows.h"
@@ -232,7 +235,8 @@ int main(int argc, char** argv)
                   std::strcmp(argv[i], "reflog") == 0 || std::strcmp(argv[i], "stashlist") == 0 ||
                   std::strcmp(argv[i], "stashsave") == 0 ||
                   std::strcmp(argv[i], "stashapply") == 0 ||
-                  std::strcmp(argv[i], "stashpop") == 0 ||
+                  std::strcmp(argv[i], "stashpop") == 0 || std::strcmp(argv[i], "subadd") == 0 ||
+                  std::strcmp(argv[i], "subupdate") == 0 || std::strcmp(argv[i], "subsync") == 0 ||
                   std::strcmp(argv[i], "repocreate") == 0 || std::strcmp(argv[i], "rename") == 0 ||
                   std::strcmp(argv[i], "cleanup") == 0 || std::strcmp(argv[i], "compare") == 0 ||
                   std::strcmp(argv[i], "blame") == 0 || std::strcmp(argv[i], "showcompare") == 0 ||
@@ -445,6 +449,36 @@ int main(int argc, char** argv)
         const size_t running = tortilla::windows::hold({});
         tortilla::run_bisect(**ui, nullptr, repo->workdir(), *step, {},
                              [running](bool) { tortilla::windows::release(running); });
+        return (*ui)->run();
+    }
+
+    // Explorer's submodule commands [spec 4.2, rows 53-55]: Add and Update
+    // ask first; Sync runs in the progress dialog. All from the clicked
+    // folder's working tree.
+    if (command == "subadd" || command == "subupdate" || command == "subsync")
+    {
+        auto repo = tortilla::repo::open(path);
+        if (!repo || repo->bare())
+        {
+            const std::string error =
+                repo ? std::string(_("This needs a working tree.")) : repo.error();
+            std::fprintf(stderr, "tortilla: %s\n", error.c_str());
+            (*ui)->message(
+                nullptr,
+                {.icon = rap::message_spec::icon::error, .title = "Tortilla", .text = error},
+                [&](rap::dialog_role) { (*ui)->quit(); });
+            (*ui)->run();
+            return 1;
+        }
+        tortilla::windows::init(**ui);
+        const size_t running = tortilla::windows::hold({});
+        auto done = [running](bool) { tortilla::windows::release(running); };
+        if (command == "subadd")
+            tortilla::add_submodule(**ui, nullptr, repo->workdir(), path, done);
+        else if (command == "subupdate")
+            tortilla::update_submodules(**ui, nullptr, repo->workdir(), path, done);
+        else
+            tortilla::sync_submodules(**ui, nullptr, repo->workdir(), done);
         return (*ui)->run();
     }
 

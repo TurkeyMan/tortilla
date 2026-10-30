@@ -18,6 +18,7 @@
 #include "git/repo.h"
 #include "git/repo_worker.h"
 #include "git/status.h"
+#include "git/submodule.h"
 #include "git/tree_list.h"
 #include "git/worktrees.h"
 #include "log/log_model.h"
@@ -1173,6 +1174,84 @@ int main(int argc, char** argv)
         // An untracked folder cleaned from inside goes as a whole: "./".
         check(listed({}, "tmp") == std::vector<std::string>{"./"},
               "clean up: a folder, from inside it");
+    }
+
+    // Submodules: Add, Update and Sync's arguments, and the list Update
+    // shows, before and after a clone's are initialized.
+    {
+        using tortilla::submodule_update_options;
+        check(tortilla::submodule_add_args({.url = "u", .path = "p"}) ==
+                  std::vector<std::string>{"submodule", "add", "--", "u", "p"},
+              "submodule add: the URL and the path");
+        check(
+            tortilla::submodule_add_args({.url = "u", .path = "p", .branch = "b", .force = true}) ==
+                std::vector<std::string>{"submodule", "add", "-b", "b", "-f", "--", "u", "p"},
+            "submodule add: a branch, forced");
+        check(tortilla::submodule_update_args({}, {"a", "b"}) ==
+                  std::vector<std::string>{"submodule", "update", "--init", "--recursive", "--",
+                                           "a", "b"},
+              "submodule update: init and recursive by default, the paths chosen");
+        check(tortilla::submodule_update_args({.init = false,
+                                               .recursive = false,
+                                               .remote = true,
+                                               .no_fetch = true,
+                                               .force = true,
+                                               .mode = submodule_update_options::how::rebase},
+                                              {}) ==
+                  std::vector<std::string>{"submodule", "update", "--remote", "--no-fetch",
+                                           "--force", "--rebase", "--"},
+              "submodule update: every option");
+        check(tortilla::submodule_sync_args(true) ==
+                  std::vector<std::string>{"submodule", "sync", "--recursive"},
+              "submodule sync: recursive");
+
+        const std::string base = std::string(argv[1]) + "/submodules";
+        const std::string lib = base + "/lib", super = base + "/super", copy = base + "/copy";
+        std::filesystem::create_directories(base);
+        auto in = [](const std::string& dir)
+        { return "cd '" + dir + "' && git -c user.name=Ada -c user.email=ada@example.com "; };
+        sh("git init -q -b main '" + lib + "'");
+        sh("echo lib > '" + lib + "/lib.txt' && " + in(lib) + "add . && " + in(lib) +
+           "commit -qm lib");
+        sh("git init -q -b main '" + super + "'");
+        sh("echo top > '" + super + "/top.txt' && " + in(super) + "add . && " + in(super) +
+           "commit -qm top");
+        check(!tortilla::has_submodules(super), "submodules: none yet");
+        // A local URL: git refuses the file transport for submodules unless allowed.
+        std::vector<std::string> add{"-c", "protocol.file.allow=always"};
+        std::ranges::copy(tortilla::submodule_add_args({.url = lib, .path = "libs/lib"}),
+                          std::back_inserter(add));
+        check(tortilla::run_git(super, add).ok(), "submodule add: runs");
+        sh(in(super) + "commit -qm 'add lib'");
+        auto listed = [](const std::string& dir)
+        {
+            auto r = tortilla::repo::open(dir);
+            return r ? tortilla::list_submodules(*r)
+                     : std::expected<std::vector<tortilla::submodule_info>, std::string>{};
+        };
+        const auto added = listed(super);
+        check(tortilla::has_submodules(super) && added && added->size() == 1 &&
+                  (*added)[0].path == "libs/lib" && (*added)[0].url == lib &&
+                  (*added)[0].initialized && (*added)[0].checked_out,
+              "submodules: the one added, initialized and checked out");
+
+        sh("git clone -q '" + super + "' '" + copy + "'");
+        const auto cloned = listed(copy);
+        check(cloned && cloned->size() == 1 && !(*cloned)[0].initialized &&
+                  !(*cloned)[0].checked_out,
+              "submodules: a clone's, not yet initialized");
+        std::vector<std::string> update{"-c", "protocol.file.allow=always"};
+        std::ranges::copy(tortilla::submodule_update_args({}, {"libs/lib"}),
+                          std::back_inserter(update));
+        check(tortilla::run_git(copy, update).ok() &&
+                  std::filesystem::exists(copy + "/libs/lib/lib.txt"),
+              "submodule update: initializes and checks out");
+        const auto updated = listed(copy);
+        check(updated && updated->size() == 1 && (*updated)[0].initialized &&
+                  (*updated)[0].checked_out,
+              "submodules: initialized and checked out after the update");
+        check(tortilla::run_git(copy, tortilla::submodule_sync_args(true)).ok(),
+              "submodule sync: runs");
     }
 
     // A repository uses Git LFS by its attributes, nested ones too, whether

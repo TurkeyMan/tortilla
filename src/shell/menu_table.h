@@ -105,6 +105,9 @@ enum class run
     bisect_reset,    // tortilla bisect reset <folder>
     worktrees,       // tortilla worktrees <folder>
     help,            // tortilla help
+    sub_add,         // tortilla subadd <folder>
+    sub_update,      // tortilla subupdate <folder>
+    sub_sync,        // tortilla subsync <folder>
 };
 
 struct row
@@ -247,9 +250,9 @@ inline constexpr row k_rows[] = {
      "deleteignore"},
     separator,
     {"Worktrees", {{{FIG | ONE, 0}, {BARE, 0}}}, place::sub, run::worktrees, "worktreelist"},
-    {"Submodule Add...", {{{FIG | ONE, 0}}}, place::sub, run::none, "subadd"},
-    {"Submodule &Update...", {{{FIG | SUBC, 0}}}, place::sub, run::none, "subupdate"},
-    {"Submodule Sync", {{{FIG | SUBC, 0}}}, place::shift, run::none, "subsync"},
+    {"Submodule Add...", {{{FIG | ONE, 0}}}, place::sub, run::sub_add, "subadd"},
+    {"Submodule &Update...", {{{FIG | SUBC, 0}}}, place::sub, run::sub_update, "subupdate"},
+    {"Submodule Sync", {{{FIG | SUBC, 0}}}, place::shift, run::sub_sync, "subsync"},
     separator,
     {"Create Patch Serial...", {{{FIG | ONE, 0}}}, place::sub, run::none, "formatpatch"},
     {"Apply Patch Serial...", {{{PATCH, 0}, {FIG | ONE, 0}}}, place::sub, run::none, "importpatch"},

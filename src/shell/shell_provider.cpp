@@ -607,6 +607,9 @@ public:
         }
         case run::help: rap::shell::launch(tortilla_exe(), {"help"}); return;
         case run::worktrees: rap::shell::launch(tortilla_exe(), {"worktrees", folder}); return;
+        case run::sub_add: rap::shell::launch(tortilla_exe(), {"subadd", folder}); return;
+        case run::sub_update: rap::shell::launch(tortilla_exe(), {"subupdate", folder}); return;
+        case run::sub_sync: rap::shell::launch(tortilla_exe(), {"subsync", folder}); return;
         case run::commit:
         case run::repostatus:
         case run::add:

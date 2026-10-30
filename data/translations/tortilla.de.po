@@ -3904,3 +3904,79 @@ msgstr "Möchten Sie den Worktree {0} wirklich entfernen? Sein Ordner wird gelö
 #: src/log/worktree_window.cpp
 msgid "_Force remove"
 msgstr "Entfernen _erzwingen"
+
+#: src/ui/submodule_dialogs.cpp src/log/log_actions.cpp
+msgid "Submodule Update"
+msgstr "Submodule aktualisieren"
+
+#: src/ui/submodule_dialogs.cpp
+msgid "Submodule Add"
+msgstr "Submodul hinzufügen"
+
+#: src/ui/submodule_dialogs.cpp
+msgid "{0} - Submodule Add"
+msgstr "{0} - Submodul hinzufügen"
+
+#: src/ui/submodule_dialogs.cpp
+msgid "{0} - Submodule Update"
+msgstr "{0} - Submodule aktualisieren"
+
+#: src/ui/submodule_dialogs.cpp
+msgid "{0} - Submodule Sync"
+msgstr "{0} - Submodule synchronisieren"
+
+#: src/ui/submodule_dialogs.cpp
+msgid "Repository and path must not be empty."
+msgstr "Repository und Pfad dürfen nicht leer sein."
+
+#: src/ui/submodule_dialogs.cpp
+msgid "Not initialized"
+msgstr "Nicht initialisiert"
+
+#: src/ui/submodule_dialogs.cpp
+msgid "Not checked out"
+msgstr "Nicht ausgecheckt"
+
+#: src/ui/submodule_dialogs.cpp
+msgid "This repository has no submodules."
+msgstr "Dieses Repository hat keine Submodule."
+
+#: src/ui/submodule_dialogs.cpp
+msgid "Repository"
+msgstr "Repository"
+
+#: src/ui/submodule_dialogs.cpp
+msgid "_Branch"
+msgstr "_Branch"
+
+#: src/ui/submodule_dialogs.cpp
+msgid "_Initialize submodules (--init)"
+msgstr "Submodule _initialisieren (--init)"
+
+#: src/ui/submodule_dialogs.cpp
+msgid "_Recursive (--recursive)"
+msgstr "_Rekursiv (--recursive)"
+
+#: src/ui/submodule_dialogs.cpp
+msgid "Remote _tracking branch (--remote)"
+msgstr "Verfolgten Remote-Branch _nutzen (--remote)"
+
+#: src/ui/submodule_dialogs.cpp
+msgid "_No fetch (--no-fetch)"
+msgstr "_Kein Fetch (--no-fetch)"
+
+#: src/ui/submodule_dialogs.cpp
+msgid "_Force (--force)"
+msgstr "_Erzwingen (--force)"
+
+#: src/ui/submodule_dialogs.cpp
+msgid "Update by"
+msgstr "Aktualisieren per"
+
+#: src/ui/submodule_dialogs.cpp
+msgid "Default (as configured)"
+msgstr "Standard (wie konfiguriert)"
+
+#: src/ui/submodule_dialogs.cpp
+msgid "Checkout"
+msgstr "Checkout"
