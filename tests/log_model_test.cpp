@@ -4,6 +4,7 @@
 // through log_model on the null UI backend.
 #include "changes/file_model.h"
 #include "changes/working_tree.h"
+#include "git/archive.h"
 #include "git/blame.h"
 #include "git/clean.h"
 #include "git/command.h"
@@ -354,6 +355,69 @@ int main(int argc, char** argv)
             tortilla::run_git(b, {"rev-parse", "HEAD"}, tortilla::git_output::stdout_only).output;
         check(r.ok() && state() == tortilla::repo::repo_state::none && head.starts_with(ids[6]),
               "bisect reset: back on the branch, bisecting no more");
+    // Export: git archive's arguments, and its tar unpacked into a folder,
+    // with what plain ustar can't hold (a long path, through pax).
+    {
+        namespace fs = std::filesystem;
+        check(tortilla::archive_args(tortilla::archive_format::zip, "v1", "/out/x.zip") ==
+                  std::vector<std::string>{"archive", "--format=zip", "-o", "/out/x.zip", "v1"},
+              "archive_args: zip");
+        check(tortilla::export_name("/src/tortilla/", "HEAD") == "tortilla",
+              "export_name: HEAD is the folder's name");
+        check(tortilla::export_name("/srv/x.git/", std::string(40, 'a')) == "x-aaaaaaaa",
+              "export_name: a bare repository's .git dropped, a hash shortened");
+        check(tortilla::export_name("/src/t", "refs/heads/feat/one") == "t-feat-one",
+              "export_name: a branch's folders made dashes");
+        check(!tortilla::archive_entry_path("../x") && !tortilla::archive_entry_path("a/../../x") &&
+                  !tortilla::archive_entry_path("/etc/x") && !tortilla::archive_entry_path(""),
+              "archive_entry_path: nothing outside the folder");
+        check(tortilla::archive_entry_path("a/b/") == fs::path("a") / "b",
+              "archive_entry_path: a folder's entry");
+
+        const std::string src = std::string(argv[1]) + "/export-src";
+        const std::string long_dir = std::string(60, 'd') + "/" + std::string(60, 'e');
+        fs::create_directories(src + "/" + long_dir);
+        const std::string g =
+            "git -C '" + src + "' -c user.name=Ada -c user.email=ada@example.com ";
+        sh("git init -q -b main '" + src + "'");
+        sh("printf 'one\\n' > '" + src + "/top.txt' && printf 'deep\\n' > '" + src + "/" +
+           long_dir + "/f.txt' && printf '#!/bin/sh\\n' > '" + src + "/run.sh' && chmod +x '" +
+           src + "/run.sh'");
+#ifndef _WIN32
+        sh("ln -s top.txt '" + src + "/link'");
+#endif
+        sh(g + "add . && " + g + "update-index --chmod=+x run.sh && " + g + "commit -qm export");
+        const std::string tar = std::string(argv[1]) + "/export.tar";
+        check(tortilla::run_git(src,
+                                tortilla::archive_args(tortilla::archive_format::tar, "HEAD", tar))
+                  .ok(),
+              "git archive writes the tar");
+        const fs::path into = fs::path(argv[1]) / "export-out";
+        const tortilla::extract_result r = tortilla::extract_tar(tar, into);
+        check(r.ok(), "extract_tar: no errors");
+        auto read = [](const fs::path& p)
+        {
+            std::ifstream in(p, std::ios::binary);
+            return std::string((std::istreambuf_iterator<char>(in)), {});
+        };
+        check(read(into / "top.txt") == "one\n", "extract_tar: a file");
+        check(read(into / long_dir / "f.txt") == "deep\n",
+              "extract_tar: a path past ustar's 100 bytes");
+#ifndef _WIN32
+        check((fs::status(into / "run.sh").permissions() & fs::perms::owner_exec) !=
+                  fs::perms::none,
+              "extract_tar: executable kept");
+        check(fs::is_symlink(into / "link") && fs::read_symlink(into / "link") == "top.txt",
+              "extract_tar: a symbolic link");
+#endif
+        check(!tortilla::extract_tar(src + "/top.txt", into).ok(),
+              "extract_tar: not a tar is an error");
+        const std::string zip = std::string(argv[1]) + "/export.zip";
+        check(tortilla::run_git(src,
+                                tortilla::archive_args(tortilla::archive_format::zip, "HEAD", zip))
+                      .ok() &&
+                  read(zip).starts_with("PK"),
+              "git archive writes the zip");
     }
 
     // Hashes are searched too by default, and hex is full of letters like

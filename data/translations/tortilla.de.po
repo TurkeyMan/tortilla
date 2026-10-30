@@ -3768,3 +3768,51 @@ msgstr "Schlecht"
 #: src/log/bisect_dialog.cpp
 msgid "Both the good and the bad revision are needed."
 msgstr "Sowohl die gute als auch die schlechte Revision werden benötigt."
+
+#: src/ui/export_dialog.cpp
+msgid "Export"
+msgstr "Exportieren"
+
+#: src/ui/export_dialog.cpp
+msgid "Version"
+msgstr "Version"
+
+#: src/ui/export_dialog.cpp
+msgid "Export to"
+msgstr "Exportieren nach"
+
+#: src/ui/export_dialog.cpp
+msgid "Zip file"
+msgstr "Zip-Datei"
+
+#: src/ui/export_dialog.cpp
+msgid "Export to zip file"
+msgstr "In Zip-Datei exportieren"
+
+#: src/ui/export_dialog.cpp
+msgid "Export into folder"
+msgstr "In Ordner exportieren"
+
+#: src/ui/export_dialog.cpp
+msgid "Zip files"
+msgstr "Zip-Dateien"
+
+#: src/ui/export_dialog.cpp
+msgid "Could not export into {0}."
+msgstr "Der Export nach {0} ist fehlgeschlagen."
+
+#: src/ui/export_dialog.cpp
+msgid "{0} already exists. Replace it?"
+msgstr "{0} existiert bereits. Möchten Sie die Datei ersetzen?"
+
+#: src/ui/export_dialog.cpp
+msgid "{0} is not empty. Export into it, replacing files of the same name?"
+msgstr "{0} ist nicht leer. Möchten Sie trotzdem dorthin exportieren und gleichnamige Dateien ersetzen?"
+
+#: src/git/archive.cpp
+msgid "Could not create the folder {0}."
+msgstr "Der Ordner {0} konnte nicht erstellt werden."
+
+#: src/git/archive.cpp
+msgid "The archive is damaged."
+msgstr "Das Archiv ist beschädigt."

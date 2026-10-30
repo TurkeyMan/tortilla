@@ -20,6 +20,7 @@
 //   tortilla mergeabort [path]         the Abort Merge dialog
 //   tortilla refbrowse [path]          Browse References
 //   tortilla repobrowser [path] [rev]  the Repository Browser: the files at rev (HEAD), from path
+//   tortilla export [path] [rev]       Export: rev's (HEAD's) tracked files to a .zip or a folder
 //   tortilla reflog [path] [ref]       the RefLog dialog, on HEAD or ref
 //   tortilla stashlist [path]          the RefLog dialog on the stash
 //   tortilla prevdiff [path]           the file against its previous version
@@ -70,6 +71,7 @@
 #include "ui/compare.h"
 #include "ui/create_repo_dialog.h"
 #include "ui/diff_window.h"
+#include "ui/export_dialog.h"
 #include "ui/progress_dialog.h"
 #include "ui/repo_browser.h"
 #include "ui/settings_dialog.h"
@@ -231,7 +233,7 @@ int main(int argc, char** argv)
                   std::strcmp(argv[i], "repocreate") == 0 || std::strcmp(argv[i], "rename") == 0 ||
                   std::strcmp(argv[i], "cleanup") == 0 || std::strcmp(argv[i], "compare") == 0 ||
                   std::strcmp(argv[i], "blame") == 0 || std::strcmp(argv[i], "showcompare") == 0 ||
-                  std::strcmp(argv[i], "repobrowser") == 0 ||
+                  std::strcmp(argv[i], "repobrowser") == 0 || std::strcmp(argv[i], "export") == 0 ||
                   std::strcmp(argv[i], "conflicteditor") == 0 ||
                   std::strcmp(argv[i], "bisect") == 0 || std::strcmp(argv[i], "about") == 0 ||
                   std::strcmp(argv[i], "remove") == 0 || std::strcmp(argv[i], "removekeep") == 0 ||
@@ -350,6 +352,26 @@ int main(int argc, char** argv)
                                     });
         (*ui)->run();
         return code;
+    }
+
+    // Explorer's Export [spec 4.2, row 46]: the whole tree at rev (HEAD),
+    // whichever folder it was asked in; a bare repository's too.
+    if (command == "export")
+    {
+        auto repo = tortilla::repo::open(path);
+        if (!repo)
+        {
+            std::fprintf(stderr, "tortilla: %s\n", repo.error().c_str());
+            (*ui)->message(
+                nullptr,
+                {.icon = rap::message_spec::icon::error, .title = "Tortilla", .text = repo.error()},
+                [&](rap::dialog_role) { (*ui)->quit(); });
+            (*ui)->run();
+            return 1;
+        }
+        tortilla::export_revision(**ui, nullptr, repo->workdir(), args.size() > 1 ? args[1] : "",
+                                  [&] { (*ui)->quit(); });
+        return (*ui)->run();
     }
 
     // Explorer's stash commands [spec 4.2, rows 24-26]: Stash changes asks

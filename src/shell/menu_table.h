@@ -96,6 +96,7 @@ enum class run
     log_submodule,   // tortilla log --submodule <first>
     blame,           // tortilla blame <first>
     repobrowser,     // tortilla repobrowser <folder>
+    export_,         // tortilla export <folder>
     ignore,          // a submenu: tortilla ignore [--delete] [--mask] <paths...>
     bisect_start,    // tortilla bisect start <folder>
     bisect_good,     // tortilla bisect good <folder>
@@ -223,7 +224,7 @@ inline constexpr row k_rows[] = {
     {"&Merge...", {{{FIG | ONE, BISECT | MERGE}}}, place::sub, run::merge, "merge"},
     {"Create &Branch...", {{{FIG | ONE, 0}}}, place::sub, run::branch, "branch"},
     {"Create &Tag...", {{{FIG | ONE, 0}}}, place::sub, run::tag, "tag"},
-    {"E&xport...", {{{FIG | ONE, 0}, {BARE, 0}}}, place::sub, run::none, "export"},
+    {"E&xport...", {{{FIG | ONE, 0}, {BARE, 0}}}, place::sub, run::export_, "export"},
     separator,
     {"Create repositor&y here...",
      {{{FOLD, GIT | FIG | BARE | INACC}, {FOLD | IGN, 0}, {FOLD | EXT, GIT}}},

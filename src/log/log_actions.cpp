@@ -21,6 +21,7 @@
 #include "i18n.h"
 #include "ui/compare.h"
 #include "ui/diff_window.h"
+#include "ui/export_dialog.h"
 #include "ui/menu_items.h"
 #include "ui/menu_text.h"
 #include "ui/progress_dialog.h"
@@ -442,7 +443,8 @@ menu log_window::context_menu(std::optional<size_t> clicked)
             if (!head && has_wc && !merging && !is_stash)
                 m.push_back(item(rap::i18n::format(_("Rebase {0} onto this...(_G)"), cur),
                                  [this, hash] { open_rebase(hash); }));
-            m.push_back(todo(_("E_xport this version...")));
+            m.push_back(item(_("E_xport this version..."), [this, hash]
+                             { export_revision(ui_, window_.get(), repo_.workdir(), hash); }));
             if (has_wc && !merging && !is_stash)
             {
                 auto revert = [this, hash](std::optional<size_t> parent)
