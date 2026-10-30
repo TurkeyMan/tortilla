@@ -386,6 +386,9 @@ int main(int argc, char** argv)
         const std::string g =
             "git -C '" + src + "' -c user.name=Ada -c user.email=ada@example.com ";
         sh("git init -q -b main '" + src + "'");
+        // Git for Windows sets core.autocrlf, and archive writes files as a
+        // checkout would: CRLF there. The test wants the bytes as committed.
+        sh(g + "config core.autocrlf false");
         sh("printf 'one\\n' > '" + src + "/top.txt' && printf 'deep\\n' > '" + src + "/" +
            long_dir + "/f.txt' && printf '#!/bin/sh\\n' > '" + src + "/run.sh' && chmod +x '" +
            src + "/run.sh'");
