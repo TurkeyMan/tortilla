@@ -583,7 +583,7 @@ void changes_view::show_log(const std::string& path, const std::string& rev)
         return host_.ui.message(
             host_.window(),
             {.icon = rap::message_spec::icon::error, .title = "Tortilla", .text = log.error()});
-    if (!rev.empty()) (*log)->start_at(rev);
+    if (!rev.empty()) (*log)->select_commit(rev);
     windows::keep(std::move(*log));
 }
 

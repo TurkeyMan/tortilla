@@ -527,9 +527,13 @@ void blame_window::show_changes(const blame_line& line)
                                          : c.previous_hash.empty()
                                              ? std::vector<std::string>{k_empty_tree, c.hash}
                                              : std::vector<std::string>{c.hash + "^", c.hash};
-    const std::string file = c.uncommitted() ? path_ : line.filename;
+    // Both names when the commit renamed the file, so git pairs them rather
+    // than calling it added.
+    std::vector<std::string> files{c.uncommitted() ? path_ : line.filename};
+    if (!c.uncommitted() && !c.previous_filename.empty() && c.previous_filename != line.filename)
+        files.insert(files.begin(), c.previous_filename);
     difftool_ = compare_revisions(
-        ui_, window_.get(), workdir_, std::move(revisions), {file},
+        ui_, window_.get(), workdir_, std::move(revisions), std::move(files),
         [this] { show_settings(ui_, window_.get(), workdir_, settings_page::diff_viewer); });
 }
 
@@ -546,7 +550,7 @@ void blame_window::show_log(const blame_line& line)
             {.icon = rap::message_spec::icon::error, .title = "Tortilla", .text = log.error()});
         return;
     }
-    (*log)->start_at(line.commit->hash);
+    (*log)->select_commit(line.commit->hash);
     windows::keep(std::move(*log));
 }
 

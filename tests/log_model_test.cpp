@@ -20,6 +20,7 @@
 #include "util/sha256.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -356,6 +357,22 @@ int main(int argc, char** argv)
         const bool ran = r.ok() && r.output.find("left") != std::string::npos &&
                          r.output.find("right") != std::string::npos;
         check(ran, "custom diff tool runs through git difftool --dir-diff");
+        // A file a commit added: no old side, which git calls /dev/null;
+        // the tool gets an empty file instead.
+        std::string first = tortilla::run_git(repo, {"rev-list", "--max-parents=0", "HEAD"},
+                                              tortilla::git_output::stdout_only)
+                                .output;
+        while (!first.empty() && std::isspace(static_cast<unsigned char>(first.back())))
+            first.pop_back();
+        tortilla::git_result added = tortilla::run_git(
+            repo,
+            tortilla::custom_difftool_args("echo %base %mine",
+                                           {"4b825dc642cb6eb9a060e54bf8d69288fbee4904", first}, "",
+                                           "", {"A.txt"}, false),
+            tortilla::git_output::stdout_only);
+        check(added.ok() && !added.output.empty() &&
+                  added.output.find("/dev/null") == std::string::npos,
+              "custom diff tool: an added file's missing side is an empty file, not /dev/null");
         if (!ran) std::printf("     git exited %d:\n%s\n", r.exit_code, r.output.c_str());
     }
 

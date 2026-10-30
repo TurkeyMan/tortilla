@@ -197,8 +197,14 @@ std::vector<std::string> custom_difftool_args(const std::string& command,
                                               const std::string& mine_name,
                                               const std::vector<std::string>& paths, bool folders)
 {
-    std::vector<std::string> args{"-c", "difftool.tortilla.cmd=" +
-                                            expand_placeholders(command, base_name, mine_name),
+    // A side that doesn't exist (a file added or deleted) is /dev/null to
+    // git, which most tools can't open (TortoiseGitMerge asks to reload and
+    // shows nothing): an empty file instead.
+    static const std::string empty_sides = "[ \"$LOCAL\" = /dev/null ] && LOCAL=$(mktemp); "
+                                           "[ \"$REMOTE\" = /dev/null ] && REMOTE=$(mktemp); ";
+    std::vector<std::string> args{"-c",
+                                  "difftool.tortilla.cmd=" + empty_sides +
+                                      expand_placeholders(command, base_name, mine_name),
                                   "difftool"};
     // A tool that compares only files gets each changed file in turn.
     if (paths.size() != 1 && folders)

@@ -790,6 +790,14 @@ void log_window::start_at(const std::string& rev)
     reload();
 }
 
+void log_window::select_commit(const std::string& rev)
+{
+    const auto id = repo_.resolve(rev);
+    if (!id) return;
+    kept_ = kept_selection{.commits = {*id}, .current = *id};
+    if (!log_.loading()) restore_selection();
+}
+
 void log_window::set_walk(walk_refs refs, std::string rev)
 {
     walk_options_.refs = refs;

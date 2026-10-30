@@ -34,6 +34,9 @@ public:
     void show() { window_->show(); }
     // Shows the history from `rev` (a ref or commit) instead of HEAD.
     void start_at(const std::string& rev);
+    // Selects `rev`'s commit once it's loaded (at once if it is), scrolled
+    // into view; later reloads keep it selected, as any selection.
+    void select_commit(const std::string& rev);
     void on_closed(std::function<void()> f) { closed_ = std::move(f); }
 
 private:
