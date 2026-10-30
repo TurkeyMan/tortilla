@@ -8,6 +8,7 @@
 #include "branch/switch_dialog.h"
 #include "changes/cleanup_dialog.h"
 #include "changes/commit_window.h"
+#include "log/format_patch_dialog.h"
 #include "log/reflog_window.h"
 #include "remote/pull_fetch_dialog.h"
 #include "remote/push_dialog.h"
@@ -429,12 +430,14 @@ menu log_window::context_menu(std::optional<size_t> clicked)
     // Commit rows, single or multi
     {
         std::vector<std::string> picks;  // oldest first
-        bool any_head = false;
+        bool any_head = false, any_stash = false;
         for (auto it = sel.rbegin(); it != sel.rend(); ++it)
             if (const commit* c = log_.commit(*it))
             {
                 picks.push_back(c->id.hex());
                 any_head = any_head || log_.is_head(*it);
+                if (auto* refs = log_.refs_of(*it))
+                    for (auto& r : *refs) any_stash = any_stash || r.kind == ref_kind::stash;
             }
         if (!picks.empty() && picks.size() == sel.size())
         {
@@ -453,7 +456,23 @@ menu log_window::context_menu(std::optional<size_t> clicked)
                                          _("Cherry Pick"), {args});
                                  }));
             }
-            m.push_back(todo(_("_Format Patch...")));
+            if (!any_stash && (sel.size() <= 2 || sel.back() - sel.front() + 1 == sel.size()))
+            {
+                // Two apart are taken as the range between them, as
+                // TortoiseGit does.
+                const commit* oldest = log_.commit(sel.back());
+                patch_range range{.oldest = picks.front(),
+                                  .newest = picks.back(),
+                                  .oldest_is_root = oldest->parents.empty()};
+                std::string what =
+                    picks.size() == 1
+                        ? picks.front().substr(0, 8) + " " + oldest->summary
+                        : rap::i18n::format(_("{0} to {1}"), picks.front().substr(0, 8),
+                                            picks.back().substr(0, 8));
+                m.push_back(item(
+                    _("_Format Patch..."), [this, range, what]
+                    { tortilla::format_patch(ui_, window_.get(), repo_.workdir(), range, what); }));
+            }
             separator(m);
         }
     }

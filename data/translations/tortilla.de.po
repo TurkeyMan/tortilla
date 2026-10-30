@@ -3628,3 +3628,23 @@ msgid "{0} line"
 msgid_plural "{0} lines"
 msgstr[0] "{0} Zeile"
 msgstr[1] "{0} Zeilen"
+
+#: src/log/format_patch_dialog.cpp
+msgid "Format Patch"
+msgstr "Patch formatieren"
+
+#: src/log/format_patch_dialog.cpp
+msgid "Commits"
+msgstr "Commits"
+
+#: src/log/format_patch_dialog.cpp
+msgid "Write patches into"
+msgstr "Patches schreiben nach"
+
+#: src/log/format_patch_dialog.cpp
+msgid "_Open folder"
+msgstr "Ordner _öffnen"
+
+#: src/log/log_actions.cpp
+msgid "{0} to {1}"
+msgstr "{0} bis {1}"

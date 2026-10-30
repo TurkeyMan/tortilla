@@ -52,6 +52,19 @@ enum label_kind : unsigned
     label_all = 15,
 };
 
+// The commits a selection in the log asks Format Patch for [spec 1.11]:
+// everything from `oldest` to `newest` along history, or that one commit
+// when they're the same.
+struct patch_range
+{
+    std::string oldest, newest;
+    bool oldest_is_root = false;  // no parent for the range to start after
+};
+
+// `git format-patch` writing `range` into `folder`, one file per commit.
+std::vector<std::string> format_patch_args(const patch_range& range, const std::string& folder,
+                                           bool signoff);
+
 class log_model : public rap::list_model
 {
 public:

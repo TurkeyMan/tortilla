@@ -155,6 +155,57 @@ int main(int argc, char** argv)
     check(log.commit(1)->summary == "Merge feat", "newest commit first");
     check(log.is_head(1), "HEAD is the merge");
 
+    // Format Patch's ranges, written for real: the files git names are
+    // counted, so a range that took in too much or too little shows.
+    {
+        auto rev = [&](const std::string& r)
+        {
+            auto out =
+                tortilla::run_git(repo, {"rev-parse", r}, tortilla::git_output::stdout_only).output;
+            while (!out.empty() && std::isspace(static_cast<unsigned char>(out.back())))
+                out.pop_back();
+            return out;
+        };
+        const std::string a = rev("main~3"), b = rev("main~2"), c = rev("main~1"),
+                          merge = rev("main");
+        int run = 0;
+        auto patches = [&](const tortilla::patch_range& range, bool signoff)
+        {
+            const std::string out = std::string(argv[1]) + "/patches" + std::to_string(++run);
+            // Signing off needs a committer; CI's environment, if set, wins over this.
+            std::vector<std::string> args{"-c", "user.name=Ada", "-c",
+                                          "user.email=ada@example.com"};
+            for (auto& arg : tortilla::format_patch_args(range, out, signoff)) args.push_back(arg);
+            std::vector<std::string> files;
+            if (tortilla::run_git(repo, args).exit_code != 0) return files;
+            for (auto& e : std::filesystem::directory_iterator(out))
+                files.push_back(e.path().filename().string());
+            std::ranges::sort(files);
+            return files;
+        };
+        check(tortilla::format_patch_args({.oldest = c, .newest = c}, "/out", true) ==
+                  std::vector<std::string>{"format-patch", "-o", "/out", "--signoff", "-1", c},
+              "format_patch_args: one commit takes -1");
+        check(tortilla::format_patch_args({.oldest = b, .newest = merge}, "/out", false).back() ==
+                  b + "^.." + merge,
+              "format_patch_args: a range starts after the oldest's parent");
+        const auto one = patches({.oldest = c, .newest = c}, true);
+        check(one == std::vector<std::string>{"0001-C-subject.patch"},
+              "format-patch: one commit, one file");
+        if (one.size() == 1)
+        {
+            std::ifstream in(std::string(argv[1]) + "/patches1/" + one[0]);
+            const std::string text((std::istreambuf_iterator<char>(in)), {});
+            check(text.find("\nSigned-off-by: ") != std::string::npos, "format-patch: signed off");
+        }
+        check(patches({.oldest = a, .newest = c, .oldest_is_root = true}, false).size() == 3,
+              "format-patch: a range from the root commit takes it in (A, B, C)");
+        // F1 and C come in either order: they're siblings.
+        const auto range = patches({.oldest = b, .newest = merge}, false);
+        check(range.size() == 3 && range[0] == "0001-B-subject.patch",
+              "format-patch: B to the merge is B, F1 and C, merges left out");
+    }
+
     // Hashes are searched too by default, and hex is full of letters like
     // "c" and "f1", so these stick to subject and message.
     constexpr unsigned text = tortilla::filter_subject | tortilla::filter_messages;
