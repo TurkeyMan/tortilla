@@ -3816,3 +3816,91 @@ msgstr "Der Ordner {0} konnte nicht erstellt werden."
 #: src/git/archive.cpp
 msgid "The archive is damaged."
 msgstr "Das Archiv ist beschädigt."
+
+#: src/log/worktree_window.cpp
+msgid "Bare repository"
+msgstr "Bare-Repository"
+
+#: src/log/worktree_window.cpp
+msgid "Main worktree"
+msgstr "Haupt-Worktree"
+
+#: src/log/worktree_window.cpp
+msgid "Current"
+msgstr "Aktuell"
+
+#: src/log/worktree_window.cpp
+msgid "Locked"
+msgstr "Gesperrt"
+
+#: src/log/worktree_window.cpp
+msgid "Locked: {0}"
+msgstr "Gesperrt: {0}"
+
+#: src/log/worktree_window.cpp
+msgid "Prunable (folder missing)"
+msgstr "Bereinigbar (Ordner fehlt)"
+
+#: src/log/worktree_window.cpp
+msgid "(detached HEAD)"
+msgstr "(losgelöster HEAD)"
+
+#: src/log/worktree_window.cpp
+msgid "Add Worktree"
+msgstr "Worktree hinzufügen"
+
+#: src/log/worktree_window.cpp
+msgid "Choose a folder for the worktree."
+msgstr "Wählen Sie einen Ordner für den Worktree."
+
+#: src/log/worktree_window.cpp
+msgid "Choose what to base it on."
+msgstr "Wählen Sie, worauf er basieren soll."
+
+#: src/log/worktree_window.cpp
+msgid "{0} - Worktrees - Tortilla"
+msgstr "{0} - Worktrees - Tortilla"
+
+#: src/log/worktree_window.cpp
+msgid "_Add..."
+msgstr "_Hinzufügen..."
+
+#: src/log/worktree_window.cpp
+msgid "Couldn't read the worktrees."
+msgstr "Die Worktrees konnten nicht gelesen werden."
+
+#: src/log/worktree_window.cpp
+msgid "{0} worktrees, {1} prunable"
+msgstr "{0} Worktrees, {1} bereinigbar"
+
+#: src/log/worktree_window.cpp
+msgid "_Unlock"
+msgstr "_Entsperren"
+
+#: src/log/worktree_window.cpp
+msgid "Loc_k"
+msgstr "_Sperren"
+
+#: src/log/worktree_window.cpp
+msgid "_Remove..."
+msgstr "_Entfernen..."
+
+#: src/log/worktree_window.cpp
+msgid "{0} - Add Worktree"
+msgstr "{0} - Worktree hinzufügen"
+
+#: src/log/worktree_window.cpp
+msgid "{0} - Remove Worktree"
+msgstr "{0} - Worktree entfernen"
+
+#: src/log/worktree_window.cpp
+msgid "{0} - Prune Worktrees"
+msgstr "{0} - Worktrees bereinigen"
+
+#: src/log/worktree_window.cpp
+msgid "Do you really want to remove the worktree {0}? Its folder is deleted."
+msgstr "Möchten Sie den Worktree {0} wirklich entfernen? Sein Ordner wird gelöscht."
+
+#: src/log/worktree_window.cpp
+msgid "_Force remove"
+msgstr "Entfernen _erzwingen"

@@ -12,6 +12,10 @@
 namespace tortilla
 {
 
+// Help (Explorer's, the rebase window's): Tortilla's documentation, the
+// project's README, in the browser. False if no browser could be started.
+bool open_help();
+
 class welcome_window
 {
 public:

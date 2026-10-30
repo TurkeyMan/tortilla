@@ -605,6 +605,8 @@ public:
             rap::shell::launch(tortilla_exe(), {"bisect", step, folder});
             return;
         }
+        case run::help: rap::shell::launch(tortilla_exe(), {"help"}); return;
+        case run::worktrees: rap::shell::launch(tortilla_exe(), {"worktrees", folder}); return;
         case run::commit:
         case run::repostatus:
         case run::add:

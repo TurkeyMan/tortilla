@@ -41,6 +41,11 @@ void open_document(const char* name)
 
 }  // namespace
 
+bool open_help()
+{
+    return rap::sys::open_url(std::string(k_project_url) + "#readme");
+}
+
 std::unique_ptr<welcome_window> welcome_window::open(rap::ui& ui)
 {
     std::unique_ptr<welcome_window> w(new welcome_window(ui));

@@ -4,6 +4,7 @@
 //                                     the repository around a submodule at path
 //                                     with nothing given and none here, the welcome window
 //   tortilla about                    the welcome window: what Tortilla is, links
+//   tortilla help                     the documentation (the README online) in the browser
 //   tortilla remove|removekeep path...  Delete (to the Recycle Bin), or stop tracking
 //   tortilla ignore [--delete] [--mask] path...  add to an ignore list (by extension;
 //                                     and stop tracking)
@@ -23,6 +24,7 @@
 //   tortilla export [path] [rev]       Export: rev's (HEAD's) tracked files to a .zip or a folder
 //   tortilla reflog [path] [ref]       the RefLog dialog, on HEAD or ref
 //   tortilla stashlist [path]          the RefLog dialog on the stash
+//   tortilla worktrees [path]          the repository's worktrees: add, remove, lock, prune
 //   tortilla prevdiff [path]           the file against its previous version
 //   tortilla stashsave|stashapply|stashpop [path]  Stash changes, Apply or Pop
 //   tortilla repocreate [folder]       git init there, bare or not
@@ -62,6 +64,7 @@
 #include "log/bisect_dialog.h"
 #include "log/log_window.h"
 #include "log/reflog_window.h"
+#include "log/worktree_window.h"
 #include "rebase/rebase_window.h"
 #include "remote/clone_dialog.h"
 #include "remote/pull_fetch_dialog.h"
@@ -236,6 +239,7 @@ int main(int argc, char** argv)
                   std::strcmp(argv[i], "repobrowser") == 0 || std::strcmp(argv[i], "export") == 0 ||
                   std::strcmp(argv[i], "conflicteditor") == 0 ||
                   std::strcmp(argv[i], "bisect") == 0 || std::strcmp(argv[i], "about") == 0 ||
+                  std::strcmp(argv[i], "help") == 0 || std::strcmp(argv[i], "worktrees") == 0 ||
                   std::strcmp(argv[i], "remove") == 0 || std::strcmp(argv[i], "removekeep") == 0 ||
                   std::strcmp(argv[i], "ignore") == 0))
         {
@@ -248,6 +252,9 @@ int main(int argc, char** argv)
     // bisect's step comes before its path.
     const size_t path_at = command == "bisect" ? 1 : 0;
     std::string path = args.size() <= path_at ? "." : args[path_at];
+
+    // Explorer's Help [spec 4.2, row 61]: the documentation, online; no window.
+    if (command == "help") return tortilla::open_help() ? 0 : 1;
 
     auto ui = rap::ui::load(argc, argv, opts);
     if (!ui)
@@ -447,7 +454,7 @@ int main(int argc, char** argv)
         command == "branch" || command == "tag" || command == "switch" || command == "merge" ||
         command == "mergeabort" || command == "refbrowse" || command == "reflog" ||
         command == "stashlist" || command == "blame" || command == "repobrowser" ||
-        command == "showcompare")
+        command == "showcompare" || command == "worktrees")
     {
         tortilla::windows::init(**ui);
         // The branch dialogs: the second argument preselects a ref or hash.
@@ -489,6 +496,8 @@ int main(int argc, char** argv)
                                                              args.size() > 2 ? args[2] : ""))
                        ? (*ui)->run()
                        : 1;
+        if (command == "worktrees")
+            return keep(tortilla::worktree_window::open(**ui, path)) ? (*ui)->run() : 1;
         if (command == "reflog" || command == "stashlist")
             return keep(tortilla::reflog_window::open(**ui, path,
                                                       command == "stashlist" ? "refs/stash" : rev))

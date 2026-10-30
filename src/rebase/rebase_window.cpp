@@ -8,6 +8,7 @@
 #include "i18n.h"
 #include "ui/progress_dialog.h"
 #include "ui/settings_dialog.h"
+#include "ui/welcome_window.h"
 
 #include <rapport/sys.h>
 
@@ -222,7 +223,7 @@ void rebase_window::build(const std::string& upstream)
                     .bind(abort_)
                     .tooltip(_("Recover to the status before rebase"))
                     .on_click([this] { abort_pressed(); }),
-                button{_("Help")}.enabled(false),
+                button{_("Help")}.on_click([] { open_help(); }),
             },
         }}}.size(120_ch, 40_lines));
 

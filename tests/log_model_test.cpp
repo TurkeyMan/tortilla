@@ -19,6 +19,7 @@
 #include "git/repo_worker.h"
 #include "git/status.h"
 #include "git/tree_list.h"
+#include "git/worktrees.h"
 #include "log/log_model.h"
 #include "shell.h"
 #include "util/sha256.h"
@@ -806,6 +807,70 @@ int main(int argc, char** argv)
                   stash->front().action.empty() && stash->front().message.starts_with("WIP on"),
               "reflog: the stash's entry");
         sh(git + "stash drop -q");
+    }
+
+    // Worktrees: the main one first, then each linked one with its branch,
+    // detached HEAD, lock and whether it's prunable, from any of them.
+    {
+        const std::string root = std::string(argv[1]);
+        sh(git + "worktree add -q -b wt-topic '" + root + "/wt-topic' feat");
+        sh(git + "worktree add -q --detach '" + root + "/wt-detached' v1");
+        sh(git + "worktree lock --reason 'on a stick' '" + root + "/wt-detached'");
+        sh(git + "worktree add -q --detach '" + root + "/wt-gone' main && rm -rf '" + root +
+           "/wt-gone'");
+        auto check_list = [&](const std::string& from, const char* where)
+        {
+            auto r = tortilla::repo::open(from);
+            const auto list =
+                r ? tortilla::list_worktrees(*r) : std::unexpected(std::string("no repo"));
+            auto find = [&](const std::string& path) -> const tortilla::worktree_info*
+            {
+                if (!list) return nullptr;
+                for (const auto& w : *list)
+                    if (std::error_code ec; std::filesystem::equivalent(w.path, path, ec))
+                        return &w;
+                return nullptr;
+            };
+            const auto* main = list && !list->empty() ? &list->front() : nullptr;
+            const auto* topic = find(root + "/wt-topic");
+            const auto* detached = find(root + "/wt-detached");
+            check(list && list->size() == 4 && main && main->main && !main->bare &&
+                      std::filesystem::equivalent(main->path, repo) && main->branch == "main" &&
+                      main->head == tortilla::resolve(repo, "HEAD"),
+                  (std::string("worktrees: the main one first, ") + where).c_str());
+            check(topic && !topic->main && topic->branch == "wt-topic" &&
+                      topic->head == tortilla::resolve(repo, "feat") && !topic->locked &&
+                      !topic->prunable,
+                  (std::string("worktrees: a new branch's, ") + where).c_str());
+            check(detached && detached->branch.empty() &&
+                      detached->head == tortilla::resolve(repo, "v1") && detached->locked &&
+                      detached->lock_reason.starts_with("on a stick") && !detached->prunable,
+                  (std::string("worktrees: detached and locked, ") + where).c_str());
+            check(list && std::ranges::count_if(*list, [](const auto& w)
+                                                { return w.prunable && !w.main; }) == 1,
+                  (std::string("worktrees: a missing folder is prunable, ") + where).c_str());
+            check(list && std::ranges::any_of(*list,
+                                              [&](const auto& w)
+                                              {
+                                                  return w.name == "wt-gone" && w.prunable &&
+                                                         w.branch.empty() &&
+                                                         w.head == tortilla::resolve(repo, "main");
+                                              }),
+                  (std::string("worktrees: a missing one's HEAD, from its admin dir, ") + where)
+                      .c_str());
+            return list ? std::ranges::count_if(*list, [](const auto& w) { return w.current; }) : 0;
+        };
+        check(check_list(repo, "from the main one") == 1, "worktrees: the main one is current");
+        check(check_list(root + "/wt-topic", "from a linked one") == 1,
+              "worktrees: a linked one is current");
+        sh(git + "worktree prune && " + git + "worktree unlock '" + root + "/wt-detached' && " +
+           git + "worktree remove '" + root + "/wt-detached' && " + git + "worktree remove '" +
+           root + "/wt-topic' && " + git + "branch -qD wt-topic");
+        auto r = tortilla::repo::open(repo);
+        const auto left =
+            r ? tortilla::list_worktrees(*r) : std::unexpected(std::string("no repo"));
+        check(left && left->size() == 1 && left->front().main && left->front().current,
+              "worktrees: pruned and removed, the main one is left");
     }
 
     // Changed Files: any two revisions' files, or one's against the working tree.

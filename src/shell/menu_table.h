@@ -103,6 +103,8 @@ enum class run
     bisect_bad,      // tortilla bisect bad <folder>
     bisect_skip,     // tortilla bisect skip <folder>
     bisect_reset,    // tortilla bisect reset <folder>
+    worktrees,       // tortilla worktrees <folder>
+    help,            // tortilla help
 };
 
 struct row
@@ -244,7 +246,7 @@ inline constexpr row k_rows[] = {
      run::ignore,
      "deleteignore"},
     separator,
-    {"Worktrees", {{{FIG | ONE, 0}, {BARE, 0}}}, place::sub, run::none, "worktreelist"},
+    {"Worktrees", {{{FIG | ONE, 0}, {BARE, 0}}}, place::sub, run::worktrees, "worktreelist"},
     {"Submodule Add...", {{{FIG | ONE, 0}}}, place::sub, run::none, "subadd"},
     {"Submodule &Update...", {{{FIG | SUBC, 0}}}, place::sub, run::none, "subupdate"},
     {"Submodule Sync", {{{FIG | SUBC, 0}}}, place::shift, run::none, "subsync"},
@@ -259,7 +261,7 @@ inline constexpr row k_rows[] = {
     {"Send Mail...", {{{PATCH, 0}, {EXT, FOLD}}}, place::sub, run::none, "sendmail"},
     separator,
     {"&Settings", {{{FOLD, 0}, {0, FOLD}}}, place::sub, run::settings, "settings"},
-    {"&Help", {{{FOLD, 0}, {0, FOLD}}}, place::sub, run::none, "help"},
+    {"&Help", {{{FOLD, 0}, {0, FOLD}}}, place::sub, run::help, "help"},
     {"A&bout", {{{FOLD, 0}, {0, FOLD}}}, place::sub, run::about, "about"},
 };
 
