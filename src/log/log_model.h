@@ -63,9 +63,9 @@ struct patch_range
     bool oldest_is_root = false;  // no parent for the range to start after
 };
 
-// `git format-patch` writing `range` into `folder`, one file per commit.
-std::vector<std::string> format_patch_args(const patch_range& range, const std::string& folder,
-                                           bool signoff);
+// `git format-patch` writing `range` to its output, the patches one after
+// another as git am takes them, for the unified diff window to show.
+std::vector<std::string> format_patch_args(const patch_range& range);
 
 // Edit Notes' save [spec 1.11]: `text` (written to `file`) as the
 // commit's note, or the note taken away when `text` is only blank.

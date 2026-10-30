@@ -234,41 +234,34 @@ int main(int argc, char** argv)
         };
         const std::string a = rev("main~3"), b = rev("main~2"), c = rev("main~1"),
                           merge = rev("main");
-        int run = 0;
-        auto patches = [&](const tortilla::patch_range& range, bool signoff)
+        // The subjects of the patches git writes, in order.
+        auto patches = [&](const tortilla::patch_range& range)
         {
-            const std::string out = std::string(argv[1]) + "/patches" + std::to_string(++run);
-            // Signing off needs a committer; CI's environment, if set, wins over this.
-            std::vector<std::string> args{"-c", "user.name=Ada", "-c",
-                                          "user.email=ada@example.com"};
-            for (auto& arg : tortilla::format_patch_args(range, out, signoff)) args.push_back(arg);
-            std::vector<std::string> files;
-            if (tortilla::run_git(repo, args).exit_code != 0) return files;
-            for (auto& e : std::filesystem::directory_iterator(out))
-                files.push_back(e.path().filename().string());
-            std::ranges::sort(files);
-            return files;
+            std::vector<std::string> subjects;
+            auto r = tortilla::run_git(repo, tortilla::format_patch_args(range),
+                                       tortilla::git_output::stdout_only);
+            if (!r.ok()) return subjects;
+            for (size_t at = r.output.find("\nSubject: ["); at != std::string::npos;
+                 at = r.output.find("\nSubject: [", at + 1))
+            {
+                const size_t from = r.output.find("] ", at) + 2;
+                subjects.push_back(r.output.substr(from, r.output.find('\n', from) - from));
+            }
+            return subjects;
         };
-        check(tortilla::format_patch_args({.oldest = c, .newest = c}, "/out", true) ==
-                  std::vector<std::string>{"format-patch", "-o", "/out", "--signoff", "-1", c},
+        check(tortilla::format_patch_args({.oldest = c, .newest = c}) ==
+                  std::vector<std::string>{"format-patch", "--stdout", "-1", c},
               "format_patch_args: one commit takes -1");
-        check(tortilla::format_patch_args({.oldest = b, .newest = merge}, "/out", false).back() ==
+        check(tortilla::format_patch_args({.oldest = b, .newest = merge}).back() ==
                   b + "^.." + merge,
               "format_patch_args: a range starts after the oldest's parent");
-        const auto one = patches({.oldest = c, .newest = c}, true);
-        check(one == std::vector<std::string>{"0001-C-subject.patch"},
-              "format-patch: one commit, one file");
-        if (one.size() == 1)
-        {
-            std::ifstream in(std::string(argv[1]) + "/patches1/" + one[0]);
-            const std::string text((std::istreambuf_iterator<char>(in)), {});
-            check(text.find("\nSigned-off-by: ") != std::string::npos, "format-patch: signed off");
-        }
-        check(patches({.oldest = a, .newest = c, .oldest_is_root = true}, false).size() == 3,
+        check(patches({.oldest = c, .newest = c}) == std::vector<std::string>{"C subject"},
+              "format-patch: one commit, one patch");
+        check(patches({.oldest = a, .newest = c, .oldest_is_root = true}).size() == 3,
               "format-patch: a range from the root commit takes it in (A, B, C)");
         // F1 and C come in either order: they're siblings.
-        const auto range = patches({.oldest = b, .newest = merge}, false);
-        check(range.size() == 3 && range[0] == "0001-B-subject.patch",
+        const auto range = patches({.oldest = b, .newest = merge});
+        check(range.size() == 3 && range[0] == "B subject",
               "format-patch: B to the merge is B, F1 and C, merges left out");
     }
 

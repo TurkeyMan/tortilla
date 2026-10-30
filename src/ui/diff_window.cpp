@@ -24,7 +24,9 @@ std::vector<rap::text_view::span> diff_spans(const std::string& text)
         std::string_view line(text.data() + at, end - at);
 
         rap::text_style s;
-        if (line.starts_with("diff ") || line.starts_with("commit "))
+        // "From <hash>" opens each of format-patch's mails: its message,
+        // and the "---" before the file list, aren't diff lines.
+        if (line.starts_with("diff ") || line.starts_with("commit ") || line.starts_with("From "))
         {
             in_header = true;
             s.bold = true;
@@ -40,6 +42,8 @@ std::vector<rap::text_view::span> diff_spans(const std::string& text)
         }
         else if (line.starts_with('+'))
             s.fg = rap::theme_color::positive;
+        else if (line == "-- ")
+            in_header = true;  // a format-patch mail's signature: git's version
         else if (line.starts_with('-'))
             s.fg = rap::theme_color::negative;
 

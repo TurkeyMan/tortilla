@@ -10,7 +10,6 @@
 #include "changes/cleanup_dialog.h"
 #include "changes/commit_window.h"
 #include "log/bisect_dialog.h"
-#include "log/format_patch_dialog.h"
 #include "log/reflog_window.h"
 #include "remote/pull_fetch_dialog.h"
 #include "remote/push_dialog.h"
@@ -574,14 +573,14 @@ menu log_window::context_menu(std::optional<size_t> clicked)
                 patch_range range{.oldest = picks.front(),
                                   .newest = picks.back(),
                                   .oldest_is_root = oldest->parents.empty()};
-                std::string what =
-                    picks.size() == 1
-                        ? picks.front().substr(0, 8) + " " + oldest->summary
-                        : rap::i18n::format(_("{0} to {1}"), picks.front().substr(0, 8),
-                                            picks.back().substr(0, 8));
+                // Shown in the unified diff window, whose Save As writes
+                // the .patch, named after this title.
+                std::string title = picks.size() == 1 ? picks.front().substr(0, 8)
+                                                      : picks.front().substr(0, 8) + ".." +
+                                                            picks.back().substr(0, 8);
                 m.push_back(item(
-                    _("_Format Patch..."), [this, range, what]
-                    { tortilla::format_patch(ui_, window_.get(), repo_.workdir(), range, what); }));
+                    _("_Format Patch..."), [this, range, title]
+                    { show_unified_diff(ui_, title, repo_.workdir(), format_patch_args(range)); }));
             }
             separator(m);
         }

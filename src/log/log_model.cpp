@@ -902,11 +902,9 @@ void log_model::paint_message(size_t row, rap::painter& p, const rap::cell_info&
     p.text({x + 2, (h - sz.h) / 2}, c.summary, subject);
 }
 
-std::vector<std::string> format_patch_args(const patch_range& range, const std::string& folder,
-                                           bool signoff)
+std::vector<std::string> format_patch_args(const patch_range& range)
 {
-    std::vector<std::string> args{"format-patch", "-o", folder};
-    if (signoff) args.push_back("--signoff");
+    std::vector<std::string> args{"format-patch", "--stdout"};
     // One revision alone means "since" to format-patch, so a single commit
     // takes -1, and a range from a root commit takes --root, as there's no
     // parent for oldest^ to name.
