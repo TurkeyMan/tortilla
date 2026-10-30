@@ -2515,8 +2515,8 @@ msgid "_Pick"
 msgstr "_Übernehmen"
 
 #: src/rebase/rebase_window.cpp:696
-msgid "_Squash (with commit below)"
-msgstr "_Squash (mit dem Commit darunter)"
+msgid "_Squash (into commit below)"
+msgstr "_Squash (in den Commit darunter)"
 
 #: src/rebase/rebase_window.cpp:699 src/ui/diff_window.cpp:140
 msgid "_Edit"

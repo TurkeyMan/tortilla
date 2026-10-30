@@ -723,7 +723,7 @@ rap::menu rebase_window::context_menu(std::optional<size_t> row)
         item(
             _("_Pick"), [this] { set_action(rebase_action::pick); }, allowed(rebase_action::pick)),
         item(
-            _("_Squash (with commit below)"), [this] { set_action(rebase_action::squash); },
+            _("_Squash (into commit below)"), [this] { set_action(rebase_action::squash); },
             allowed(rebase_action::squash)),
         item(
             _("_Edit"), [this] { set_action(rebase_action::edit); }, allowed(rebase_action::edit)),

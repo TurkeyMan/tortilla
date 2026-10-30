@@ -14,7 +14,7 @@ namespace tortilla
 enum class rebase_action
 {
     pick,
-    squash,  // with the commit below
+    squash,  // into the commit below
     edit,
     skip,
 };
