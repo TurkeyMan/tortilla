@@ -28,7 +28,9 @@
 #include "ui/stash_dialog.h"
 #include "util/calendar.h"
 
+#include <cstdio>
 #include <ctime>
+#include <filesystem>
 
 namespace tortilla
 {
@@ -38,6 +40,7 @@ namespace
 using rap::menu;
 using rap::menu_item;
 using arg_list = std::vector<std::string>;
+namespace fs = std::filesystem;
 
 enum copy_format
 {
@@ -324,7 +327,22 @@ menu log_window::context_menu(std::optional<size_t> clicked)
         // Group E: commit rows
         if (!wc)
         {
-            if (refs && !is_stash) m.push_back(todo(_("Show log...")));
+            if (refs && !is_stash)
+            {
+                // From the row's ref, so the new log follows that branch or
+                // tag; with several, the one to walk from is picked.
+                if (refs->size() == 1)
+                    m.push_back(item(_("Show log..."),
+                                     [this, r = refs->front().full_name] { show_log_at(r); }));
+                else
+                {
+                    menu_item sub{.label = _("Show log...")};
+                    for (const ref& r : *refs)
+                        sub.children.push_back(item(menu_text(r.name), [this, full = r.full_name]
+                                                    { show_log_at(full); }));
+                    m.push_back(std::move(sub));
+                }
+            }
             // At this commit, from the path the log is limited to.
             m.push_back(item(
                 _("_Browse repository"),
@@ -418,7 +436,7 @@ menu log_window::context_menu(std::optional<size_t> clicked)
                 else
                     m.push_back(item(_("_Revert change by this commit"), [revert] { revert({}); }));
             }
-            if (!is_stash) m.push_back(todo(_("Edit _Notes")));
+            if (!is_stash) m.push_back(item(_("Edit _Notes"), [this, c] { edit_notes(*c); }));
             separator(m);
         }
     }
@@ -1057,6 +1075,67 @@ void log_window::reset_to(const commit& c)
 void log_window::merge_from(const commit&, const std::string& what)
 {
     keep_dialog(merge_dialog::open(ui_, repo_.workdir(), what));
+}
+
+// The whole repository's log, as TortoiseGit opens it for the row's ref
+// [spec 1.11]; the walk and its loading start off the UI thread.
+void log_window::show_log_at(const std::string& rev)
+{
+    auto log = log_window::open(ui_, repo_location());
+    if (!log)
+        return ui_.message(
+            window_.get(),
+            {.icon = rap::message_spec::icon::error, .title = "Tortilla", .text = log.error()});
+    (*log)->start_at(rev);
+    windows::keep(std::move(*log));
+}
+
+// TortoiseGit's input dialog for the note [spec 1.11]. The note is read with
+// libgit2 (one tree lookup, no git process); saving goes through git notes,
+// which writes the notes commit and its reflog as git would.
+void log_window::edit_notes(const commit& c)
+{
+    using namespace rap::layout;
+    using namespace rap::literals;
+    struct state
+    {
+        std::unique_ptr<rap::window> window;
+        rap::text_view* text = nullptr;
+    };
+    auto st = std::make_shared<state>();
+    const std::string hash = c.id.hex();
+    st->window = ui_.create(
+        dialog{_("Edit Notes"),
+               {vbox{label{rap::i18n::format(_("Notes for {0}:"), c.id.hex(8) + " " + c.summary)},
+                     text_view{repo_.note(c.id)}.bind(st->text).stretch(), buttons{ok, cancel}}}}
+            .size(60_ch, 10_lines),
+        window_.get());
+    st->window->on_finished(
+        [this, st, hash, alive = std::weak_ptr<bool>(alive_)](rap::dialog_role role)
+        {
+            const std::string text = st->text->text();
+            ui_.post([st] {});  // the window goes after this returns
+            if (role != rap::dialog_role::ok || !alive.lock()) return;
+            // From a file, so the note keeps its lines exactly as typed.
+            std::error_code ec;
+            const fs::path dir = fs::temp_directory_path(ec) / "tortilla";
+            fs::create_directories(dir, ec);
+            const fs::path file = dir / ("notes-" + hash.substr(0, 8) + ".txt");
+            if (std::FILE* f = rap::sys::fopen(file, "wb"))
+            {
+                std::fwrite(text.data(), 1, text.size(), f);
+                std::fclose(f);
+            }
+            run_quietly(_("Edit Notes"), {note_args(hash, text, rap::sys::path_to_utf8(file))},
+                        [this, file](bool, const std::string&)
+                        {
+                            std::error_code ec;
+                            fs::remove(file, ec);
+                            reload();
+                        });
+        });
+    st->window->show();
+    st->text->focus();
 }
 
 void log_window::open_rebase(const std::string& upstream)

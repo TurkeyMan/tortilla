@@ -126,6 +126,11 @@ private:
     template <class Dialog>
     void keep_dialog(std::expected<std::unique_ptr<Dialog>, std::string>);
 
+    // Show log...: another log window walking from `rev`.
+    void show_log_at(const std::string& rev);
+    // Edit Notes: the commit's note in a dialog, saved with git notes.
+    void edit_notes(const commit&);
+
     void copy_to_clipboard(const std::vector<size_t>& rows, int format);
     void show_branches_containing(const commit&);
 

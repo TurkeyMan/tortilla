@@ -65,6 +65,11 @@ struct patch_range
 std::vector<std::string> format_patch_args(const patch_range& range, const std::string& folder,
                                            bool signoff);
 
+// Edit Notes' save [spec 1.11]: `text` (written to `file`) as the
+// commit's note, or the note taken away when `text` is only blank.
+std::vector<std::string> note_args(const std::string& hash, const std::string& text,
+                                   const std::string& file);
+
 class log_model : public rap::list_model
 {
 public:

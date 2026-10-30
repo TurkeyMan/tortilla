@@ -1593,6 +1593,19 @@ msgstr "Eltern-Commit {0} ({1})"
 msgid "Edit _Notes"
 msgstr "_Notizen bearbeiten"
 
+#: src/log/log_actions.cpp
+msgid "Edit Notes"
+msgstr "Notizen bearbeiten"
+
+#: src/log/log_actions.cpp
+#, c++-format
+msgid "Notes for {0}:"
+msgstr "Notizen zu {0}:"
+
+#: src/log/log_window.cpp
+msgid "Notes:"
+msgstr "Notizen:"
+
 #: src/log/log_actions.cpp:400
 msgid "_Compare revisions"
 msgstr "Revisionen _vergleichen"

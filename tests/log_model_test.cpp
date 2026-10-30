@@ -207,6 +207,38 @@ int main(int argc, char** argv)
               "format-patch: B to the merge is B, F1 and C, merges left out");
     }
 
+    // Edit Notes: saved with git notes (a note commit needs an identity;
+    // CI's environment, if set, wins over this), read back with libgit2.
+    {
+        const tortilla::commit* head = log.commit(1);
+        const std::string hash = head->id.hex();
+        check(tortilla::note_args(hash, " \n\t", "/n.txt") ==
+                  std::vector<std::string>{"notes", "remove", "--ignore-missing", hash},
+              "note_args: a blank note is removed");
+        check(tortilla::note_args(hash, "x", "/n.txt") ==
+                  std::vector<std::string>{"notes", "add", "-f", "-F", "/n.txt", hash},
+              "note_args: a note is written from its file");
+        auto r = tortilla::repo::open(repo);
+        const std::string file = std::string(argv[1]) + "/note.txt";
+        auto save = [&](const std::string& text)
+        {
+            std::ofstream(file, std::ios::binary) << text;
+            std::vector<std::string> args{"-c", "user.name=Ada", "-c",
+                                          "user.email=ada@example.com"};
+            for (auto& arg : tortilla::note_args(hash, text, file)) args.push_back(arg);
+            return tortilla::run_git(repo, args).exit_code == 0;
+        };
+        check(r && r->note(head->id).empty(), "note: none to begin with");
+        check(save("first line\nsecond line\n") && r &&
+                  r->note(head->id) == "first line\nsecond line\n",
+              "note: added, lines kept");
+        check(save("replaced\n") && r && r->note(head->id) == "replaced\n", "note: replaced");
+        check(save("") && r && r->note(head->id).empty(), "note: emptied removes it");
+        check(save(""), "note: removing a missing one is no error");
+        // The notes commits aren't the history the checks below walk.
+        (void)tortilla::run_git(repo, {"update-ref", "-d", "refs/notes/commits"});
+    }
+
     // Hashes are searched too by default, and hex is full of letters like
     // "c" and "f1", so these stick to subject and message.
     constexpr unsigned text = tortilla::filter_subject | tortilla::filter_messages;

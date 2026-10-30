@@ -170,6 +170,9 @@ public:
                                           const std::function<bool(commit&&)>& sink) const;
 
     std::expected<commit_details, std::string> details(const oid&) const;
+    // The commit's note on the default notes ref (core.notesRef, else
+    // refs/notes/commits), as git log shows it; "" when it has none.
+    std::string note(const oid&) const;
     // Changes against the first parent (or the empty tree for a root commit).
     std::expected<std::vector<file_change>, std::string> changes(const oid&) const;
     // The same in two steps, for commits that may be huge: `listed` gets the

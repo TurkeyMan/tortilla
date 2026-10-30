@@ -919,4 +919,14 @@ std::vector<std::string> format_patch_args(const patch_range& range, const std::
     return args;
 }
 
+std::vector<std::string> note_args(const std::string& hash, const std::string& text,
+                                   const std::string& file)
+{
+    // git notes add refuses an empty note, so emptying one removes it; a
+    // commit that never had one isn't an error then.
+    if (std::ranges::all_of(text, [](unsigned char ch) { return std::isspace(ch) != 0; }))
+        return {"notes", "remove", "--ignore-missing", hash};
+    return {"notes", "add", "-f", "-F", file, hash};
+}
+
 }  // namespace tortilla

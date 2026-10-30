@@ -716,8 +716,21 @@ void log_window::show_commit(size_t row)
     files_.clear();
     oid id = c.id;
     files_worker_->submit(
-        [this, id](repo& repo, const repo_worker::progress& progress) -> std::function<void()>
+        [this, id, text, spans](repo& repo,
+                                const repo_worker::progress& progress) -> std::function<void()>
         {
+            // The note under the message [spec 1.13], read here so the click
+            // never waits on it.
+            if (std::string note = repo.note(id); !note.empty())
+                progress.post(
+                    [this, text, spans, note]() mutable
+                    {
+                        const std::string label = _("Notes:");
+                        text += "\n";
+                        spans.push_back({text.size(), text.size() + label.size(), {.bold = true}});
+                        text += label + "\n" + note;
+                        details_->set_text(text, spans);
+                    });
             (void)repo.changes(id, {.listed =
                                         [&](const std::vector<file_change>& files)
                                     {

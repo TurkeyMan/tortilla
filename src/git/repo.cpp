@@ -613,6 +613,17 @@ uint8_t repo::actions(const oid& id) const
     return mask;
 }
 
+std::string repo::note(const oid& id) const
+{
+    git_oid gid = to_git(id);
+    git_note* n = nullptr;
+    if (git_note_read(&n, repo_, nullptr, &gid) != 0) return {};
+    const char* message = git_note_message(n);
+    std::string text = message ? message : "";
+    git_note_free(n);
+    return text;
+}
+
 bool repo::is_ancestor(const oid& ancestor, const oid& descendant) const
 {
     git_oid a = to_git(ancestor), d = to_git(descendant);
