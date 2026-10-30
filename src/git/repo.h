@@ -15,6 +15,7 @@
 #include <vector>
 
 struct git_repository;
+struct git_diff;
 
 namespace tortilla
 {
@@ -182,6 +183,11 @@ public:
         std::function<bool()> stop;
     };
     std::expected<void, std::string> changes(const oid&, const change_steps&) const;
+    // Any two revisions (commits, refs, trees), or one against the working
+    // tree and index when `to` is "": Compare with working tree, Compare
+    // revisions.
+    std::expected<void, std::string> changes_between(const std::string& from, const std::string& to,
+                                                     const change_steps&) const;
     // Short names: local branches, then remote branches, then tags.
     std::vector<std::string> branch_names(bool local, bool remote, bool tags) const;
     // A branch, tag or hash, peeled to its commit.
@@ -200,6 +206,7 @@ public:
     git_repository* raw() const { return repo_; }
 
 private:
+    std::expected<void, std::string> report_changes(git_diff*, const change_steps&) const;
     explicit repo(git_repository* r)
         : repo_(r)
     {

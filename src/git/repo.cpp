@@ -476,34 +476,22 @@ std::expected<std::vector<file_change>, std::string> repo::changes(const oid& id
     return out;
 }
 
-std::expected<void, std::string> repo::changes(const oid& id, const change_steps& steps) const
+// A diff's files, renames paired, as change_steps want them: the list
+// first (the tree diff alone), then the line counts in batches.
+std::expected<void, std::string> repo::report_changes(git_diff* diff,
+                                                      const change_steps& steps) const
 {
-    git_oid gid = to_git(id);
-    owned_commit c, parent;
-    owned_tree tree, parent_tree;
-    if (git_commit_lookup(&c.p, repo_, &gid) != 0 || git_commit_tree(&tree.p, c.p) != 0)
-        return std::unexpected(last_git_error());
-    if (git_commit_parentcount(c.p) > 0)
-    {
-        if (git_commit_parent(&parent.p, c.p, 0) != 0 ||
-            git_commit_tree(&parent_tree.p, parent.p) != 0)
-            return std::unexpected(last_git_error());
-    }
-
-    owned_diff diff;
-    if (git_diff_tree_to_tree(&diff.p, repo_, parent_tree.p, tree.p, nullptr) != 0)
-        return std::unexpected(last_git_error());
     git_diff_find_options find = GIT_DIFF_FIND_OPTIONS_INIT;
     find.flags = GIT_DIFF_FIND_RENAMES;
-    git_diff_find_similar(diff.p, &find);
+    git_diff_find_similar(diff, &find);
 
     // The files first: the tree diff alone, no file contents.
-    const size_t n = git_diff_num_deltas(diff.p);
+    const size_t n = git_diff_num_deltas(diff);
     std::vector<file_change> files;
     files.reserve(n);
     for (size_t i = 0; i < n; ++i)
     {
-        const git_diff_delta* d = git_diff_get_delta(diff.p, i);
+        const git_diff_delta* d = git_diff_get_delta(diff, i);
         file_change f;
         f.path = d->new_file.path;
         if (d->status == GIT_DELTA_RENAMED || d->status == GIT_DELTA_COPIED)
@@ -526,7 +514,7 @@ std::expected<void, std::string> repo::changes(const oid& id, const change_steps
             if (steps.stop && steps.stop()) return {};
             file_change& f = files[i];
             owned_patch patch;
-            if (git_patch_from_diff(&patch.p, diff.p, i) == 0 && patch.p)
+            if (git_patch_from_diff(&patch.p, diff, i) == 0 && patch.p)
             {
                 size_t context;
                 git_patch_line_stats(&context, &f.added, &f.removed, patch.p);
@@ -539,6 +527,49 @@ std::expected<void, std::string> repo::changes(const oid& id, const change_steps
                                                          files.begin() + std::ptrdiff_t(last)));
     }
     return {};
+}
+
+// `from` against `to` (commits, refs or trees; git's empty tree is none),
+// or against the working tree and index when `to` is "".
+std::expected<void, std::string> repo::changes_between(const std::string& from,
+                                                       const std::string& to,
+                                                       const change_steps& steps) const
+{
+    auto tree_of = [this](const std::string& rev, owned_tree& out) -> bool
+    {
+        if (rev == "4b825dc642cb6eb9a060e54bf8d69288fbee4904") return true;  // stays null: empty
+        owned_object obj;
+        if (git_revparse_single(&obj.p, repo_, rev.c_str()) != 0) return false;
+        return git_object_peel(reinterpret_cast<git_object**>(&out.p), obj.p, GIT_OBJECT_TREE) == 0;
+    };
+    owned_tree a, b;
+    if (!tree_of(from, a) || (!to.empty() && !tree_of(to, b)))
+        return std::unexpected(last_git_error());
+    owned_diff diff;
+    const int made = to.empty() ? git_diff_tree_to_workdir_with_index(&diff.p, repo_, a.p, nullptr)
+                                : git_diff_tree_to_tree(&diff.p, repo_, a.p, b.p, nullptr);
+    if (made != 0) return std::unexpected(last_git_error());
+    return report_changes(diff.p, steps);
+}
+
+std::expected<void, std::string> repo::changes(const oid& id, const change_steps& steps) const
+{
+    git_oid gid = to_git(id);
+    owned_commit c, parent;
+    owned_tree tree, parent_tree;
+    if (git_commit_lookup(&c.p, repo_, &gid) != 0 || git_commit_tree(&tree.p, c.p) != 0)
+        return std::unexpected(last_git_error());
+    if (git_commit_parentcount(c.p) > 0)
+    {
+        if (git_commit_parent(&parent.p, c.p, 0) != 0 ||
+            git_commit_tree(&parent_tree.p, parent.p) != 0)
+            return std::unexpected(last_git_error());
+    }
+
+    owned_diff diff;
+    if (git_diff_tree_to_tree(&diff.p, repo_, parent_tree.p, tree.p, nullptr) != 0)
+        return std::unexpected(last_git_error());
+    return report_changes(diff.p, steps);
 }
 
 namespace
