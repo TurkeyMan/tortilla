@@ -349,6 +349,11 @@ std::expected<void, std::string> repo::walk(const walk_options& opts,
         // its parents rewritten to the nearest such, so the graph joins up.
         // Following renames is git log's alone; its history of one file is
         // a line, each commit's parent the one listed after it.
+        // TODO(perf): this starts git and waits for all of it, ~1.5 s on
+        // Windows over \\wsl.localhost where the plain walk is instant. In
+        // process instead: compare the path's tree entry with the parents'
+        // per commit, rebuild the default simplification (merges too), find
+        // renames only where the path vanishes, and stream the rows.
         const bool follow = opts.follow && opts.paths.size() == 1;
         std::vector<std::string> args{"rev-list", "--parents"};
         if (follow) args = {"log", "--follow", "--format=%H"};
