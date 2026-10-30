@@ -79,6 +79,7 @@ add_library(tortilla_git STATIC
     src/git/lfs.cpp
     src/git/clean.cpp
     src/git/blame.cpp
+    src/git/tree_list.cpp
     src/changes/working_tree.cpp)
 target_include_directories(tortilla_git PUBLIC src)
 target_link_libraries(tortilla_git PUBLIC ${TORTILLA_LIBGIT2} rapport::rapport)
@@ -99,6 +100,7 @@ add_executable(tortilla
     src/ui/reset_dialog.cpp
     src/ui/remotes_page.cpp
     src/blame/blame_window.cpp
+    src/ui/repo_browser.cpp
     src/rebase/rebase_window.cpp
     src/ui/compare.cpp
     src/ui/progress_dialog.cpp

@@ -13,6 +13,7 @@
 #include "settings.h"
 #include "ui/menu_text.h"
 #include "ui/progress_dialog.h"
+#include "ui/repo_browser.h"
 #include "ui/windows.h"
 #include "util/calendar.h"
 
@@ -576,6 +577,17 @@ rap::menu browse_refs::list_menu(std::optional<size_t>)
             m.push_back({});
         }
         if (e.commit()) m.push_back({.label = _("Show _log"), .action = [this, e] { show_log(e.full); }});
+        m.push_back({.label = _("_Browse repository"),
+                     .action = [this, e]
+                     {
+                         auto b = repo_browser::open(ui_, workdir_, e.full);
+                         if (!b)
+                             return ui_.message(window_.get(),
+                                                {.icon = rap::message_spec::icon::error,
+                                                 .title = "Tortilla",
+                                                 .text = b.error()});
+                         windows::keep(std::move(*b));
+                     }});
         if (e.local_branch() || e.remote_branch())
             m.push_back({.label = _("Show _RefLog"),
                          .action = [this, e]

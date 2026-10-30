@@ -3648,3 +3648,55 @@ msgstr "Ordner _öffnen"
 #: src/log/log_actions.cpp
 msgid "{0} to {1}"
 msgstr "{0} bis {1}"
+
+#: src/ui/repo_browser.cpp
+msgid "Size"
+msgstr "Größe"
+
+#: src/ui/repo_browser.cpp
+msgid "Type"
+msgstr "Typ"
+
+#: src/ui/repo_browser.cpp
+msgid "{0} bytes"
+msgstr "{0} Bytes"
+
+#: src/ui/repo_browser.cpp
+msgid "Folder"
+msgstr "Ordner"
+
+#: src/ui/repo_browser.cpp
+msgid "Executable file"
+msgstr "Ausführbare Datei"
+
+#: src/ui/repo_browser.cpp
+msgid "Symbolic link"
+msgstr "Symbolische Verknüpfung"
+
+#: src/ui/repo_browser.cpp
+msgid "Submodule"
+msgstr "Submodul"
+
+#: src/ui/repo_browser.cpp
+msgid "File"
+msgstr "Datei"
+
+#: src/ui/repo_browser.cpp
+msgid "{0} - Repository Browser - Tortilla"
+msgstr "{0} - Repository-Browser - Tortilla"
+
+#: src/ui/repo_browser.cpp
+msgid "Revision:"
+msgstr "Revision:"
+
+#: src/ui/repo_browser.cpp
+msgid "Repository Browser"
+msgstr "Repository-Browser"
+
+#: src/ui/repo_browser.cpp
+msgid "Couldn't find the revision \"{0}\"."
+msgstr "Die Revision „{0}“ wurde nicht gefunden."
+
+#: src/ui/repo_browser.cpp
+msgid "Copy _path"
+msgstr "_Pfad kopieren"

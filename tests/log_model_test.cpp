@@ -15,6 +15,7 @@
 #include "git/repo.h"
 #include "git/repo_worker.h"
 #include "git/status.h"
+#include "git/tree_list.h"
 #include "log/log_model.h"
 #include "shell.h"
 #include "util/sha256.h"
@@ -683,6 +684,75 @@ int main(int argc, char** argv)
                                             : std::vector<tortilla::blame_line>{};
         check(older.size() == 3 && older[1].commit->summary == "second",
               "blame: at a revision, by its name there");
+    }
+
+    // The Repository Browser's reading: a revision's folders and files, in process.
+    {
+        const std::string dir = std::string(argv[1]) + "/browse";
+        const std::string g =
+            "cd '" + dir +
+            "' && GIT_AUTHOR_NAME=Ada GIT_AUTHOR_EMAIL=ada@x GIT_COMMITTER_NAME=Ada "
+            "GIT_COMMITTER_EMAIL=ada@x git -c user.name=Ada -c user.email=ada@x ";
+        sh("git init -q '" + dir + "' && mkdir -p '" + dir + "/src/core' '" + dir + "/docs'");
+        // The executable bit and the symlink set in the index, as Windows
+        // has neither on disk.
+        sh("printf 'abc' > '" + dir + "/src/core/a.txt' && printf 'readme\\n' > '" + dir +
+           "/README' && printf '#!/bin/sh\\n' > '" + dir + "/run.sh' && printf 'x' > '" + dir +
+           "/docs/d.md' && " + g + "add . && " + g + "update-index --chmod=+x run.sh && " + g +
+           "update-index --add --cacheinfo \"120000,$(printf README | git hash-object -w "
+           "--stdin),link\" && " +
+           g + "commit -qm first");
+        sh("printf 'abcdefgh' > '" + dir + "/src/core/a.txt' && " + g + "add src/core/a.txt && " +
+           g + "commit -qm second");
+        auto r = tortilla::repo::open(dir);
+        check(r.has_value(), "browse: the repository opens");
+        if (r)
+        {
+            using kind = tortilla::tree_entry::kind;
+            const auto head = tortilla::resolve_tree(*r, "HEAD");
+            const auto older = tortilla::resolve_tree(*r, "HEAD~1");
+            check(head && head->commit && head->subject == "second" && older &&
+                      older->subject == "first" && older->tree != head->tree,
+                  "browse: a revision resolves to its commit, subject and tree");
+            check(!tortilla::resolve_tree(*r, "no-such-branch"),
+                  "browse: an unknown revision is an error");
+            const auto by_tree = head ? tortilla::resolve_tree(*r, head->tree.hex()) : head;
+            check(by_tree && !by_tree->commit && by_tree->tree == head->tree,
+                  "browse: a tree's own id browses it, with no commit");
+            const auto folders =
+                head ? tortilla::tree_folders(*r, head->tree) : std::vector<std::string>{};
+            check(folders == std::vector<std::string>{"docs", "src", "src/core"},
+                  "browse: every folder, each before those inside it");
+            const auto top = head ? tortilla::tree_entries(*r, head->tree, "")
+                                  : std::expected<std::vector<tortilla::tree_entry>, std::string>{};
+            auto find = [](const auto& entries,
+                           const std::string& name) -> const tortilla::tree_entry*
+            {
+                for (const auto& e : entries)
+                    if (e.name == name) return &e;
+                return nullptr;
+            };
+            const tortilla::tree_entry *readme = top ? find(*top, "README") : nullptr,
+                                       *run = top ? find(*top, "run.sh") : nullptr,
+                                       *link = top ? find(*top, "link") : nullptr,
+                                       *src = top ? find(*top, "src") : nullptr;
+            check(top && top->size() == 5 && readme && readme->type == kind::file &&
+                      readme->size == 7 && run && run->type == kind::executable && link &&
+                      link->type == kind::symlink && link->size == 6 && src &&
+                      src->type == kind::folder,
+                  "browse: the top's entries, with their kinds and sizes");
+            const tortilla::oid none;
+            const auto core_now = tortilla::tree_entries(*r, head ? head->tree : none, "src/core");
+            const auto core_then =
+                tortilla::tree_entries(*r, older ? older->tree : none, "src/core");
+            check(core_now && core_now->size() == 1 && (*core_now)[0].size == 8 && core_then &&
+                      core_then->size() == 1 && (*core_then)[0].size == 3 &&
+                      (*core_then)[0].id != (*core_now)[0].id,
+                  "browse: an older revision shows a changed file's old size");
+            check(head && !tortilla::tree_entries(*r, head->tree, "nowhere") &&
+                      !tortilla::tree_entries(*r, head->tree, "README"),
+                  "browse: a folder that isn't there, or a file, is an error");
+        }
     }
 
     // Settings' Remotes page: what Save runs, run on a repository.

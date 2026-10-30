@@ -22,6 +22,7 @@
 #include "ui/menu_items.h"
 #include "ui/menu_text.h"
 #include "ui/progress_dialog.h"
+#include "ui/repo_browser.h"
 #include "ui/reset_dialog.h"
 #include "ui/stash_dialog.h"
 #include "util/calendar.h"
@@ -297,7 +298,23 @@ menu log_window::context_menu(std::optional<size_t> clicked)
         if (!wc)
         {
             if (refs && !is_stash) m.push_back(todo(_("Show log...")));
-            m.push_back(todo(_("_Browse repository")));
+            // At this commit, from the path the log is limited to.
+            m.push_back(item(
+                _("_Browse repository"),
+                [this, hash]
+                {
+                    const std::string from =
+                        path_limited()
+                            ? rap::sys::path_to_utf8(rap::sys::path_from_utf8(repo_.workdir()) /
+                                                     rap::sys::path_from_utf8(rel_path_))
+                            : repo_location();
+                    auto b = repo_browser::open(ui_, from, hash);
+                    if (!b)
+                        return ui_.message(window_.get(), {.icon = rap::message_spec::icon::error,
+                                                           .title = "Tortilla",
+                                                           .text = b.error()});
+                    windows::keep(std::move(*b));
+                }));
             if (!head && has_wc && !merging && !is_stash)
             {
                 // Merge a branch at this commit by name, else the commit.

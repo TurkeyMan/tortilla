@@ -579,6 +579,7 @@ public:
         case run::merge: rap::shell::launch(tortilla_exe(), {"merge", folder}); return;
         case run::merge_abort: rap::shell::launch(tortilla_exe(), {"mergeabort", folder}); return;
         case run::refbrowse: rap::shell::launch(tortilla_exe(), {"refbrowse", folder}); return;
+        case run::repobrowser: rap::shell::launch(tortilla_exe(), {"repobrowser", folder}); return;
         case run::reflog: rap::shell::launch(tortilla_exe(), {"reflog", folder}); return;
         case run::stash_list: rap::shell::launch(tortilla_exe(), {"stashlist", folder}); return;
         case run::prevdiff: rap::shell::launch(tortilla_exe(), {"prevdiff", first}); return;

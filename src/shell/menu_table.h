@@ -95,6 +95,7 @@ enum class run
     diff_later,      // remembers <first>, or tortilla compare <remembered> <first>
     log_submodule,   // tortilla log --submodule <first>
     blame,           // tortilla blame <first>
+    repobrowser,     // tortilla repobrowser <folder>
     ignore,          // a submenu: tortilla ignore [--delete] [--mask] <paths...>
 };
 
@@ -164,7 +165,11 @@ inline constexpr row k_rows[] = {
      place::sub,
      run::none,
      "revisiongraph"},
-    {"&Repo-browser", {{{FIG | ONE, 0}, {BARE | ONE, 0}}}, place::sub, run::none, "repobrowser"},
+    {"&Repo-browser",
+     {{{FIG | ONE, 0}, {BARE | ONE, 0}}},
+     place::sub,
+     run::repobrowser,
+     "repobrowser"},
     {"Check for modi&fications",
      {{{GIT, 0}, {FOLD | FIG, 0}}},
      place::sub,
