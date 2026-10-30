@@ -111,6 +111,7 @@ add_executable(tortilla
     src/ui/welcome_window.cpp
     src/changes/remove.cpp
     src/changes/cleanup_dialog.cpp
+    src/changes/changed_files_window.cpp
     src/changes/ignore_dialog.cpp
     src/i18n.cpp
     src/ui/askpass.cpp

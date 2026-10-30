@@ -581,6 +581,34 @@ int main(int argc, char** argv)
         sh(git + "stash drop -q");
     }
 
+    // Changed Files: any two revisions' files, or one's against the working tree.
+    {
+        auto r = tortilla::repo::open(repo);
+        auto between = [&](const std::string& from, const std::string& to)
+        {
+            std::vector<std::string> paths;
+            if (r)
+                (void)r->changes_between(
+                    from, to,
+                    {.listed = [&](const std::vector<tortilla::file_change>& files)
+                     {
+                         for (const auto& f : files) paths.push_back(f.path);
+                     }});
+            std::ranges::sort(paths);
+            return paths;
+        };
+        // From A (the root) to the merge: B, F1 and C were added since.
+        const std::string root = tortilla::run_git(repo, {"rev-list", "--max-parents=0", "HEAD"},
+                                                   tortilla::git_output::stdout_only)
+                                     .output.substr(0, 40);
+        check(between(root, "HEAD") == std::vector<std::string>{"B.txt", "C.txt", "F1.txt"},
+              "changes between: two revisions' files");
+        sh("echo changed >> '" + repo + "/B.txt'");
+        check(between("HEAD", "") == std::vector<std::string>{"B.txt"},
+              "changes between: a revision and the working tree");
+        sh("cd '" + repo + "' && git checkout -q -- B.txt");
+    }
+
     // A log of a path: only the commits that changed it, their parents
     // rewritten to join those up (A, B, F1 and C each added their file).
     {

@@ -3700,3 +3700,11 @@ msgstr "Die Revision „{0}“ wurde nicht gefunden."
 #: src/ui/repo_browser.cpp
 msgid "Copy _path"
 msgstr "_Pfad kopieren"
+
+#: src/changes/changed_files_window.cpp
+msgid "{0} - Changed Files - Tortilla"
+msgstr "{0} - Geänderte Dateien - Tortilla"
+
+#: src/changes/changed_files_window.cpp
+msgid "({0} selected)"
+msgstr "({0} ausgewählt)"

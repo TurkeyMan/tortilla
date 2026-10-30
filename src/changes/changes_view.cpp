@@ -182,6 +182,8 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
     if (files.empty()) return m;
 
     const bool wc = source_.what == changes_source::working_tree;
+    // Against the working tree: the newer side is the working file.
+    const bool vs_wc = source_.what == changes_source::revision_to_working_tree;
     const bool one = files.size() == 1;
     auto any = [&](auto pred) { return std::ranges::any_of(files, pred); };
     auto all = [&](auto pred) { return std::ranges::all_of(files, pred); };
@@ -337,16 +339,21 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
         const std::string& parent = source_.parent;
         const std::string& parent_title = source_.parent_title;
 
-        m.push_back(item(_("Compare with b_ase"),
-                         [this, parent, hash, paths] { difftool({parent, hash}, paths); }));
-        m.push_back(item(_("Show changes as _unified diff"),
-                         [this, parent, hash, paths, dir, count]
-                         {
-                             show_unified_diff(host_.ui, count + " " + hash.substr(0, 8), dir,
-                                               plus({"diff", parent, hash, "--"}, paths));
-                         }));
+        // Against the working tree there's no second revision: git diff
+        // with one compares it with the working tree.
+        const std::vector<std::string> sides =
+            vs_wc ? std::vector<std::string>{parent} : std::vector<std::string>{parent, hash};
         m.push_back(
-            item(_("Compare with _working tree"), [this, hash, paths] { difftool({hash}, paths); }));
+            item(_("Compare with b_ase"), [this, sides, paths] { difftool(sides, paths); }));
+        m.push_back(item(_("Show changes as _unified diff"),
+                         [this, sides, paths, dir, count, title = vs_wc ? parent : hash]
+                         {
+                             show_unified_diff(host_.ui, count + " " + title.substr(0, 8), dir,
+                                               plus(plus({"diff"}, sides), plus({"--"}, paths)));
+                         }));
+        if (!vs_wc)
+            m.push_back(item(_("Compare with _working tree"),
+                             [this, hash, paths] { difftool({hash}, paths); }));
         if (!parent_title.empty())
             m.push_back(item(rap::i18n::format(_("Compare parent with working tree: {0}"),
                                                menu_text(parent_title)),
@@ -358,7 +365,7 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
         if (!deleted)
             m.push_back(item(
                 _("R_evert to this revision"),
-                [confirm_local, hash, files, count]
+                [confirm_local, hash = vs_wc ? parent : hash, files, count]
                 {
                     confirm_local(rap::i18n::format(_("Replace {0} in the working tree with the "
                                                       "version in {1}?"),
@@ -390,25 +397,28 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
     if (one)
     {
         const file_change f = files.front();
-        m.push_back(item(_("Show _log"),
-                         [this, f, wc] { show_log(f.path, wc ? std::string() : source_.hash); }));
+        // The working file's history where the list is the working tree's.
+        const bool working = wc || vs_wc;
+        m.push_back(item(_("Show _log"), [this, f, working]
+                         { show_log(f.path, working ? std::string() : source_.hash); }));
         // The old name's history, from before the change.
         if (renamed)
             m.push_back(item(_("Show log _before rename/copy"), [this, f, wc]
                              { show_log(f.old_path, wc ? std::string("HEAD") : source_.parent); }));
         // The file as it is here: in the working tree, or in this commit.
         m.push_back(item(
-            _("_Blame"), [this, f, wc] { blame(f.path, wc ? std::string() : source_.hash); },
+            _("_Blame"),
+            [this, f, working] { blame(f.path, working ? std::string() : source_.hash); },
             f.status != 'D' && !(wc && f.status == '?')));
     }
-    if (!wc && !deleted)
+    if (!wc && !vs_wc && !deleted)
     {
         m.push_back(item(_("Export selection to..."),
                          [this, hash = source_.hash, files] { save_revisions(hash, files); }));
     }
     if (one)
     {
-        if (!wc && !deleted)
+        if (!wc && !vs_wc && !deleted)
         {
             m.push_back(item(_("Save revision _to..."), [this, hash = source_.hash, f = files.front()]
                              { save_revision(hash, f); }));
@@ -528,6 +538,8 @@ void changes_view::activated(size_t row)
     if (f.status == 'U') return edit_conflict(f.path);
     arg_list paths = paths_of({f});
     if (source_.what == changes_source::working_tree) return difftool({"HEAD"}, paths);
+    if (source_.what == changes_source::revision_to_working_tree)
+        return difftool({source_.parent}, paths);
     difftool({source_.parent, source_.hash}, paths);
 }
 

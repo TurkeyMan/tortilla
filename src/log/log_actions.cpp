@@ -6,6 +6,7 @@
 #include "branch/create_ref_dialog.h"
 #include "branch/merge_dialog.h"
 #include "branch/switch_dialog.h"
+#include "changes/changed_files_window.h"
 #include "changes/cleanup_dialog.h"
 #include "changes/commit_window.h"
 #include "log/format_patch_dialog.h"
@@ -158,8 +159,34 @@ void log_window::confirm_then_run(const std::string& question, const std::string
 }
 
 // Comparing revisions with the tool the Diff Viewer page chose (compare.h).
+// A log of a path compares that path, as TortoiseGit's does. Otherwise,
+// several files open the Changed Files window, to compare each on its own
+// (a file-by-file tool would show them one after another, each waiting on
+// the last); one goes straight to the tool.
 void log_window::difftool(std::vector<std::string> revisions, std::vector<std::string> paths)
 {
+    if (paths.empty() && path_limited()) paths = {rel_path_};
+    if (paths.empty() && !revisions.empty() && revisions.size() <= 2)
+    {
+        const std::string from = revisions[0], to = revisions.size() > 1 ? revisions[1] : "";
+        // The list alone (stopping before the line counts): a tree diff.
+        std::vector<file_change> files;
+        (void)repo_.changes_between(
+            from, to,
+            {.listed = [&](const std::vector<file_change>& f) { files = f; },
+             .stop = [] { return true; }});
+        if (files.size() > 1)
+        {
+            keep_dialog(changed_files_window::open(ui_, repo_location(), from, to));
+            return;
+        }
+        if (files.size() == 1)
+        {
+            // Both names for a rename, so git pairs them.
+            if (!files.front().old_path.empty()) paths.push_back(files.front().old_path);
+            paths.push_back(files.front().path);
+        }
+    }
     difftool_ =
         compare_revisions(ui_, window_.get(), repo_.workdir(), std::move(revisions),
                           std::move(paths), [this] { open_settings(settings_page::diff_viewer); });

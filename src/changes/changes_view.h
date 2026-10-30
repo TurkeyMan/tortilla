@@ -31,7 +31,11 @@ struct changes_source
     enum kind
     {
         working_tree,  // the working tree against HEAD
-        revision,      // a commit against its (first) parent
+        revision,      // a commit against its (first) parent, or any two revisions
+        // The working tree against `parent`, a revision (Compare with
+        // working tree): its files are the working tree's, but none of the
+        // working tree's own actions (Revert, Add...) apply.
+        revision_to_working_tree,
     };
     kind what = working_tree;
     std::string hash;          // revision: the commit

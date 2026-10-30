@@ -29,6 +29,8 @@
 //   tortilla cleanup [path...]         Clean up: untracked files removed
 //   tortilla compare file1 file2       two files, anywhere, in the diff tool
 //   tortilla blame file [rev]          Blame: each line's last commit, through its history
+//   tortilla showcompare [path] rev1 [rev2]  the files changed between two revisions
+//                                     (or rev1 and the working tree), in a list
 //   tortilla conflicteditor file       a conflicted file in the merge tool
 //   tortilla diff [path] rev [rev2]   a commit, or rev..rev2, as a unified diff
 //   tortilla settings [path] [diff|menu|network|remotes]  the Settings dialog (at that page)
@@ -42,6 +44,7 @@
 #include "branch/create_ref_dialog.h"
 #include "branch/merge_dialog.h"
 #include "branch/switch_dialog.h"
+#include "changes/changed_files_window.h"
 #include "changes/changes_window.h"
 #include "changes/cleanup_dialog.h"
 #include "changes/commit_window.h"
@@ -224,7 +227,8 @@ int main(int argc, char** argv)
                   std::strcmp(argv[i], "stashpop") == 0 ||
                   std::strcmp(argv[i], "repocreate") == 0 || std::strcmp(argv[i], "rename") == 0 ||
                   std::strcmp(argv[i], "cleanup") == 0 || std::strcmp(argv[i], "compare") == 0 ||
-                  std::strcmp(argv[i], "blame") == 0 || std::strcmp(argv[i], "repobrowser") == 0 ||
+                  std::strcmp(argv[i], "blame") == 0 || std::strcmp(argv[i], "showcompare") == 0 ||
+                  std::strcmp(argv[i], "repobrowser") == 0 ||
                   std::strcmp(argv[i], "conflicteditor") == 0 ||
                   std::strcmp(argv[i], "about") == 0 || std::strcmp(argv[i], "remove") == 0 ||
                   std::strcmp(argv[i], "removekeep") == 0 || std::strcmp(argv[i], "ignore") == 0))
@@ -380,7 +384,8 @@ int main(int argc, char** argv)
     if (command == "clone" || command == "fetch" || command == "pull" || command == "push" ||
         command == "branch" || command == "tag" || command == "switch" || command == "merge" ||
         command == "mergeabort" || command == "refbrowse" || command == "reflog" ||
-        command == "stashlist" || command == "blame" || command == "repobrowser")
+        command == "stashlist" || command == "blame" || command == "repobrowser" ||
+        command == "showcompare")
     {
         tortilla::windows::init(**ui);
         // The branch dialogs: the second argument preselects a ref or hash.
@@ -417,6 +422,11 @@ int main(int argc, char** argv)
             return keep(tortilla::repo_browser::open(**ui, path, rev)) ? (*ui)->run() : 1;
         if (command == "blame")
             return keep(tortilla::blame_window::open(**ui, path, rev)) ? (*ui)->run() : 1;
+        if (command == "showcompare")
+            return keep(tortilla::changed_files_window::open(**ui, path, rev,
+                                                             args.size() > 2 ? args[2] : ""))
+                       ? (*ui)->run()
+                       : 1;
         if (command == "reflog" || command == "stashlist")
             return keep(tortilla::reflog_window::open(**ui, path,
                                                       command == "stashlist" ? "refs/stash" : rev))
