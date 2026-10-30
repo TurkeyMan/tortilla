@@ -64,8 +64,10 @@ struct patch_range
 };
 
 // `git format-patch` writing `range` to its output, the patches one after
-// another as git am takes them, for the unified diff window to show.
-std::vector<std::string> format_patch_args(const patch_range& range);
+// another as git am takes them, for the unified diff window to show; or,
+// given a folder, into it as a numbered file per commit.
+std::vector<std::string> format_patch_args(const patch_range& range,
+                                           const std::string& folder = {});
 
 // Edit Notes' save [spec 1.11]: `text` (written to `file`) as the
 // commit's note, or the note taken away when `text` is only blank.

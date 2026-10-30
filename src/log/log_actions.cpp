@@ -19,6 +19,7 @@
 #include "git/diff_tool.h"
 #include "git/submodule.h"
 #include "i18n.h"
+#include "settings.h"
 #include "ui/compare.h"
 #include "ui/diff_window.h"
 #include "ui/export_dialog.h"
@@ -573,14 +574,24 @@ menu log_window::context_menu(std::optional<size_t> clicked)
                 patch_range range{.oldest = picks.front(),
                                   .newest = picks.back(),
                                   .oldest_is_root = oldest->parents.empty()};
-                // Shown in the unified diff window, whose Save As writes
-                // the .patch, named after this title.
-                std::string title = picks.size() == 1 ? picks.front().substr(0, 8)
-                                                      : picks.front().substr(0, 8) + ".." +
-                                                            picks.back().substr(0, 8);
-                m.push_back(item(
-                    _("_Format Patch..."), [this, range, title]
-                    { show_unified_diff(ui_, title, repo_.workdir(), format_patch_args(range)); }));
+                // Shown in the unified diff window. One commit saves as a
+                // .patch named after the title; several as a series, a
+                // numbered file each, into a folder.
+                const bool series = picks.size() > 1;
+                std::string title =
+                    series ? picks.front().substr(0, 8) + ".." + picks.back().substr(0, 8)
+                           : picks.front().substr(0, 8);
+                m.push_back(item(_("_Format Patch..."),
+                                 [this, range, title, series]
+                                 {
+                                     std::function<void(rap::window*)> save;
+                                     if (series)
+                                         save = [this, range](rap::window* viewer)
+                                         { save_patch_series(viewer, range); };
+                                     show_unified_diff(ui_, title, repo_.workdir(),
+                                                       format_patch_args(range), {},
+                                                       std::move(save));
+                                 }));
             }
             separator(m);
         }
@@ -1130,6 +1141,30 @@ void log_window::reset_to(const commit& c)
 void log_window::merge_from(const commit&, const std::string& what)
 {
     keep_dialog(merge_dialog::open(ui_, repo_.workdir(), what));
+}
+
+void log_window::save_patch_series(rap::window* viewer, const patch_range& range)
+{
+    const std::string key = "formatPatch.dir." + repo_.workdir();
+    std::string folder = settings::get().value(key);
+    if (folder.empty()) folder = repo_.workdir();
+    ui_.choose_files(
+        viewer,
+        {.mode = rap::file_dialog_spec::mode::folder,
+         .title = _("Write patches into"),
+         .initial_path = folder},
+        [this, key, range, alive = std::weak_ptr<bool>(alive_)](std::vector<std::string> chosen)
+        {
+            if (chosen.empty() || !alive.lock()) return;
+            const std::string out = chosen.front();
+            settings::get().set(key, out);
+            std::vector<progress_follow_up> follow_ups;
+            follow_ups.push_back(
+                {.label = _("_Open folder"),
+                 .after_close = [out] { rap::sys::open_path(rap::sys::path_from_utf8(out)); }});
+            run_progress_dialog(ui_, window_.get(), _("Format Patch"), repo_.workdir(),
+                                {format_patch_args(range, out)}, {}, std::move(follow_ups));
+        });
 }
 
 // The whole repository's log, as TortoiseGit opens it for the row's ref

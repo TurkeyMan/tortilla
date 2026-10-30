@@ -255,6 +255,18 @@ int main(int argc, char** argv)
         check(tortilla::format_patch_args({.oldest = b, .newest = merge}).back() ==
                   b + "^.." + merge,
               "format_patch_args: a range starts after the oldest's parent");
+        {
+            const std::string out = std::string(argv[1]) + "/patches";
+            std::vector<std::string> files;
+            if (tortilla::run_git(repo,
+                                  tortilla::format_patch_args({.oldest = b, .newest = c}, out))
+                    .ok())
+                for (auto& e : std::filesystem::directory_iterator(out))
+                    files.push_back(e.path().filename().string());
+            std::ranges::sort(files);
+            check(files == std::vector<std::string>{"0001-B-subject.patch", "0002-C-subject.patch"},
+                  "format-patch: a series into a folder, a numbered file per commit");
+        }
         check(patches({.oldest = c, .newest = c}) == std::vector<std::string>{"C subject"},
               "format-patch: one commit, one patch");
         check(patches({.oldest = a, .newest = c, .oldest_is_root = true}).size() == 3,

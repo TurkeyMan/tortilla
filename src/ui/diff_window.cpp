@@ -77,10 +77,12 @@ namespace
 class diff_window : public std::enable_shared_from_this<diff_window>
 {
 public:
-    diff_window(rap::ui& ui, std::string title, std::function<void()> on_closed)
+    diff_window(rap::ui& ui, std::string title, std::function<void()> on_closed,
+                std::function<void(rap::window*)> save)
         : ui_(ui)
         , title_(std::move(title))
         , on_closed_(std::move(on_closed))
+        , save_(std::move(save))
     {
     }
 
@@ -269,6 +271,7 @@ private:
 
     void save_as()
     {
+        if (save_) return save_(window_.get());
         rap::file_dialog_spec spec;
         spec.mode = rap::file_dialog_spec::mode::save;
         spec.title = _("Save Diff");
@@ -321,6 +324,7 @@ private:
     rap::ui& ui_;
     std::string title_, content_;
     std::function<void()> on_closed_;
+    std::function<void(rap::window*)> save_;
     std::unique_ptr<rap::window> window_;
     std::shared_ptr<diff_window> self_;
     rap::text_view* text_ = nullptr;
@@ -336,9 +340,11 @@ private:
 }  // namespace
 
 void show_unified_diff(rap::ui& ui, const std::string& title, const std::string& dir,
-                     const std::vector<std::string>& git_args, std::function<void()> closed)
+                       const std::vector<std::string>& git_args, std::function<void()> closed,
+                       std::function<void(rap::window*)> save)
 {
-    std::make_shared<diff_window>(ui, title, std::move(closed))->open(dir, git_args);
+    std::make_shared<diff_window>(ui, title, std::move(closed), std::move(save))
+        ->open(dir, git_args);
 }
 
 }  // namespace tortilla

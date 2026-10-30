@@ -12,9 +12,11 @@ namespace tortilla
 {
 
 // Owns itself; closes on Close or the window's close box, then calls
-// `closed`.
+// `closed`. `save`, if given, replaces Save As's file dialog (Format Patch
+// writes a selection's series into a folder); it gets the viewer's window.
 void show_unified_diff(rap::ui&, const std::string& title, const std::string& dir,
-                     const std::vector<std::string>& git_args, std::function<void()> closed = {});
+                       const std::vector<std::string>& git_args, std::function<void()> closed = {},
+                       std::function<void(rap::window*)> save = {});
 
 // Colour spans for unified diff text: headers bold, hunks in the accent
 // colour, additions and removals in the theme's positive/negative colours.

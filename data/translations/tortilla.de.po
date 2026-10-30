@@ -3647,7 +3647,15 @@ msgid_plural "{0} lines"
 msgstr[0] "{0} Zeile"
 msgstr[1] "{0} Zeilen"
 
-#: src/ui/export_dialog.cpp
+#: src/log/log_actions.cpp
+msgid "Format Patch"
+msgstr "Patch formatieren"
+
+#: src/log/log_actions.cpp
+msgid "Write patches into"
+msgstr "Patches schreiben nach"
+
+#: src/ui/export_dialog.cpp src/log/log_actions.cpp
 msgid "_Open folder"
 msgstr "Ordner _öffnen"
 
