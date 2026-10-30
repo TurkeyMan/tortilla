@@ -201,6 +201,9 @@ public:
     std::expected<std::vector<commit>, std::string> range(const oid& upstream, const oid& branch,
                                                           bool include_merges) const;
 
+    // One commit's fields, as a walk gives them; nullopt when it isn't here.
+    std::optional<commit> lookup(const oid&) const;
+
     // True when `descendant` has `ancestor` in its history.
     bool is_ancestor(const oid& ancestor, const oid& descendant) const;
     // Cheap summary of changes() (no line counts): a mask of Action bits.

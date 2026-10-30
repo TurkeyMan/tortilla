@@ -277,6 +277,17 @@ int main(int argc, char** argv)
               "format-patch: B to the merge is B, F1 and C, merges left out");
     }
 
+    // Commits dragged out of a log: full hashes only come back.
+    {
+        const std::string a(40, 'a'), b = std::string(39, 'b') + "c";
+        check(tortilla::parse_commits_payload(tortilla::commits_payload({a, b})) ==
+                  std::vector<std::string>{a, b},
+              "commits payload: round trip, in order");
+        check(tortilla::parse_commits_payload(a + "\r\nnot a hash\n" + b.substr(0, 8) + "\n") ==
+                  std::vector<std::string>{a},
+              "commits payload: CRLF taken, anything else dropped");
+    }
+
     // Edit Notes: saved with git notes (a note commit needs an identity;
     // CI's environment, if set, wins over this), read back with libgit2.
     {

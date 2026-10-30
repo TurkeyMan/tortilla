@@ -179,8 +179,8 @@ int main(int argc, char** argv)
            "add . && " + g + "commit -qm X1 && " + g + "checkout -q feature");
         auto opened = repo::open(h.repo);
         auto side = opened->range(*opened->resolve("main"), *opened->resolve("side"), false);
-        check(side && h.model.add_on_top(*side) == 1 && h.row("X1") == 0, "add: on top");
-        check(h.model.add_on_top(*side) == 0, "add: one already listed isn't added again");
+        check(side && h.model.add(0, *side) == 1 && h.row("X1") == 0, "add: on top");
+        check(h.model.add(0, *side) == 0, "add: one already listed isn't added again");
         h.start();
         check(h.engine->stage() == rebase_stage::done &&
                   h.subjects() == "X1\nF3\nF2\nF1\nMain two\n",

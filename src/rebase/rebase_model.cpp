@@ -62,15 +62,16 @@ void rebase_model::set_refs(ref_map refs)
     if (!rows_.empty()) notify_changed(0, rows_.size());
 }
 
-size_t rebase_model::add_on_top(const std::vector<commit>& commits)
+size_t rebase_model::add(size_t at, const std::vector<commit>& commits)
 {
     std::vector<rebase_row> added;
     for (const commit& c : commits)
         if (std::ranges::none_of(rows_, [&](const rebase_row& r) { return r.commit.id == c.id; }) &&
             std::ranges::none_of(added, [&](const rebase_row& r) { return r.commit.id == c.id; }))
             added.push_back({.commit = c});
-    rows_.insert(rows_.begin(), added.begin(), added.end());
-    if (!added.empty()) notify_inserted(0, added.size());
+    at = std::min(at, rows_.size());
+    rows_.insert(rows_.begin() + ptrdiff_t(at), added.begin(), added.end());
+    if (!added.empty()) notify_inserted(at, added.size());
     return added.size();
 }
 

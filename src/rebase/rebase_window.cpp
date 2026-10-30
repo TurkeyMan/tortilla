@@ -15,6 +15,7 @@
 #include <rapport/sys.h>
 
 #include <algorithm>
+#include <numeric>
 
 namespace tortilla
 {
@@ -163,6 +164,12 @@ void rebase_window::build(const std::string& upstream)
                                      { return context_menu(row); })
                     .on_reorder([this](const std::vector<size_t>& rows, size_t dest)
                                 { return drop_rows(rows, dest); })
+                    // Commits dragged in from a log: picks where they land.
+                    .on_drop_in(
+                        {.types = {commits_type},
+                         .can_drop = [this](size_t, const std::string&) { return can_add(); },
+                         .drop = [this](size_t at, const std::string&, const std::string& data)
+                         { return add_commits_at(at, parse_commits_payload(data)); }})
                     .stretch(3),
                 vbox{
                     // Row under the list [spec 2.2]
@@ -645,6 +652,27 @@ void rebase_window::close()
     if (closed_) closed_();
 }
 
+bool rebase_window::can_add() const
+{
+    return !(engine_ && engine_->started()) && !preserve_merges_->checked();
+}
+
+bool rebase_window::add_commits_at(size_t at, const std::vector<std::string>& hashes)
+{
+    if (!can_add()) return false;
+    // Merges can't be picked; commits from another repository aren't here.
+    std::vector<commit> chosen;
+    for (const std::string& h : hashes)
+        if (auto id = repo_.resolve(h))
+            if (auto c = repo_.lookup(*id); c && c->parents.size() <= 1) chosen.push_back(*c);
+    const size_t n = model_.add(at, chosen);
+    if (!n) return false;
+    std::vector<size_t> rows(n);
+    std::iota(rows.begin(), rows.end(), std::min(at, model_.size() - n));
+    list_->select(rows);
+    return true;
+}
+
 void rebase_window::add_commits()
 {
     auto log = log_window::open(ui_, repo_.workdir(), true);
@@ -655,8 +683,10 @@ void rebase_window::add_commits()
     (*log)->pick_commits(_("_Add"),
                          [this, alive = std::weak_ptr<bool>(alive_)](std::vector<commit> chosen)
                          {
-                             if (!alive.lock() || (engine_ && engine_->started())) return;
-                             if (model_.add_on_top(chosen)) list_->select({0});
+                             if (!alive.lock()) return;
+                             std::vector<std::string> hashes;
+                             for (const commit& c : chosen) hashes.push_back(c.id.hex());
+                             add_commits_at(0, hashes);
                          });
     windows::keep(std::move(*log));
 }

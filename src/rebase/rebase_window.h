@@ -67,6 +67,10 @@ private:
     rap::button* add_ = nullptr;
     // Add: a log of every branch to pick commits from [spec 2.5].
     void add_commits();
+    // Commits added (Add, or dropped from a log) as picks in front of row
+    // `at`; false when none went in.
+    bool can_add() const;
+    bool add_commits_at(size_t at, const std::vector<std::string>& hashes);
     bool fast_forward_ = false;
     bool can_start_ = false;
     bool stashed_ = false;

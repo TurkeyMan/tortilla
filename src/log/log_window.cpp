@@ -230,6 +230,20 @@ void log_window::build()
                                      { return context_menu(row); })
                     .on_header_menu([this](size_t) { return header_menu(); })
                     .on_cell_drag(label_drag())
+                    // Commits dragged out, into a rebase's list or anywhere
+                    // taking text: their hashes, newest first as the rows run.
+                    .on_drag_out(
+                        {.begin = [this](std::vector<size_t> rows) -> std::optional<rap::data_offer>
+                         {
+                             std::ranges::sort(rows);
+                             std::vector<std::string> hashes;
+                             for (size_t row : rows)
+                                 if (const commit* c = log_.commit(row))
+                                     hashes.push_back(c->id.hex());
+                             if (hashes.empty()) return std::nullopt;
+                             const std::string data = commits_payload(hashes);
+                             return rap::data_offer{{{commits_type, data}, {"text/plain", data}}};
+                         }})
                     .on_activate([this](size_t row) { row_activated(row); })
                     .on_cell_context_menu([this](size_t row, size_t column, rap::point_f at)
                                           { return cell_menu(row, column, at); })

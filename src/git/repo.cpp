@@ -728,4 +728,32 @@ std::expected<std::vector<commit>, std::string> repo::range(const oid& upstream,
     return out;
 }
 
+std::optional<commit> repo::lookup(const oid& id) const
+{
+    git_oid gid = to_git(id);
+    owned_commit c;
+    if (git_commit_lookup(&c.p, repo_, &gid) != 0) return std::nullopt;
+    commit out;
+    out.id = id;
+    for (unsigned i = 0, n = git_commit_parentcount(c.p); i < n; ++i)
+        out.parents.push_back(to_oid(git_commit_parent_id(c.p, i)));
+    if (const char* s = git_commit_summary(c.p)) out.summary = s;
+    if (const char* m = git_commit_message(c.p)) out.message = m;
+    if (const git_signature* a = git_commit_author(c.p))
+    {
+        out.author = a->name ? a->name : "";
+        out.email = a->email ? a->email : "";
+        out.time = a->when.time;
+        out.offset_minutes = a->when.offset;
+    }
+    if (const git_signature* cm = git_commit_committer(c.p))
+    {
+        out.committer = cm->name ? cm->name : "";
+        out.committer_email = cm->email ? cm->email : "";
+        out.commit_time = cm->when.time;
+        out.commit_offset_minutes = cm->when.offset;
+    }
+    return out;
+}
+
 }  // namespace tortilla

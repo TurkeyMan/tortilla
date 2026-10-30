@@ -69,6 +69,13 @@ struct patch_range
 std::vector<std::string> format_patch_args(const patch_range& range,
                                            const std::string& folder = {});
 
+// Commits dragged out of a log (into a rebase's list, say): their hashes,
+// one a line, newest first, under Tortilla's own type, and as plain text
+// for other programs.
+inline constexpr const char* commits_type = "application/x-tortilla-commits";
+std::string commits_payload(const std::vector<std::string>& hashes);
+std::vector<std::string> parse_commits_payload(const std::string&);
+
 // Edit Notes' save [spec 1.11]: `text` (written to `file`) as the
 // commit's note, or the note taken away when `text` is only blank.
 std::vector<std::string> note_args(const std::string& hash, const std::string& text,

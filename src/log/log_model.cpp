@@ -921,6 +921,31 @@ std::vector<std::string> format_patch_args(const patch_range& range, const std::
     return args;
 }
 
+std::string commits_payload(const std::vector<std::string>& hashes)
+{
+    std::string out;
+    for (const std::string& h : hashes) out += h + "\n";
+    return out;
+}
+
+std::vector<std::string> parse_commits_payload(const std::string& data)
+{
+    // Only full hashes: anything else in a drop isn't ours to guess at.
+    std::vector<std::string> out;
+    for (size_t at = 0; at < data.size();)
+    {
+        size_t end = data.find('\n', at);
+        if (end == std::string::npos) end = data.size();
+        std::string line = data.substr(at, end - at);
+        while (!line.empty() && std::isspace(static_cast<unsigned char>(line.back())))
+            line.pop_back();
+        if (line.size() == 40 && line.find_first_not_of("0123456789abcdef") == std::string::npos)
+            out.push_back(line);
+        at = end + 1;
+    }
+    return out;
+}
+
 std::vector<std::string> note_args(const std::string& hash, const std::string& text,
                                    const std::string& file)
 {
