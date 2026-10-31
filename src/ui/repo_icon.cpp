@@ -115,6 +115,9 @@ rap::icon icon_of(rap::ui& ui, std::optional<rap::color> colored)
 }
 
 rap::icon g_icon;
+// A coloured repository's windows: a taskbar group of their own on Windows,
+// whose button shows their icon; "" keeps Tortilla's group.
+std::string g_app_id;
 
 // -- which colour: by what's open now ------------------------------------------
 //
@@ -279,7 +282,9 @@ void use_repo_icon(rap::ui& ui, const std::string& path, bool outer)
     auto r = repo::open(rap::sys::path_to_utf8(at));
     if (!r) return;
     const std::string dir = r->bare() ? r->git_dir() : r->workdir();
-    g_icon = icon_of(ui, take_color(dir));
+    const std::optional<rap::color> c = take_color(dir);
+    g_icon = icon_of(ui, c);
+    g_app_id = c ? "Tortilla.Repository." + hash_hex(dir) : std::string();
 }
 
 std::unique_ptr<rap::window> create_window(rap::ui& ui, const rap::window_spec& spec,
@@ -288,6 +293,8 @@ std::unique_ptr<rap::window> create_window(rap::ui& ui, const rap::window_spec& 
     auto w = ui.create(spec, parent);
     if (!g_icon) g_icon = icon_of(ui, std::nullopt);
     if (w && g_icon) w->set_icon(g_icon);
+    // Before the window shows: one whose group changes after moves on the taskbar.
+    if (w && !g_app_id.empty()) w->set_app_id(g_app_id);
     return w;
 }
 
