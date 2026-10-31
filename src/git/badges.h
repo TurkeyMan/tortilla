@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <expected>
+#include <functional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -13,6 +14,17 @@
 
 namespace tortilla
 {
+
+// Hashing a std::string key from a string_view too, so lookups needn't make
+// a string (std::equal_to<> compares them).
+struct string_hash
+{
+    using is_transparent = void;
+    size_t operator()(std::string_view s) const { return std::hash<std::string_view>{}(s); }
+};
+using string_set = std::unordered_set<std::string, string_hash, std::equal_to<>>;
+template <class V>
+using string_map = std::unordered_map<std::string, V, string_hash, std::equal_to<>>;
 
 enum class badge : uint8_t
 {
@@ -41,10 +53,10 @@ public:
     bool untracked(std::string_view path) const;
 
 private:
-    std::unordered_map<std::string, badge> changed_;  // files, then their folders
-    std::unordered_set<std::string> tracked_;         // files and the folders holding them
-    std::unordered_set<std::string> untracked_;       // as git listed them
-    std::unordered_set<std::string> untracked_within_;  // folders holding those
+    string_map<badge> changed_;    // files, then their folders
+    string_set tracked_;           // files and the folders holding them
+    string_set untracked_;         // as git listed them
+    string_set untracked_within_;  // folders holding those
 };
 
 // Runs git in `workdir` (the top of a working tree) for its badges.

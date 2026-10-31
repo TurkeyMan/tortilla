@@ -114,21 +114,19 @@ repo_badges repo_badges::build(std::string_view tracked, std::string_view status
 bool repo_badges::untracked(std::string_view path) const
 {
     while (!path.empty() && path.back() == '/') path.remove_suffix(1);
-    if (untracked_within_.contains(std::string(path)) || untracked_.contains(std::string(path)))
-        return true;
+    if (untracked_within_.contains(path) || untracked_.contains(path)) return true;
     // Inside a folder git reported whole.
     bool inside = false;
-    each_folder(
-        path, [&](std::string_view folder)
-        { inside = inside || (!folder.empty() && untracked_.contains(std::string(folder))); });
+    each_folder(path, [&](std::string_view folder)
+                { inside = inside || (!folder.empty() && untracked_.contains(folder)); });
     return inside;
 }
 
 badge repo_badges::of(std::string_view path) const
 {
     while (!path.empty() && path.back() == '/') path.remove_suffix(1);
-    if (auto it = changed_.find(std::string(path)); it != changed_.end()) return it->second;
-    return tracked_.contains(std::string(path)) ? badge::clean : badge::none;
+    if (auto it = changed_.find(path); it != changed_.end()) return it->second;
+    return tracked_.contains(path) ? badge::clean : badge::none;
 }
 
 namespace

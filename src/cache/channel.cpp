@@ -16,6 +16,7 @@
 
 #include <cstring>
 #include <filesystem>
+#include <optional>
 #include <thread>
 
 namespace tortilla::channel
@@ -26,6 +27,37 @@ namespace
 
 // A whole selection asked at once can be long.
 constexpr size_t k_max_line = 16 * 1024 * 1024;
+constexpr size_t k_chunk = 64 * 1024;
+
+// A line read in chunks: each chunk searched once for the newline, not the
+// whole of what came before again.
+struct line_reader
+{
+    std::string data;
+    size_t end = std::string::npos;  // the newline, once seen
+
+    bool done() const { return end != std::string::npos || data.size() >= k_max_line; }
+    // Room for a chunk at the end; then got() says how much of it came.
+    char* room()
+    {
+        data.resize(data.size() + k_chunk);
+        return data.data() + data.size() - k_chunk;
+    }
+    void got(size_t n)
+    {
+        const size_t from = data.size() - k_chunk;
+        data.resize(from + n);
+        if (const size_t nl = std::string_view(data).find('\n', from); nl != std::string::npos)
+            end = nl;
+    }
+    // The line without its newline, taken out.
+    std::optional<std::string> take()
+    {
+        if (end == std::string::npos) return std::nullopt;
+        data.resize(end);
+        return std::move(data);
+    }
+};
 
 #ifdef _WIN32
 
@@ -134,15 +166,18 @@ std::expected<void, std::string> serve(std::string_view name,
             return std::unexpected("CreateNamedPipe failed: " + std::to_string(GetLastError()));
         if (connected)
         {
-            std::string line;
-            char buf[4096];
+            line_reader in;
             DWORD got = 0;
-            while (line.find('\n') == std::string::npos && line.size() < k_max_line &&
-                   ReadFile(h, buf, sizeof buf, &got, nullptr) && got > 0)
-                line.append(buf, got);
-            if (size_t nl = line.find('\n'); nl != std::string::npos)
+            while (!in.done())
             {
-                std::string reply = answer(std::string_view(line).substr(0, nl)) + "\n";
+                const bool ok = ReadFile(h, in.room(), DWORD(k_chunk), &got, nullptr) && got > 0;
+                in.got(ok ? got : 0);
+                if (!ok) break;
+            }
+            if (auto line = in.take())
+            {
+                std::string reply = answer(*line);
+                reply += '\n';
                 DWORD wrote = 0;
                 WriteFile(h, reply.data(), DWORD(reply.size()), &wrote, nullptr);
                 FlushFileBuffers(h);
@@ -173,19 +208,19 @@ std::expected<std::string, ask_error> ask(std::string_view name, std::string_vie
     DWORD done = 0;
     bool ok =
         finish(h, ov, WriteFile(h, out.data(), DWORD(out.size()), nullptr, &ov), done, deadline);
-    out.clear();
-    char buf[4096];
-    while (ok && out.find('\n') == std::string::npos && out.size() < k_max_line)
+    line_reader in;
+    while (ok && !in.done())
     {
         ResetEvent(ov.hEvent);
-        ok = finish(h, ov, ReadFile(h, buf, sizeof buf, nullptr, &ov), done, deadline) && done > 0;
-        if (ok) out.append(buf, done);
+        char* room = in.room();
+        ok = finish(h, ov, ReadFile(h, room, DWORD(k_chunk), nullptr, &ov), done, deadline) &&
+             done > 0;
+        in.got(ok ? done : 0);
     }
     CloseHandle(ov.hEvent);
     CloseHandle(h);
-    const size_t nl = out.find('\n');
-    if (!ok && nl == std::string::npos) return std::unexpected(ask_error::failed);
-    return out.substr(0, nl);
+    if (auto line = in.take()) return std::move(*line);
+    return std::unexpected(ask_error::failed);
 }
 
 #else
@@ -230,14 +265,17 @@ std::expected<void, std::string> serve(std::string_view name,
         timeval tv{0, 500 * 1000};
         setsockopt(c, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
         setsockopt(c, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);
-        std::string line;
-        char buf[4096];
-        for (ssize_t got; line.find('\n') == std::string::npos && line.size() < k_max_line &&
-                          (got = read(c, buf, sizeof buf)) > 0;)
-            line.append(buf, size_t(got));
-        if (size_t nl = line.find('\n'); nl != std::string::npos)
+        line_reader in;
+        while (!in.done())
         {
-            const std::string reply = answer(std::string_view(line).substr(0, nl)) + "\n";
+            const ssize_t got = read(c, in.room(), k_chunk);
+            in.got(got > 0 ? size_t(got) : 0);
+            if (got <= 0) break;
+        }
+        if (auto line = in.take())
+        {
+            std::string reply = answer(*line);
+            reply += '\n';
             (void)!write(c, reply.data(), reply.size());
         }
         close(c);
@@ -279,23 +317,17 @@ std::expected<std::string, ask_error> ask(std::string_view name, std::string_vie
         if (n <= 0 && errno != EAGAIN) return std::unexpected(ask_error::failed);
         if (n > 0) sent += size_t(n);
     }
-    std::string in;
-    char buf[4096];
-    while (in.find('\n') == std::string::npos && in.size() < k_max_line)
+    line_reader in;
+    while (!in.done())
     {
         if (!wait(POLLIN)) return std::unexpected(ask_error::failed);
-        const ssize_t n = read(s, buf, sizeof buf);
+        const ssize_t n = read(s, in.room(), k_chunk);
+        in.got(n > 0 ? size_t(n) : 0);
         if (n == 0) break;
-        if (n < 0)
-        {
-            if (errno == EAGAIN) continue;
-            return std::unexpected(ask_error::failed);
-        }
-        in.append(buf, size_t(n));
+        if (n < 0 && errno != EAGAIN) return std::unexpected(ask_error::failed);
     }
-    const size_t nl = in.find('\n');
-    if (nl == std::string::npos) return std::unexpected(ask_error::failed);
-    return in.substr(0, nl);
+    if (auto line = in.take()) return std::move(*line);
+    return std::unexpected(ask_error::failed);
 }
 
 #endif

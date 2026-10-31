@@ -16,6 +16,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <string_view>
 #include <vector>
 
 namespace tortilla
@@ -45,6 +46,8 @@ public:
         bool untracked = false;
     };
     state look(const std::filesystem::path&);
+    // The same for a path in UTF-8, as requests carry it: no path object made.
+    state look(std::string_view utf8_path);
 
     // Since the last question.
     std::chrono::steady_clock::duration idle() const;

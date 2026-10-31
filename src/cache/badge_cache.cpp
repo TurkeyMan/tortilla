@@ -11,6 +11,12 @@
 #include <mutex>
 #include <optional>
 #include <thread>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/stat.h>
+#endif
 #include <unordered_map>
 #include <unordered_set>
 
@@ -41,7 +47,7 @@ struct repo_entry
 {
     fs::path root;
     std::shared_ptr<const repo_badges> badges;  // null until first loaded
-    std::unordered_set<std::string> asked;      // repository-relative
+    string_set asked;                           // repository-relative
     std::unique_ptr<rap::sys::directory_watch> watch;
     clock::time_point used;
 };
@@ -57,6 +63,54 @@ std::string repo_relative(const fs::path& path, const fs::path& root)
     std::string rel = rap::sys::path_to_utf8(path.lexically_relative(root));
     std::ranges::replace(rel, '\\', '/');
     return rel == "." ? std::string() : rel;
+}
+
+#ifdef _WIN32
+constexpr std::string_view k_separators = "/\\";
+#else
+constexpr std::string_view k_separators = "/";
+#endif
+
+bool is_separator(char c)
+{
+    return k_separators.find(c) != std::string_view::npos;
+}
+
+// Whether the UTF-8 `path` is a folder, through a buffer kept per thread
+// rather than a path object made each time.
+bool is_directory(std::string_view path)
+{
+#ifdef _WIN32
+    thread_local std::wstring wide;
+    wide.resize(size_t(MultiByteToWideChar(CP_UTF8, 0, path.data(), int(path.size()), nullptr, 0)));
+    MultiByteToWideChar(CP_UTF8, 0, path.data(), int(path.size()), wide.data(), int(wide.size()));
+    const DWORD a = GetFileAttributesW(wide.c_str());
+    return a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY);
+#else
+    thread_local std::string z;
+    z.assign(path);
+    struct stat st;
+    return ::stat(z.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
+#endif
+}
+
+// `path` inside `root` as git has it: '/'-separated, "" for root itself. A
+// slice of `path` where its separators are git's already; else a buffer
+// kept per thread, good until the next call.
+std::string_view git_relative(std::string_view path, std::string_view root)
+{
+    if (path.size() <= root.size() + 1) return {};
+    std::string_view rel = path.substr(root.size() + 1);
+#ifdef _WIN32
+    if (rel.find('\\') != std::string_view::npos)
+    {
+        thread_local std::string slashed;
+        slashed.assign(rel);
+        std::ranges::replace(slashed, '\\', '/');
+        return slashed;
+    }
+#endif
+    return rel;
 }
 
 // Under .git, what changes without changing any file's status: objects,
@@ -77,14 +131,14 @@ struct badge_cache::impl
     std::function<void(const std::vector<fs::path>&)> changed;
     std::mutex m;
     std::condition_variable wake;
-    std::unordered_map<std::string, std::shared_ptr<repo_entry>> repos;  // by root
+    string_map<std::shared_ptr<repo_entry>> repos;  // by root
     struct root_memo
     {
-        std::optional<fs::path> root;
+        std::optional<std::string> root;
         clock::time_point at;
     };
-    std::unordered_map<std::string, root_memo> roots;  // by folder
-    std::map<std::string, clock::time_point> due;      // roots to load, and when
+    string_map<root_memo> roots;                                // by folder
+    std::map<std::string, clock::time_point, std::less<>> due;  // roots to load, and when
     // Each repository met: its top folder's badge, and when that was learnt
     // (seconds since the epoch, so it means something across runs).
     struct summary
@@ -92,36 +146,37 @@ struct badge_cache::impl
         badge b = badge::none;
         int64_t at = 0;
     };
-    std::unordered_map<std::string, summary> summaries;    // by root
-    std::map<std::string, clock::time_point> due_summary;  // roots to summarise
+    string_map<summary> summaries;                                      // by root
+    std::map<std::string, clock::time_point, std::less<>> due_summary;  // roots to summarise
     fs::path summaries_file;
     std::atomic<clock::rep> last_ask{clock::now().time_since_epoch().count()};
     bool stopping = false;
     std::thread worker;
 
     // The working tree holding `folder` (itself, if it has a .git), or
-    // nullopt; inside a .git folder there's none.
-    std::optional<fs::path> root_of(const fs::path& folder)
+    // null; inside a .git folder there's none. Remembered a while by folder,
+    // so a folder met before costs a lookup and no more.
+    const std::string* root_of(std::string_view folder)
     {
-        const std::string k = key(folder);
         const auto now = clock::now();
-        if (auto it = roots.find(k); it != roots.end() && now - it->second.at < k_root_memo)
-            return it->second.root;
-        std::optional<fs::path> found;
+        if (auto it = roots.find(folder); it != roots.end() && now - it->second.at < k_root_memo)
+            return it->second.root ? &*it->second.root : nullptr;
+        std::optional<std::string> found;
         std::error_code ec;
-        for (fs::path d = folder; !d.empty(); d = d.parent_path())
+        for (fs::path d = rap::sys::path_from_utf8(folder); !d.empty(); d = d.parent_path())
         {
             if (d.filename() == ".git") break;
             if (fs::exists(d / ".git", ec))
             {
-                found = d;
+                found = key(d);
                 break;
             }
             if (d == d.parent_path()) break;
         }
         if (roots.size() > 50000) roots.clear();
-        roots[k] = {found, now};
-        return found;
+        auto& memo = roots[std::string(folder)];
+        memo = {std::move(found), now};
+        return memo.root ? &*memo.root : nullptr;
     }
 
     static int64_t seconds_now()
@@ -196,16 +251,24 @@ struct badge_cache::impl
         if (w) e.watch = std::move(*w);
     }
 
-    state look(const fs::path& path)
+    // `path` in UTF-8, as the file manager's extension sends it. Allocates
+    // nothing for paths and folders met before: lookups take the slices.
+    state look(std::string_view path)
     {
         last_ask = clock::now().time_since_epoch().count();
-        std::error_code ec;
-        const bool dir = fs::is_directory(path, ec);
+        while (path.size() > 1 && is_separator(path.back())) path.remove_suffix(1);
+        const bool dir = is_directory(path);
         std::lock_guard lock(m);
-        const auto root = root_of(dir ? path : path.parent_path());
-        if (!root) return {};
-        const std::string k = key(*root);
-        const std::string rel = repo_relative(path, *root);
+        size_t cut = path.size();
+        if (!dir)
+        {
+            cut = path.find_last_of(k_separators);
+            if (cut == std::string_view::npos) return {};
+        }
+        const std::string* found = root_of(path.substr(0, cut));
+        if (!found) return {};
+        const std::string& k = *found;
+        const std::string_view rel = git_relative(path, k);
         // Its own folder, from outside: the summary, unless it's loaded.
         auto loaded = repos.find(k);
         if (rel.empty() && (loaded == repos.end() || !loaded->second->badges))
@@ -219,21 +282,23 @@ struct badge_cache::impl
                 due_summary.emplace(k, clock::now());
                 wake.notify_one();
             }
-            if (loaded != repos.end()) loaded->second->asked.emplace(rel);
+            if (loaded != repos.end() && !loaded->second->asked.contains(rel))
+                loaded->second->asked.emplace(rel);
             return {known != summaries.end() ? known->second.b : badge::none};
         }
-        auto& e = repos[k];
-        if (!e)
+        if (loaded == repos.end())
         {
-            e = std::make_shared<repo_entry>();
-            e->root = *root;
+            auto e = std::make_shared<repo_entry>();
+            e->root = rap::sys::path_from_utf8(k);
             watch(*e);
             schedule(k, clock::now());
+            loaded = repos.emplace(k, std::move(e)).first;
         }
-        e->used = clock::now();
-        if (e->asked.size() < k_max_asked) e->asked.emplace(rel);
-        if (!e->badges) return {};
-        return {e->badges->of(rel), !due.contains(k), e->badges->untracked(rel)};
+        repo_entry& e = *loaded->second;
+        e.used = clock::now();
+        if (e.asked.size() < k_max_asked && !e.asked.contains(rel)) e.asked.emplace(rel);
+        if (!e.badges) return {};
+        return {e.badges->of(rel), !due.contains(k), e.badges->untracked(rel)};
     }
 
     void run()
@@ -350,12 +415,17 @@ badge_cache::~badge_cache()
 
 badge badge_cache::ask(const fs::path& p)
 {
-    return impl_->look(p).b;
+    return impl_->look(rap::sys::path_to_utf8(p)).b;
 }
 
 badge_cache::state badge_cache::look(const fs::path& p)
 {
-    return impl_->look(p);
+    return impl_->look(rap::sys::path_to_utf8(p));
+}
+
+badge_cache::state badge_cache::look(std::string_view utf8_path)
+{
+    return impl_->look(utf8_path);
 }
 
 std::chrono::steady_clock::duration badge_cache::idle() const

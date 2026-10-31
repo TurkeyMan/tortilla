@@ -10,6 +10,7 @@
 #include <windows.h>
 #endif
 
+#include <algorithm>
 #include <thread>
 
 namespace tortilla
@@ -37,24 +38,24 @@ void redraw(const std::vector<std::filesystem::path>& paths)
 
 std::string answer_cache_request(badge_cache& cache, std::string_view request)
 {
-    if (request.starts_with("badge "))
-        return std::to_string(
-            int(cache.ask(rap::sys::path_from_utf8(std::string(request.substr(6))))));
+    // The paths are slices of the request, looked up as they are: no copies.
+    if (request.starts_with("badge ")) return std::to_string(int(cache.look(request.substr(6)).b));
     // Tab-separated paths, each answered "<badge> <current> <untracked>"
-    // (the last two 0 or 1), ';' between them.
+    // (one digit each), ';' between them.
     if (request.starts_with("states\t"))
     {
         std::string out;
-        for (size_t at = 7; at <= request.size();)
+        out.reserve(size_t(std::ranges::count(request, '\t')) * 6);
+        for (std::string_view rest = request.substr(7);;)
         {
-            size_t end = request.find('\t', at);
-            if (end == std::string_view::npos) end = request.size();
-            const auto s =
-                cache.look(rap::sys::path_from_utf8(std::string(request.substr(at, end - at))));
+            const size_t tab = rest.find('\t');
+            const auto s = cache.look(rest.substr(0, tab));
             if (!out.empty()) out += ';';
-            out +=
-                std::to_string(int(s.b)) + (s.current ? " 1" : " 0") + (s.untracked ? " 1" : " 0");
-            at = end + 1;
+            out += char('0' + int(s.b));
+            out += s.current ? " 1" : " 0";
+            out += s.untracked ? " 1" : " 0";
+            if (tab == std::string_view::npos) break;
+            rest.remove_prefix(tab + 1);
         }
         return out;
     }
