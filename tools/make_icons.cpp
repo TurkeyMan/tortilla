@@ -16,6 +16,7 @@
 #include <QFile>
 #include <QImage>
 #include <QPainter>
+#include <algorithm>
 #include <cstdio>
 #include <vector>
 
@@ -119,10 +120,23 @@ int main(int argc, char** argv)
     QDir().mkpath(out + "/layers");
     for (int n : {16, 20, 24, 32, 40, 48, 64, 256})
     {
-        body_sq.scaled(n, n, Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
-            .save(out + QString("/layers/body-%1.png").arg(n));
-        shell_sq.scaled(n, n, Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
-            .save(out + QString("/layers/shell-%1.png").arg(n));
+        const QImage icon = at(n);
+        const QImage b = body_sq.scaled(n, n, Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
+                             .convertToFormat(QImage::Format_ARGB32);
+        QImage s = shell_sq.scaled(n, n, Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
+                       .convertToFormat(QImage::Format_ARGB32);
+        // The shell's coverage is what the body leaves of the icon's, so the
+        // two add up to the icon's alpha exactly, each rounded to 8 bits or
+        // not: no pixel on the shell's margin is left short of opaque.
+        for (int y = 0; y < n; ++y)
+            for (int x = 0; x < n; ++x)
+            {
+                const QRgb p = s.pixel(x, y);
+                const int a = std::max(0, qAlpha(icon.pixel(x, y)) - qAlpha(b.pixel(x, y)));
+                s.setPixel(x, y, qRgba(qRed(p), qGreen(p), qBlue(p), a));
+            }
+        b.save(out + QString("/layers/body-%1.png").arg(n));
+        s.save(out + QString("/layers/shell-%1.png").arg(n));
     }
     std::printf("layers: body and shell at 8 sizes\n");
     return 0;
