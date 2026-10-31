@@ -108,17 +108,35 @@ badge repo_badges::of(std::string_view path) const
     return tracked_.contains(std::string(path)) ? badge::clean : badge::none;
 }
 
+namespace
+{
+
+// No optional locks: git status may otherwise refresh the index, which a
+// watcher of the repository would see as a change to load again.
+git_result quiet_status(const std::string& workdir)
+{
+    return run_git(workdir,
+                   {"--no-optional-locks", "status", "--porcelain", "-z", "--untracked-files=no"},
+                   git_output::stdout_only);
+}
+
+}  // namespace
+
 std::expected<repo_badges, std::string> load_badges(const std::string& workdir)
 {
     const git_result tracked = run_git(workdir, {"ls-files", "-z"}, git_output::stdout_only);
     if (!tracked.ok()) return std::unexpected(tracked.output);
-    // No optional locks: git status may otherwise refresh the index, which
-    // a watcher of the repository would see as a change to load again.
-    const git_result status = run_git(
-        workdir, {"--no-optional-locks", "status", "--porcelain", "-z", "--untracked-files=no"},
-        git_output::stdout_only);
+    const git_result status = quiet_status(workdir);
     if (!status.ok()) return std::unexpected(status.output);
     return repo_badges::build(tracked.output, status.output);
+}
+
+std::expected<badge, std::string> load_summary(const std::string& workdir)
+{
+    const git_result status = quiet_status(workdir);
+    if (!status.ok()) return std::unexpected(status.output);
+    const badge b = repo_badges::build({}, status.output).of("");
+    return b == badge::none ? badge::clean : b;
 }
 
 }  // namespace tortilla

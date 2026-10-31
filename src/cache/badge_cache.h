@@ -1,9 +1,13 @@
 // The badges' status cache: what tortilla cache serves the file manager
 // extensions. It answers at once from what it knows, and works out the rest
-// in the background: a repository is loaded on its first question (its
-// files have no badge until then), then watched and loaded again when it
-// changes. Paths asked about whose badge changed are reported, so the file
-// manager can draw them again.
+// in the background: a repository is loaded when something inside it is
+// asked about (its files have no badge until then), then watched and loaded
+// again when it changes. A repository's own folder, seen from outside it,
+// shows a summary instead: remembered for every repository met, across
+// runs, and refreshed with a plain git status when it's a while old, so a
+// folder of repositories shows each one's state without loading them all.
+// Paths asked about whose badge changed are reported, so the file manager
+// can draw them again.
 #pragma once
 
 #include "git/badges.h"
@@ -22,7 +26,10 @@ class badge_cache
 public:
     // `changed` gets paths asked about whose badge changed, from the
     // cache's own thread.
-    explicit badge_cache(std::function<void(const std::vector<std::filesystem::path>&)> changed);
+    // `summaries`: where the repositories' summaries are kept between runs;
+    // empty for Tortilla's cache folder.
+    explicit badge_cache(std::function<void(const std::vector<std::filesystem::path>&)> changed,
+                         std::filesystem::path summaries = {});
     ~badge_cache();
 
     // Never waits on git.

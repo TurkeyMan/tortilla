@@ -1438,12 +1438,14 @@ int main(int argc, char** argv)
            "user.name=Ada -c user.email=ada@example.com commit -qm one");
         std::mutex m;
         std::vector<std::filesystem::path> redrawn;
+        const auto summaries = std::filesystem::path(argv[1]) / "badge-summaries";
         tortilla::badge_cache cache(
             [&](const std::vector<std::filesystem::path>& paths)
             {
                 std::lock_guard lock(m);
                 redrawn.insert(redrawn.end(), paths.begin(), paths.end());
-            });
+            },
+            summaries);
         const auto file = std::filesystem::path(r) / "src" / "a.txt";
         check(cache.ask(file) == badge::none,
               "badge cache: nothing until the repository is loaded");
@@ -1478,6 +1480,24 @@ int main(int argc, char** argv)
         check(tortilla::answer_cache_request(cache, "badge " + rap::sys::path_to_utf8(file)) ==
                   std::to_string(int(badge::modified)),
               "badge cache: the request's answer");
+
+        // A repository seen only from outside: its folder's summary, from a
+        // plain status, without loading the repository.
+        const std::string other = std::string(argv[1]) + "/badge-cache-other";
+        sh("git init -q -b main '" + other + "' && echo o > '" + other + "/o.txt' && cd '" + other +
+           "' && git -c user.name=Ada -c user.email=ada@example.com add . && git -c "
+           "user.name=Ada -c user.email=ada@example.com commit -qm one && echo x >> o.txt");
+        const std::filesystem::path other_root(other), other_file = other_root / "o.txt";
+        check(cache.ask(other_root) == badge::none, "badge cache: an unknown repository, none yet");
+        for (int i = 0; i < 100 && cache.ask(other_root) != badge::modified; ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        check(cache.ask(other_root) == badge::modified,
+              "badge cache: a repository's folder from its summary");
+        check(cache.ask(other_file) == badge::none,
+              "badge cache: the summary didn't load the repository");
+        tortilla::badge_cache later([](const std::vector<std::filesystem::path>&) {}, summaries);
+        check(later.ask(other_root) == badge::modified,
+              "badge cache: summaries remembered across runs");
     }
 
     std::printf("%s\n", failures ? "FAILED" : "all passed");

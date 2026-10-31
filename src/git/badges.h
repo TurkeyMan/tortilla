@@ -45,4 +45,8 @@ private:
 // Runs git in `workdir` (the top of a working tree) for its badges.
 std::expected<repo_badges, std::string> load_badges(const std::string& workdir);
 
+// Just the top folder's badge, cheaply: git status alone, without listing
+// every tracked file. Clean when nothing's changed.
+std::expected<badge, std::string> load_summary(const std::string& workdir);
+
 }  // namespace tortilla

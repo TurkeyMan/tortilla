@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <atomic>
 #include <condition_variable>
+#include <cstdio>
+#include <fstream>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -31,6 +33,9 @@ constexpr auto k_root_memo = std::chrono::seconds(30);
 // Paths remembered per repository, to say which changed: beyond this, a
 // load reports none (the file manager redraws what it shows soon enough).
 constexpr size_t k_max_asked = 100000;
+// A repository's summary older than this is refreshed when its folder is
+// shown (the stale one shown meanwhile).
+constexpr auto k_summary_stale = std::chrono::minutes(2);
 
 struct repo_entry
 {
@@ -80,6 +85,16 @@ struct badge_cache::impl
     };
     std::unordered_map<std::string, root_memo> roots;  // by folder
     std::map<std::string, clock::time_point> due;      // roots to load, and when
+    // Each repository met: its top folder's badge, and when that was learnt
+    // (seconds since the epoch, so it means something across runs).
+    struct summary
+    {
+        badge b = badge::none;
+        int64_t at = 0;
+    };
+    std::unordered_map<std::string, summary> summaries;    // by root
+    std::map<std::string, clock::time_point> due_summary;  // roots to summarise
+    fs::path summaries_file;
     std::atomic<clock::rep> last_ask{clock::now().time_since_epoch().count()};
     bool stopping = false;
     std::thread worker;
@@ -107,6 +122,53 @@ struct badge_cache::impl
         if (roots.size() > 50000) roots.clear();
         roots[k] = {found, now};
         return found;
+    }
+
+    static int64_t seconds_now()
+    {
+        return std::chrono::duration_cast<std::chrono::seconds>(
+                   std::chrono::system_clock::now().time_since_epoch())
+            .count();
+    }
+
+    // "<badge> <seconds> <root>" a line each.
+    void load_summaries()
+    {
+        std::ifstream in(summaries_file, std::ios::binary);
+        for (std::string line; std::getline(in, line);)
+        {
+            int b = 0;
+            long long at = 0;
+            int used = 0;
+            if (std::sscanf(line.c_str(), "%d %lld %n", &b, &at, &used) == 2 && used > 0 && b > 0 &&
+                b <= int(badge::added))
+                summaries[line.substr(size_t(used))] = {badge(b), at};
+        }
+    }
+
+    // Written aside, then moved over the old: never half a file.
+    void save_summaries() const
+    {
+        std::error_code ec;
+        fs::create_directories(summaries_file.parent_path(), ec);
+        const fs::path temp = summaries_file.string() + ".new";
+        {
+            std::ofstream out(temp, std::ios::binary | std::ios::trunc);
+            for (const auto& [root, s] : summaries)
+                out << int(s.b) << ' ' << s.at << ' ' << root << '\n';
+            if (!out) return;
+        }
+        fs::rename(temp, summaries_file, ec);
+    }
+
+    // Learns a repository's summary: true if it differs from what was known.
+    bool learn(const std::string& root, badge b)
+    {
+        summary& s = summaries[root];
+        const bool differs = s.b != b;
+        s = {b, seconds_now()};
+        save_summaries();
+        return differs;
     }
 
     void schedule(const std::string& root, clock::time_point when)
@@ -143,6 +205,23 @@ struct badge_cache::impl
         const auto root = root_of(dir ? path : path.parent_path());
         if (!root) return badge::none;
         const std::string k = key(*root);
+        const std::string rel = repo_relative(path, *root);
+        // Its own folder, from outside: the summary, unless it's loaded.
+        auto loaded = repos.find(k);
+        if (rel.empty() && (loaded == repos.end() || !loaded->second->badges))
+        {
+            const auto known = summaries.find(k);
+            if ((known == summaries.end() ||
+                 seconds_now() - known->second.at >
+                     std::chrono::duration_cast<std::chrono::seconds>(k_summary_stale).count()) &&
+                !due_summary.contains(k) && loaded == repos.end())
+            {
+                due_summary.emplace(k, clock::now());
+                wake.notify_one();
+            }
+            if (loaded != repos.end()) loaded->second->asked.emplace(rel);
+            return known != summaries.end() ? known->second.b : badge::none;
+        }
         auto& e = repos[k];
         if (!e)
         {
@@ -152,7 +231,6 @@ struct badge_cache::impl
             schedule(k, clock::now());
         }
         e->used = clock::now();
-        const std::string rel = repo_relative(path, *root);
         if (e->asked.size() < k_max_asked) e->asked.emplace(rel);
         return e->badges ? e->badges->of(rel) : badge::none;
     }
@@ -180,13 +258,31 @@ struct badge_cache::impl
                 lock.lock();
                 continue;
             }
-            if (due.empty())
+            auto next = std::ranges::min_element(due, {}, [](const auto& d) { return d.second; });
+            const bool load_due = next != due.end() && next->second <= now;
+            // Summaries wait for loads: a repository being worked in first.
+            if (!load_due && !due_summary.empty())
+            {
+                const std::string root = due_summary.begin()->first;
+                due_summary.erase(due_summary.begin());
+                if (repos.contains(root)) continue;  // being loaded: that tells it
+                lock.unlock();
+                auto b = load_summary(root);
+                lock.lock();
+                if (b && learn(root, *b) && changed)
+                {
+                    lock.unlock();
+                    changed({rap::sys::path_from_utf8(root)});
+                    lock.lock();
+                }
+                continue;
+            }
+            if (next == due.end())
             {
                 wake.wait_for(lock, std::chrono::minutes(1));
                 continue;
             }
-            auto next = std::ranges::min_element(due, {}, [](const auto& d) { return d.second; });
-            if (next->second > now)
+            if (!load_due)
             {
                 wake.wait_until(lock, next->second);
                 continue;
@@ -206,7 +302,14 @@ struct badge_cache::impl
                 if ((entry->badges ? entry->badges->of(rel) : badge::none) != fresh->of(rel))
                     differ.push_back(rel.empty() ? entry->root
                                                  : entry->root / rap::sys::path_from_utf8(rel));
+            const bool had = entry->badges != nullptr;
+            const badge top = fresh->of("");
+            if (top != badge::none) learn(root, top);
             entry->badges = std::move(fresh);
+            // Its folder showed the summary until now.
+            if (!had && entry->asked.contains("") &&
+                std::ranges::find(differ, entry->root) == differ.end())
+                differ.push_back(entry->root);
             if (!differ.empty() && changed)
             {
                 lock.unlock();
@@ -217,10 +320,14 @@ struct badge_cache::impl
     }
 };
 
-badge_cache::badge_cache(std::function<void(const std::vector<fs::path>&)> changed)
+badge_cache::badge_cache(std::function<void(const std::vector<fs::path>&)> changed,
+                         fs::path summaries)
     : impl_(std::make_unique<impl>())
 {
     impl_->changed = std::move(changed);
+    impl_->summaries_file =
+        summaries.empty() ? rap::sys::cache_dir("tortilla") / "repositories" : summaries;
+    impl_->load_summaries();
     impl_->worker = std::thread([i = impl_.get()] { i->run(); });
 }
 
