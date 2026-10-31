@@ -5,6 +5,7 @@
 #include "changes/file_model.h"
 #include "changes/working_tree.h"
 #include "git/archive.h"
+#include "git/badges.h"
 #include "git/blame.h"
 #include "git/clean.h"
 #include "git/command.h"
@@ -1349,6 +1350,54 @@ int main(int argc, char** argv)
              !ec && it != std::filesystem::recursive_directory_iterator(); it.increment(ec))
             objects += it->is_regular_file();
         check(objects == 3, "LFS: a push uploads the new file to the remote's LFS store");
+    }
+
+    // Badges on file manager icons: from git's answers, then a real repository.
+    {
+        using tortilla::badge;
+        using namespace std::string_literals;
+        const auto b = tortilla::repo_badges::build("a.txt\0src/x.cpp\0src/y.cpp\0src/deep/z.h\0"s,
+                                                    " M src/x.cpp\0R  src/new.cpp\0src/y.cpp\0"s);
+        check(b.of("a.txt") == badge::clean && b.of("src/deep/z.h") == badge::clean,
+              "badges: tracked and unchanged files are clean");
+        check(b.of("src/x.cpp") == badge::modified && b.of("src/new.cpp") == badge::added,
+              "badges: modified, and a rename's new name added");
+        check(b.of("src/deep") == badge::clean && b.of("src") == badge::modified &&
+                  b.of("src/") == badge::modified && b.of("") == badge::modified,
+              "badges: a folder sums up what's inside it");
+        check(b.of("nope.txt") == badge::none && b.of("srcs") == badge::none,
+              "badges: untracked paths have none");
+
+        const std::string r = std::string(argv[1]) + "/badges";
+        auto in = [&]
+        { return "cd '" + r + "' && git -c user.name=Ada -c user.email=ada@example.com "; };
+        sh("git init -q -b main '" + r + "' && mkdir -p '" + r + "/lib/sub' '" + r + "/docs'");
+        sh("cd '" + r +
+           "' && echo a > a.txt && echo m > lib/m.txt && echo c > lib/sub/c.txt && "
+           "echo d > docs/d.txt && echo k > keep.txt && " +
+           in() + "add . && " + in() + "commit -qm one");
+        sh(in() + "checkout -qb other && echo theirs > '" + r + "/keep.txt' && " + in() +
+           "commit -qam theirs && " + in() + "checkout -q main && echo ours > '" + r +
+           "/keep.txt' && " + in() + "commit -qam ours");
+        sh(in() + "merge -q other >/dev/null 2>&1 || true");
+        sh("echo changed >> '" + r + "/lib/m.txt' && echo new > '" + r + "/lib/sub/n.txt' && " +
+           in() + "add lib/sub/n.txt && echo stray > '" + r + "/stray.txt'");
+        const auto live = tortilla::load_badges(r);
+        check(live.has_value(), "badges: git answers in a real repository");
+        if (live)
+        {
+            check(live->of("a.txt") == badge::clean && live->of("docs") == badge::clean &&
+                      live->of("docs/d.txt") == badge::clean,
+                  "badges: clean files and folders");
+            check(live->of("lib/m.txt") == badge::modified &&
+                      live->of("lib/sub/n.txt") == badge::added &&
+                      live->of("keep.txt") == badge::conflicted,
+                  "badges: modified, added and conflicted files");
+            check(live->of("lib/sub") == badge::modified && live->of("lib") == badge::modified &&
+                      live->of("") == badge::conflicted,
+                  "badges: folders take the strongest inside, conflicted over modified");
+            check(live->of("stray.txt") == badge::none, "badges: an untracked file has none");
+        }
     }
 
     std::printf("%s\n", failures ? "FAILED" : "all passed");

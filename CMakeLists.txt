@@ -82,6 +82,7 @@ add_library(tortilla_git STATIC
     src/git/blame.cpp
     src/git/tree_list.cpp
     src/git/archive.cpp
+    src/git/badges.cpp
     src/git/submodule.cpp
     src/changes/working_tree.cpp)
 target_include_directories(tortilla_git PUBLIC src)
