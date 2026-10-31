@@ -7,7 +7,10 @@
 ; The extension is registered for every user (tortilla --register-shell
 ; --all-users). Explorer keeps it loaded, so it can't be overwritten or
 ; deleted while Explorer runs; it can be renamed, so an upgrade or uninstall
-; moves the old one aside and deletes it at the next restart.
+; moves the old one aside. Then Explorer is restarted (tortilla
+; --restart-explorer, through Windows' Restart Manager, which starts it
+; again as its user, not as Setup): the old extension is deleted while it's
+; stopped, and the new one, with its badges, loads as it starts. No reboot.
 
 Unicode true
 !include "MUI2.nsh"
@@ -49,6 +52,9 @@ VIAddVersionKey "LegalCopyright" "Manu Evans, GPL-3.0"
 ; lose, so stopped without asking; Explorer's extension starts it again.
 !define PS_TORTILLA_CACHE `powershell.exe -NoProfile -NonInteractive -Command "Get-CimInstance Win32_Process -Filter \"Name='tortilla.exe'\" | Where-Object { $$_.ExecutablePath -eq '$INSTDIR\bin\tortilla.exe' -and $$_.CommandLine -match ' cache$$' } | ForEach-Object { Stop-Process -Id $$_.ProcessId -Force }"`
 
+Var Asked     ; the programs using Tortilla's files were listed, and closing them agreed
+Var Leftover  ; the old extension, moved aside but still loaded, else ""
+
 !macro CloseTortilla
   nsExec::Exec `${PS_TORTILLA_CACHE}`
   Pop $R1
@@ -65,8 +71,10 @@ VIAddVersionKey "LegalCopyright" "Manu Evans, GPL-3.0"
       ${Break}
     ${EndIf}
     ${If} $R0 == 0
-      MessageBox MB_ICONINFORMATION|MB_OKCANCEL "Tortilla is running. Setup will close its windows to continue;$\r$\nanything unsaved in them (a commit message, say) is lost." /SD IDOK IDOK +2
-      Abort
+      ${If} $Asked != 1
+        MessageBox MB_ICONINFORMATION|MB_OKCANCEL "Tortilla is running. Setup will close its windows to continue;$\r$\nanything unsaved in them (a commit message, say) is lost." /SD IDOK IDOK +2
+        Abort
+      ${EndIf}
       nsExec::Exec `${PS_TORTILLA} | ForEach-Object { [void]$$_.CloseMainWindow() }"`
       Pop $R1
     ${ElseIf} $R0 == 10
@@ -83,14 +91,18 @@ VIAddVersionKey "LegalCopyright" "Manu Evans, GPL-3.0"
   ${Loop}
 !macroend
 
-; Moves a loaded Explorer extension out of the way and deletes it once
-; nothing holds it (now, or at the next restart).
+; Moves the Explorer extension out of the way, deleting it if nothing holds
+; it; if Explorer has it loaded, $Leftover names it, for the restart.
 !macro MoveAsideShellExtension
+  StrCpy $Leftover ""
   ${If} ${FileExists} "$INSTDIR\bin\tortilla-shell.dll"
-    GetTempFileName $0 "$INSTDIR"
-    Delete "$0"
-    Rename "$INSTDIR\bin\tortilla-shell.dll" "$0"
-    Delete /REBOOTOK "$0"
+    GetTempFileName $Leftover "$INSTDIR"
+    Delete "$Leftover"
+    Rename "$INSTDIR\bin\tortilla-shell.dll" "$Leftover"
+    Delete "$Leftover"
+    ${IfNot} ${FileExists} "$Leftover"
+      StrCpy $Leftover ""
+    ${EndIf}
   ${EndIf}
 !macroend
 
@@ -108,10 +120,31 @@ FunctionEnd
 
 Section "Tortilla"
   SetShellVarContext all
+  ; An old extension a past install couldn't delete.
+  Delete "$INSTDIR\ns*.tmp"
+  ; Who has Tortilla's files open (Explorer, its windows), as the Restart
+  ; Manager says, asked by the new tortilla.exe; said before anything closes.
+  StrCpy $Asked 0
+  ${If} ${FileExists} "$INSTDIR\bin\tortilla.exe"
+    nsExec::Exec `${PS_TORTILLA_CACHE}`
+    Pop $R1
+    InitPluginsDir
+    SetOutPath "$PLUGINSDIR"
+    File "${STAGE}\bin\tortilla.exe"
+    nsExec::ExecToStack '"$PLUGINSDIR\tortilla.exe" --in-use "$INSTDIR\bin"'
+    Pop $R1
+    Pop $R2
+    ${If} $R1 == 0
+    ${AndIf} $R2 != ""
+      MessageBox MB_ICONINFORMATION|MB_OKCANCEL "These are using Tortilla's files:$\r$\n$\r$\n$R2$\r$\nSetup will close Tortilla's windows (anything unsaved in them, a commit message say, is lost)$\r$\nand restart Windows Explorer when it's done." /SD IDOK IDOK +2
+      Abort
+      StrCpy $Asked 1
+    ${EndIf}
+  ${EndIf}
   !insertmacro CloseTortilla
   ; A reinstall replaces the old tree rather than mixing DLLs of two versions.
   !insertmacro MoveAsideShellExtension
-  RMDir /r /REBOOTOK "$INSTDIR\bin"
+  RMDir /r "$INSTDIR\bin"
   RMDir /r "$INSTDIR\translations"
   SetOutPath "$INSTDIR"
   File /r "${STAGE}\*"
@@ -135,6 +168,20 @@ Section "Tortilla"
   WriteRegDWORD HKLM "${UNINSTALL_KEY}" "NoModify" 1
   WriteRegDWORD HKLM "${UNINSTALL_KEY}" "NoRepair" 1
 
+  ; Explorer loads the extension, and its badges, as it starts: restarted
+  ; now, which also lets go of the old one. Said beforehand if it was using
+  ; the files; otherwise asked.
+  StrCpy $R1 0
+  ${If} $Asked == 1
+  ${OrIf} $Leftover != ""
+    StrCpy $R1 1
+  ${ElseIf} ${Cmd} `MessageBox MB_ICONQUESTION|MB_YESNO "Restart Windows Explorer now, so Tortilla's badges show?$\r$\nIts windows close, and the taskbar is back in a moment. Otherwise they show after you next sign in." /SD IDYES IDYES`
+    StrCpy $R1 1
+  ${EndIf}
+  ${If} $R1 == 1
+    ExecWait '"$INSTDIR\bin\tortilla.exe" --restart-explorer "$Leftover"'
+  ${EndIf}
+
   ; Tortilla runs git itself; say so now rather than at first use.
   SearchPath $1 "git.exe"
   ${If} $1 == ""
@@ -147,14 +194,19 @@ Section "Uninstall"
   !insertmacro CloseTortilla
   ExecWait '"$INSTDIR\bin\tortilla.exe" --unregister-shell --all-users'
   !insertmacro MoveAsideShellExtension
+  ; Explorer lets go of the extension as it restarts, and it's deleted then.
+  ${If} $Leftover != ""
+    ExecWait '"$INSTDIR\bin\tortilla.exe" --restart-explorer "$Leftover"'
+  ${EndIf}
   Delete "$SMPROGRAMS\Tortilla.lnk"
-  RMDir /r /REBOOTOK "$INSTDIR\bin"
+  RMDir /r "$INSTDIR\bin"
   RMDir /r "$INSTDIR\translations"
   Delete "$INSTDIR\README.md"
   Delete "$INSTDIR\LICENSE"
   Delete "$INSTDIR\NOTICES.md"
   Delete "$INSTDIR\uninstall.exe"
-  RMDir /REBOOTOK "$INSTDIR"
+  Delete "$INSTDIR\ns*.tmp"
+  RMDir "$INSTDIR"
   DeleteRegKey HKLM "${UNINSTALL_KEY}"
   DeleteRegKey HKLM "Software\Tortilla"
 SectionEnd

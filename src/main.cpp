@@ -43,6 +43,11 @@
 //   tortilla diff [path] rev [rev2]   a commit, or rev..rev2, as a unified diff
 //   tortilla settings [path] [diff|menu|network|remotes]  the Settings dialog (at that page)
 //   tortilla --which-ui       show the detected desktop and backend order
+//   tortilla --in-use DIR     (Windows, for the installer) the programs holding
+//                             a file in DIR, a line each
+//   tortilla --restart-explorer [FILE...]  (Windows, for the installer)
+//                             restart Explorer as its user, deleting FILEs
+//                             while it's stopped
 //   tortilla --register-shell / --unregister-shell [--all-users]
 //                             add or remove the file manager's context menu,
 //                             for this user or (elevated, as the installer
@@ -88,6 +93,7 @@
 #include "ui/trust_repository.h"
 #include "ui/welcome_window.h"
 #include "ui/windows.h"
+#include "util/restart_explorer.h"
 
 #include <rapport/rapport.h>
 #include <rapport/shell.h>
@@ -204,6 +210,23 @@ int main(int argc, char** argv)
             for (auto& b : d.preference) std::printf(" %s", b.c_str());
             std::printf("\n");
             return 0;
+        }
+        else if (std::strcmp(argv[i], "--in-use") == 0 && i + 1 < argc)
+        {
+            // For the installer: who holds a file in the folder, a line each.
+            for (const std::string& name : tortilla::programs_using(argv[i + 1]))
+                std::printf("%s\n", name.c_str());
+            return 0;
+        }
+        else if (std::strcmp(argv[i], "--restart-explorer") == 0)
+        {
+            // For the installer: Explorer restarted to load the extension,
+            // the files after it (the old extension, moved aside) deleted
+            // meanwhile.
+            std::vector<std::string> leftovers;
+            for (int j = i + 1; j < argc; ++j)
+                if (*argv[j]) leftovers.push_back(argv[j]);  // the installer's "" for none
+            return tortilla::restart_explorer(leftovers) ? 0 : 1;
         }
         else if (std::strcmp(argv[i], "--register-shell") == 0 ||
                  std::strcmp(argv[i], "--unregister-shell") == 0)
