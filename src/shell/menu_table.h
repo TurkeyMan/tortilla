@@ -52,7 +52,7 @@ struct when
 enum class place
 {
     sub,
-    top,    // in TortoiseGit's default top-level mask
+    top,    // at the top level by default: TortoiseGit's, and Diff, Show log and Revert
     shift,  // in its default extended mask: only with Shift held
 };
 
@@ -150,13 +150,13 @@ inline constexpr row k_rows[] = {
     {"SVN Fetch", {{{FIG | SVN | ONE, 0}}}, place::sub, run::none, "svnfetch"},
     {"Import SVN Ignore ...", {{{FIG | SVN | ONE, 0}}}, place::shift, run::none, "svnignore"},
     separator,
-    {"&Diff", {{{GIT | ONE, 0}, {TWO, FOLD}}}, place::sub, run::diff, "diff"},
+    {"&Diff", {{{GIT | ONE, 0}, {TWO, FOLD}}}, place::top, run::diff, "diff"},
     {"Diff later", {{{ONE, FOLD}}}, place::sub, run::diff_later, "difflater"},
     {"&Diff with previous version", {{{GIT | ONE, ADDED}}}, place::sub, run::prevdiff, "prevdiff"},
     separator,
     {"Show &log",
      {{{GIT | ONE, ADDED}, {FOLD | FIG | ONE, ADDED}, {FIG | ONE, ADDED}, {BARE, 0}}},
-     place::sub,
+     place::top,
      run::log,
      "log"},
     {"Show log of this folder",
@@ -220,7 +220,7 @@ inline constexpr row k_rows[] = {
      place::sub,
      run::remove_keep,
      "removekeep"},
-    {"Re&vert...", {{{GIT, NORMAL}, {FIG, 0}}}, place::sub, run::revert, "revert"},
+    {"Re&vert...", {{{GIT, NORMAL}, {FIG, 0}}}, place::top, run::revert, "revert"},
     {"&Clean up...", {{{FIG | FOLD, 0}}}, place::sub, run::cleanup, "cleanup"},
     separator,
     // (LFS: a submenu only when the repository has <gitdir>/lfs [spec 4.4].)
