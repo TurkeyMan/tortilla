@@ -6,6 +6,7 @@
 #include "i18n.h"
 #include "log/log_window.h"
 #include "settings.h"
+#include "ui/repo_icon.h"
 #include "ui/windows.h"
 
 #include <rapport/sys.h>
@@ -123,7 +124,8 @@ private:
         std::string folder = rap::sys::path_to_utf8(top.parent_path().make_preferred());
         if (!folder.empty() && folder.back() != fs::path::preferred_separator)
             folder += char(fs::path::preferred_separator);
-        window_ = ui_.create(
+        window_ = create_window(
+            ui_,
             dialog{_("Add Worktree"),
                    {vbox{
                        group{_("Folder"),
@@ -245,7 +247,8 @@ void worktree_window::build()
 {
     using namespace rap::layout;
     using namespace rap::literals;
-    window_ = ui_.create(
+    window_ = create_window(
+        ui_,
         dialog{rap::i18n::format(_("{0} - Worktrees - Tortilla"), shown_path(dir_)),
                {vbox{
                    list{columns(), rows_.get()}

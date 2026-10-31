@@ -4,6 +4,7 @@
 #include "i18n.h"
 #include "settings.h"
 #include "ui/progress_dialog.h"
+#include "ui/repo_icon.h"
 
 #include <rapport/sys.h>
 
@@ -145,7 +146,8 @@ void export_revision(rap::ui& ui, rap::window* parent, const std::string& workdi
 
     using namespace rap::layout;
     using namespace rap::literals;
-    st->window = ui.create(
+    st->window = create_window(
+        ui,
         dialog{_("Export"),
                {vbox{
                    form{

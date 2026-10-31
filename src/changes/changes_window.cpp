@@ -6,6 +6,7 @@
 #include "settings.h"
 #include "ui/diff_window.h"
 #include "ui/progress_dialog.h"
+#include "ui/repo_icon.h"
 #include "ui/settings_dialog.h"
 #include "ui/stash_dialog.h"
 #include "ui/windows.h"
@@ -113,68 +114,71 @@ void changes_window::build()
         files_.save_layout();
         if (closed_) closed_();
     };
-    window_ = ui_.create(window{
-        _("Working Tree"),
-        {vbox{
-            label{}.ellipsize().bind(branch_),
-            files_.list("changes.files").stretch(),
-            label{}.bind(note_),
-            hbox{
-                vbox{
-                    check{_("Show un_versioned files"), flag(k_unversioned, true)}
-                        .bind(unversioned_)
-                        .enabled(one_folder)
-                        .on_toggled(
-                            [this](bool on)
-                            {
-                                set_flag(k_unversioned, on);
-                                reload();
-                            }),
-                    check{_("Show ignore local changes flagged files")}
-                        .bind(local_ignored_)
-                        .on_toggled([this](bool) { reload(); }),
-                    check{_("Show i_gnored files")}
-                        .bind(ignored_)
-                        .enabled(one_folder)
-                        .on_toggled([this](bool) { reload(); }),
-                    check{_("Show all _staged files"), flag(k_all_staged, true)}
-                        .bind(all_staged_)
-                        .on_toggled(
-                            [this](bool on)
-                            {
-                                set_flag(k_all_staged, on);
-                                reload();
-                            }),
-                    // At the repository's root it's the whole project anyway.
-                    check{_("Show _Whole Project"), root_ || flag(whole_project_key(workdir_), false)}
-                        .bind(whole_project_)
-                        .enabled(!root_)
-                        .on_toggled(
-                            [this](bool on)
-                            {
-                                set_flag(whole_project_key(workdir_), on);
-                                reload();
-                            }),
-                },
-                spacer{},
-                label{}.bind(stats_),
-            },
-            hbox{
-                spacer{},
-                button{_("Save unified diff")}.on_click([this] { show_unified_diff_of_paths(); }),
-                menu_button{_("Stash")}.on_menu([this] { return stash_menu(); }),
-                button{_("Commit")}.on_click([this] { open_commit(); }),
-                button{_("_Refresh")}.bind(refresh_).on_click([this] { reload(); }),
-                // Always OK, closing even mid-load (TortoiseGit relabels it
-                // Cancel while loading, which only flickers).
-                button{_("OK")}.on_click(
-                    [this, close]
-                    {
-                        close();
-                        window_->close();
-                    }),
-            },
-        }}}.size(110_ch, 32_lines));
+    window_ = create_window(
+        ui_, window{_("Working Tree"),
+                    {vbox{
+                        label{}.ellipsize().bind(branch_),
+                        files_.list("changes.files").stretch(),
+                        label{}.bind(note_),
+                        hbox{
+                            vbox{
+                                check{_("Show un_versioned files"), flag(k_unversioned, true)}
+                                    .bind(unversioned_)
+                                    .enabled(one_folder)
+                                    .on_toggled(
+                                        [this](bool on)
+                                        {
+                                            set_flag(k_unversioned, on);
+                                            reload();
+                                        }),
+                                check{_("Show ignore local changes flagged files")}
+                                    .bind(local_ignored_)
+                                    .on_toggled([this](bool) { reload(); }),
+                                check{_("Show i_gnored files")}
+                                    .bind(ignored_)
+                                    .enabled(one_folder)
+                                    .on_toggled([this](bool) { reload(); }),
+                                check{_("Show all _staged files"), flag(k_all_staged, true)}
+                                    .bind(all_staged_)
+                                    .on_toggled(
+                                        [this](bool on)
+                                        {
+                                            set_flag(k_all_staged, on);
+                                            reload();
+                                        }),
+                                // At the repository's root it's the whole project anyway.
+                                check{_("Show _Whole Project"),
+                                      root_ || flag(whole_project_key(workdir_), false)}
+                                    .bind(whole_project_)
+                                    .enabled(!root_)
+                                    .on_toggled(
+                                        [this](bool on)
+                                        {
+                                            set_flag(whole_project_key(workdir_), on);
+                                            reload();
+                                        }),
+                            },
+                            spacer{},
+                            label{}.bind(stats_),
+                        },
+                        hbox{
+                            spacer{},
+                            button{_("Save unified diff")}.on_click(
+                                [this] { show_unified_diff_of_paths(); }),
+                            menu_button{_("Stash")}.on_menu([this] { return stash_menu(); }),
+                            button{_("Commit")}.on_click([this] { open_commit(); }),
+                            button{_("_Refresh")}.bind(refresh_).on_click([this] { reload(); }),
+                            // Always OK, closing even mid-load (TortoiseGit relabels it
+                            // Cancel while loading, which only flickers).
+                            button{_("OK")}.on_click(
+                                [this, close]
+                                {
+                                    close();
+                                    window_->close();
+                                }),
+                        },
+                    }}}
+                 .size(110_ch, 32_lines));
 
     window_->on_close_request(
         [close]

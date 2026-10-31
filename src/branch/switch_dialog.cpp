@@ -9,6 +9,7 @@
 #include "remote/pull_fetch_dialog.h"
 #include "settings.h"
 #include "ui/progress_dialog.h"
+#include "ui/repo_icon.h"
 #include "ui/windows.h"
 
 #include <rapport/sys.h>
@@ -53,35 +54,39 @@ void switch_dialog::build(const std::string& target)
     std::string root = workdir_;
     while (root.size() > 1 && (root.back() == '/' || root.back() == '\\')) root.pop_back();
     root = rap::sys::path_to_utf8(rap::sys::path_from_utf8(root).make_preferred());
-    window_ = ui_.create(dialog{
-        rap::i18n::format(_("{0} - Switch/Checkout - Tortilla"), root),
-        {vbox{
-            target_.layout({.caption = _("Switch To"), .ui = &ui_, .window = [this] { return window_.get(); }}),
-            group{_("Option"),
-                  vbox{
-                      hbox{
-                          check{_("Create _New Branch")}
-                              .bind(new_branch_)
-                              .on_toggled([this](bool) { update_state(); }),
-                          entry{}.bind(name_).stretch().on_changed(
-                              [this](const std::string& n)
-                              {
-                                  // Renamed away from the remote branch: no tracking [spec 8.3.2].
-                                  if (target_.name().starts_with("remotes/") &&
-                                      !target_.name().ends_with("/" + n))
-                                      track_->set_checked(false);
-                              }),
-                      },
-                      hbox{
-                          check{_("Overwrite working tree changes (_force)")}.bind(force_),
-                          check{_("_Merge")}.bind(merge_),
-                          spacer{},
-                      },
-                      check{_("T_rack")}.bind(track_),
-                      check{_("_Override branch if exists")}.bind(override_),
-                  }},
-            buttons{dialog_button{rap::dialog_role::ok, ""}.on_click([this] { ok(); }), cancel},
-        }}});
+    window_ = create_window(
+        ui_,
+        dialog{
+            rap::i18n::format(_("{0} - Switch/Checkout - Tortilla"), root),
+            {vbox{
+                target_.layout({.caption = _("Switch To"),
+                                .ui = &ui_,
+                                .window = [this] { return window_.get(); }}),
+                group{_("Option"),
+                      vbox{
+                          hbox{
+                              check{_("Create _New Branch")}
+                                  .bind(new_branch_)
+                                  .on_toggled([this](bool) { update_state(); }),
+                              entry{}.bind(name_).stretch().on_changed(
+                                  [this](const std::string& n)
+                                  {
+                                      // Renamed away from the remote branch: no tracking [spec 8.3.2].
+                                      if (target_.name().starts_with("remotes/") &&
+                                          !target_.name().ends_with("/" + n))
+                                          track_->set_checked(false);
+                                  }),
+                          },
+                          hbox{
+                              check{_("Overwrite working tree changes (_force)")}.bind(force_),
+                              check{_("_Merge")}.bind(merge_),
+                              spacer{},
+                          },
+                          check{_("T_rack")}.bind(track_),
+                          check{_("_Override branch if exists")}.bind(override_),
+                      }},
+                buttons{dialog_button{rap::dialog_role::ok, ""}.on_click([this] { ok(); }), cancel},
+            }}});
     window_->on_finished(
         [this](rap::dialog_role)
         {

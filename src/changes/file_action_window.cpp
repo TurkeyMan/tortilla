@@ -4,6 +4,7 @@
 #include "i18n.h"
 #include "settings.h"
 #include "ui/progress_dialog.h"
+#include "ui/repo_icon.h"
 #include "ui/settings_dialog.h"
 
 #include <rapport/sys.h>
@@ -201,19 +202,22 @@ void file_action_window::build()
     options.push_back(spacer{});
     options.push_back(label{}.bind(note_));
 
-    window_ = ui_.create(window{
-        title(),
-        {vbox{
-            files_.list(settings_key() + ".files", true).stretch(),
-            rap::node{rap::spec::box{rap::layout::horizontal, std::move(options), false, {}}, {}},
-            hbox{
-                spacer{},
-                button{_("OK")}.bind(ok_).enabled(false).on_click([this]
-                                                               { run(files_.checked_files()); }),
-                button{_("Cancel")}.on_click([this] { close(false); }),
-            },
-        }}}.size(action_ == file_action::revert ? 90_ch : 80_ch,
-                 action_ == file_action::revert ? 32_lines : 24_lines));
+    window_ = create_window(
+        ui_,
+        window{title(),
+               {vbox{
+                   files_.list(settings_key() + ".files", true).stretch(),
+                   rap::node{rap::spec::box{rap::layout::horizontal, std::move(options), false, {}},
+                             {}},
+                   hbox{
+                       spacer{},
+                       button{_("OK")}.bind(ok_).enabled(false).on_click(
+                           [this] { run(files_.checked_files()); }),
+                       button{_("Cancel")}.on_click([this] { close(false); }),
+                   },
+               }}}
+            .size(action_ == file_action::revert ? 90_ch : 80_ch,
+                  action_ == file_action::revert ? 32_lines : 24_lines));
 
     window_->on_close_request(
         [this]

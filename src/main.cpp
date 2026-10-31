@@ -79,6 +79,7 @@
 #include "ui/export_dialog.h"
 #include "ui/progress_dialog.h"
 #include "ui/repo_browser.h"
+#include "ui/repo_icon.h"
 #include "ui/settings_dialog.h"
 #include "ui/stash_dialog.h"
 #include "ui/submodule_dialogs.h"
@@ -301,6 +302,10 @@ int main(int argc, char** argv)
         }
         if (!go_on) return 1;
     }
+
+    // Windows of a repository carry its colour on the taskbar.
+    if (command != "clone" && command != "repocreate" && command != "about")
+        tortilla::use_repo_icon(**ui, path);
 
     if (command == "settings")
     {

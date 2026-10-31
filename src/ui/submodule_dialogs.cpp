@@ -7,6 +7,7 @@
 #include "i18n.h"
 #include "settings.h"
 #include "ui/progress_dialog.h"
+#include "ui/repo_icon.h"
 
 #include <rapport/sys.h>
 
@@ -297,7 +298,8 @@ void add_submodule(rap::ui& ui, rap::window* parent, const std::string& workdir,
 
     using namespace rap::layout;
     using namespace rap::literals;
-    st->window = ui.create(
+    st->window = create_window(
+        ui,
         dialog{
             _("Submodule Add"),
             {vbox{
@@ -362,7 +364,8 @@ void update_submodules(rap::ui& ui, rap::window* parent, const std::string& work
 
     using namespace rap::layout;
     using namespace rap::literals;
-    st->window = ui.create(
+    st->window = create_window(
+        ui,
         dialog{
             _("Submodule Update"),
             {vbox{

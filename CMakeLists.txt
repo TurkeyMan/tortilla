@@ -114,6 +114,7 @@ add_executable(tortilla
     src/ui/settings_dialog.cpp
     src/shell/menu_icons.cpp
     src/util/gravatar.cpp
+    src/ui/repo_icon.cpp
     src/ui/welcome_window.cpp
     src/changes/remove.cpp
     src/changes/cleanup_dialog.cpp
@@ -188,6 +189,25 @@ string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," TORTILLA_MASCOT "${TORTILLA_M
 file(GENERATE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/mascot.cpp CONTENT
      "#include <cstddef>\n#include <cstdint>\nnamespace tortilla\n{\nextern const uint8_t k_mascot_png[] = {${TORTILLA_MASCOT}};\nextern const size_t k_mascot_png_size = sizeof k_mascot_png;\n}\n")
 target_sources(tortilla PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/mascot.cpp)
+
+# The icon split into its shell and the rest at each size, built in too:
+# windows tint the shell per repository (src/ui/repo_icon.cpp).
+set(TORTILLA_ICON_LAYERS "")
+set(TORTILLA_ICON_TABLE "")
+foreach(n 16 20 24 32 40 48 64 256)
+    foreach(part body shell)
+        set(png ${CMAKE_CURRENT_SOURCE_DIR}/data/icons/layers/${part}-${n}.png)
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${png})
+        file(READ ${png} bytes HEX)
+        string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," bytes "${bytes}")
+        string(APPEND TORTILLA_ICON_LAYERS "const uint8_t ${part}_${n}[] = {${bytes}};\n")
+    endforeach()
+    string(APPEND TORTILLA_ICON_TABLE
+           "    {${n}, {body_${n}, sizeof body_${n}}, {shell_${n}, sizeof shell_${n}}},\n")
+endforeach()
+file(GENERATE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/icon_layers.cpp CONTENT
+     "#include \"ui/repo_icon.h\"\nnamespace tortilla\n{\nnamespace\n{\n${TORTILLA_ICON_LAYERS}}\nextern const std::vector<icon_layers> k_icon_layers = {\n${TORTILLA_ICON_TABLE}};\n}\n")
+target_sources(tortilla PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/icon_layers.cpp)
 target_compile_definitions(tortilla PRIVATE TORTILLA_VERSION="${PROJECT_VERSION}")
 
 # Translations: Tortilla's and rapport's .po files, read as they are

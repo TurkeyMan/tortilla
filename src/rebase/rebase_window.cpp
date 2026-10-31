@@ -8,6 +8,7 @@
 #include "i18n.h"
 #include "log/log_window.h"
 #include "ui/progress_dialog.h"
+#include "ui/repo_icon.h"
 #include "ui/settings_dialog.h"
 #include "ui/welcome_window.h"
 #include "ui/windows.h"
@@ -116,122 +117,136 @@ void rebase_window::build(const std::string& upstream)
                       std::nullopt);
         });
 
-    window_ = ui_.create(window{
-        rap::i18n::format(_("{0} - Rebase - Tortilla"), title),
-        {vbox{
-            // Row 1 [spec 2.2]
-            hbox{
-                label{_("Branch:")},
-                drop_down{branches_, index_of(branches_, current)}
-                    .bind(branch_)
-                    .on_changed([this](int) { reload_list(); })
-                    .width(30_ch),
-                button{_("Swap branch and upstream")}
-                    .icon(swap_icon)
-                    .icon_only()
-                    .bind(swap_)
-                    .on_click(
-                        [this]
-                        {
-                            // Swap only when both names exist on both sides.
-                            std::string b = branches_[size_t(std::max(0, branch_->current()))];
-                            std::string u = upstreams_[size_t(std::max(0, upstream_->current()))];
-                            auto bi = std::ranges::find(branches_, u);
-                            if (bi == branches_.end()) return;
-                            branch_->set_current(int(bi - branches_.begin()));
-                            auto ui = std::ranges::find(upstreams_, b);
-                            if (ui != upstreams_.end())
-                                upstream_->set_current(int(ui - upstreams_.begin()));
-                            reload_list();
-                        }),
-                label{_("Upstream:")},
-                drop_down{upstreams_, index_of(upstreams_, wanted)}
-                    .bind(upstream_)
-                    .on_changed([this](int) { reload_list(); })
-                    .width(30_ch),
-                // Browse References for the upstream, and for --onto [spec 2.8].
-                button{"..."}.tooltip(_("Browse References")).on_click([this] { pick_upstream(); }),
-                button{_("_Onto")}.bind(onto_button_).on_click([this] { toggle_onto(); }),
-                spacer{},
-            },
-            splitter{
-                vertical,
-                list{rebase_model::columns(), &model_}
-                    .soft_selection()
-                    .bind(list_)
-                    .on_selection_changed([this] { selection_changed(); })
-                    .on_context_menu([this](std::optional<size_t> row)
-                                     { return context_menu(row); })
-                    .on_reorder([this](const std::vector<size_t>& rows, size_t dest)
-                                { return drop_rows(rows, dest); })
-                    // Commits dragged in from a log: picks where they land.
-                    .on_drop_in(
-                        {.types = {commits_type},
-                         .can_drop = [this](size_t, const std::string&) { return can_add(); },
-                         .drop = [this](size_t at, const std::string&, const std::string& data)
-                         { return add_commits_at(at, parse_commits_payload(data)); }})
-                    .stretch(3),
-                vbox{
-                    // Row under the list [spec 2.2]
-                    hbox{
-                        menu_button{_("_Pick ALL")}.bind(set_all_).on_menu(
-                            [this] { return set_all_menu(); }),
-                        button{_("_Up")}.bind(up_).on_click([this] { move_rows(true, false); }),
-                        button{_("_Down")}.bind(down_).on_click([this]
-                                                                { move_rows(false, false); }),
-                        button{_("_Add")}.bind(add_).on_click([this] { add_commits(); }),
-                        check{_("_Preserve merges")}
-                            .bind(preserve_merges_)
-                            .on_toggled([this](bool) { reload_list(); })
-                            .tooltip(_("Include merge commits. Reordering commits with merges "
-                                       "does not work properly.")),
-                        check{_("_Force Rebase")}
-                            .bind(force_)
-                            .on_toggled([this](bool) { reload_list(); })
-                            .tooltip(_("Force the rebase even if the current branch is a "
-                                       "descendant of the commit you are rebasing onto.")),
-                    },
-                    tabs{
-                        {_("Revision Files"),
-                         vbox{revision_files_.list("rebase.revision").soft_selection().stretch()}
-                             .handle(revision_page_)},
-                        {_("Conflict Files"),
-                         vbox{conflict_files_.list("rebase.conflicts").soft_selection().stretch()}
-                             .handle(conflict_page_)},
-                        {_("Commit Message"), vbox{text_view{}.read_only().bind(message_).stretch()}
-                                                  .handle(message_page_)},
-                        {_("Log"),
-                         vbox{text_view{}.monospace().read_only().wrap(false).bind(log_).stretch()}
-                             .handle(log_page_)},
+    window_ = create_window(
+        ui_,
+        window{
+            rap::i18n::format(_("{0} - Rebase - Tortilla"), title),
+            {vbox{
+                // Row 1 [spec 2.2]
+                hbox{
+                    label{_("Branch:")},
+                    drop_down{branches_, index_of(branches_, current)}
+                        .bind(branch_)
+                        .on_changed([this](int) { reload_list(); })
+                        .width(30_ch),
+                    button{_("Swap branch and upstream")}
+                        .icon(swap_icon)
+                        .icon_only()
+                        .bind(swap_)
+                        .on_click(
+                            [this]
+                            {
+                                // Swap only when both names exist on both sides.
+                                std::string b = branches_[size_t(std::max(0, branch_->current()))];
+                                std::string u =
+                                    upstreams_[size_t(std::max(0, upstream_->current()))];
+                                auto bi = std::ranges::find(branches_, u);
+                                if (bi == branches_.end()) return;
+                                branch_->set_current(int(bi - branches_.begin()));
+                                auto ui = std::ranges::find(upstreams_, b);
+                                if (ui != upstreams_.end())
+                                    upstream_->set_current(int(ui - upstreams_.begin()));
+                                reload_list();
+                            }),
+                    label{_("Upstream:")},
+                    drop_down{upstreams_, index_of(upstreams_, wanted)}
+                        .bind(upstream_)
+                        .on_changed([this](int) { reload_list(); })
+                        .width(30_ch),
+                    // Browse References for the upstream, and for --onto [spec 2.8].
+                    button{"..."}
+                        .tooltip(_("Browse References"))
+                        .on_click([this] { pick_upstream(); }),
+                    button{_("_Onto")}.bind(onto_button_).on_click([this] { toggle_onto(); }),
+                    spacer{},
+                },
+                splitter{
+                    vertical,
+                    list{rebase_model::columns(), &model_}
+                        .soft_selection()
+                        .bind(list_)
+                        .on_selection_changed([this] { selection_changed(); })
+                        .on_context_menu([this](std::optional<size_t> row)
+                                         { return context_menu(row); })
+                        .on_reorder([this](const std::vector<size_t>& rows, size_t dest)
+                                    { return drop_rows(rows, dest); })
+                        // Commits dragged in from a log: picks where they land.
+                        .on_drop_in(
+                            {.types = {commits_type},
+                             .can_drop = [this](size_t, const std::string&) { return can_add(); },
+                             .drop = [this](size_t at, const std::string&, const std::string& data)
+                             { return add_commits_at(at, parse_commits_payload(data)); }})
+                        .stretch(3),
+                    vbox{
+                        // Row under the list [spec 2.2]
+                        hbox{
+                            menu_button{_("_Pick ALL")}.bind(set_all_).on_menu(
+                                [this] { return set_all_menu(); }),
+                            button{_("_Up")}.bind(up_).on_click([this] { move_rows(true, false); }),
+                            button{_("_Down")}.bind(down_).on_click([this]
+                                                                    { move_rows(false, false); }),
+                            button{_("_Add")}.bind(add_).on_click([this] { add_commits(); }),
+                            check{_("_Preserve merges")}
+                                .bind(preserve_merges_)
+                                .on_toggled([this](bool) { reload_list(); })
+                                .tooltip(_("Include merge commits. Reordering commits with merges "
+                                           "does not work properly.")),
+                            check{_("_Force Rebase")}
+                                .bind(force_)
+                                .on_toggled([this](bool) { reload_list(); })
+                                .tooltip(_("Force the rebase even if the current branch is a "
+                                           "descendant of the commit you are rebasing onto.")),
+                        },
+                        tabs{
+                            {_("Revision Files"),
+                             vbox{
+                                 revision_files_.list("rebase.revision").soft_selection().stretch()}
+                                 .handle(revision_page_)},
+                            {_("Conflict Files"), vbox{conflict_files_.list("rebase.conflicts")
+                                                           .soft_selection()
+                                                           .stretch()}
+                                                      .handle(conflict_page_)},
+                            {_("Commit Message"),
+                             vbox{text_view{}.read_only().bind(message_).stretch()}.handle(
+                                 message_page_)},
+                            {_("Log"), vbox{text_view{}
+                                                .monospace()
+                                                .read_only()
+                                                .wrap(false)
+                                                .bind(log_)
+                                                .stretch()}
+                                           .handle(log_page_)},
+                        }
+                            .bind(tabs_)
+                            .stretch(),
                     }
-                        .bind(tabs_)
-                        .stretch(),
+                        .stretch(2),
                 }
-                    .stretch(2),
-            }
-                .stretch(),
-            // Bottom [spec 2.2]
-            progress_bar{}.bind(progress_),
-            hbox{
-                label{}.ellipsize().bind(status_).stretch(),
-                menu_button{_("Show log")}.bind(post_).on_menu(
-                    [this]() -> rap::menu
-                    {
-                        return {item(_("Show _log"),
-                                     [this]
-                                     {
-                                         if (show_log_) show_log_();
-                                         close();
-                                     })};
-                    }),
-                button{_("Start Rebase")}.bind(continue_).on_click([this] { continue_pressed(); }),
-                button{_("Abort")}
-                    .bind(abort_)
-                    .tooltip(_("Recover to the status before rebase"))
-                    .on_click([this] { abort_pressed(); }),
-                button{_("Help")}.on_click([] { open_help(); }),
-            },
-        }}}.size(120_ch, 40_lines));
+                    .stretch(),
+                // Bottom [spec 2.2]
+                progress_bar{}.bind(progress_),
+                hbox{
+                    label{}.ellipsize().bind(status_).stretch(),
+                    menu_button{_("Show log")}.bind(post_).on_menu(
+                        [this]() -> rap::menu
+                        {
+                            return {item(_("Show _log"),
+                                         [this]
+                                         {
+                                             if (show_log_) show_log_();
+                                             close();
+                                         })};
+                        }),
+                    button{_("Start Rebase")}.bind(continue_).on_click([this]
+                                                                       { continue_pressed(); }),
+                    button{_("Abort")}
+                        .bind(abort_)
+                        .tooltip(_("Recover to the status before rebase"))
+                        .on_click([this] { abort_pressed(); }),
+                    button{_("Help")}.on_click([] { open_help(); }),
+                },
+            }}}
+            .size(120_ch, 40_lines));
 
     window_->on_close_request(
         [this]

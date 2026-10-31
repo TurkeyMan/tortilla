@@ -27,6 +27,7 @@
 #include "ui/menu_text.h"
 #include "ui/progress_dialog.h"
 #include "ui/repo_browser.h"
+#include "ui/repo_icon.h"
 #include "ui/reset_dialog.h"
 #include "ui/stash_dialog.h"
 #include "ui/submodule_dialogs.h"
@@ -977,7 +978,8 @@ void log_window::choose(const std::string& title, const std::string& question,
     rows.push_back(buttons{cancel});
     // A box from a list built at run time (VBox{...} takes a fixed list).
     rap::node box{rap::spec::box{rap::orientation::vertical, std::move(rows), false, {}}, {}};
-    st->window = ui_.create(dialog{title, {std::move(box)}}.resizable(false), window_.get());
+    st->window =
+        create_window(ui_, dialog{title, {std::move(box)}}.resizable(false), window_.get());
     st->window->on_finished(
         [this, st](rap::dialog_role) mutable
         {
@@ -1194,7 +1196,8 @@ void log_window::edit_notes(const commit& c)
     };
     auto st = std::make_shared<state>();
     const std::string hash = c.id.hex();
-    st->window = ui_.create(
+    st->window = create_window(
+        ui_,
         dialog{_("Edit Notes"),
                {vbox{label{rap::i18n::format(_("Notes for {0}:"), c.id.hex(8) + " " + c.summary)},
                      text_view{repo_.note(c.id)}.bind(st->text).stretch(), buttons{ok, cancel}}}}

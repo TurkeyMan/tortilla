@@ -7,6 +7,7 @@
 #include "log/log_window.h"
 #include "settings.h"
 #include "ui/compare.h"
+#include "ui/repo_icon.h"
 #include "ui/settings_dialog.h"
 #include "ui/windows.h"
 #include "util/calendar.h"
@@ -203,83 +204,87 @@ void blame_window::build()
         (rap::sys::path_from_utf8(where) / rap::sys::path_from_utf8(path_)).make_preferred());
     settings& st = settings::get();
 
-    window_ = ui_.create(window{
-        rap::i18n::format(_("{0} - Blame - Tortilla"), title),
-        {vbox{
-            // The file's history: older to the left [the slider is Tortilla's].
-            hbox{
-                button{_("_Older")}
-                    .bind(older_)
-                    .tooltip(_("The revision before"))
-                    .on_click(
-                        [this]
-                        {
-                            if (current_ + 1 < stops_.size()) go_to(current_ + 1);
-                        }),
-                slider{0, 1, 1}
-                    .step(1, 1)
-                    .bind(slider_)
-                    .on_changed(
-                        [this](double v)
-                        {
-                            // Where it's going said at once; blamed when it stops a moment.
-                            const size_t n = stops_.size();
-                            if (n < 2) return;
-                            const size_t to =
-                                n - 1 - size_t(std::clamp(std::lround(v), 0L, long(n - 1)));
-                            revision_label_->set_text(stops_[to].label);
-                            slide_timer_ = ui_.timer(250, false, [this, to] { go_to(to); });
-                        })
+    window_ = create_window(
+        ui_,
+        window{
+            rap::i18n::format(_("{0} - Blame - Tortilla"), title),
+            {vbox{
+                // The file's history: older to the left [the slider is Tortilla's].
+                hbox{
+                    button{_("_Older")}
+                        .bind(older_)
+                        .tooltip(_("The revision before"))
+                        .on_click(
+                            [this]
+                            {
+                                if (current_ + 1 < stops_.size()) go_to(current_ + 1);
+                            }),
+                    slider{0, 1, 1}
+                        .step(1, 1)
+                        .bind(slider_)
+                        .on_changed(
+                            [this](double v)
+                            {
+                                // Where it's going said at once; blamed when it stops a moment.
+                                const size_t n = stops_.size();
+                                if (n < 2) return;
+                                const size_t to =
+                                    n - 1 - size_t(std::clamp(std::lround(v), 0L, long(n - 1)));
+                                revision_label_->set_text(stops_[to].label);
+                                slide_timer_ = ui_.timer(250, false, [this, to] { go_to(to); });
+                            })
+                        .stretch(),
+                    button{_("_Newer")}
+                        .bind(newer_)
+                        .tooltip(_("The revision after"))
+                        .on_click(
+                            [this]
+                            {
+                                if (current_ > 0) go_to(current_ - 1);
+                            }),
+                },
+                label{}.bind(revision_label_).ellipsize(),
+                hbox{
+                    label{_("Find:")},
+                    entry{}.bind(find_).on_activate([this] { find_next(); }).stretch(),
+                    check{_("Ignore _whitespace"), st.value("blame.ignoreWhitespace") == "1"}
+                        .bind(ignore_whitespace_)
+                        .on_toggled(
+                            [this](bool on)
+                            {
+                                settings::get().set("blame.ignoreWhitespace", on ? "1" : "0");
+                                go_to(current_);
+                            }),
+                    check{_("Detect _moved or copied lines"), st.value("blame.detectMoves") == "1"}
+                        .bind(detect_moves_)
+                        .on_toggled(
+                            [this](bool on)
+                            {
+                                settings::get().set("blame.detectMoves", on ? "1" : "0");
+                                go_to(current_);
+                            }),
+                },
+                splitter{
+                    vertical,
+                    list{columns, rows_.get()}
+                        .bind(list_)
+                        .selection(rap::selection_mode::single)
+                        .on_selection_changed([this] { update_details(); })
+                        .on_activate(
+                            [this](size_t row)
+                            {
+                                if (row < rows_->lines.size()) show_changes(rows_->lines[row]);
+                            })
+                        .on_context_menu([this](std::optional<size_t> row)
+                                         { return line_menu(row); })
+                        .stretch(4),
+                    text_view{}.read_only().bind(details_).height(5_lines),
+                }
+                    .bind(splitter_)
                     .stretch(),
-                button{_("_Newer")}
-                    .bind(newer_)
-                    .tooltip(_("The revision after"))
-                    .on_click(
-                        [this]
-                        {
-                            if (current_ > 0) go_to(current_ - 1);
-                        }),
-            },
-            label{}.bind(revision_label_).ellipsize(),
-            hbox{
-                label{_("Find:")},
-                entry{}.bind(find_).on_activate([this] { find_next(); }).stretch(),
-                check{_("Ignore _whitespace"), st.value("blame.ignoreWhitespace") == "1"}
-                    .bind(ignore_whitespace_)
-                    .on_toggled(
-                        [this](bool on)
-                        {
-                            settings::get().set("blame.ignoreWhitespace", on ? "1" : "0");
-                            go_to(current_);
-                        }),
-                check{_("Detect _moved or copied lines"), st.value("blame.detectMoves") == "1"}
-                    .bind(detect_moves_)
-                    .on_toggled(
-                        [this](bool on)
-                        {
-                            settings::get().set("blame.detectMoves", on ? "1" : "0");
-                            go_to(current_);
-                        }),
-            },
-            splitter{
-                vertical,
-                list{columns, rows_.get()}
-                    .bind(list_)
-                    .selection(rap::selection_mode::single)
-                    .on_selection_changed([this] { update_details(); })
-                    .on_activate(
-                        [this](size_t row)
-                        {
-                            if (row < rows_->lines.size()) show_changes(rows_->lines[row]);
-                        })
-                    .on_context_menu([this](std::optional<size_t> row) { return line_menu(row); })
-                    .stretch(4),
-                text_view{}.read_only().bind(details_).height(5_lines),
-            }
-                .bind(splitter_)
-                .stretch(),
-            label{}.bind(status_).ellipsize(),
-        }}}.size(140_ch, 45_lines));
+                label{}.bind(status_).ellipsize(),
+            }}}
+            .size(140_ch, 45_lines));
     st.restore_window("blame.window", *window_);
     if (auto v = st.numbers("blame.columns"); v.size() == column_count) list_->set_column_widths(v);
     // The lines get most of the height, the commit's details a strip.

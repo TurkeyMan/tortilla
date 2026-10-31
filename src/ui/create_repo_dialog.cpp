@@ -2,6 +2,7 @@
 
 #include "git/command.h"
 #include "i18n.h"
+#include "ui/repo_icon.h"
 
 #include <rapport/sys.h>
 
@@ -111,12 +112,15 @@ struct state
         std::string shown = rap::sys::path_to_utf8(rap::sys::path_from_utf8(folder).make_preferred());
         // A folder named *.git is meant to be bare, by convention.
         const bool dot_git = folder.ends_with(".git") || folder.ends_with(".git/") || folder.ends_with(".git\\");
-        window = ui.create(
+        window = create_window(
+            ui,
             dialog{rap::i18n::format(_("{0} - Git Init - Tortilla"), shown),
                    {vbox{
                        check{_("Make it _Bare (No working directories)"), dot_git}.bind(bare),
-                       label{_("If you plan to work inside this folder, leave this unchecked. Typically a bare "
-                               "repo can only have changes 'pushed' to it. (By convention, a bare repo folder "
+                       label{_("If you plan to work inside this folder, leave this unchecked. "
+                               "Typically a bare "
+                               "repo can only have changes 'pushed' to it. (By convention, a bare "
+                               "repo folder "
                                "should have a name that ends with '.git')")}
                            .wrap(),
                        buttons{ok, cancel},

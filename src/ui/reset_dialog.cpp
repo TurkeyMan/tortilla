@@ -3,6 +3,7 @@
 #include "changes/cleanup_dialog.h"
 #include "i18n.h"
 #include "ui/progress_dialog.h"
+#include "ui/repo_icon.h"
 
 #include <algorithm>
 #include <memory>
@@ -22,7 +23,8 @@ void reset_to(rap::ui& ui, rap::window* parent, const std::string& workdir,
     auto st = std::make_shared<state>();
 
     using namespace rap::layout;
-    st->window = ui.create(
+    st->window = create_window(
+        ui,
         dialog{_("Reset"),
                {vbox{
                    label{rap::i18n::format(_("Reset \"{0}\" to {1} {2}"), branch, hash.substr(0, 8),

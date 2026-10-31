@@ -4,6 +4,7 @@
 #include "i18n.h"
 #include "settings.h"
 #include "ui/progress_dialog.h"
+#include "ui/repo_icon.h"
 #include "ui/settings_dialog.h"
 
 #include <rapport/sys.h>
@@ -77,13 +78,14 @@ void changed_files_window::build()
     const std::string sides = short_rev(from_) + "  \xe2\x86\x92  " +
                               (to_.empty() ? std::string(_("Working tree")) : short_rev(to_));
 
-    window_ = ui_.create(window{
-        rap::i18n::format(_("{0} - Changed Files - Tortilla"), root),
-        {vbox{
-            label{sides},
-            files_.list("changedFiles.files").stretch(),
-            label{}.bind(status_).ellipsize(),
-        }}}.size(110_ch, 30_lines));
+    window_ =
+        create_window(ui_, window{rap::i18n::format(_("{0} - Changed Files - Tortilla"), root),
+                                  {vbox{
+                                      label{sides},
+                                      files_.list("changedFiles.files").stretch(),
+                                      label{}.bind(status_).ellipsize(),
+                                  }}}
+                               .size(110_ch, 30_lines));
     settings::get().restore_window("changedFiles.window", *window_);
     files_.restore_layout();
     window_->on_close_request(

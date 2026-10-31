@@ -14,6 +14,7 @@
 #include "ui/menu_text.h"
 #include "ui/progress_dialog.h"
 #include "ui/repo_browser.h"
+#include "ui/repo_icon.h"
 #include "ui/windows.h"
 #include "util/calendar.h"
 
@@ -203,7 +204,8 @@ void browse_refs::build()
     while (root.size() > 1 && (root.back() == '/' || root.back() == '\\')) root.pop_back();
     root = rap::sys::path_to_utf8(rap::sys::path_from_utf8(root).make_preferred());
 
-    window_ = ui_.create(
+    window_ = create_window(
+        ui_,
         dialog{
             rap::i18n::format(_("{0} - Browse references - Tortilla"), root),
             {vbox{
@@ -223,7 +225,8 @@ void browse_refs::build()
                         .icon(rap::icon::named("edit-find-symbolic"))
                         .on_menu([this] { return filter_menu(); })
                         .tooltip(_("Filter options")),
-                    drop_down{{_("All"), _("Only merged (to HEAD)"), _("Only unmerged (to HEAD)")}, 0}
+                    drop_down{{_("All"), _("Only merged (to HEAD)"), _("Only unmerged (to HEAD)")},
+                              0}
                         .bind(merged_)
                         .on_changed([this](int) { reload(); }),
                 },
@@ -254,7 +257,8 @@ void browse_refs::build()
                                 list_->set_sort_indicator(col, order);
                                 set_rows(rows_->items, rows_->base);
                             })
-                        .on_context_menu([this](std::optional<size_t> row) { return list_menu(row); })
+                        .on_context_menu([this](std::optional<size_t> row)
+                                         { return list_menu(row); })
                         .selection(options_.pick && !options_.multiple ? rap::selection_mode::single
                                                                        : rap::selection_mode::multi)
                         .stretch(3),
@@ -280,7 +284,8 @@ void browse_refs::build()
                                     std::string b = current_branch(workdir_);
                                     finish(b.empty() || b == "HEAD" ? resolve(workdir_, "HEAD") : b);
                                 }),
-                            dialog_button{rap::dialog_role::ok, ""}.on_click([this] { ok(); }), cancel},
+                            dialog_button{rap::dialog_role::ok, ""}.on_click([this] { ok(); }),
+                            cancel},
                 },
             }}}
             .size(130_ch, 30_lines),
@@ -844,10 +849,15 @@ void ask_text(rap::ui& ui, rap::window* parent, const std::string& title, const 
         rap::text_view* text = nullptr;
     };
     auto st = std::make_shared<state>();
-    st->window = ui.create(
-        lines ? dialog{title, {vbox{label{prompt}, text_view{initial}.bind(st->text).stretch(), buttons{ok, cancel}}}}
+    st->window = create_window(
+        ui,
+        lines ? dialog{title,
+                       {vbox{label{prompt}, text_view{initial}.bind(st->text).stretch(),
+                             buttons{ok, cancel}}}}
                     .size(60_ch, 8_lines)
-              : dialog{title, {vbox{label{prompt}, entry{initial}.bind(st->line), buttons{ok, cancel}}}}.size(60_ch, {}),
+              : dialog{title,
+                       {vbox{label{prompt}, entry{initial}.bind(st->line), buttons{ok, cancel}}}}
+                    .size(60_ch, {}),
         parent);
     st->window->on_finished(
         [st, done, &ui](rap::dialog_role role)

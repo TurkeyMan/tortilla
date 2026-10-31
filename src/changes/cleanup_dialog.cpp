@@ -5,6 +5,7 @@
 #include "i18n.h"
 #include "settings.h"
 #include "ui/progress_dialog.h"
+#include "ui/repo_icon.h"
 
 #include <rapport/sys.h>
 
@@ -65,7 +66,8 @@ void clean_up(rap::ui& ui, rap::window* parent, std::vector<std::string> paths,
     settings& set = settings::get();
 
     using namespace rap::layout;
-    st->window = ui.create(
+    st->window = create_window(
+        ui,
         dialog{
             _("Clean up"),
             {vbox{

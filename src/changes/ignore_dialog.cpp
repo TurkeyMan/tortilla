@@ -5,6 +5,7 @@
 #include "git/repo.h"
 #include "i18n.h"
 #include "settings.h"
+#include "ui/repo_icon.h"
 
 #include <rapport/sys.h>
 
@@ -150,23 +151,26 @@ void show_ignore_dialog(rap::ui& ui, std::vector<std::string> paths, bool by_ext
     {
         if (auto s = weak.lock()) s->update_preview();
     };
-    st->window = ui.create(
+    st->window = create_window(
+        ui,
         dialog{_("Ignore - Tortilla"),
                {vbox{
                    form{
                        {_("Ignore"),
                         drop_down{by_extension
-                                      ? std::vector<std::string>{_("Only in its folder"), _("In every folder")}
-                                      : std::vector<std::string>{_("Only this item"), _("This name in every folder")},
+                                      ? std::vector<std::string>{_("Only in its folder"),
+                                                                 _("In every folder")}
+                                      : std::vector<std::string>{_("Only this item"),
+                                                                 _("This name in every folder")},
                                   scope}
                             .on_changed(changed)
                             .bind(st->scope)},
-                       {_("Write to"),
-                        drop_down{{_("The repository's .gitignore"), _("The .gitignore in its folder"),
-                                   _("This clone only (.git/info/exclude)")},
-                                  target}
-                            .on_changed(changed)
-                            .bind(st->target)},
+                       {_("Write to"), drop_down{{_("The repository's .gitignore"),
+                                                  _("The .gitignore in its folder"),
+                                                  _("This clone only (.git/info/exclude)")},
+                                                 target}
+                                           .on_changed(changed)
+                                           .bind(st->target)},
                    },
                    label{_("Adds:")},
                    label{}.selectable().bind(st->preview),

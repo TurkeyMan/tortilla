@@ -7,6 +7,7 @@
 #include "remote/push_dialog.h"
 #include "settings.h"
 #include "ui/progress_dialog.h"
+#include "ui/repo_icon.h"
 #include "ui/windows.h"
 
 #include <rapport/sys.h>
@@ -65,29 +66,35 @@ void create_ref_dialog::build(const std::string& base, const std::string& name, 
         run_git(workdir_, {"rev-parse", "--is-bare-repository"}, git_output::stdout_only)
             .output.starts_with("true");
     const bool can_sign = !config_value(workdir_, "user.signingkey").empty();
-    window_ = ui_.create(dialog{
-        tag_ ? _("Create Tag") : _("Create Branch"),
-        {vbox{
-            group{_("Name"), entry{name}.bind(name_).width(40_ch).on_changed([this](const std::string&)
-                                                                          { name_changed(); })},
-            base_.layout({.caption = _("Base On"), .head = true, .ui = &ui_, .window = [this] { return window_.get(); }}),
-            group{_("Options"),
-                  hbox{
-                      check{_("Trac_k")}.bind(track_).visible(!tag_),
-                      check{_("_Force")}.bind(force_),
-                      check{_("_Switch to new branch"),
-                            switch_to || settings::get().value("branch.switchTo") == "1"}
-                          .bind(switch_)
-                          .visible(!tag_ && !bare),
-                      check{_("Si_gn")}.bind(sign_).visible(tag_).enabled(can_sign),
-                      check{_("_Push"), settings::get().value("tag.push") == "1"}.bind(push_).visible(
-                          tag_),
-                      spacer{},
-                  }},
-            group{tag_ ? _("Message (makes an annotated tag)") : _("Description"),
-                  text_view{}.bind(message_).height(4_lines).stretch()},
-            buttons{dialog_button{rap::dialog_role::ok, ""}.on_click([this] { ok(); }), cancel},
-        }}});
+    window_ = create_window(
+        ui_,
+        dialog{
+            tag_ ? _("Create Tag") : _("Create Branch"),
+            {vbox{
+                group{_("Name"), entry{name}.bind(name_).width(40_ch).on_changed(
+                                     [this](const std::string&) { name_changed(); })},
+                base_.layout({.caption = _("Base On"),
+                              .head = true,
+                              .ui = &ui_,
+                              .window = [this] { return window_.get(); }}),
+                group{_("Options"),
+                      hbox{
+                          check{_("Trac_k")}.bind(track_).visible(!tag_),
+                          check{_("_Force")}.bind(force_),
+                          check{_("_Switch to new branch"),
+                                switch_to || settings::get().value("branch.switchTo") == "1"}
+                              .bind(switch_)
+                              .visible(!tag_ && !bare),
+                          check{_("Si_gn")}.bind(sign_).visible(tag_).enabled(can_sign),
+                          check{_("_Push"), settings::get().value("tag.push") == "1"}
+                              .bind(push_)
+                              .visible(tag_),
+                          spacer{},
+                      }},
+                group{tag_ ? _("Message (makes an annotated tag)") : _("Description"),
+                      text_view{}.bind(message_).height(4_lines).stretch()},
+                buttons{dialog_button{rap::dialog_role::ok, ""}.on_click([this] { ok(); }), cancel},
+            }}});
     window_->on_finished(
         [this](rap::dialog_role)
         {

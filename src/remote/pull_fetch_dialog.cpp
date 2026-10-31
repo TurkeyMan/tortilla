@@ -11,6 +11,7 @@
 #include "settings.h"
 #include "ui/compare.h"
 #include "ui/progress_dialog.h"
+#include "ui/repo_icon.h"
 #include "ui/settings_dialog.h"
 #include "ui/windows.h"
 
@@ -146,56 +147,58 @@ void pull_fetch_dialog::build()
     const bool rebase = rebase_from_config_ || settings::get().value(key + ".rebase") == "1";
     const bool shallow = is_shallow(workdir_);
 
-    window_ = ui_.create(dialog{
-        title(workdir_, pull_ ? _("{0} - Pull - Tortilla") : _("{0} - Fetch - Tortilla")),
-        {vbox{
-            group{_("Remote"),
-                  form{
-                      {_("Remote"),
-                       hbox{drop_down{items, current}.bind(remote_).stretch().on_changed(
-                                [this](int) { remote_changed(); }),
-                            button{_("_Manage")}.on_click([this] { manage_remotes(); })}},
-                      {_("URL"), combo{url_history()}.bind(url_)},
-                      {_("Remote branch"),
-                       combo{{}, remote_branch}.bind(remote_branch_).width(40_ch)},
-                  }},
-            group{_("Options"),
-                  vbox{
-                      hbox{
-                          check{_("_Squash")}.bind(squash_).enabled(pull_),
-                          check{_("No _Fast Forward")}.bind(no_ff_).enabled(pull_).on_toggled(
-                              [this](bool on)
-                              {
-                                  ff_only_->set_enabled(!on);
-                                  if (on) ff_only_->set_checked(false);
-                              }),
-                          check{_("No Co_mmit")}.bind(no_commit_).enabled(pull_),
-                          check{_("Fast Forward O_nly"),
-                                pull_ && settings::get().value(key + ".ffonly") == "1"}
-                              .bind(ff_only_)
-                              .enabled(pull_)
-                              .on_toggled(
+    window_ = create_window(
+        ui_,
+        dialog{
+            title(workdir_, pull_ ? _("{0} - Pull - Tortilla") : _("{0} - Fetch - Tortilla")),
+            {vbox{
+                group{_("Remote"),
+                      form{
+                          {_("Remote"),
+                           hbox{drop_down{items, current}.bind(remote_).stretch().on_changed(
+                                    [this](int) { remote_changed(); }),
+                                button{_("_Manage")}.on_click([this] { manage_remotes(); })}},
+                          {_("URL"), combo{url_history()}.bind(url_)},
+                          {_("Remote branch"),
+                           combo{{}, remote_branch}.bind(remote_branch_).width(40_ch)},
+                      }},
+                group{_("Options"),
+                      vbox{
+                          hbox{
+                              check{_("_Squash")}.bind(squash_).enabled(pull_),
+                              check{_("No _Fast Forward")}.bind(no_ff_).enabled(pull_).on_toggled(
                                   [this](bool on)
                                   {
-                                      no_ff_->set_enabled(!on);
-                                      if (on) no_ff_->set_checked(false);
+                                      ff_only_->set_enabled(!on);
+                                      if (on) ff_only_->set_checked(false);
                                   }),
-                          spacer{},
-                      },
-                      hbox{
-                          check{_("Depth"), shallow}.bind(depth_).visible(shallow),
-                          spin{1, 1e9, 1}.bind(depth_value_).visible(shallow),
-                          spacer{},
-                      },
-                      form{
-                          {_("Tags"), drop_down{{_("Default")}, 0}.bind(tags_)},
-                          {_("Prune"), drop_down{{_("Default")}, 0}.bind(prune_)},
-                      },
-                      check{_("_Launch Rebase After Fetch"), rebase}.bind(rebase_),
-                  }},
-            // OK checks before the dialog goes.
-            buttons{dialog_button{rap::dialog_role::ok, ""}.on_click([this] { ok(); }), cancel},
-        }}});
+                              check{_("No Co_mmit")}.bind(no_commit_).enabled(pull_),
+                              check{_("Fast Forward O_nly"),
+                                    pull_ && settings::get().value(key + ".ffonly") == "1"}
+                                  .bind(ff_only_)
+                                  .enabled(pull_)
+                                  .on_toggled(
+                                      [this](bool on)
+                                      {
+                                          no_ff_->set_enabled(!on);
+                                          if (on) no_ff_->set_checked(false);
+                                      }),
+                              spacer{},
+                          },
+                          hbox{
+                              check{_("Depth"), shallow}.bind(depth_).visible(shallow),
+                              spin{1, 1e9, 1}.bind(depth_value_).visible(shallow),
+                              spacer{},
+                          },
+                          form{
+                              {_("Tags"), drop_down{{_("Default")}, 0}.bind(tags_)},
+                              {_("Prune"), drop_down{{_("Default")}, 0}.bind(prune_)},
+                          },
+                          check{_("_Launch Rebase After Fetch"), rebase}.bind(rebase_),
+                      }},
+                // OK checks before the dialog goes.
+                buttons{dialog_button{rap::dialog_role::ok, ""}.on_click([this] { ok(); }), cancel},
+            }}});
     window_->on_finished([this](rap::dialog_role) { finished(); });
     remote_changed();
 }

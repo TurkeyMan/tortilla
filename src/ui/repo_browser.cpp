@@ -9,6 +9,7 @@
 #include "settings.h"
 #include "ui/compare.h"
 #include "ui/menu_items.h"
+#include "ui/repo_icon.h"
 #include "ui/settings_dialog.h"
 #include "ui/windows.h"
 
@@ -256,59 +257,61 @@ void repo_browser::build()
     while (root.size() > 1 && (root.back() == '/' || root.back() == '\\')) root.pop_back();
     root = rap::sys::path_to_utf8(rap::sys::path_from_utf8(root).make_preferred());
 
-    window_ = ui_.create(window{
-        rap::i18n::format(_("{0} - Repository Browser - Tortilla"), root),
-        {vbox{
-            hbox{
-                label{_("Revision:")},
-                entry{}
-                    .bind(revision_entry_)
-                    .on_activate([this] { load(revision_entry_->text(), folder()); })
-                    .width(30_ch),
-                button{"..."}
-                    .tooltip(_("Browse References"))
-                    .on_click(
-                        [this]
-                        {
-                            pick_ref(ui_, window_.get(), workdir_, {.initial = revision_},
-                                     [this, alive = std::weak_ptr<bool>(alive_)](
-                                         const std::string& picked)
-                                     {
-                                         if (alive.lock() && !picked.empty())
-                                             load(picked, folder());
-                                     });
-                        }),
-                label{}.bind(commit_).ellipsize().stretch(),
-            },
-            splitter{
-                horizontal,
-                tree{}
-                    .bind(tree_view_)
-                    .on_selection_changed([this] { show_folder(folder()); })
-                    .on_context_menu(
-                        [this](std::optional<std::string> id) -> rap::menu
-                        {
-                            if (!id) return {};
-                            return folder_menu(id->substr(1));
-                        }),
-                list{columns(), rows_.get()}
-                    .bind(list_)
-                    .on_activate([this](size_t row) { activated(row); })
-                    .on_sort_requested(
-                        [this](size_t col, rap::sort_order order)
-                        {
-                            rows_->sort_column = col;
-                            rows_->descending = order == rap::sort_order::descending;
-                            list_->set_sort_indicator(col, order);
-                            show_folder(folder());
-                        })
-                    .on_context_menu([this](std::optional<size_t>) { return list_menu(); })
-                    .selection(rap::selection_mode::multi)
-                    .stretch(3),
-            }
-                .bind(splitter_)
-                .stretch(),
-        }}}.size(120_ch, 35_lines));
+    window_ = create_window(
+        ui_,
+        window{rap::i18n::format(_("{0} - Repository Browser - Tortilla"), root),
+               {vbox{
+                   hbox{
+                       label{_("Revision:")},
+                       entry{}
+                           .bind(revision_entry_)
+                           .on_activate([this] { load(revision_entry_->text(), folder()); })
+                           .width(30_ch),
+                       button{"..."}
+                           .tooltip(_("Browse References"))
+                           .on_click(
+                               [this]
+                               {
+                                   pick_ref(ui_, window_.get(), workdir_, {.initial = revision_},
+                                            [this, alive = std::weak_ptr<bool>(alive_)](
+                                                const std::string& picked)
+                                            {
+                                                if (alive.lock() && !picked.empty())
+                                                    load(picked, folder());
+                                            });
+                               }),
+                       label{}.bind(commit_).ellipsize().stretch(),
+                   },
+                   splitter{
+                       horizontal,
+                       tree{}
+                           .bind(tree_view_)
+                           .on_selection_changed([this] { show_folder(folder()); })
+                           .on_context_menu(
+                               [this](std::optional<std::string> id) -> rap::menu
+                               {
+                                   if (!id) return {};
+                                   return folder_menu(id->substr(1));
+                               }),
+                       list{columns(), rows_.get()}
+                           .bind(list_)
+                           .on_activate([this](size_t row) { activated(row); })
+                           .on_sort_requested(
+                               [this](size_t col, rap::sort_order order)
+                               {
+                                   rows_->sort_column = col;
+                                   rows_->descending = order == rap::sort_order::descending;
+                                   list_->set_sort_indicator(col, order);
+                                   show_folder(folder());
+                               })
+                           .on_context_menu([this](std::optional<size_t>) { return list_menu(); })
+                           .selection(rap::selection_mode::multi)
+                           .stretch(3),
+                   }
+                       .bind(splitter_)
+                       .stretch(),
+               }}}
+            .size(120_ch, 35_lines));
     st.restore_window("repoBrowser.window", *window_);
     if (auto v = st.numbers("repoBrowser.columns"); v.size() == column_count)
         list_->set_column_widths(v);

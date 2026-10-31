@@ -7,6 +7,7 @@
 #include "i18n.h"
 #include "settings.h"
 #include "ui/menu_text.h"
+#include "ui/repo_icon.h"
 #include "ui/settings_dialog.h"
 #include "util/calendar.h"
 
@@ -182,181 +183,187 @@ void log_window::build()
     using namespace rap::layout;
     namespace a = rap;
 
-    window_ = ui_.create(window{
-        title_text(),
-        {vbox{
-            // Filter bar [spec 1.2, row 1]
-            hbox{
-                menu_button{"HEAD"}
-                    .bind(ref_button_)
-                    .on_menu([this] { return ref_menu(); })
-                    .width(22_ch),
-                label{_("From:")},
-                date_picker{}.bind(from_).on_changed([this](a::date) { dates_changed(); }),
-                label{_("To:")},
-                date_picker{}.bind(to_).on_changed([this](a::date) { dates_changed(); }),
-                entry{}
-                    .bind(search_)
-                    .on_changed([this](const std::string&) { schedule_filter(); })
-                    .on_activate([this] { apply_filter(); })
-                    .stretch(),
-                // TODO: TortoiseGit puts this magnifier inside the search box.
-                menu_button{""}
-                    .icon(rap::icon::named("edit-find-symbolic"))
-                    .on_menu([this] { return filter_menu(); })
-                    .tooltip(_("Filter options")),
-                drop_down{{_("Author Email"), _("Committer Email"), _("Merge Point"), _("Parent 1"),
-                           _("Parent 2"), _("Tag"), _("Tag (FF)"), _("Branch"), _("Branch (FF)"),
-                           _("Selection History")},
-                          0}
-                    .bind(jump_type_),
-                button{_("Jump up (Alt+Up)")}
-                    .icon(jump_arrow(true))
-                    .icon_only()
-                    .on_click([this] { jump(true); }),
-                button{_("Jump down (Alt+Down)")}
-                    .icon(jump_arrow(false))
-                    .icon_only()
-                    .on_click([this] { jump(false); }),
-            },
-            // Commit list, details, changed files [spec 1.2, main area]
-            splitter{
-                vertical,
-                list{log_model::columns(), &log_}
-                    .soft_selection()
-                    .auto_scroll()
-                    .bind(commit_list_)
-                    .on_selection_changed([this] { selection_changed(); })
-                    .on_context_menu([this](std::optional<size_t> row)
-                                     { return context_menu(row); })
-                    .on_header_menu([this](size_t) { return header_menu(); })
-                    .on_cell_drag(label_drag())
-                    // Commits dragged out, into a rebase's list or anywhere
-                    // taking text: their hashes, newest first as the rows run.
-                    .on_drag_out(
-                        {.begin = [this](std::vector<size_t> rows) -> std::optional<rap::data_offer>
-                         {
-                             std::ranges::sort(rows);
-                             std::vector<std::string> hashes;
-                             for (size_t row : rows)
-                                 if (const commit* c = log_.commit(row))
-                                     hashes.push_back(c->id.hex());
-                             if (hashes.empty()) return std::nullopt;
-                             const std::string data = commits_payload(hashes);
-                             return rap::data_offer{{{commits_type, data}, {"text/plain", data}}};
-                         }})
-                    .on_activate([this](size_t row) { row_activated(row); })
-                    .on_cell_context_menu([this](size_t row, size_t column, rap::point_f at)
-                                          { return cell_menu(row, column, at); })
-                    .stretch(3),
-                // The details pane keeps its height: dragging the upper
-                // divider moves the lower one with it, taking space from the
-                // file list until that reaches its minimum. (TortoiseGit
-                // shrinks the details first [spec 1.3]; this is deliberate.)
+    window_ = create_window(
+        ui_,
+        window{
+            title_text(),
+            {vbox{
+                // Filter bar [spec 1.2, row 1]
                 hbox{
-                    text_view{}.read_only().bind(details_).stretch(),
-                    // Kept top right, as TortoiseGit has it [spec 1.2].
-                    vbox{
-                        canvas{}
-                            .on_paint(
-                                [this](rap::painter& p, rap::size_f size)
-                                {
-                                    p.rect({0, 0, size.w, size.h}, 0,
-                                           rap::paint{rap::theme_color::window}, std::nullopt);
-                                    if (!avatar_) return;
-                                    p.image(*avatar_,
-                                            {0, 0, float(avatar_->width()),
-                                             float(avatar_->height())},
-                                            {0, 0, size.w, size.h});
-                                })
-                            .width(64_px)
-                            .height(64_px)
-                            .bind(avatar_canvas_),
-                        spacer{},
-                    },
-                }
-                    .height(9_lines),
-                files_.list("log.files").height(4_lines).stretch(2),
-            }
-                .bind(splitter_)
-                .stretch(),
-            // Bottom area [spec 1.2]
-            label{}.selectable().ellipsize().bind(status_),
-            hbox{
-                vbox{
-                    // Per repository, as in TortoiseGit [spec 1.9.7]; only
-                    // with a path to leave out.
-                    check{_("Show _Whole Project"),
-                          settings::get().value("log.wholeProject." + repo_.workdir()) == "1"}
-                        .bind(whole_project_)
-                        .enabled(!rel_path_.empty())
-                        .on_toggled(
-                            [this](bool on)
-                            {
-                                settings::get().set("log.wholeProject." + repo_.workdir(),
-                                                    on ? "1" : "0");
-                                window_->set_title(title_text());
-                                update_file_view();  // nothing is unrelated without a path
-                                reload();
-                            }),
-                    check{_("_All Branches")}
-                        .bind(all_branches_)
-                        .on_toggled(
-                            [this](bool)
-                            {
-                                set_walk(all_branches_->checked() ? walk_refs::all : walk_refs::head);
-                                reload();
-                            }),
+                    menu_button{"HEAD"}
+                        .bind(ref_button_)
+                        .on_menu([this] { return ref_menu(); })
+                        .width(22_ch),
+                    label{_("From:")},
+                    date_picker{}.bind(from_).on_changed([this](a::date) { dates_changed(); }),
+                    label{_("To:")},
+                    date_picker{}.bind(to_).on_changed([this](a::date) { dates_changed(); }),
+                    entry{}
+                        .bind(search_)
+                        .on_changed([this](const std::string&) { schedule_filter(); })
+                        .on_activate([this] { apply_filter(); })
+                        .stretch(),
+                    // TODO: TortoiseGit puts this magnifier inside the search box.
+                    menu_button{""}
+                        .icon(rap::icon::named("edit-find-symbolic"))
+                        .on_menu([this] { return filter_menu(); })
+                        .tooltip(_("Filter options")),
+                    drop_down{{_("Author Email"), _("Committer Email"), _("Merge Point"),
+                               _("Parent 1"), _("Parent 2"), _("Tag"), _("Tag (FF)"), _("Branch"),
+                               _("Branch (FF)"), _("Selection History")},
+                              0}
+                        .bind(jump_type_),
+                    button{_("Jump up (Alt+Up)")}
+                        .icon(jump_arrow(true))
+                        .icon_only()
+                        .on_click([this] { jump(true); }),
+                    button{_("Jump down (Alt+Down)")}
+                        .icon(jump_arrow(false))
+                        .icon_only()
+                        .on_click([this] { jump(false); }),
                 },
-                // The selected commit's files, by path: a second after
-                // typing stops, at once on Enter, cleared by Escape (the
-                // window's keys) [spec 1.11.2].
-                entry{}
-                    .bind(path_filter_)
-                    .placeholder(std::string("   ") + _("Filter paths"))
-                    .on_changed(
-                        [this](const std::string&)
-                        {
-                            path_filter_timer_ =
-                                ui_.timer(1000, false, [this] { update_file_view(); });
-                        })
-                    .on_activate([this] { update_file_view(); })
+                // Commit list, details, changed files [spec 1.2, main area]
+                splitter{
+                    vertical,
+                    list{log_model::columns(), &log_}
+                        .soft_selection()
+                        .auto_scroll()
+                        .bind(commit_list_)
+                        .on_selection_changed([this] { selection_changed(); })
+                        .on_context_menu([this](std::optional<size_t> row)
+                                         { return context_menu(row); })
+                        .on_header_menu([this](size_t) { return header_menu(); })
+                        .on_cell_drag(label_drag())
+                        // Commits dragged out, into a rebase's list or anywhere
+                        // taking text: their hashes, newest first as the rows run.
+                        .on_drag_out({.begin = [this](std::vector<size_t> rows)
+                                          -> std::optional<rap::data_offer>
+                                      {
+                                          std::ranges::sort(rows);
+                                          std::vector<std::string> hashes;
+                                          for (size_t row : rows)
+                                              if (const commit* c = log_.commit(row))
+                                                  hashes.push_back(c->id.hex());
+                                          if (hashes.empty()) return std::nullopt;
+                                          const std::string data = commits_payload(hashes);
+                                          return rap::data_offer{
+                                              {{commits_type, data}, {"text/plain", data}}};
+                                      }})
+                        .on_activate([this](size_t row) { row_activated(row); })
+                        .on_cell_context_menu([this](size_t row, size_t column, rap::point_f at)
+                                              { return cell_menu(row, column, at); })
+                        .stretch(3),
+                    // The details pane keeps its height: dragging the upper
+                    // divider moves the lower one with it, taking space from the
+                    // file list until that reaches its minimum. (TortoiseGit
+                    // shrinks the details first [spec 1.3]; this is deliberate.)
+                    hbox{
+                        text_view{}.read_only().bind(details_).stretch(),
+                        // Kept top right, as TortoiseGit has it [spec 1.2].
+                        vbox{
+                            canvas{}
+                                .on_paint(
+                                    [this](rap::painter& p, rap::size_f size)
+                                    {
+                                        p.rect({0, 0, size.w, size.h}, 0,
+                                               rap::paint{rap::theme_color::window}, std::nullopt);
+                                        if (!avatar_) return;
+                                        p.image(*avatar_,
+                                                {0, 0, float(avatar_->width()),
+                                                 float(avatar_->height())},
+                                                {0, 0, size.w, size.h});
+                                    })
+                                .width(64_px)
+                                .height(64_px)
+                                .bind(avatar_canvas_),
+                            spacer{},
+                        },
+                    }
+                        .height(9_lines),
+                    files_.list("log.files").height(4_lines).stretch(2),
+                }
+                    .bind(splitter_)
                     .stretch(),
-            },
-            hbox{
-                button{_("Refresh")}
-                    .tooltip(_("Reload the log (F5)"))
-                    .on_click([this] { reload(); }),
-                button{_("S_tatistics")}.bind(statistics_).enabled(false),
-                progress_bar{}.bind(progress_).stretch(),
-                menu_button{_("Walk Be_havior")}.bind(walk_).on_menu([this]
-                                                                     { return walk_menu(); }),
-                menu_button{_("_View")}.bind(view_).on_menu([this] { return view_menu(); }),
-                spacer{},
-                button{_("OK")}.bind(ok_).on_click(
-                    [this]
-                    {
-                        if (picked_)
+                // Bottom area [spec 1.2]
+                label{}.selectable().ellipsize().bind(status_),
+                hbox{
+                    vbox{
+                        // Per repository, as in TortoiseGit [spec 1.9.7]; only
+                        // with a path to leave out.
+                        check{_("Show _Whole Project"),
+                              settings::get().value("log.wholeProject." + repo_.workdir()) == "1"}
+                            .bind(whole_project_)
+                            .enabled(!rel_path_.empty())
+                            .on_toggled(
+                                [this](bool on)
+                                {
+                                    settings::get().set("log.wholeProject." + repo_.workdir(),
+                                                        on ? "1" : "0");
+                                    window_->set_title(title_text());
+                                    update_file_view();  // nothing is unrelated without a path
+                                    reload();
+                                }),
+                        check{_("_All Branches")}
+                            .bind(all_branches_)
+                            .on_toggled(
+                                [this](bool)
+                                {
+                                    set_walk(all_branches_->checked() ? walk_refs::all
+                                                                      : walk_refs::head);
+                                    reload();
+                                }),
+                    },
+                    // The selected commit's files, by path: a second after
+                    // typing stops, at once on Enter, cleared by Escape (the
+                    // window's keys) [spec 1.11.2].
+                    entry{}
+                        .bind(path_filter_)
+                        .placeholder(std::string("   ") + _("Filter paths"))
+                        .on_changed(
+                            [this](const std::string&)
+                            {
+                                path_filter_timer_ =
+                                    ui_.timer(1000, false, [this] { update_file_view(); });
+                            })
+                        .on_activate([this] { update_file_view(); })
+                        .stretch(),
+                },
+                hbox{
+                    button{_("Refresh")}
+                        .tooltip(_("Reload the log (F5)"))
+                        .on_click([this] { reload(); }),
+                    button{_("S_tatistics")}.bind(statistics_).enabled(false),
+                    progress_bar{}.bind(progress_).stretch(),
+                    menu_button{_("Walk Be_havior")}.bind(walk_).on_menu([this]
+                                                                         { return walk_menu(); }),
+                    menu_button{_("_View")}.bind(view_).on_menu([this] { return view_menu(); }),
+                    spacer{},
+                    button{_("OK")}.bind(ok_).on_click(
+                        [this]
                         {
-                            std::vector<commit> chosen;
-                            for (size_t row : commit_list_->selection())
-                                if (const commit* c = log_.commit(row); c && c->parents.size() <= 1)
-                                    chosen.push_back(*c);
-                            picked_(std::move(chosen));
-                        }
-                        save_layout();
-                        window_->close();
-                        if (closed_) closed_();
-                    }),
-                button{_("Cancel")}.bind(cancel_).on_click(
-                    [this]
-                    {
-                        save_layout();
-                        window_->close();
-                        if (closed_) closed_();
-                    }),
-            },
-        }}}.size(140_ch, 50_lines));
+                            if (picked_)
+                            {
+                                std::vector<commit> chosen;
+                                for (size_t row : commit_list_->selection())
+                                    if (const commit* c = log_.commit(row);
+                                        c && c->parents.size() <= 1)
+                                        chosen.push_back(*c);
+                                picked_(std::move(chosen));
+                            }
+                            save_layout();
+                            window_->close();
+                            if (closed_) closed_();
+                        }),
+                    button{_("Cancel")}.bind(cancel_).on_click(
+                        [this]
+                        {
+                            save_layout();
+                            window_->close();
+                            if (closed_) closed_();
+                        }),
+                },
+            }}}
+            .size(140_ch, 50_lines));
 
     window_->on_close_request(
         [this]

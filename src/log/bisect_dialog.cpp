@@ -3,6 +3,7 @@
 #include "git/repo.h"
 #include "i18n.h"
 #include "ui/progress_dialog.h"
+#include "ui/repo_icon.h"
 #include "ui/windows.h"
 
 #include <rapport/sys.h>
@@ -54,13 +55,16 @@ void bisect_start_dialog::build(const std::string& good, const std::string& bad)
     using namespace rap::layout;
     using namespace rap::literals;
     auto window = [this] { return window_.get(); };
-    window_ = ui_.create(dialog{
-        rap::i18n::format(_("{0} - Bisect start - Tortilla"), root_of(workdir_)),
-        {vbox{
-            good_.layout({.caption = _("Good"), .head = true, .ui = &ui_, .window = window}),
-            bad_.layout({.caption = _("Bad"), .head = true, .ui = &ui_, .window = window}),
-            buttons{dialog_button{rap::dialog_role::ok, ""}.on_click([this] { ok(); }), cancel},
-        }}}.resizable(false));
+    window_ = create_window(
+        ui_,
+        dialog{
+            rap::i18n::format(_("{0} - Bisect start - Tortilla"), root_of(workdir_)),
+            {vbox{
+                good_.layout({.caption = _("Good"), .head = true, .ui = &ui_, .window = window}),
+                bad_.layout({.caption = _("Bad"), .head = true, .ui = &ui_, .window = window}),
+                buttons{dialog_button{rap::dialog_role::ok, ""}.on_click([this] { ok(); }), cancel},
+            }}}
+            .resizable(false));
     window_->on_finished(
         [this](rap::dialog_role)
         {

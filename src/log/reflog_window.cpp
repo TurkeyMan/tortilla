@@ -12,6 +12,7 @@
 #include "ui/compare.h"
 #include "ui/menu_text.h"
 #include "ui/progress_dialog.h"
+#include "ui/repo_icon.h"
 #include "ui/reset_dialog.h"
 #include "ui/settings_dialog.h"
 #include "ui/windows.h"
@@ -123,7 +124,8 @@ void reflog_window::build()
     while (root.size() > 1 && (root.back() == '/' || root.back() == '\\')) root.pop_back();
     root = rap::sys::path_to_utf8(rap::sys::path_from_utf8(root).make_preferred());
 
-    window_ = ui_.create(
+    window_ = create_window(
+        ui_,
         dialog{rap::i18n::format(_("{0} - RefLog - Tortilla"), root),
                {vbox{
                    hbox{

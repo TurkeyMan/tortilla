@@ -3,6 +3,7 @@
 #include "git/command.h"
 #include "git/repo.h"
 #include "i18n.h"
+#include "ui/repo_icon.h"
 
 #include <rapport/sys.h>
 
@@ -136,26 +137,25 @@ void rename_item(rap::ui& ui, const std::string& path, std::function<void(bool)>
     using namespace rap::layout;
     using namespace rap::literals;
     std::weak_ptr<state> weak = st;
-    st->window = ui.create(
-        dialog{_("Rename - Tortilla"),
-               {vbox{
-                   label{rap::i18n::format(_("Rename “{0}”:"), st->name)},
-                   form{{_("New name:"), entry{st->name}
-                                              .bind(st->field)
-                                              .on_activate(
-                                                  [weak]
-                                                  {
-                                                      if (auto s = weak.lock()) s->ok();
-                                                  })}},
-                   buttons{dialog_button{rap::dialog_role::ok, ""}.on_click(
-                               [weak]
-                               {
-                                   if (auto s = weak.lock()) s->ok();
-                               }),
-                           cancel},
-               }}}
-            .size(50_ch, {}),
-        nullptr);
+    st->window =
+        create_window(ui,
+                      dialog{_("Rename - Tortilla"),
+                             {vbox{
+                                 label{rap::i18n::format(_("Rename “{0}”:"), st->name)},
+                                 form{{_("New name:"), entry{st->name}.bind(st->field).on_activate(
+                                                           [weak]
+                                                           {
+                                                               if (auto s = weak.lock()) s->ok();
+                                                           })}},
+                                 buttons{dialog_button{rap::dialog_role::ok, ""}.on_click(
+                                             [weak]
+                                             {
+                                                 if (auto s = weak.lock()) s->ok();
+                                             }),
+                                         cancel},
+                             }}}
+                          .size(50_ch, {}),
+                      nullptr);
     st->window->on_finished(
         [st](rap::dialog_role role)
         {

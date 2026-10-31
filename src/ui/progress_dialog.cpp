@@ -2,6 +2,7 @@
 
 #include "git/command.h"
 #include "i18n.h"
+#include "ui/repo_icon.h"
 
 #include <cctype>
 #include <chrono>
@@ -206,10 +207,12 @@ void run_progress_dialog(rap::ui& ui, rap::window* parent, const std::string& ti
             }),
     });
 
-    p->window = ui.create(
-        dialog{rap::i18n::format(_("{0} - Tortilla"), title), {rap::node{rap::spec::box{vertical, std::move(body), false, {}}, {}}}}
-            .size(90_ch, 24_lines),
-        parent);
+    p->window =
+        create_window(ui,
+                      dialog{rap::i18n::format(_("{0} - Tortilla"), title),
+                             {rap::node{rap::spec::box{vertical, std::move(body), false, {}}, {}}}}
+                          .size(90_ch, 24_lines),
+                      parent);
 
     p->close->set_enabled(false);
     p->keep_alive = p;

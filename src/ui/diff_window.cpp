@@ -3,6 +3,7 @@
 #include "git/command.h"
 #include "i18n.h"
 #include "settings.h"
+#include "ui/repo_icon.h"
 
 #include <rapport/sys.h>
 
@@ -98,73 +99,75 @@ public:
                 if (auto s = weak.lock()) f(*s);
             };
         };
-        window_ = ui_.create(window{
-            rap::i18n::format(_("{0} - Tortilla"), title_),
-            {vbox{
-                text_view{}.read_only().monospace().wrap(false).bind(text_).stretch(),
-                hbox{
-                    label{_("Find:")},
-                    entry{}
-                        .bind(query_)
-                        .on_changed(
-                            [weak](const std::string&)
-                            {
-                                if (auto s = weak.lock()) s->search();
-                            })
-                        .on_activate(with([](diff_window& w) { w.step(1); }))
-                        .stretch(),
-                    button{_("_Previous")}.on_click(with([](diff_window& w) { w.step(-1); })),
-                    button{_("_Next")}.on_click(with([](diff_window& w) { w.step(1); })),
-                    check{_("Match _case")}
-                        .bind(match_case_)
-                        .on_toggled(
-                            [weak](bool)
-                            {
-                                if (auto s = weak.lock()) s->search();
-                            }),
-                    label{""}.bind(count_).width(12_ch),
-                }
-                    .margins()  // the window has none, so the text sits flush as in an editor
-                    .handle(find_bar_),
-            }}}
-                                 .menu_bar({
-                                     // The menus live in the window, so their items hold the
-                                     // diff_window weakly, like every other callback here.
-                                     {_("_File"),
-                                      [with]
-                                      {
-                                          return rap::menu{
-                                              {.label = _("_Save As..."),
-                                               .action = with([](diff_window& w) { w.save_as(); }),
-                                               .shortcut = "Ctrl+S"},
-                                              rap::menu_item::separator(),
-                                              {.label = _("_Close"),
-                                               .action = with([](diff_window& w) { w.close(); }),
-                                               .shortcut = "Ctrl+W"},
-                                          };
-                                      }},
-                                     {_("_Edit"),
-                                      [with, weak]
-                                      {
-                                          auto s = weak.lock();
-                                          const bool any = s && !s->query_->text().empty();
-                                          return rap::menu{
-                                              {.label = _("_Find..."),
-                                               .action = with([](diff_window& w) { w.show_find(); }),
-                                               .shortcut = "Ctrl+F"},
-                                              {.label = _("Find _Next"),
-                                               .action = with([](diff_window& w) { w.step(1); }),
-                                               .shortcut = "F3",
-                                               .enabled = any},
-                                              {.label = _("Find _Previous"),
-                                               .action = with([](diff_window& w) { w.step(-1); }),
-                                               .shortcut = "Shift+F3",
-                                               .enabled = any},
-                                          };
-                                      }},
-                                 })
-                                 .margins(false)
-                                 .size(120_ch, 45_lines));
+        window_ = create_window(
+            ui_,
+            window{
+                rap::i18n::format(_("{0} - Tortilla"), title_),
+                {vbox{
+                    text_view{}.read_only().monospace().wrap(false).bind(text_).stretch(),
+                    hbox{
+                        label{_("Find:")},
+                        entry{}
+                            .bind(query_)
+                            .on_changed(
+                                [weak](const std::string&)
+                                {
+                                    if (auto s = weak.lock()) s->search();
+                                })
+                            .on_activate(with([](diff_window& w) { w.step(1); }))
+                            .stretch(),
+                        button{_("_Previous")}.on_click(with([](diff_window& w) { w.step(-1); })),
+                        button{_("_Next")}.on_click(with([](diff_window& w) { w.step(1); })),
+                        check{_("Match _case")}
+                            .bind(match_case_)
+                            .on_toggled(
+                                [weak](bool)
+                                {
+                                    if (auto s = weak.lock()) s->search();
+                                }),
+                        label{""}.bind(count_).width(12_ch),
+                    }
+                        .margins()  // the window has none, so the text sits flush as in an editor
+                        .handle(find_bar_),
+                }}}
+                .menu_bar({
+                    // The menus live in the window, so their items hold the
+                    // diff_window weakly, like every other callback here.
+                    {_("_File"),
+                     [with]
+                     {
+                         return rap::menu{
+                             {.label = _("_Save As..."),
+                              .action = with([](diff_window& w) { w.save_as(); }),
+                              .shortcut = "Ctrl+S"},
+                             rap::menu_item::separator(),
+                             {.label = _("_Close"),
+                              .action = with([](diff_window& w) { w.close(); }),
+                              .shortcut = "Ctrl+W"},
+                         };
+                     }},
+                    {_("_Edit"),
+                     [with, weak]
+                     {
+                         auto s = weak.lock();
+                         const bool any = s && !s->query_->text().empty();
+                         return rap::menu{
+                             {.label = _("_Find..."),
+                              .action = with([](diff_window& w) { w.show_find(); }),
+                              .shortcut = "Ctrl+F"},
+                             {.label = _("Find _Next"),
+                              .action = with([](diff_window& w) { w.step(1); }),
+                              .shortcut = "F3",
+                              .enabled = any},
+                             {.label = _("Find _Previous"),
+                              .action = with([](diff_window& w) { w.step(-1); }),
+                              .shortcut = "Shift+F3",
+                              .enabled = any},
+                         };
+                     }},
+                })
+                .margins(false)
+                .size(120_ch, 45_lines));
 
         find_bar_->set_visible(false);
         window_->on_key(

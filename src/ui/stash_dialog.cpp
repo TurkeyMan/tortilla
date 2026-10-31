@@ -2,6 +2,7 @@
 
 #include "i18n.h"
 #include "ui/progress_dialog.h"
+#include "ui/repo_icon.h"
 
 #include <memory>
 
@@ -21,11 +22,13 @@ void stash_changes(rap::ui& ui, rap::window* parent, const std::string& workdir,
 
     using namespace rap::layout;
     using namespace rap::literals;
-    st->window = ui.create(
+    st->window = create_window(
+        ui,
         dialog{_("Stash"),
                {vbox{
                    form{
-                       {_("Message"), entry{}.bind(st->message).placeholder(_("optional")).width(40_ch)},
+                       {_("Message"),
+                        entry{}.bind(st->message).placeholder(_("optional")).width(40_ch)},
                        {"", check{_("Include _untracked files")}.bind(st->untracked)},
                    },
                    buttons{ok, cancel},

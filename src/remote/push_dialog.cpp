@@ -7,6 +7,7 @@
 #include "remote/pull_fetch_dialog.h"
 #include "settings.h"
 #include "ui/progress_dialog.h"
+#include "ui/repo_icon.h"
 #include "ui/settings_dialog.h"
 #include "ui/windows.h"
 
@@ -89,57 +90,60 @@ void push_dialog::build(const std::string& preselected)
     const std::string branch = !preselected.empty() ? preselected : current_branch(workdir_);
 
     std::string recurse_config = config_value(workdir_, "push.recurseSubmodules");
-    window_ = ui_.create(dialog{
-        title(workdir_, _("{0} - Push - Tortilla")),
-        {vbox{
-            group{_("Ref"),
-                  vbox{
-                      check{_("_Push all branches"), settings::get().value(key + ".all") == "1"}
-                          .bind(all_branches_)
-                          .on_toggled([this](bool) { update_state(); }),
-                      form{
-                          {_("Local"),
-                           combo{local_branches(workdir_), branch.empty() ? "HEAD" : branch}
-                               .bind(local_)
-                               .width(40_ch)
-                               .on_changed([this](const std::string&) { local_changed(); })},
-                          {_("Remote branch"), combo{}.bind(remote_branch_)},
-                      },
-                  }},
-            group{_("Destination"),
-                  form{
-                      {_("Remote"),
-                       hbox{drop_down{items, current}.bind(remote_).stretch().on_changed(
-                                [this](int) { update_state(); }),
-                            button{_("_Manage")}.on_click([this] { manage_remotes(); })}},
-                      {_("URL"), combo{}.bind(url_)},
-                  }},
-            group{_("Options"),
-                  vbox{
-                      hbox{
-                          check{_("Force _with lease")}
-                              .bind(force_with_lease_)
+    window_ = create_window(
+        ui_,
+        dialog{
+            title(workdir_, _("{0} - Push - Tortilla")),
+            {vbox{
+                group{_("Ref"),
+                      vbox{
+                          check{_("_Push all branches"), settings::get().value(key + ".all") == "1"}
+                              .bind(all_branches_)
                               .on_toggled([this](bool) { update_state(); }),
-                          check{_("_Force")}.bind(force_).on_toggled([this](bool)
-                                                                     { update_state(); }),
-                          check{_("Include _Tags")}.bind(tags_).on_toggled([this](bool)
-                                                                           { update_state(); }),
-                          spacer{},
-                      },
-                      check{_("_Set upstream/track remote branch")}.bind(set_upstream_),
+                          form{
+                              {_("Local"),
+                               combo{local_branches(workdir_), branch.empty() ? "HEAD" : branch}
+                                   .bind(local_)
+                                   .width(40_ch)
+                                   .on_changed([this](const std::string&) { local_changed(); })},
+                              {_("Remote branch"), combo{}.bind(remote_branch_)},
+                          },
+                      }},
+                group{_("Destination"),
                       form{
-                          {_("Recurse submodules"),
-                           drop_down{{recurse_config.empty()
-                                          ? std::string(_("Default"))
-                                          : rap::i18n::format(_("Default ({0})"), recurse_config),
-                                      _("None"), _("Check"), _("On demand")},
-                                     0}
-                               .bind(recurse_)},
-                          {_("Push option"), entry{}.bind(push_option_)},
-                      },
-                  }},
-            buttons{dialog_button{rap::dialog_role::ok, ""}.on_click([this] { ok(); }), cancel},
-        }}});
+                          {_("Remote"),
+                           hbox{drop_down{items, current}.bind(remote_).stretch().on_changed(
+                                    [this](int) { update_state(); }),
+                                button{_("_Manage")}.on_click([this] { manage_remotes(); })}},
+                          {_("URL"), combo{}.bind(url_)},
+                      }},
+                group{
+                    _("Options"),
+                    vbox{
+                        hbox{
+                            check{_("Force _with lease")}
+                                .bind(force_with_lease_)
+                                .on_toggled([this](bool) { update_state(); }),
+                            check{_("_Force")}.bind(force_).on_toggled([this](bool)
+                                                                       { update_state(); }),
+                            check{_("Include _Tags")}.bind(tags_).on_toggled([this](bool)
+                                                                             { update_state(); }),
+                            spacer{},
+                        },
+                        check{_("_Set upstream/track remote branch")}.bind(set_upstream_),
+                        form{
+                            {_("Recurse submodules"),
+                             drop_down{{recurse_config.empty()
+                                            ? std::string(_("Default"))
+                                            : rap::i18n::format(_("Default ({0})"), recurse_config),
+                                        _("None"), _("Check"), _("On demand")},
+                                       0}
+                                 .bind(recurse_)},
+                            {_("Push option"), entry{}.bind(push_option_)},
+                        },
+                    }},
+                buttons{dialog_button{rap::dialog_role::ok, ""}.on_click([this] { ok(); }), cancel},
+            }}});
     window_->on_finished(
         [this](rap::dialog_role)
         {

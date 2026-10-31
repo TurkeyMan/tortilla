@@ -4,6 +4,7 @@
 #include "i18n.h"
 #include "settings.h"
 #include "ui/progress_dialog.h"
+#include "ui/repo_icon.h"
 #include "ui/settings_dialog.h"
 
 #include <rapport/sys.h>
@@ -118,126 +119,137 @@ void commit_window::build()
     auto check_link =
         [this](const char* text, std::function<bool(const file_change&)> which, bool on = true)
     { return label{text}.link([this, which, on] { files_.check_where(which, on); }); };
-    window_ = ui_.create(window{
-        _("Commit"),
-        {vbox{
-            hbox{
-                label{_("Commit to:")},
-                // Read-only and frameless, it reads as the branch's name, as
-                // TortoiseGit's does; "new branch" gives it a frame to type in.
-                entry{}.bind(branch_).read_only().frame(false).width(24_ch),
-                check{_("new branch")}
-                    .bind(new_branch_)
-                    .on_toggled(
-                        [this](bool on)
-                        {
-                            branch_->set_read_only(!on);
-                            branch_->set_frame(on);
-                            branch_->set_placeholder(on ? _("new branch name") : "");
-                            branch_->set_text(on ? "" : current_branch_);
-                            if (on) branch_->focus();
-                        }),
-                spacer{},
-            },
-            splitter{
-                vertical,
-                group{
-                    _("Message:"),
-                    vbox{
-                        // TortoiseGit's room for a message, before any dragging.
-                        text_view{}
-                            .bind(message_)
-                            .on_changed([this] { update_state(); })
-                            .height(8_lines)
-                            .stretch(),
-                        check{_("Amend _Last Commit")}.bind(amend_).on_toggled([this](bool on)
-                                                                            { amend_toggled(on); }),
-                        hbox{
-                            // Shown greyed until wanted, as the author field: the
-                            // row keeps its layout when they're turned on.
-                            check{_("Set author _date")}.bind(set_date_).on_toggled(
-                                [this](bool on)
-                                {
-                                    date_->set_enabled(on);
-                                    time_->set_enabled(on);
-                                }),
-                            date_picker{}.bind(date_).enabled(false),
-                            entry{}.bind(time_).placeholder("HH:MM:SS").width(10_ch).enabled(false),
-                            spacer{},
-                        },
-                        hbox{
-                            check{_("Set au_thor")}
-                                .bind(set_author_)
-                                .on_toggled([this](bool on) { author_->set_enabled(on); }),
-                            entry{}.bind(author_).enabled(false).width(36_ch),
-                            spacer{},
-                            button{_("Add _Signed-off-by")}.on_click([this] { add_signoff(); }),
-                        },
-                    }},
-                group{
-                    _("Changes made (F5: refresh, double-click on file for diff):"),
-                    vbox{
-                        hbox{
-                            label{_("Check:")},
-                            check_link(_("All"), [](const file_change&) { return true; }),
-                            check_link(
-                                _("None"), [](const file_change&) { return true; }, false),
-                            check_link(_("Unversioned"),
-                                       [](const file_change& f) { return f.status == '?'; }),
-                            check_link(_("Versioned"), versioned),
-                            check_link(_("Added"),
-                                       [](const file_change& f) { return f.status == 'A'; }),
-                            check_link(_("Deleted"),
-                                       [](const file_change& f) { return f.status == 'D'; }),
-                            check_link(
-                                _("Modified"), [](const file_change& f)
-                                { return f.status == 'M' || f.status == 'T' || f.status == 'R'; }),
-                            check_link(_("Files"),
-                                       [](const file_change& f) { return !f.path.ends_with('/'); }),
-                            check_link(_("Submodules"),
-                                       [](const file_change& f) { return f.path.ends_with('/'); }),
-                            spacer{},
-                        },
-                        files_.list("commit.files", true).stretch(),
-                        hbox{
-                            vbox{
-                                check{_("Show _Unversioned Files"), flag(k_unversioned, true)}
-                                    .bind(unversioned_)
-                                    .on_toggled(
-                                        [this](bool on)
-                                        {
-                                            settings::get().set(k_unversioned, on ? "1" : "0");
-                                            reload();
-                                        }),
-                                check{_("Show _Whole Project"),
-                                      root_ || flag(whole_project_key(workdir_), false)}
-                                    .bind(whole_project_)
-                                    .enabled(!root_)
-                                    .on_toggled(
-                                        [this](bool on)
-                                        {
-                                            settings::get().set(whole_project_key(workdir_),
-                                                                on ? "1" : "0");
-                                            reload();
-                                        }),
-                                check{_("Message onl_y")}
-                                    .bind(message_only_)
-                                    .on_toggled([this](bool) { update_state(); }),
+    window_ = create_window(
+        ui_,
+        window{
+            _("Commit"),
+            {vbox{
+                hbox{
+                    label{_("Commit to:")},
+                    // Read-only and frameless, it reads as the branch's name, as
+                    // TortoiseGit's does; "new branch" gives it a frame to type in.
+                    entry{}.bind(branch_).read_only().frame(false).width(24_ch),
+                    check{_("new branch")}
+                        .bind(new_branch_)
+                        .on_toggled(
+                            [this](bool on)
+                            {
+                                branch_->set_read_only(!on);
+                                branch_->set_frame(on);
+                                branch_->set_placeholder(on ? _("new branch name") : "");
+                                branch_->set_text(on ? "" : current_branch_);
+                                if (on) branch_->focus();
+                            }),
+                    spacer{},
+                },
+                splitter{
+                    vertical,
+                    group{
+                        _("Message:"),
+                        vbox{
+                            // TortoiseGit's room for a message, before any dragging.
+                            text_view{}
+                                .bind(message_)
+                                .on_changed([this] { update_state(); })
+                                .height(8_lines)
+                                .stretch(),
+                            check{_("Amend _Last Commit")}.bind(amend_).on_toggled(
+                                [this](bool on) { amend_toggled(on); }),
+                            hbox{
+                                // Shown greyed until wanted, as the author field: the
+                                // row keeps its layout when they're turned on.
+                                check{_("Set author _date")}.bind(set_date_).on_toggled(
+                                    [this](bool on)
+                                    {
+                                        date_->set_enabled(on);
+                                        time_->set_enabled(on);
+                                    }),
+                                date_picker{}.bind(date_).enabled(false),
+                                entry{}
+                                    .bind(time_)
+                                    .placeholder("HH:MM:SS")
+                                    .width(10_ch)
+                                    .enabled(false),
+                                spacer{},
                             },
-                            spacer{},
-                            label{}.bind(stats_),
-                        },
-                    }}
-                    .stretch(),  // the files take what the window gains, not the message
-            }
-                .bind(splitter_)
-                .stretch(),
-            hbox{
-                spacer{},
-                button{_("C_ommit")}.bind(commit_).enabled(false).on_click([this] { commit(); }),
-                button{_("Cancel")}.on_click([this] { close(false); }),
-            },
-        }}}.size(100_ch, 44_lines));
+                            hbox{
+                                check{_("Set au_thor")}
+                                    .bind(set_author_)
+                                    .on_toggled([this](bool on) { author_->set_enabled(on); }),
+                                entry{}.bind(author_).enabled(false).width(36_ch),
+                                spacer{},
+                                button{_("Add _Signed-off-by")}.on_click([this] { add_signoff(); }),
+                            },
+                        }},
+                    group{_("Changes made (F5: refresh, double-click on file for diff):"),
+                          vbox{
+                              hbox{
+                                  label{_("Check:")},
+                                  check_link(_("All"), [](const file_change&) { return true; }),
+                                  check_link(
+                                      _("None"), [](const file_change&) { return true; }, false),
+                                  check_link(_("Unversioned"),
+                                             [](const file_change& f) { return f.status == '?'; }),
+                                  check_link(_("Versioned"), versioned),
+                                  check_link(_("Added"),
+                                             [](const file_change& f) { return f.status == 'A'; }),
+                                  check_link(_("Deleted"),
+                                             [](const file_change& f) { return f.status == 'D'; }),
+                                  check_link(_("Modified"),
+                                             [](const file_change& f)
+                                             {
+                                                 return f.status == 'M' || f.status == 'T' ||
+                                                        f.status == 'R';
+                                             }),
+                                  check_link(_("Files"), [](const file_change& f)
+                                             { return !f.path.ends_with('/'); }),
+                                  check_link(_("Submodules"), [](const file_change& f)
+                                             { return f.path.ends_with('/'); }),
+                                  spacer{},
+                              },
+                              files_.list("commit.files", true).stretch(),
+                              hbox{
+                                  vbox{
+                                      check{_("Show _Unversioned Files"), flag(k_unversioned, true)}
+                                          .bind(unversioned_)
+                                          .on_toggled(
+                                              [this](bool on)
+                                              {
+                                                  settings::get().set(k_unversioned,
+                                                                      on ? "1" : "0");
+                                                  reload();
+                                              }),
+                                      check{_("Show _Whole Project"),
+                                            root_ || flag(whole_project_key(workdir_), false)}
+                                          .bind(whole_project_)
+                                          .enabled(!root_)
+                                          .on_toggled(
+                                              [this](bool on)
+                                              {
+                                                  settings::get().set(whole_project_key(workdir_),
+                                                                      on ? "1" : "0");
+                                                  reload();
+                                              }),
+                                      check{_("Message onl_y")}
+                                          .bind(message_only_)
+                                          .on_toggled([this](bool) { update_state(); }),
+                                  },
+                                  spacer{},
+                                  label{}.bind(stats_),
+                              },
+                          }}
+                        .stretch(),  // the files take what the window gains, not the message
+                }
+                    .bind(splitter_)
+                    .stretch(),
+                hbox{
+                    spacer{},
+                    button{_("C_ommit")}.bind(commit_).enabled(false).on_click([this]
+                                                                               { commit(); }),
+                    button{_("Cancel")}.on_click([this] { close(false); }),
+                },
+            }}}
+            .size(100_ch, 44_lines));
 
     window_->on_close_request(
         [this]

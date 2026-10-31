@@ -10,6 +10,7 @@
 #include "shell/menu_icons.h"
 #include "shell/menu_table.h"
 #include "ui/remotes_page.h"
+#include "ui/repo_icon.h"
 
 #include <rapport/sys.h>
 
@@ -556,7 +557,8 @@ void show_settings(rap::ui& ui, rap::window* parent, const std::string& repo_dir
 
     using namespace rap::layout;
     // Lazy pages don't size the dialog, so it has a size of its own.
-    st->window = ui.create(
+    st->window = create_window(
+        ui,
         dialog{
             _("Settings - Tortilla"),
             {vbox{

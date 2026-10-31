@@ -7,6 +7,7 @@
 #include "log/log_window.h"
 #include "settings.h"
 #include "ui/progress_dialog.h"
+#include "ui/repo_icon.h"
 #include "ui/windows.h"
 
 #include <rapport/sys.h>
@@ -72,59 +73,64 @@ void clone_dialog::build(const std::string& folder, const std::string& url)
     const std::vector<std::string> history = url_history();
     const std::string first_url = !url.empty() ? url : history.empty() ? "" : history.front();
 
-    window_ = ui_.create(dialog{
-        _("Git clone - Tortilla"),
-        {vbox{
-            group{
-                _("Clone Existing Repository"),
-                vbox{
-                    form{
-                        {_("URL"), combo{history, first_url}.bind(url_).width(60_ch).on_changed(
-                                    [this](const std::string& u) { url_changed(u); })},
-                        {_("Directory"),
-                         hbox{
-                             entry{dir}.bind(directory_).stretch(),
-                             button{_("Bro_wse...")}.on_click(
-                                 [this]
-                                 {
-                                     ui_.choose_files(window_.get(),
-                                                      {.mode = rap::file_dialog_spec::mode::folder,
-                                                       .title = _("Clone into"),
-                                                       .initial_path = directory_->text()},
-                                                      [this](std::vector<std::string> chosen)
-                                                      {
-                                                          if (chosen.empty()) return;
-                                                          directory_->set_text(chosen.front());
-                                                          module_.clear();
-                                                          url_changed(url_->text());
-                                                      });
-                                 }),
-                         }},
-                    },
-                    hbox{
-                        check{_("Depth")}.bind(depth_).on_toggled([this](bool) { update_state(); }),
-                        spin{1, 1e9, 1}.bind(depth_value_),
-                        check{_("Recursive"), settings::get().value("clone.recursive") == "1"}
-                            .bind(recursive_)
-                            .on_toggled([this](bool) { update_state(); }),
-                        check{_("Clone into Bare Repo")}.bind(bare_).on_toggled([this](bool)
-                                                                             { update_state(); }),
-                        check{_("No Checkout")}
-                            .bind(no_checkout_)
-                            .on_toggled([this](bool) { update_state(); }),
-                        spacer{},
-                    },
-                    hbox{
-                        check{_("Branch")}.bind(branch_).on_toggled([this](bool) { update_state(); }),
-                        entry{}.bind(branch_name_).width(20_ch),
-                        check{_("Origin Name")}.bind(origin_).on_toggled([this](bool)
+    window_ = create_window(
+        ui_,
+        dialog{
+            _("Git clone - Tortilla"),
+            {vbox{
+                group{
+                    _("Clone Existing Repository"),
+                    vbox{
+                        form{
+                            {_("URL"), combo{history, first_url}.bind(url_).width(60_ch).on_changed(
+                                           [this](const std::string& u) { url_changed(u); })},
+                            {_("Directory"),
+                             hbox{
+                                 entry{dir}.bind(directory_).stretch(),
+                                 button{_("Bro_wse...")}.on_click(
+                                     [this]
+                                     {
+                                         ui_.choose_files(
+                                             window_.get(),
+                                             {.mode = rap::file_dialog_spec::mode::folder,
+                                              .title = _("Clone into"),
+                                              .initial_path = directory_->text()},
+                                             [this](std::vector<std::string> chosen)
+                                             {
+                                                 if (chosen.empty()) return;
+                                                 directory_->set_text(chosen.front());
+                                                 module_.clear();
+                                                 url_changed(url_->text());
+                                             });
+                                     }),
+                             }},
+                        },
+                        hbox{
+                            check{_("Depth")}.bind(depth_).on_toggled([this](bool)
                                                                       { update_state(); }),
-                        entry{}.bind(origin_name_).width(16_ch),
-                        spacer{},
-                    },
-                }},
-            buttons{dialog_button{rap::dialog_role::ok, ""}.on_click([this] { ok(); }), cancel},
-        }}});
+                            spin{1, 1e9, 1}.bind(depth_value_),
+                            check{_("Recursive"), settings::get().value("clone.recursive") == "1"}
+                                .bind(recursive_)
+                                .on_toggled([this](bool) { update_state(); }),
+                            check{_("Clone into Bare Repo")}.bind(bare_).on_toggled(
+                                [this](bool) { update_state(); }),
+                            check{_("No Checkout")}
+                                .bind(no_checkout_)
+                                .on_toggled([this](bool) { update_state(); }),
+                            spacer{},
+                        },
+                        hbox{
+                            check{_("Branch")}.bind(branch_).on_toggled([this](bool)
+                                                                        { update_state(); }),
+                            entry{}.bind(branch_name_).width(20_ch),
+                            check{_("Origin Name")}.bind(origin_).on_toggled([this](bool)
+                                                                             { update_state(); }),
+                            entry{}.bind(origin_name_).width(16_ch),
+                            spacer{},
+                        },
+                    }},
+                buttons{dialog_button{rap::dialog_role::ok, ""}.on_click([this] { ok(); }), cancel},
+            }}});
     window_->on_finished(
         [this](rap::dialog_role)
         {

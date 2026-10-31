@@ -9,6 +9,7 @@
 #include "i18n.h"
 #include "remote/push_dialog.h"
 #include "ui/progress_dialog.h"
+#include "ui/repo_icon.h"
 #include "ui/windows.h"
 
 #include <rapport/sys.h>
@@ -92,43 +93,51 @@ void merge_dialog::build(const std::string& from)
     options.front() = _("(none)");
     const std::string current = current_branch(workdir_);
 
-    window_ = ui_.create(dialog{
-        rap::i18n::format(_("{0} - Merge - Tortilla"), root_of(workdir_)),
-        {vbox{
-            hbox{label{_("Current branch:")}, label{current.empty() ? _("(no branch)") : current},
-                 spacer{}},
-            from_.layout({.caption = _("From"), .skip_current = true, .ui = &ui_, .window = [this] { return window_.get(); }}),
-            group{
-                _("Option"),
-                vbox{
-                    hbox{
-                        check{_("_Squash")}.bind(squash_).on_toggled([this](bool) { update_state(); }),
-                        check{_("Messages")}.bind(log_).on_toggled([this](bool) { update_state(); }),
-                        spin{1, 100000, double(log_count)}.bind(log_count_),
-                        spacer{},
-                    },
-                    hbox{
-                        check{_("No _Fast Forward")}.bind(no_ff_).on_toggled([this](bool)
-                                                                          { update_state(); }),
-                        check{_("Fast Forward O_nly")}.bind(ff_only_).on_toggled([this](bool)
-                                                                              { update_state(); }),
-                        spacer{},
-                    },
-                    check{_("No Co_mmit")}.bind(no_commit_),
-                    hbox{
-                        label{_("Strategy")},
-                        drop_down{strategies, 0}.bind(strategy_).on_changed([this](int)
-                                                                            { update_state(); }),
-                        drop_down{options, 0}
-                            .bind(strategy_option_)
-                            .on_changed([this](int) { update_state(); }),
-                        entry{}.bind(strategy_parameter_).width(10_ch),
-                        spacer{},
-                    },
-                }},
-            group{_("Merge Message"), text_view{}.bind(message_).height(6_lines).stretch()}.stretch(),
-            buttons{dialog_button{rap::dialog_role::ok, ""}.on_click([this] { ok(); }), cancel},
-        }}}.size(70_ch, 30_lines));
+    window_ = create_window(
+        ui_,
+        dialog{
+            rap::i18n::format(_("{0} - Merge - Tortilla"), root_of(workdir_)),
+            {vbox{
+                hbox{label{_("Current branch:")},
+                     label{current.empty() ? _("(no branch)") : current}, spacer{}},
+                from_.layout({.caption = _("From"),
+                              .skip_current = true,
+                              .ui = &ui_,
+                              .window = [this] { return window_.get(); }}),
+                group{_("Option"),
+                      vbox{
+                          hbox{
+                              check{_("_Squash")}.bind(squash_).on_toggled([this](bool)
+                                                                           { update_state(); }),
+                              check{_("Messages")}.bind(log_).on_toggled([this](bool)
+                                                                         { update_state(); }),
+                              spin{1, 100000, double(log_count)}.bind(log_count_),
+                              spacer{},
+                          },
+                          hbox{
+                              check{_("No _Fast Forward")}.bind(no_ff_).on_toggled(
+                                  [this](bool) { update_state(); }),
+                              check{_("Fast Forward O_nly")}.bind(ff_only_).on_toggled(
+                                  [this](bool) { update_state(); }),
+                              spacer{},
+                          },
+                          check{_("No Co_mmit")}.bind(no_commit_),
+                          hbox{
+                              label{_("Strategy")},
+                              drop_down{strategies, 0}.bind(strategy_).on_changed(
+                                  [this](int) { update_state(); }),
+                              drop_down{options, 0}
+                                  .bind(strategy_option_)
+                                  .on_changed([this](int) { update_state(); }),
+                              entry{}.bind(strategy_parameter_).width(10_ch),
+                              spacer{},
+                          },
+                      }},
+                group{_("Merge Message"), text_view{}.bind(message_).height(6_lines).stretch()}
+                    .stretch(),
+                buttons{dialog_button{rap::dialog_role::ok, ""}.on_click([this] { ok(); }), cancel},
+            }}}
+            .size(70_ch, 30_lines));
     window_->on_finished(
         [this](rap::dialog_role)
         {
@@ -341,24 +350,28 @@ abort_merge_dialog::abort_merge_dialog(rap::ui& ui, std::string workdir)
 void abort_merge_dialog::build()
 {
     using namespace rap::layout;
-    window_ = ui_.create(dialog{
-        rap::i18n::format(_("{0} - Abort Merge - Tortilla"), root_of(workdir_)),
-        {vbox{
-            label{_("In order to abort a merge progress a reset (to HEAD) is needed.")},
-            group{_("Reset Type"),
-                  drop_down{{_("Merge: Resets the index and try to reconstruct the pre-merge state"),
-                             _("Mixed: Leave working tree untouched, reset index"),
-                             _("Hard: Reset working tree and index (discard all local changes)")},
-                            0}
-                      .bind(type_)},
-            button{_("Show modified files in _working tree")}.on_click(
-                [this]
-                {
-                    if (auto w = changes_window::open(ui_, {workdir_}))
-                        windows::keep(std::move(*w));
-                }),
-            buttons{dialog_button{rap::dialog_role::ok, ""}.on_click([this] { ok(); }), cancel},
-        }}}.resizable(false));
+    window_ = create_window(
+        ui_,
+        dialog{
+            rap::i18n::format(_("{0} - Abort Merge - Tortilla"), root_of(workdir_)),
+            {vbox{
+                label{_("In order to abort a merge progress a reset (to HEAD) is needed.")},
+                group{_("Reset Type"),
+                      drop_down{
+                          {_("Merge: Resets the index and try to reconstruct the pre-merge state"),
+                           _("Mixed: Leave working tree untouched, reset index"),
+                           _("Hard: Reset working tree and index (discard all local changes)")},
+                          0}
+                          .bind(type_)},
+                button{_("Show modified files in _working tree")}.on_click(
+                    [this]
+                    {
+                        if (auto w = changes_window::open(ui_, {workdir_}))
+                            windows::keep(std::move(*w));
+                    }),
+                buttons{dialog_button{rap::dialog_role::ok, ""}.on_click([this] { ok(); }), cancel},
+            }}}
+            .resizable(false));
     window_->on_finished(
         [this](rap::dialog_role)
         {
