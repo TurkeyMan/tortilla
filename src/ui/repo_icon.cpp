@@ -65,6 +65,14 @@ std::vector<float> premultiplied(const rap::sys::decoded_image& d)
 // One size: the body plus the shell's shading times the colour. The shell's
 // usual tone is 200 (tools/make_shell_layer.py), so a colour lands as given
 // there, lighter on its highlights and darker on its spots.
+// The icon as it is.
+std::unique_ptr<rap::image> plain(rap::ui& ui, const icon_layers& l)
+{
+    auto icon = rap::sys::decode_image(l.icon);
+    if (!icon || icon->width != l.size || icon->height != l.size) return nullptr;
+    return ui.create_image(l.size, l.size, icon->format, icon->pixels.data(), size_t(l.size) * 4);
+}
+
 std::unique_ptr<rap::image> tinted(rap::ui& ui, const icon_layers& l, rap::color c)
 {
     auto body = rap::sys::decode_image(l.body), shell = rap::sys::decode_image(l.shell);
@@ -83,6 +91,27 @@ std::unique_ptr<rap::image> tinted(rap::ui& ui, const icon_layers& l, rap::color
     }
     return ui.create_image(l.size, l.size, rap::pixel_format::bgra8_premultiplied, out.data(),
                            size_t(l.size) * 4);
+}
+
+// The icon drawn from `colored`'s images (or the plain ones), at the size
+// nearest above what's asked; empty if none decode.
+rap::icon icon_of(rap::ui& ui, std::optional<rap::color> colored)
+{
+    // Smallest first, as k_icon_layers lists them.
+    std::vector<std::pair<int, std::shared_ptr<rap::image>>> images;
+    for (const icon_layers& l : k_icon_layers)
+        if (auto image = colored ? tinted(ui, l, *colored) : plain(ui, l))
+            images.emplace_back(l.size, std::move(image));
+    if (images.empty()) return {};
+    return rap::icon::drawn(
+        [images](rap::painter& p, rap::size_f size)
+        {
+            // The smallest at least as big as the device pixels asked for.
+            const float want = std::max(size.w, size.h) * p.device_scale();
+            auto it = std::ranges::find_if(images, [&](const auto& e) { return e.first >= want; });
+            const auto& [n, image] = it != images.end() ? *it : images.back();
+            p.image(*image, {0, 0, float(n), float(n)}, {0, 0, size.w, size.h});
+        });
 }
 
 rap::icon g_icon;
@@ -250,29 +279,14 @@ void use_repo_icon(rap::ui& ui, const std::string& path, bool outer)
     auto r = repo::open(rap::sys::path_to_utf8(at));
     if (!r) return;
     const std::string dir = r->bare() ? r->git_dir() : r->workdir();
-    const std::optional<rap::color> c = take_color(dir);
-    if (!c) return;  // the program's own icon
-
-    // Smallest first, as k_icon_layers lists them.
-    std::vector<std::pair<int, std::shared_ptr<rap::image>>> images;
-    for (const icon_layers& l : k_icon_layers)
-        if (auto image = tinted(ui, l, *c)) images.emplace_back(l.size, std::move(image));
-    if (images.empty()) return;
-    g_icon = rap::icon::drawn(
-        [images](rap::painter& p, rap::size_f size)
-        {
-            // The smallest at least as big as the device pixels asked for.
-            const float want = std::max(size.w, size.h) * p.device_scale();
-            auto it = std::ranges::find_if(images, [&](const auto& e) { return e.first >= want; });
-            const auto& [n, image] = it != images.end() ? *it : images.back();
-            p.image(*image, {0, 0, float(n), float(n)}, {0, 0, size.w, size.h});
-        });
+    g_icon = icon_of(ui, take_color(dir));
 }
 
 std::unique_ptr<rap::window> create_window(rap::ui& ui, const rap::window_spec& spec,
                                            rap::window* parent)
 {
     auto w = ui.create(spec, parent);
+    if (!g_icon) g_icon = icon_of(ui, std::nullopt);
     if (w && g_icon) w->set_icon(g_icon);
     return w;
 }

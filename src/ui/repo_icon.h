@@ -16,13 +16,13 @@
 namespace tortilla
 {
 
-// The icon at one size, split in two (tools/make_icons.cpp): the icon
-// without its shell, and the shell's grey shading. Built in from
+// The icon at one size, whole and split in two (tools/make_icons.cpp): the
+// icon without its shell, and the shell's grey shading. Built in from
 // data/icons/layers (CMakeLists.txt).
 struct icon_layers
 {
     int size;
-    std::span<const uint8_t> body, shell;
+    std::span<const uint8_t> icon, body, shell;
 };
 extern const std::vector<icon_layers> k_icon_layers;
 
@@ -31,7 +31,9 @@ extern const std::vector<icon_layers> k_icon_layers;
 // around a submodule at `path`). Outside one, they keep Tortilla's.
 void use_repo_icon(rap::ui&, const std::string& path, bool outer = false);
 
-// ui.create, with the repository's icon when use_repo_icon chose one.
+// ui.create, with the repository's icon when use_repo_icon chose one, and
+// Tortilla's own otherwise: set, not left to the desktop to find by name
+// (which an uninstalled build, or WSLg, doesn't).
 std::unique_ptr<rap::window> create_window(rap::ui&, const rap::window_spec&,
                                            rap::window* parent = nullptr);
 

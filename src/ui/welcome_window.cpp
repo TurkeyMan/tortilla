@@ -61,7 +61,8 @@ void welcome_window::build()
                                    size_t(png->width) * 4);
 
     using namespace rap::layout;
-    window_ = ui_.create(
+    window_ = create_window(
+        ui_,
         dialog{
             _("Welcome to Tortilla"),
             {vbox{
@@ -72,9 +73,10 @@ void welcome_window::build()
                         "folder in your file manager to commit, pull, push, browse the history or "
                         "untangle a merge.")}
                     .wrap(),
-                label{_("It began with a simple wish: TortoiseGit's way of working, without the "
-                        "waiting, on every desktop. So every window is your system's own, and "
-                        "everything on screen keeps up with your display, however long the history.")}
+                label{
+                    _("It began with a simple wish: TortoiseGit's way of working, without the "
+                      "waiting, on every desktop. So every window is your system's own, and "
+                      "everything on screen keeps up with your display, however long the history.")}
                     .wrap(),
                 label{_("To start, right-click a folder and look for Tortilla, or open one here.")},
                 hbox{

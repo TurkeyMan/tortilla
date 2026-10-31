@@ -2,8 +2,8 @@
 // opaque pixels, centred on a square, and area-averaged down to each size.
 // Writes <outdir>/hicolor/NxN/apps/tortilla.png and <outdir>/tortilla.ico.
 // Given the shell layer (tools/make_shell_layer.py) too, also each size
-// split in two, <outdir>/layers/body-N.png and shell-N.png: the icon without
-// its shell, and the shell's grey shading. Scaled premultiplied, the two add
+// whole, <outdir>/layers/icon-N.png, and split in two, body-N.png and
+// shell-N.png: the icon without its shell, and the shell's grey shading. Scaled premultiplied, the two add
 // up to the icon at any size, so Tortilla can tint the shell per repository
 // with no fringe of the old colour (repo_icon.cpp).
 // Needs Qt 6 (QtGui), so it isn't part of the build:
@@ -135,9 +135,10 @@ int main(int argc, char** argv)
                 const int a = std::max(0, qAlpha(icon.pixel(x, y)) - qAlpha(b.pixel(x, y)));
                 s.setPixel(x, y, qRgba(qRed(p), qGreen(p), qBlue(p), a));
             }
+        icon.save(out + QString("/layers/icon-%1.png").arg(n));
         b.save(out + QString("/layers/body-%1.png").arg(n));
         s.save(out + QString("/layers/shell-%1.png").arg(n));
     }
-    std::printf("layers: body and shell at 8 sizes\n");
+    std::printf("layers: icon, body and shell at 8 sizes\n");
     return 0;
 }
