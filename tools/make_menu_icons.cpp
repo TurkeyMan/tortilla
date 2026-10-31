@@ -7,6 +7,12 @@
 //   g++ -std=c++23 -fPIC -Isrc -Irapport/core/include tools/make_menu_icons.cpp \
 //       src/shell/menu_icons.cpp -o make_menu_icons $(pkg-config --cflags --libs Qt6Gui)
 //   QT_QPA_PLATFORM=offscreen ./make_menu_icons data/windows/menu data/linux/icons
+// With --badges, the badges' overlay icons instead (src/shell/badge_icons.cpp):
+//   g++ ... src/shell/menu_icons.cpp src/shell/badge_icons.cpp ...
+//   QT_QPA_PLATFORM=offscreen ./make_menu_icons --badges data/windows/badges
+// <dir>/<kind>.ico, the badge in the bottom-left corner of a transparent
+// icon at every size Explorer draws, and <dir>/sheet.png.
+#include "shell/badge_icons.h"
 #include "shell/menu_icons.h"
 
 #include <QBuffer>
@@ -17,7 +23,9 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <cstdio>
+#include <functional>
 #include <numbers>
+#include <string_view>
 #include <vector>
 
 namespace
@@ -137,15 +145,28 @@ QImage render(std::string_view group, int size, int scale = 1)
     return out;
 }
 
-QByteArray ico(std::string_view group)
+// A badge's overlay: an icon of side `size`, transparent but for the badge
+// in its bottom-left corner.
+QImage render_badge(std::string_view kind, int size)
+{
+    QImage out(size, size, QImage::Format_ARGB32_Premultiplied);
+    out.fill(Qt::transparent);
+    QPainter p(&out);
+    qt_painter painter(p);
+    const float b = tortilla::badge_size(float(size));
+    tortilla::paint_badge(painter, kind, 0, float(size) - b, b);
+    return out;
+}
+
+QByteArray ico_of(const std::vector<int>& sizes, const std::function<QImage(int)>& draw)
 {
     std::vector<std::pair<int, QByteArray>> images;
-    for (int n : {16, 20, 24, 32, 40, 48})
+    for (int n : sizes)
     {
         QByteArray png;
         QBuffer buf(&png);
         buf.open(QIODevice::WriteOnly);
-        render(group, n).convertToFormat(QImage::Format_ARGB32).save(&buf, "PNG");
+        draw(n).convertToFormat(QImage::Format_ARGB32).save(&buf, "PNG");
         images.push_back({n, png});
     }
     QByteArray out;
@@ -161,7 +182,7 @@ QByteArray ico(std::string_view group)
     qint64 offset = 6 + 16 * qint64(images.size());
     for (auto& [n, png] : images)
     {
-        out.append(char(n)).append(char(n));
+        out.append(char(n >= 256 ? 0 : n)).append(char(n >= 256 ? 0 : n));
         out.append(char(0)).append(char(0));  // no palette, reserved
         u16(1);                               // planes
         u16(32);                              // bits per pixel
@@ -173,11 +194,59 @@ QByteArray ico(std::string_view group)
     return out;
 }
 
+QByteArray ico(std::string_view group)
+{
+    return ico_of({16, 20, 24, 32, 40, 48}, [&](int n) { return render(group, n); });
+}
+
+int make_badges(const QString& dir)
+{
+    QDir().mkpath(dir);
+    const auto kinds = tortilla::badge_kinds();
+    for (std::string_view k : kinds)
+    {
+        QFile f(dir + "/" + QString::fromUtf8(k.data(), qsizetype(k.size())) + ".ico");
+        if (!f.open(QIODevice::WriteOnly)) return 1;
+        f.write(ico_of({16, 20, 24, 32, 40, 48, 64, 96, 128, 256},
+                       [&](int n) { return render_badge(k, n); }));
+    }
+    // The sheet: each badge over a plain document icon at the sizes
+    // Explorer's views use, and its 16 px pixels magnified.
+    const std::vector<int> sizes{16, 24, 32, 48, 96, 256};
+    const int w = 16 * 8 + 24 + [&]
+    {
+        int t = 0;
+        for (int n : sizes) t += n + 24;
+        return t;
+    }();
+    QImage sheet(w, int(kinds.size()) * (256 + 24) + 24, QImage::Format_ARGB32_Premultiplied);
+    sheet.fill(QColor(0xf6, 0xf5, 0xf4));
+    QPainter p(&sheet);
+    for (size_t row = 0; row < kinds.size(); ++row)
+    {
+        const int y = 24 + int(row) * (256 + 24);
+        int x = 24;
+        for (int n : sizes)
+        {
+            const QRectF page(x + n * 0.18, y + 256 - n, n * 0.64, n);
+            p.setPen(QPen(QColor(0x9a, 0x99, 0x96), std::max(1.0, n / 32.0)));
+            p.setBrush(Qt::white);
+            p.drawRect(page);
+            p.drawImage(QPoint(x, y + 256 - n), render_badge(kinds[row], n));
+            x += n + 24;
+        }
+        p.drawImage(QRect(x, y + 256 - 16 * 8, 16 * 8, 16 * 8),
+                    render_badge(kinds[row], 16).scaled(16 * 8, 16 * 8));
+    }
+    return sheet.save(dir + "/sheet.png") ? 0 : 1;
+}
+
 }  // namespace
 
 int main(int argc, char** argv)
 {
     QGuiApplication app(argc, argv);
+    if (argc == 3 && std::string_view(argv[1]) == "--badges") return make_badges(argv[2]);
     if (argc != 2 && argc != 3)
     {
         std::fprintf(stderr, "usage: make_menu_icons outdir [linux-icons-dir]\n");

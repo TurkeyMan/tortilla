@@ -57,6 +57,7 @@ Remove-Item -Recurse -Force dist -ErrorAction SilentlyContinue
 New-Item -ItemType Directory "$stage/bin" | Out-Null
 Copy-Item "$bin/tortilla.exe", "$bin/tortilla-shell.dll", data/windows/tortilla.ico "$stage/bin/"
 Copy-Item -Recurse data/windows/menu "$stage/bin/menu"
+Copy-Item -Recurse data/windows/badges "$stage/bin/badges"
 # Translations beside bin\ (tortilla looks in ..\translations).
 New-Item -ItemType Directory "$stage/translations" | Out-Null
 Get-ChildItem data/translations/*.po, rapport/i18n/*.po -ErrorAction SilentlyContinue |

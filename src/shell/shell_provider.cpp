@@ -6,6 +6,9 @@
 // Until the status cache exists, an item inside a working tree counts as
 // tracked and unmodified: TortoiseGit's own fallback when status fails
 // [spec 4.3 step 3]. So IGN, CONFL, ADDED and DELETED are never set.
+#include "cache/cache_main.h"
+#include "cache/channel.h"
+#include "git/badges.h"
 #include "menu_table.h"
 
 #include <rapport/shell.h>
@@ -17,13 +20,16 @@
 
 #include <array>
 #include <cctype>
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
+#include <mutex>
 #include <optional>
 #include <set>
 #include <string>
 #include <system_error>
+#include <unordered_map>
 
 namespace
 {
@@ -448,9 +454,133 @@ std::string diff_with_label(const fs::path& p)
     return "Diff with \"" + escaped + "\"";
 }
 
+// -- badges ---------------------------------------------------------------------
+//
+// Asked of tortilla cache over its channel, which the extension starts when
+// none answers. Explorer asks each badge kind in turn about every icon, so
+// an answer is kept a moment for the others; not longer, as the cache tells
+// Explorer to redraw an icon once its badge changes, and the redraw asks
+// again.
+
+constexpr auto k_badge_wait = std::chrono::milliseconds(50);
+constexpr auto k_badge_kept = std::chrono::milliseconds(500);
+constexpr auto k_cache_start_gap = std::chrono::seconds(10);
+
+// Where badges are looked for: not on network or removable drives, which
+// TortoiseGit leaves out by default too (slow, or gone without warning).
+bool badges_wanted(const fs::path& p)
+{
+#ifdef _WIN32
+    const std::wstring root = p.root_path().wstring();
+    if (root.size() < 2 || root[1] != L':') return false;  // UNC, \\?\ and such
+    const UINT type = GetDriveTypeW(root.c_str());
+    return type == DRIVE_FIXED || type == DRIVE_RAMDISK;
+#else
+    (void)p;
+    return true;
+#endif
+}
+
+class badge_client
+{
+public:
+    std::string badge(const fs::path& p)
+    {
+        if (!badges_wanted(p)) return {};
+        const std::string key = utf8(p);
+        const auto now = std::chrono::steady_clock::now();
+        {
+            std::lock_guard lock(m_);
+            if (auto it = kept_.find(key); it != kept_.end() && now - it->second.at < k_badge_kept)
+                return it->second.id;
+        }
+        std::string id;
+        auto answer =
+            tortilla::channel::ask(tortilla::k_cache_channel, "badge " + key, k_badge_wait);
+        if (answer)
+            id = id_of(*answer);
+        else if (answer.error() == tortilla::channel::ask_error::no_server)
+            start_cache(now);
+        std::lock_guard lock(m_);
+        if (kept_.size() > 4096) kept_.clear();
+        kept_[key] = {id, now};
+        return id;
+    }
+
+private:
+    static std::string id_of(std::string_view number)
+    {
+        using tortilla::badge;
+        switch (badge(std::atoi(std::string(number).c_str())))
+        {
+        case badge::clean: return "clean";
+        case badge::modified: return "modified";
+        case badge::conflicted: return "conflicted";
+        case badge::added: return "added";
+        default: return {};
+        }
+    }
+
+    void start_cache(std::chrono::steady_clock::time_point now)
+    {
+        {
+            std::lock_guard lock(m_);
+            if (started_ && now - *started_ < k_cache_start_gap) return;
+            started_ = now;
+        }
+        rap::shell::launch(tortilla_exe(), {"cache"});
+    }
+
+    struct kept
+    {
+        std::string id;
+        std::chrono::steady_clock::time_point at;
+    };
+    std::mutex m_;
+    std::unordered_map<std::string, kept> kept_;
+    std::optional<std::chrono::steady_clock::time_point> started_;
+};
+
+badge_client& badges()
+{
+    static badge_client c;
+    return c;
+}
+
+std::string badge_icon(std::string_view kind)
+{
+#ifdef _WIN32
+    return "badges/" + std::string(kind) + ".ico";
+#else
+    return "tortilla-badge-" + std::string(kind);
+#endif
+}
+
 class tortilla_provider : public rap::shell::provider
 {
 public:
+    std::vector<rap::shell::badge_kind> badge_kinds() const override
+    {
+        // Highest priority first: where a platform shows only one, the
+        // strongest wins (a conflict over a change over the rest).
+        return {{"conflicted", badge_icon("conflicted"), 4},
+                {"modified", badge_icon("modified"), 3},
+                {"added", badge_icon("added"), 2},
+                {"clean", badge_icon("clean"), 1}};
+    }
+
+    std::string badge(const fs::path& p) override
+    {
+        try
+        {
+            return badges().badge(p);
+        }
+        catch (...)
+        {
+            return {};
+        }
+    }
+
     std::vector<menu_item> menu(const selection& sel) override
     {
         state_ = compute(sel);

@@ -171,18 +171,22 @@ endif()
 rapport_add_shell_extension(tortilla-shell
     NAME "Tortilla" ID org.tortilla.Tortilla
     WINDOWS_CLSID {D73E7C0C-F88B-4DD5-AC56-9AABAB52E4EB}
-    SOURCES src/shell/shell_provider.cpp)
+    SOURCES src/shell/shell_provider.cpp src/cache/channel.cpp)
+target_include_directories(tortilla-shell_provider PRIVATE src)
 if(UNIX AND NOT APPLE)
     include(GNUInstallDirs)
     target_compile_definitions(tortilla-shell_provider PRIVATE
         TORTILLA_INSTALL_BINDIR="${CMAKE_INSTALL_FULL_BINDIR}")
 endif()
-# Its icons, beside it as installed (tools/make_menu_icons.cpp draws them).
+# Its icons, beside it as installed (tools/make_menu_icons.cpp draws them,
+# the badges' too).
 add_custom_command(TARGET tortilla-shell-probe POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_CURRENT_SOURCE_DIR}/data/windows/tortilla.ico
             $<TARGET_FILE_DIR:tortilla-shell-probe>/tortilla.ico
     COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/data/windows/menu
-            $<TARGET_FILE_DIR:tortilla-shell-probe>/menu)
+            $<TARGET_FILE_DIR:tortilla-shell-probe>/menu
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/data/windows/badges
+            $<TARGET_FILE_DIR:tortilla-shell-probe>/badges)
 target_link_libraries(tortilla PRIVATE rapport::shell)
 
 # The welcome window's mascot, built in: nothing to install or lose.

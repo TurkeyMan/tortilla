@@ -45,7 +45,13 @@ VIAddVersionKey "LegalCopyright" "Manu Evans, GPL-3.0"
 ; to close as its own close button would; one still open after five
 ; seconds is ended. Copies of Tortilla elsewhere are left alone.
 !define PS_TORTILLA `powershell.exe -NoProfile -NonInteractive -Command "Get-Process tortilla -ErrorAction SilentlyContinue | Where-Object { $$_.Path -eq '$INSTDIR\bin\tortilla.exe' }`
+; The badges' status cache (tortilla.exe cache): no window and nothing to
+; lose, so stopped without asking; Explorer's extension starts it again.
+!define PS_TORTILLA_CACHE `powershell.exe -NoProfile -NonInteractive -Command "Get-CimInstance Win32_Process -Filter \"Name='tortilla.exe'\" | Where-Object { $$_.ExecutablePath -eq '$INSTDIR\bin\tortilla.exe' -and $$_.CommandLine -match ' cache$$' } | ForEach-Object { Stop-Process -Id $$_.ProcessId -Force }"`
+
 !macro CloseTortilla
+  nsExec::Exec `${PS_TORTILLA_CACHE}`
+  Pop $R1
   StrCpy $R0 0
   ${Do}
     ${IfNot} ${FileExists} "$INSTDIR\bin\tortilla.exe"
