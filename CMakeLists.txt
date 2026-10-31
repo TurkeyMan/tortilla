@@ -189,9 +189,6 @@ add_custom_command(TARGET tortilla-shell-probe POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/data/windows/badges
             $<TARGET_FILE_DIR:tortilla-shell-probe>/badges)
 target_link_libraries(tortilla PRIVATE rapport::shell)
-if(WIN32)
-    target_link_libraries(tortilla PRIVATE rstrtmgr)  # the installer's Explorer restart
-endif()
 
 # The welcome window's mascot, built in: nothing to install or lose.
 set(TORTILLA_MASCOT_PNG ${CMAKE_CURRENT_SOURCE_DIR}/data/icons/hicolor/256x256/apps/tortilla.png)
