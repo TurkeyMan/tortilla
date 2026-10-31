@@ -5,6 +5,7 @@
 //                                     with nothing given and none here, the welcome window
 //   tortilla about                    the welcome window: what Tortilla is, links
 //   tortilla help                     the documentation (the README online) in the browser
+//   tortilla cache                    the file manager badges' status cache (no window)
 //   tortilla remove|removekeep path...  Delete (to the Recycle Bin), or stop tracking
 //   tortilla ignore [--delete] [--mask] path...  add to an ignore list (by extension;
 //                                     and stop tracking)
@@ -51,6 +52,7 @@
 #include "branch/create_ref_dialog.h"
 #include "branch/merge_dialog.h"
 #include "branch/switch_dialog.h"
+#include "cache/cache_main.h"
 #include "changes/changed_files_window.h"
 #include "changes/changes_window.h"
 #include "changes/cleanup_dialog.h"
@@ -166,6 +168,9 @@ int main(int argc, char** argv)
         if (!ui) return 1;
         return tortilla::run_askpass(**ui, argv[1]);
     }
+    // The badges' status cache: no window, no toolkit, started by the file
+    // manager extension.
+    if (argc == 2 && std::strcmp(argv[1], "cache") == 0) return tortilla::run_cache();
 #ifdef _WIN32
     // A GUI program has no console; started from one, write to it, so
     // --which-ui and --register-shell can be read.

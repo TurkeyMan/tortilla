@@ -2,6 +2,9 @@
 //   tortilla-tests <scratch dir>
 // Builds a repo with branches and merges via the git CLI, then loads it
 // through log_model on the null UI backend.
+#include "cache/badge_cache.h"
+#include "cache/cache_main.h"
+#include "cache/channel.h"
 #include "changes/file_model.h"
 #include "changes/working_tree.h"
 #include "git/archive.h"
@@ -28,11 +31,13 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <thread>
@@ -1398,6 +1403,81 @@ int main(int argc, char** argv)
                   "badges: folders take the strongest inside, conflicted over modified");
             check(live->of("stray.txt") == badge::none, "badges: an untracked file has none");
         }
+    }
+
+    // The badges' cache: the channel it answers on, and a repository it
+    // loads in the background and watches for changes.
+    {
+        using tortilla::badge;
+        const std::string name =
+            "test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+        std::thread(
+            [name]
+            {
+                (void)tortilla::channel::serve(name, [](std::string_view q)
+                                               { return "got " + std::string(q); });
+            })
+            .detach();
+        std::expected<std::string, tortilla::channel::ask_error> answer;
+        for (int i = 0; i < 50; ++i)
+        {
+            answer = tortilla::channel::ask(name, "hello", std::chrono::milliseconds(500));
+            if (answer || answer.error() != tortilla::channel::ask_error::no_server) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+        check(answer && *answer == "got hello", "cache channel: a question answered");
+        check(!tortilla::channel::ask(name + "-none", "x", std::chrono::milliseconds(200)) &&
+                  tortilla::channel::ask(name + "-none", "x", std::chrono::milliseconds(200))
+                          .error() == tortilla::channel::ask_error::no_server,
+              "cache channel: no server is said so");
+
+        const std::string r = std::string(argv[1]) + "/badge-cache";
+        sh("git init -q -b main '" + r + "' && mkdir '" + r + "/src' && echo a > '" + r +
+           "/src/a.txt' && cd '" + r +
+           "' && git -c user.name=Ada -c user.email=ada@example.com add . && git -c "
+           "user.name=Ada -c user.email=ada@example.com commit -qm one");
+        std::mutex m;
+        std::vector<std::filesystem::path> redrawn;
+        tortilla::badge_cache cache(
+            [&](const std::vector<std::filesystem::path>& paths)
+            {
+                std::lock_guard lock(m);
+                redrawn.insert(redrawn.end(), paths.begin(), paths.end());
+            });
+        const auto file = std::filesystem::path(r) / "src" / "a.txt";
+        check(cache.ask(file) == badge::none,
+              "badge cache: nothing until the repository is loaded");
+        auto wait_for = [&](badge want)
+        {
+            for (int i = 0; i < 100 && cache.ask(file) != want; ++i)
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            return cache.ask(file) == want;
+        };
+        check(wait_for(badge::clean), "badge cache: loaded in the background, clean");
+        check(cache.ask(std::filesystem::path(r) / "src") == badge::clean &&
+                  cache.ask(std::filesystem::path(r)) == badge::clean,
+              "badge cache: its folders and the top");
+        check(cache.ask(std::filesystem::path(argv[1])) == badge::none,
+              "badge cache: outside a repository, none");
+        {
+            std::lock_guard lock(m);
+            redrawn.clear();
+        }
+        sh("echo more >> '" + rap::sys::path_to_utf8(file) + "'");
+        check(wait_for(badge::modified), "badge cache: an edit seen by its watch");
+        bool told = false;
+        for (int i = 0; i < 40 && !told; ++i)
+        {
+            {
+                std::lock_guard lock(m);
+                told = std::ranges::find(redrawn, file) != redrawn.end();
+            }
+            if (!told) std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+        check(told, "badge cache: the changed file is reported for redrawing");
+        check(tortilla::answer_cache_request(cache, "badge " + rap::sys::path_to_utf8(file)) ==
+                  std::to_string(int(badge::modified)),
+              "badge cache: the request's answer");
     }
 
     std::printf("%s\n", failures ? "FAILED" : "all passed");

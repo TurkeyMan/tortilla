@@ -83,6 +83,9 @@ add_library(tortilla_git STATIC
     src/git/tree_list.cpp
     src/git/archive.cpp
     src/git/badges.cpp
+    src/cache/badge_cache.cpp
+    src/cache/cache_main.cpp
+    src/cache/channel.cpp
     src/git/submodule.cpp
     src/changes/working_tree.cpp)
 target_include_directories(tortilla_git PUBLIC src)

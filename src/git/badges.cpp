@@ -112,8 +112,11 @@ std::expected<repo_badges, std::string> load_badges(const std::string& workdir)
 {
     const git_result tracked = run_git(workdir, {"ls-files", "-z"}, git_output::stdout_only);
     if (!tracked.ok()) return std::unexpected(tracked.output);
+    // No optional locks: git status may otherwise refresh the index, which
+    // a watcher of the repository would see as a change to load again.
     const git_result status = run_git(
-        workdir, {"status", "--porcelain", "-z", "--untracked-files=no"}, git_output::stdout_only);
+        workdir, {"--no-optional-locks", "status", "--porcelain", "-z", "--untracked-files=no"},
+        git_output::stdout_only);
     if (!status.ok()) return std::unexpected(status.output);
     return repo_badges::build(tracked.output, status.output);
 }
