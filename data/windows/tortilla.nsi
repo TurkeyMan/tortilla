@@ -56,6 +56,7 @@ VIAddVersionKey "LegalCopyright" "Manu Evans, GPL-3.0"
 Var Asked      ; the programs using Tortilla's files were listed, and closing them agreed
 Var Leftover   ; the old extension, moved aside but still loaded, else ""
 Var LeaveAlone ; Explorer isn't to be restarted: what it holds goes at the next reboot
+Var Restart    ; Explorer is to be restarted when Setup is done
 
 !macro CloseTortilla
   nsExec::Exec `${PS_TORTILLA_CACHE}`
@@ -130,6 +131,7 @@ Section "Tortilla"
   ; Manager says, asked by the new tortilla.exe; said before anything closes.
   StrCpy $Asked 0
   StrCpy $LeaveAlone 0
+  StrCpy $Restart 0
   ${If} ${FileExists} "$INSTDIR\bin\tortilla.exe"
     nsExec::Exec `${PS_TORTILLA_CACHE}`
     Pop $R1
@@ -148,8 +150,18 @@ Section "Tortilla"
       Goto listed
       asked:
       StrCpy $Asked 1
+      StrCpy $Restart 1
       listed:
     ${EndIf}
+  ${EndIf}
+  ; Nothing in use (a fresh install, say): restarting Explorer at the end
+  ; only shows the badges sooner, so asked now too, and No needs no reboot.
+  ${If} $Restart != 1
+  ${AndIf} $LeaveAlone != 1
+    MessageBox MB_ICONQUESTION|MB_YESNO "Restart Windows Explorer when Setup is done, so Tortilla's badges show straight away?$\r$\nIts windows close, and the taskbar is back in a moment.$\r$\n$\r$\nNo: the badges show after you next sign in." /SD IDYES IDYES +3
+    StrCpy $LeaveAlone 1
+    Goto +2
+    StrCpy $Restart 1
   ${EndIf}
   !insertmacro CloseTortilla
   ; A reinstall replaces the old tree rather than mixing DLLs of two versions.
@@ -179,18 +191,8 @@ Section "Tortilla"
   WriteRegDWORD HKLM "${UNINSTALL_KEY}" "NoRepair" 1
 
   ; Explorer loads the extension, and its badges, as it starts: restarted
-  ; now, which also lets go of the old one. Said beforehand if it was using
-  ; the files; otherwise asked.
-  StrCpy $R1 0
-  ${If} $LeaveAlone == 1
-    StrCpy $R1 0
-  ${ElseIf} $Asked == 1
-  ${OrIf} $Leftover != ""
-    StrCpy $R1 1
-  ${ElseIf} ${Cmd} `MessageBox MB_ICONQUESTION|MB_YESNO "Restart Windows Explorer now, so Tortilla's badges show?$\r$\nIts windows close, and the taskbar is back in a moment. Otherwise they show after you next sign in." /SD IDYES IDYES`
-    StrCpy $R1 1
-  ${EndIf}
-  ${If} $R1 == 1
+  ; now, as agreed up front, which also lets go of the old one.
+  ${If} $Restart == 1
     ExecWait '"$INSTDIR\bin\tortilla.exe" --restart-explorer "$Leftover"'
   ${EndIf}
 
