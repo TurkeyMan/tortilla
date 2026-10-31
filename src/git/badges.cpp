@@ -76,7 +76,17 @@ repo_badges repo_badges::build(std::string_view tracked, std::string_view status
                    }
                    if (field.size() < 4) return;
                    const char x = field[0], y = field[1];
-                   const std::string_view path = field.substr(3);
+                   std::string_view path = field.substr(3);
+                   // Untracked: no badge, but noted (a folder git collapses
+                   // ends in '/'), and its folders hold something untracked.
+                   if (x == '?')
+                   {
+                       while (!path.empty() && path.back() == '/') path.remove_suffix(1);
+                       out.untracked_.emplace(path);
+                       each_folder(path, [&](std::string_view folder)
+                                   { out.untracked_within_.emplace(folder); });
+                       return;
+                   }
                    badge b = badge::modified;
                    // Unmerged: both sides' letters, or either one U.
                    if (x == 'U' || y == 'U' || (x == 'A' && y == 'A') || (x == 'D' && y == 'D'))
@@ -101,6 +111,19 @@ repo_badges repo_badges::build(std::string_view tracked, std::string_view status
     return out;
 }
 
+bool repo_badges::untracked(std::string_view path) const
+{
+    while (!path.empty() && path.back() == '/') path.remove_suffix(1);
+    if (untracked_within_.contains(std::string(path)) || untracked_.contains(std::string(path)))
+        return true;
+    // Inside a folder git reported whole.
+    bool inside = false;
+    each_folder(
+        path, [&](std::string_view folder)
+        { inside = inside || (!folder.empty() && untracked_.contains(std::string(folder))); });
+    return inside;
+}
+
 badge repo_badges::of(std::string_view path) const
 {
     while (!path.empty() && path.back() == '/') path.remove_suffix(1);
@@ -113,10 +136,13 @@ namespace
 
 // No optional locks: git status may otherwise refresh the index, which a
 // watcher of the repository would see as a change to load again.
-git_result quiet_status(const std::string& workdir)
+// With `untracked`, untracked files too (folders of them collapsed), at
+// some cost: the menu wants to know a folder has none.
+git_result quiet_status(const std::string& workdir, bool untracked = false)
 {
     return run_git(workdir,
-                   {"--no-optional-locks", "status", "--porcelain", "-z", "--untracked-files=no"},
+                   {"--no-optional-locks", "status", "--porcelain", "-z",
+                    untracked ? "--untracked-files=normal" : "--untracked-files=no"},
                    git_output::stdout_only);
 }
 
@@ -126,7 +152,7 @@ std::expected<repo_badges, std::string> load_badges(const std::string& workdir)
 {
     const git_result tracked = run_git(workdir, {"ls-files", "-z"}, git_output::stdout_only);
     if (!tracked.ok()) return std::unexpected(tracked.output);
-    const git_result status = quiet_status(workdir);
+    const git_result status = quiet_status(workdir, true);
     if (!status.ok()) return std::unexpected(status.output);
     return repo_badges::build(tracked.output, status.output);
 }

@@ -1372,6 +1372,14 @@ int main(int argc, char** argv)
               "badges: a folder sums up what's inside it");
         check(b.of("nope.txt") == badge::none && b.of("srcs") == badge::none,
               "badges: untracked paths have none");
+        const auto u = tortilla::repo_badges::build("a.txt\0src/x.cpp\0docs/d.md\0"s,
+                                                    "?? src/new.cpp\0?? build/\0"s);
+        check(u.untracked("src/new.cpp") && u.untracked("build") &&
+                  u.untracked("build/out/o.obj") && u.untracked("src") && u.untracked(""),
+              "badges: untracked files, a folder git collapsed, and what holds them");
+        check(!u.untracked("docs") && !u.untracked("a.txt") && !u.untracked("src/x.cpp") &&
+                  u.of("src") == badge::clean && u.of("src/new.cpp") == badge::none,
+              "badges: untracked files aren't changes, nor badged");
 
         const std::string r = std::string(argv[1]) + "/badges";
         auto in = [&]
@@ -1401,7 +1409,9 @@ int main(int argc, char** argv)
             check(live->of("lib/sub") == badge::modified && live->of("lib") == badge::modified &&
                       live->of("") == badge::conflicted,
                   "badges: folders take the strongest inside, conflicted over modified");
-            check(live->of("stray.txt") == badge::none, "badges: an untracked file has none");
+            check(live->of("stray.txt") == badge::none && live->untracked("stray.txt") &&
+                      live->untracked("") && !live->untracked("docs"),
+                  "badges: an untracked file has none, but is known");
         }
     }
 
@@ -1456,6 +1466,11 @@ int main(int argc, char** argv)
             return cache.ask(file) == want;
         };
         check(wait_for(badge::clean), "badge cache: loaded in the background, clean");
+        {
+            const auto st = cache.look(file);
+            check(st.b == badge::clean && st.current && !st.untracked,
+                  "badge cache: a loaded repository's answer is current");
+        }
         check(cache.ask(std::filesystem::path(r) / "src") == badge::clean &&
                   cache.ask(std::filesystem::path(r)) == badge::clean,
               "badge cache: its folders and the top");

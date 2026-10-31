@@ -196,14 +196,14 @@ struct badge_cache::impl
         if (w) e.watch = std::move(*w);
     }
 
-    badge ask(const fs::path& path)
+    state look(const fs::path& path)
     {
         last_ask = clock::now().time_since_epoch().count();
         std::error_code ec;
         const bool dir = fs::is_directory(path, ec);
         std::lock_guard lock(m);
         const auto root = root_of(dir ? path : path.parent_path());
-        if (!root) return badge::none;
+        if (!root) return {};
         const std::string k = key(*root);
         const std::string rel = repo_relative(path, *root);
         // Its own folder, from outside: the summary, unless it's loaded.
@@ -220,7 +220,7 @@ struct badge_cache::impl
                 wake.notify_one();
             }
             if (loaded != repos.end()) loaded->second->asked.emplace(rel);
-            return known != summaries.end() ? known->second.b : badge::none;
+            return {known != summaries.end() ? known->second.b : badge::none};
         }
         auto& e = repos[k];
         if (!e)
@@ -232,7 +232,8 @@ struct badge_cache::impl
         }
         e->used = clock::now();
         if (e->asked.size() < k_max_asked) e->asked.emplace(rel);
-        return e->badges ? e->badges->of(rel) : badge::none;
+        if (!e->badges) return {};
+        return {e->badges->of(rel), !due.contains(k), e->badges->untracked(rel)};
     }
 
     void run()
@@ -349,7 +350,12 @@ badge_cache::~badge_cache()
 
 badge badge_cache::ask(const fs::path& p)
 {
-    return impl_->ask(p);
+    return impl_->look(p).b;
+}
+
+badge_cache::state badge_cache::look(const fs::path& p)
+{
+    return impl_->look(p);
 }
 
 std::chrono::steady_clock::duration badge_cache::idle() const

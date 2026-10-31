@@ -40,6 +40,12 @@ std::string answer_cache_request(badge_cache& cache, std::string_view request)
     if (request.starts_with("badge "))
         return std::to_string(
             int(cache.ask(rap::sys::path_from_utf8(std::string(request.substr(6))))));
+    // "<badge> <current> <untracked>", the last two 0 or 1.
+    if (request.starts_with("state "))
+    {
+        const auto s = cache.look(rap::sys::path_from_utf8(std::string(request.substr(6))));
+        return std::to_string(int(s.b)) + (s.current ? " 1" : " 0") + (s.untracked ? " 1" : " 0");
+    }
     return "?";
 }
 

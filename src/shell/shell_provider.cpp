@@ -22,6 +22,7 @@
 #include <cctype>
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <mutex>
@@ -161,13 +162,149 @@ bool is_patch(const fs::path& p)
     return ext == ".diff" || ext == ".patch";
 }
 
+std::string utf8(const fs::path& p);
+fs::path tortilla_exe();
+
+// -- badges ---------------------------------------------------------------------
+//
+// Asked of tortilla cache over its channel, which the extension starts when
+// none answers. Explorer asks each badge kind in turn about every icon, so
+// an answer is kept a moment for the others; not longer, as the cache tells
+// Explorer to redraw an icon once its badge changes, and the redraw asks
+// again.
+
+constexpr auto k_badge_wait = std::chrono::milliseconds(50);
+constexpr auto k_badge_kept = std::chrono::milliseconds(500);
+constexpr auto k_cache_start_gap = std::chrono::seconds(10);
+
+// Where badges are looked for: not on network or removable drives, which
+// TortoiseGit leaves out by default too (slow, or gone without warning).
+bool badges_wanted(const fs::path& p)
+{
+#ifdef _WIN32
+    const std::wstring root = p.root_path().wstring();
+    if (root.size() < 2 || root[1] != L':') return false;  // UNC, \\?\ and such
+    const UINT type = GetDriveTypeW(root.c_str());
+    return type == DRIVE_FIXED || type == DRIVE_RAMDISK;
+#else
+    (void)p;
+    return true;
+#endif
+}
+
+class badge_client
+{
+public:
+    std::string badge(const fs::path& p)
+    {
+        if (!badges_wanted(p)) return {};
+        const std::string key = utf8(p);
+        const auto now = std::chrono::steady_clock::now();
+        {
+            std::lock_guard lock(m_);
+            if (auto it = kept_.find(key); it != kept_.end() && now - it->second.at < k_badge_kept)
+                return it->second.id;
+        }
+        std::string id;
+        auto answer =
+            tortilla::channel::ask(tortilla::k_cache_channel, "badge " + key, k_badge_wait);
+        if (answer)
+            id = id_of(*answer);
+        else if (answer.error() == tortilla::channel::ask_error::no_server)
+            start_cache(now);
+        std::lock_guard lock(m_);
+        if (kept_.size() > 4096) kept_.clear();
+        kept_[key] = {id, now};
+        return id;
+    }
+
+    static std::string id_of(std::string_view number)
+    {
+        using tortilla::badge;
+        switch (badge(std::atoi(std::string(number).c_str())))
+        {
+        case badge::clean: return "clean";
+        case badge::modified: return "modified";
+        case badge::conflicted: return "conflicted";
+        case badge::added: return "added";
+        default: return {};
+        }
+    }
+
+    // What the cache knows of `p` right now, for the menu; nullopt when it
+    // can't say in time (or isn't running, which starts it).
+    struct known
+    {
+        tortilla::badge b;
+        bool current, untracked;
+    };
+    std::optional<known> look(const fs::path& p, std::chrono::milliseconds wait)
+    {
+        if (!badges_wanted(p) || wait.count() <= 0) return std::nullopt;
+        auto answer = tortilla::channel::ask(tortilla::k_cache_channel, "state " + utf8(p), wait);
+        if (!answer)
+        {
+            if (answer.error() == tortilla::channel::ask_error::no_server)
+                start_cache(std::chrono::steady_clock::now());
+            return std::nullopt;
+        }
+        int b = 0, current = 0, untracked = 0;
+        if (std::sscanf(answer->c_str(), "%d %d %d", &b, &current, &untracked) != 3)
+            return std::nullopt;
+        return known{tortilla::badge(b), current != 0, untracked != 0};
+    }
+
+private:
+    void start_cache(std::chrono::steady_clock::time_point now)
+    {
+        {
+            std::lock_guard lock(m_);
+            if (started_ && now - *started_ < k_cache_start_gap) return;
+            started_ = now;
+        }
+        rap::shell::launch(tortilla_exe(), {"cache"});
+    }
+
+    struct kept
+    {
+        std::string id;
+        std::chrono::steady_clock::time_point at;
+    };
+    std::mutex m_;
+    std::unordered_map<std::string, kept> kept_;
+    std::optional<std::chrono::steady_clock::time_point> started_;
+};
+
+badge_client& badges()
+{
+    static badge_client c;
+    return c;
+}
+
+std::string badge_icon(std::string_view kind)
+{
+#ifdef _WIN32
+    return "badges/" + std::string(kind) + ".ico";
+#else
+    return "tortilla-badge-" + std::string(kind);
+#endif
+}
+
 // The flags for a selection, and the folder commands run on [spec 4.3].
 struct state
 {
     uint32_t flags = 0;
     fs::path folder;  // the background, or the one selected directory
     fs::path first;   // the first selected item, else the folder
+    // The status cache vouches that everything selected is clean, with
+    // nothing untracked: nothing to diff, commit or revert.
+    bool known_clean = false;
 };
+
+// The whole menu may wait this long on the status cache, across its items.
+constexpr auto k_menu_wait = std::chrono::milliseconds(100);
+// Items asked about, at most; a bigger selection isn't vouched for.
+constexpr size_t k_menu_items = 16;
 
 state compute(const selection& sel)
 {
@@ -208,6 +345,37 @@ state compute(const selection& sel)
         }
     }
     s.first = sel.paths.empty() ? s.folder : sel.paths.front();
+
+    // What the status cache vouches for: the first item's status, as
+    // TortoiseGit's flags take it [spec 4.3], and whether all of it is clean.
+    // Without its word, the fallback above stands.
+    if (s.flags & (GIT | FIG))
+    {
+        std::vector<fs::path> items = sel.paths;
+        if (items.empty() && !s.folder.empty()) items.push_back(s.folder);
+        const auto until = std::chrono::steady_clock::now() + k_menu_wait;
+        auto left = [&]
+        {
+            return std::chrono::duration_cast<std::chrono::milliseconds>(
+                until - std::chrono::steady_clock::now());
+        };
+        bool all_clean = !items.empty() && items.size() <= k_menu_items;
+        for (size_t i = 0; i < items.size() && i < k_menu_items; ++i)
+        {
+            const auto k = badges().look(items[i], left());
+            const bool known = k && k->current;
+            all_clean = all_clean && known && k->b == tortilla::badge::clean && !k->untracked;
+            if (i != 0 || !known) continue;
+            using tortilla::badge;
+            const bool dir = is_dir(items[0]);
+            s.flags &= ~(NORMAL | CONFL | ADDED);
+            if (k->b == badge::clean) s.flags |= NORMAL;
+            if (k->b == badge::conflicted) s.flags |= CONFL;
+            if (k->b == badge::added) s.flags |= ADDED;
+            if (!dir && k->b == badge::none && k->untracked) s.flags &= ~GIT;  // unversioned
+        }
+        s.known_clean = all_clean;
+    }
     return s;
 }
 
@@ -454,108 +622,6 @@ std::string diff_with_label(const fs::path& p)
     return "Diff with \"" + escaped + "\"";
 }
 
-// -- badges ---------------------------------------------------------------------
-//
-// Asked of tortilla cache over its channel, which the extension starts when
-// none answers. Explorer asks each badge kind in turn about every icon, so
-// an answer is kept a moment for the others; not longer, as the cache tells
-// Explorer to redraw an icon once its badge changes, and the redraw asks
-// again.
-
-constexpr auto k_badge_wait = std::chrono::milliseconds(50);
-constexpr auto k_badge_kept = std::chrono::milliseconds(500);
-constexpr auto k_cache_start_gap = std::chrono::seconds(10);
-
-// Where badges are looked for: not on network or removable drives, which
-// TortoiseGit leaves out by default too (slow, or gone without warning).
-bool badges_wanted(const fs::path& p)
-{
-#ifdef _WIN32
-    const std::wstring root = p.root_path().wstring();
-    if (root.size() < 2 || root[1] != L':') return false;  // UNC, \\?\ and such
-    const UINT type = GetDriveTypeW(root.c_str());
-    return type == DRIVE_FIXED || type == DRIVE_RAMDISK;
-#else
-    (void)p;
-    return true;
-#endif
-}
-
-class badge_client
-{
-public:
-    std::string badge(const fs::path& p)
-    {
-        if (!badges_wanted(p)) return {};
-        const std::string key = utf8(p);
-        const auto now = std::chrono::steady_clock::now();
-        {
-            std::lock_guard lock(m_);
-            if (auto it = kept_.find(key); it != kept_.end() && now - it->second.at < k_badge_kept)
-                return it->second.id;
-        }
-        std::string id;
-        auto answer =
-            tortilla::channel::ask(tortilla::k_cache_channel, "badge " + key, k_badge_wait);
-        if (answer)
-            id = id_of(*answer);
-        else if (answer.error() == tortilla::channel::ask_error::no_server)
-            start_cache(now);
-        std::lock_guard lock(m_);
-        if (kept_.size() > 4096) kept_.clear();
-        kept_[key] = {id, now};
-        return id;
-    }
-
-private:
-    static std::string id_of(std::string_view number)
-    {
-        using tortilla::badge;
-        switch (badge(std::atoi(std::string(number).c_str())))
-        {
-        case badge::clean: return "clean";
-        case badge::modified: return "modified";
-        case badge::conflicted: return "conflicted";
-        case badge::added: return "added";
-        default: return {};
-        }
-    }
-
-    void start_cache(std::chrono::steady_clock::time_point now)
-    {
-        {
-            std::lock_guard lock(m_);
-            if (started_ && now - *started_ < k_cache_start_gap) return;
-            started_ = now;
-        }
-        rap::shell::launch(tortilla_exe(), {"cache"});
-    }
-
-    struct kept
-    {
-        std::string id;
-        std::chrono::steady_clock::time_point at;
-    };
-    std::mutex m_;
-    std::unordered_map<std::string, kept> kept_;
-    std::optional<std::chrono::steady_clock::time_point> started_;
-};
-
-badge_client& badges()
-{
-    static badge_client c;
-    return c;
-}
-
-std::string badge_icon(std::string_view kind)
-{
-#ifdef _WIN32
-    return "badges/" + std::string(kind) + ".ico";
-#else
-    return "tortilla-badge-" + std::string(kind);
-#endif
-}
-
 class tortilla_provider : public rap::shell::provider
 {
 public:
@@ -598,7 +664,13 @@ public:
                 armed = true;
                 continue;
             }
-            const shows where = where_shown(r, settings.where);
+            shows where = where_shown(r, settings.where);
+            // Known clean: nothing to diff, commit or revert, so not at the
+            // top; still in the submenu (Commit to amend the last commit).
+            if (where == shows::top && state_.known_clean &&
+                (std::string_view(r.id) == "diff" || std::string_view(r.id) == "commit" ||
+                 std::string_view(r.id) == "revert"))
+                where = shows::submenu;
             if (where == shows::hidden || (where == shows::shift && !(f & EXT))) continue;
             if (!matches(r, f)) continue;
             std::string label = r.label;

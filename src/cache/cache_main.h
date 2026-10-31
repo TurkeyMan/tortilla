@@ -1,7 +1,9 @@
 // tortilla cache: the status cache behind the file manager badges, one per
 // user, started by the extension when it finds none running. It serves
-// "badge <path>" with the badge's number (tortilla::badge) on the channel
-// named k_cache_channel, and ends after a while with no questions.
+// "badge <path>" with the badge's number (tortilla::badge), and "state
+// <path>" with badge_cache::state's ("<badge> <current> <untracked>"), on
+// the channel named k_cache_channel; it ends after a while with no
+// questions.
 #pragma once
 
 #include <string>

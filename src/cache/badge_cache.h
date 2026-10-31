@@ -35,6 +35,17 @@ public:
     // Never waits on git.
     badge ask(const std::filesystem::path&);
 
+    // The badge, and whether it can be relied on: `current` when the
+    // repository is loaded, watched and not waiting to load a change;
+    // `untracked` (then) when the path is untracked or holds untracked files.
+    struct state
+    {
+        badge b = badge::none;
+        bool current = false;
+        bool untracked = false;
+    };
+    state look(const std::filesystem::path&);
+
     // Since the last question.
     std::chrono::steady_clock::duration idle() const;
 

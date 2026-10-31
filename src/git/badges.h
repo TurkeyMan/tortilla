@@ -30,16 +30,21 @@ enum class badge : uint8_t
 class repo_badges
 {
 public:
-    // `tracked`: git ls-files -z; `status`: git status --porcelain -z
-    // --untracked-files=no. Paths are repository-relative, '/'-separated.
+    // `tracked`: git ls-files -z; `status`: git status --porcelain -z, with
+    // or without untracked files. Paths are repository-relative, '/'-separated.
     static repo_badges build(std::string_view tracked, std::string_view status);
 
     // `path` repository-relative, '/'-separated, "" for the top folder.
     badge of(std::string_view path) const;
+    // Whether `path` is untracked, or a folder with something untracked in
+    // it: when git status listed untracked files.
+    bool untracked(std::string_view path) const;
 
 private:
     std::unordered_map<std::string, badge> changed_;  // files, then their folders
     std::unordered_set<std::string> tracked_;         // files and the folders holding them
+    std::unordered_set<std::string> untracked_;       // as git listed them
+    std::unordered_set<std::string> untracked_within_;  // folders holding those
 };
 
 // Runs git in `workdir` (the top of a working tree) for its badges.
