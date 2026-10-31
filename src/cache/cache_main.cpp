@@ -40,11 +40,23 @@ std::string answer_cache_request(badge_cache& cache, std::string_view request)
     if (request.starts_with("badge "))
         return std::to_string(
             int(cache.ask(rap::sys::path_from_utf8(std::string(request.substr(6))))));
-    // "<badge> <current> <untracked>", the last two 0 or 1.
-    if (request.starts_with("state "))
+    // Tab-separated paths, each answered "<badge> <current> <untracked>"
+    // (the last two 0 or 1), ';' between them.
+    if (request.starts_with("states\t"))
     {
-        const auto s = cache.look(rap::sys::path_from_utf8(std::string(request.substr(6))));
-        return std::to_string(int(s.b)) + (s.current ? " 1" : " 0") + (s.untracked ? " 1" : " 0");
+        std::string out;
+        for (size_t at = 7; at <= request.size();)
+        {
+            size_t end = request.find('\t', at);
+            if (end == std::string_view::npos) end = request.size();
+            const auto s =
+                cache.look(rap::sys::path_from_utf8(std::string(request.substr(at, end - at))));
+            if (!out.empty()) out += ';';
+            out +=
+                std::to_string(int(s.b)) + (s.current ? " 1" : " 0") + (s.untracked ? " 1" : " 0");
+            at = end + 1;
+        }
+        return out;
     }
     return "?";
 }

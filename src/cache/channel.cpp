@@ -24,7 +24,8 @@ namespace tortilla::channel
 namespace
 {
 
-constexpr size_t k_max_line = 64 * 1024;
+// A whole selection asked at once can be long.
+constexpr size_t k_max_line = 16 * 1024 * 1024;
 
 #ifdef _WIN32
 

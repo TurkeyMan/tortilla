@@ -1495,6 +1495,10 @@ int main(int argc, char** argv)
         check(tortilla::answer_cache_request(cache, "badge " + rap::sys::path_to_utf8(file)) ==
                   std::to_string(int(badge::modified)),
               "badge cache: the request's answer");
+        check(tortilla::answer_cache_request(cache, "states\t" + rap::sys::path_to_utf8(file) +
+                                                        "\t" + std::string(argv[1])) ==
+                  std::to_string(int(badge::modified)) + " 1 0;0 0 0",
+              "badge cache: a selection's states in one request");
 
         // A repository seen only from outside: its folder's summary, from a
         // plain status, without loading the repository.

@@ -18,8 +18,10 @@
 #include <windows.h>
 #endif
 
+#include <algorithm>
 #include <array>
 #include <cctype>
+#include <charconv>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -238,20 +240,44 @@ public:
         tortilla::badge b;
         bool current, untracked;
     };
-    std::optional<known> look(const fs::path& p, std::chrono::milliseconds wait)
+    // All of `paths` in one question, answered from the cache's memory; nullopt
+    // if any can't be asked about, or no answer comes within `wait`.
+    std::optional<std::vector<known>> look(const std::vector<fs::path>& paths,
+                                           std::chrono::milliseconds wait)
     {
-        if (!badges_wanted(p) || wait.count() <= 0) return std::nullopt;
-        auto answer = tortilla::channel::ask(tortilla::k_cache_channel, "state " + utf8(p), wait);
+        std::string request = "states";
+        for (const fs::path& p : paths)
+        {
+            const std::string s = utf8(p);
+            if (!badges_wanted(p) || s.find_first_of("\t\n") != std::string::npos)
+                return std::nullopt;
+            request += '\t' + s;
+        }
+        auto answer = tortilla::channel::ask(tortilla::k_cache_channel, request, wait);
         if (!answer)
         {
             if (answer.error() == tortilla::channel::ask_error::no_server)
                 start_cache(std::chrono::steady_clock::now());
             return std::nullopt;
         }
-        int b = 0, current = 0, untracked = 0;
-        if (std::sscanf(answer->c_str(), "%d %d %d", &b, &current, &untracked) != 3)
-            return std::nullopt;
-        return known{tortilla::badge(b), current != 0, untracked != 0};
+        // "<badge> <current> <untracked>" each, ';' between: read in one
+        // pass (sscanf would measure the rest of the string every time).
+        std::vector<known> out;
+        const char* at = answer->data();
+        const char* const end = at + answer->size();
+        auto number = [&](int& v)
+        {
+            while (at < end && (*at == ' ' || *at == ';')) ++at;
+            const auto r = std::from_chars(at, end, v);
+            if (r.ec != std::errc()) return false;
+            at = r.ptr;
+            return true;
+        };
+        for (int b, current, untracked;
+             out.size() < paths.size() && number(b) && number(current) && number(untracked);)
+            out.push_back({tortilla::badge(b), current != 0, untracked != 0});
+        if (out.size() != paths.size()) return std::nullopt;
+        return out;
     }
 
 private:
@@ -301,10 +327,9 @@ struct state
     bool known_clean = false;
 };
 
-// The whole menu may wait this long on the status cache, across its items.
+// The menu waits this long at most for the status cache's word on the
+// selection, all asked at once.
 constexpr auto k_menu_wait = std::chrono::milliseconds(100);
-// Items asked about, at most; a bigger selection isn't vouched for.
-constexpr size_t k_menu_items = 16;
 
 state compute(const selection& sel)
 {
@@ -346,35 +371,30 @@ state compute(const selection& sel)
     }
     s.first = sel.paths.empty() ? s.folder : sel.paths.front();
 
-    // What the status cache vouches for: the first item's status, as
-    // TortoiseGit's flags take it [spec 4.3], and whether all of it is clean.
-    // Without its word, the fallback above stands.
+    // What the status cache vouches for, the whole selection asked at once:
+    // TortoiseGit's status flags [spec 4.3], though for all of it rather than
+    // its first item (clean only if every item is, conflicted if any is),
+    // and whether everything's clean. Without its word on every item, the
+    // fallback above stands.
     if (s.flags & (GIT | FIG))
     {
         std::vector<fs::path> items = sel.paths;
         if (items.empty() && !s.folder.empty()) items.push_back(s.folder);
-        const auto until = std::chrono::steady_clock::now() + k_menu_wait;
-        auto left = [&]
+        const auto answers = items.empty() ? std::nullopt : badges().look(items, k_menu_wait);
+        if (answers && std::ranges::all_of(*answers, [](const auto& k) { return k.current; }))
         {
-            return std::chrono::duration_cast<std::chrono::milliseconds>(
-                until - std::chrono::steady_clock::now());
-        };
-        bool all_clean = !items.empty() && items.size() <= k_menu_items;
-        for (size_t i = 0; i < items.size() && i < k_menu_items; ++i)
-        {
-            const auto k = badges().look(items[i], left());
-            const bool known = k && k->current;
-            all_clean = all_clean && known && k->b == tortilla::badge::clean && !k->untracked;
-            if (i != 0 || !known) continue;
             using tortilla::badge;
-            const bool dir = is_dir(items[0]);
+            auto all = [&](auto f) { return std::ranges::all_of(*answers, f); };
+            auto any = [&](auto f) { return std::ranges::any_of(*answers, f); };
+            const auto& first = answers->front();
             s.flags &= ~(NORMAL | CONFL | ADDED);
-            if (k->b == badge::clean) s.flags |= NORMAL;
-            if (k->b == badge::conflicted) s.flags |= CONFL;
-            if (k->b == badge::added) s.flags |= ADDED;
-            if (!dir && k->b == badge::none && k->untracked) s.flags &= ~GIT;  // unversioned
+            if (all([](const auto& k) { return k.b == badge::clean; })) s.flags |= NORMAL;
+            if (any([](const auto& k) { return k.b == badge::conflicted; })) s.flags |= CONFL;
+            if (first.b == badge::added) s.flags |= ADDED;
+            if (!is_dir(items.front()) && first.b == badge::none && first.untracked)
+                s.flags &= ~GIT;  // unversioned
+            s.known_clean = all([](const auto& k) { return k.b == badge::clean && !k.untracked; });
         }
-        s.known_clean = all_clean;
     }
     return s;
 }
