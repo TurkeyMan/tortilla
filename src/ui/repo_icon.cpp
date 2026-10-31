@@ -6,8 +6,11 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <filesystem>
+#include <random>
+#include <string_view>
 #include <thread>
 
 #ifdef _WIN32
@@ -88,17 +91,18 @@ rap::icon g_icon;
 //
 // Colours tell apart the repositories on screen at once, so they're handed
 // out among Tortilla's running processes, not kept: the first repository
-// open gets the icon's own colours (slot 0), each other one open meanwhile
-// the lowest free palette slot, and a slot frees when its windows close.
+// open gets the icon's own colours, each other one open meanwhile a colour
+// none of the others has (the palette's first, then made up to stand apart
+// from those in use), and it's free again when its windows close.
 //
-// Each process holding a slot keeps a file locked for its life, named
-// <slot>-<repository hash>-<pid>, in Tortilla's cache folder: the system
-// drops the lock when the process ends, however it ends, so a file nobody
-// holds is left over and goes. The name says all; no one reads another's
-// file. A short lock on "registry" keeps two starting processes from taking
-// the same slot.
+// Each process with a colour keeps a file locked for its life, named
+// <rrggbb or "plain">-<repository hash>-<pid>, in Tortilla's cache folder:
+// the system drops the lock when the process ends, however it ends, so a
+// file nobody holds is left over and goes. The name says all; no one reads
+// another's file. A short lock on "registry" keeps two starting processes
+// from taking the same colour.
 
-rap::sys::mapped_file g_slot;  // ours, held until exit
+rap::sys::mapped_file g_held;  // ours, held until exit
 
 std::string hash_hex(const std::string& s)
 {
@@ -109,8 +113,64 @@ std::string hash_hex(const std::string& s)
     return out;
 }
 
-// The slot for the repository keyed `key`; 0 is plain.
-size_t take_slot(const std::string& key)
+std::string hex(rap::color c)
+{
+    char out[7];
+    std::snprintf(out, sizeof out, "%02x%02x%02x", c.r, c.g, c.b);
+    return out;
+}
+
+// How different two colours look: RGB weighted by the mean red ("redmean").
+float distance(rap::color a, rap::color b)
+{
+    const float r = (a.r + b.r) / 2.f, dr = float(a.r) - b.r, dg = float(a.g) - b.g,
+                db = float(a.b) - b.b;
+    return std::sqrt((2 + r / 256) * dr * dr + 4 * dg * dg + (2 + (255 - r) / 256) * db * db);
+}
+
+rap::color from_hsl(float h, float s, float l)
+{
+    const float c = (1 - std::abs(2 * l - 1)) * s, m = l - c / 2;
+    auto channel = [&](float n)
+    {
+        const float k = std::fmod(n + h / 30, 12.f);
+        return uint8_t(std::lround(
+            255 * (m + c * (0.5f - 0.5f * std::clamp(std::min(k - 3, 9 - k), -1.f, 1.f)))));
+    };
+    return {channel(0), channel(8), channel(4)};
+}
+
+// A colour for a repository newly open beside those `in_use`: the first of
+// the palette none has, else the most apart of a few made up, apart from
+// the shell's own tan too: any hue, saturation 50-100%, lightness 25-90%
+// (dark and near white; darker flattens the shell's spots).
+rap::color new_color(const std::vector<rap::color>& in_use)
+{
+    auto apart = [&](rap::color c)
+    {
+        float d = distance(c, {253, 212, 100});  // the shell's own
+        for (rap::color u : in_use) d = std::min(d, distance(c, u));
+        return d;
+    };
+    for (rap::color c : k_palette)
+        if (std::ranges::none_of(in_use, [&](rap::color u) { return distance(c, u) < 1; }))
+            return c;
+    std::mt19937 random{std::random_device{}()};
+    std::uniform_real_distribution<float> hue(0, 360), sat(0.5f, 1), light(0.25f, 0.9f);
+    rap::color best{};
+    float best_apart = -1;
+    for (int i = 0; i < 48; ++i)
+        if (const rap::color c = from_hsl(hue(random), sat(random), light(random));
+            apart(c) > best_apart)
+        {
+            best = c;
+            best_apart = apart(c);
+        }
+    return best;
+}
+
+// The colour for the repository keyed `key`; nullopt: the icon's own.
+std::optional<rap::color> take_color(const std::string& key)
 {
     namespace fs = std::filesystem;
     const fs::path dir = rap::sys::cache_dir("tortilla") / "colors";
@@ -118,23 +178,25 @@ size_t take_slot(const std::string& key)
     fs::create_directories(dir, ec);
     auto registry =
         rap::sys::mapped_file::open(dir / "registry", rap::sys::mapped_file::mode::read_write);
-    if (!registry) return 0;
+    if (!registry) return std::nullopt;
     for (int tries = 0; !registry->try_lock(); ++tries)
     {
-        if (tries == 50) return 0;  // someone's stuck: plain rather than wait
+        if (tries == 50) return std::nullopt;  // someone's stuck: plain rather than wait
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 
     const std::string mine = hash_hex(key);
-    std::vector<size_t> users(1 + std::size(k_palette));
-    std::optional<size_t> same;
+    std::vector<rap::color> in_use;
+    bool plain_used = false;
+    std::optional<std::string> same;  // the colour's part of the name
     for (const fs::directory_entry& e : fs::directory_iterator(dir, ec))
     {
         const std::string name = rap::sys::path_to_utf8(e.path().filename());
-        size_t slot;
-        char hash[17];
-        if (std::sscanf(name.c_str(), "%zu-%16[0-9a-f]-", &slot, hash) != 2 || slot >= users.size())
-            continue;
+        char what[8], hash[17];
+        if (std::sscanf(name.c_str(), "%7[0-9a-z]-%16[0-9a-f]-", what, hash) != 2) continue;
+        unsigned r, g, b;
+        const bool plain = std::string_view(what) == "plain";
+        if (!plain && std::sscanf(what, "%2x%2x%2x", &r, &g, &b) != 3) continue;
         // Held: its process is running. Not: left over.
         auto f = rap::sys::mapped_file::open(e.path(), rap::sys::mapped_file::mode::read);
         if (f && f->try_lock())
@@ -144,43 +206,57 @@ size_t take_slot(const std::string& key)
             fs::remove(e.path(), ec);
             continue;
         }
-        ++users[slot];
-        if (hash == mine) same = slot;
+        if (plain)
+            plain_used = true;
+        else
+            in_use.push_back({uint8_t(r), uint8_t(g), uint8_t(b)});
+        if (hash == mine) same = what;
     }
-    size_t slot = same ? *same : 0;
-    if (!same)
+
+    std::optional<rap::color> color;
+    std::string what = "plain";
+    if (same)
     {
-        // The lowest free; with every colour taken, the least used.
-        auto it = std::ranges::find(users, size_t(0));
-        slot =
-            it != users.end()
-                ? size_t(it - users.begin())
-                : size_t(std::ranges::min_element(users.begin() + 1, users.end()) - users.begin());
+        what = *same;
+        unsigned r, g, b;
+        if (what != "plain" && std::sscanf(what.c_str(), "%2x%2x%2x", &r, &g, &b) == 3)
+            color = rap::color{uint8_t(r), uint8_t(g), uint8_t(b)};
     }
-    const std::string name =
-        std::to_string(slot) + "-" + mine + "-" + std::to_string(current_pid());
+    else if (plain_used)
+    {
+        color = new_color(in_use);
+        what = hex(*color);
+    }
+    const std::string name = what + "-" + mine + "-" + std::to_string(current_pid());
     if (auto f = rap::sys::mapped_file::open(dir / name, rap::sys::mapped_file::mode::read_write);
         f && f->try_lock())
-        g_slot = std::move(*f);
+        g_held = std::move(*f);
     registry->unlock();
-    return slot;
+    return color;
 }
 
 }  // namespace
 
-void use_repo_icon(rap::ui& ui, const std::string& path)
+void use_repo_icon(rap::ui& ui, const std::string& path, bool outer)
 {
-    auto r = repo::open(path);
+    // As the log finds it: a path gone from the working tree is looked
+    // for from the nearest folder still there; `outer` from the folder above.
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    fs::path at = fs::absolute(rap::sys::path_from_utf8(path), ec);
+    if (outer) at = (at.has_filename() ? at : at.parent_path()).parent_path();
+    while (!fs::exists(at, ec) && at.has_parent_path() && at.parent_path() != at)
+        at = at.parent_path();
+    auto r = repo::open(rap::sys::path_to_utf8(at));
     if (!r) return;
     const std::string dir = r->bare() ? r->git_dir() : r->workdir();
-    const size_t slot = take_slot(dir);
-    if (slot == 0) return;  // the program's own icon
-    const rap::color c = k_palette[slot - 1];
+    const std::optional<rap::color> c = take_color(dir);
+    if (!c) return;  // the program's own icon
 
     // Smallest first, as k_icon_layers lists them.
     std::vector<std::pair<int, std::shared_ptr<rap::image>>> images;
     for (const icon_layers& l : k_icon_layers)
-        if (auto image = tinted(ui, l, c)) images.emplace_back(l.size, std::move(image));
+        if (auto image = tinted(ui, l, *c)) images.emplace_back(l.size, std::move(image));
     if (images.empty()) return;
     g_icon = rap::icon::drawn(
         [images](rap::painter& p, rap::size_f size)

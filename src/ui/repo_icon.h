@@ -27,9 +27,9 @@ struct icon_layers
 extern const std::vector<icon_layers> k_icon_layers;
 
 // From now on, windows made with create_window carry the icon of the
-// repository at `path` (anything inside it). Outside one, they keep
-// Tortilla's.
-void use_repo_icon(rap::ui&, const std::string& path);
+// repository at `path` (anything inside it; with `outer`, the repository
+// around a submodule at `path`). Outside one, they keep Tortilla's.
+void use_repo_icon(rap::ui&, const std::string& path, bool outer = false);
 
 // ui.create, with the repository's icon when use_repo_icon chose one.
 std::unique_ptr<rap::window> create_window(rap::ui&, const rap::window_spec&,

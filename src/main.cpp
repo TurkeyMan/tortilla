@@ -305,7 +305,7 @@ int main(int argc, char** argv)
 
     // Windows of a repository carry its colour on the taskbar.
     if (command != "clone" && command != "repocreate" && command != "about")
-        tortilla::use_repo_icon(**ui, path);
+        tortilla::use_repo_icon(**ui, path, command == "log" && submodule);
 
     if (command == "settings")
     {

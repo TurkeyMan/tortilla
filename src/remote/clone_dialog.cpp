@@ -227,6 +227,7 @@ void clone_dialog::ok()
          .after_close =
              [&ui, dir]
          {
+             use_repo_icon(ui, dir);
              if (auto w = log_window::open(ui, dir)) windows::keep(std::move(*w));
          }},
         {.label = _("E_xplore to"),

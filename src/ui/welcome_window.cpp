@@ -1,4 +1,5 @@
 #include "welcome_window.h"
+#include "ui/repo_icon.h"
 
 #include "i18n.h"
 #include "log/log_window.h"
@@ -146,6 +147,7 @@ void welcome_window::open_repository()
                      [this](std::vector<std::string> paths)
                      {
                          if (paths.empty()) return;
+                         use_repo_icon(ui_, paths.front());
                          auto log = log_window::open(ui_, paths.front());
                          if (!log)
                          {
