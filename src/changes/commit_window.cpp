@@ -144,43 +144,46 @@ void commit_window::build()
                 },
                 splitter{
                     vertical,
-                    group{
-                        _("Message:"),
-                        vbox{
-                            // TortoiseGit's room for a message, before any dragging.
-                            text_view{}
-                                .bind(message_)
-                                .on_changed([this] { update_state(); })
-                                .height(8_lines)
-                                .stretch(),
-                            check{_("Amend _Last Commit")}.bind(amend_).on_toggled(
-                                [this](bool on) { amend_toggled(on); }),
-                            hbox{
-                                // Shown greyed until wanted, as the author field: the
-                                // row keeps its layout when they're turned on.
-                                check{_("Set author _date")}.bind(set_date_).on_toggled(
-                                    [this](bool on)
-                                    {
-                                        date_->set_enabled(on);
-                                        time_->set_enabled(on);
-                                    }),
-                                date_picker{}.bind(date_).enabled(false),
-                                entry{}
-                                    .bind(time_)
-                                    .placeholder("HH:MM:SS")
-                                    .width(10_ch)
-                                    .enabled(false),
-                                spacer{},
-                            },
-                            hbox{
-                                check{_("Set au_thor")}
-                                    .bind(set_author_)
-                                    .on_toggled([this](bool on) { author_->set_enabled(on); }),
-                                entry{}.bind(author_).enabled(false).width(36_ch),
-                                spacer{},
-                                button{_("Add _Signed-off-by")}.on_click([this] { add_signoff(); }),
-                            },
-                        }},
+                    group{_("Message:"),
+                          vbox{
+                              // TortoiseGit's room for a message, before any dragging.
+                              text_view{}
+                                  .bind(message_)
+                                  .on_changed([this] { update_state(); })
+                                  .height(8_lines)
+                                  .stretch(),
+                              check{_("Amend _Last Commit")}.bind(amend_).on_toggled(
+                                  [this](bool on) { amend_toggled(on); }),
+                              // The checks as labels, so the date and author line up.
+                              // Shown greyed until wanted: the rows keep their layout
+                              // when they're turned on.
+                              form{
+                                  {check{_("Set author _date")}.bind(set_date_).on_toggled(
+                                       [this](bool on)
+                                       {
+                                           date_->set_enabled(on);
+                                           time_->set_enabled(on);
+                                       }),
+                                   hbox{
+                                       date_picker{}.bind(date_).enabled(false),
+                                       entry{}
+                                           .bind(time_)
+                                           .placeholder("HH:MM:SS")
+                                           .width(10_ch)
+                                           .enabled(false),
+                                       spacer{},
+                                   }},
+                                  // Long names have room as the window widens.
+                                  {check{_("Set au_thor")}
+                                       .bind(set_author_)
+                                       .on_toggled([this](bool on) { author_->set_enabled(on); }),
+                                   hbox{
+                                       entry{}.bind(author_).enabled(false).width(36_ch).stretch(),
+                                       button{_("Add _Signed-off-by")}.on_click([this]
+                                                                                { add_signoff(); }),
+                                   }},
+                              },
+                          }},
                     group{_("Changes made (F5: refresh, double-click on file for diff):"),
                           vbox{
                               hbox{
