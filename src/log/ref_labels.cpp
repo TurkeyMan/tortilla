@@ -45,6 +45,40 @@ bool is_dark(color c)
     return c.r * 30 + c.g * 59 + c.b * 11 <= 12800;
 }
 
+// The checks' mark, in a circle `d` across at `c`, ringed in white to stand
+// out on any label.
+void paint_checks(rap::painter& p, rap::point_f c, float d, check_state s)
+{
+    const float r = d / 2;
+    const color white{255, 255, 255};
+    switch (s)
+    {
+    case check_state::success:
+        p.circle(c, r, paint{color{26, 127, 55}}, paint{white});
+        {
+            const float w = std::max(1.5f, d / 8);
+            const rap::point_f a{c.x - r * 0.45f, c.y + r * 0.02f},
+                b{c.x - r * 0.12f, c.y + r * 0.36f}, e{c.x + r * 0.48f, c.y - r * 0.33f};
+            p.line(a, b, paint{white}, w, rap::line_cap::round);
+            p.line(b, e, paint{white}, w, rap::line_cap::round);
+            break;
+        }
+    case check_state::failure:
+    {
+        p.circle(c, r, paint{color{207, 34, 46}}, paint{white});
+        const float a = r * 0.36f, w = std::max(1.5f, d / 8);
+        p.line({c.x - a, c.y - a}, {c.x + a, c.y + a}, paint{white}, w);
+        p.line({c.x - a, c.y + a}, {c.x + a, c.y - a}, paint{white}, w);
+        break;
+    }
+    case check_state::pending:
+        p.circle(c, r, paint{color{191, 135, 0}}, paint{white});
+        p.circle(c, r * 0.3f, paint{white}, std::nullopt);
+        break;
+    case check_state::none: break;
+    }
+}
+
 }  // namespace
 
 // [GLLB:523-657]: full-height rectangles, text width + 8, 1 px apart.
@@ -52,7 +86,8 @@ bool is_dark(color c)
 // upstream's label follows them; annotated tags get an arrow tip;
 // everything else is bevelled.
 float paint_ref_labels(rap::painter& p, const std::vector<ref>& refs, float x, float h,
-                     const std::function<bool(const ref&)>& show, std::vector<label_box>* boxes)
+                       const std::function<bool(const ref&)>& show, std::vector<label_box>* boxes,
+                       const std::function<std::optional<pr_mark>(const ref&)>& pr)
 {
     if (boxes) boxes->clear();
     auto visible = [&](const ref& r) { return !show || show(r); };
@@ -76,6 +111,7 @@ float paint_ref_labels(rap::painter& p, const std::vector<ref>& refs, float x, f
     }
 
     float start = x;
+    int marked = 0;  // the PR the label before showed: its upstream needn't again
     for (auto [ref, rounded] : order)
     {
         color fill = label_colour(*ref);
@@ -83,6 +119,18 @@ float paint_ref_labels(rap::painter& p, const std::vector<ref>& refs, float x, f
         ts.fg = is_dark(fill) ? color{255, 255, 255} : color{0, 0, 0};
         rap::size_f t = p.measure(ref->name, ts);
         float w = t.w + 8;
+        // A pull request's "#12" and its checks, after the name.
+        std::optional<pr_mark> mark = pr ? pr(*ref) : std::nullopt;
+        if (mark && ref->kind == ref_kind::remote_branch && mark->number == marked) mark.reset();
+        marked = mark ? mark->number : 0;
+        const std::string number = mark ? "#" + std::to_string(mark->number) : "";
+        rap::text_style number_style = ts;
+        if (mark && mark->draft)  // a draft's number fainter
+            number_style.fg = is_dark(fill) ? color{255, 255, 255, 150} : color{0, 0, 0, 150};
+        const float number_w = mark ? p.measure(number, number_style).w : 0;
+        const float dot = std::clamp(h - 7, 8.0f, 14.0f);
+        const bool has_dot = mark && mark->checks != check_state::none;
+        if (mark) w += 5 + number_w + (has_dot ? dot + 3 : 0);
         rect_f box{x, 0, w, h};
 
         if (rounded)
@@ -113,7 +161,18 @@ float paint_ref_labels(rap::painter& p, const std::vector<ref>& refs, float x, f
             p.line({box.x + w + 8, h / 2}, {box.x + w, h}, paint{darken(fill, 50)}, 2);
             w += 8;
         }
-        p.text({box.x + 4, (h - t.h) / 2 - (rounded ? 1 : 0)}, ref->name, ts);
+        const float ty = (h - t.h) / 2 - (rounded ? 1 : 0);
+        p.text({box.x + 4, ty}, ref->name, ts);
+        if (mark)
+        {
+            const float nx = box.x + 4 + t.w + 5;
+            // A hairline before the number: the label's two parts.
+            p.line({nx - 2.5f, 3}, {nx - 2.5f, h - (rounded ? 5 : 3)}, paint{darken(fill, 60)}, 1);
+            p.text({nx, ty}, number, number_style);
+            if (has_dot)
+                paint_checks(p, {nx + number_w + 3 + dot / 2, (h - (rounded ? 2 : 0)) / 2}, dot,
+                             mark->checks);
+        }
         if (boxes) boxes->push_back({x, x + w, *ref});
         x += w + 1;
     }

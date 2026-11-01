@@ -120,6 +120,8 @@ log_window::open(rap::ui& ui, const std::string& path, bool all_branches, bool o
     if (all_branches) w->set_walk(walk_refs::all);
     w->reload();
     w->watch_repository();
+    w->pr_watch_ = std::make_unique<pr_watch>(ui, w->repo_location(),
+                                              [p = w.get()] { p->update_pull_requests(); });
     warn_if_lfs_missing(ui, w->window_.get(), w->repo_.workdir());
     return w;
 }
@@ -655,6 +657,24 @@ void log_window::loaded(const std::string& error)
     restore_selection();
     if (log_.row_count() && !commit_list_->current()) commit_list_->set_current(0);
     update_status();
+    update_pull_requests();
+}
+
+void log_window::update_pull_requests()
+{
+    if (!pr_watch_) return;
+    pr_heads_ = match_pull_requests(pr_watch_->remotes(), pr_watch_->pull_requests(), log_.refs());
+    std::unordered_map<std::string, pr_mark> marks;
+    for (const auto& [name, p] : pr_heads_)
+        marks.emplace(name,
+                      pr_mark{.number = p.pr.number, .checks = p.pr.checks, .draft = p.pr.draft});
+    log_.set_pull_requests(std::move(marks));
+}
+
+const open_pr* log_window::pull_request_of(const ref& r) const
+{
+    auto it = pr_heads_.find(r.full_name);
+    return it == pr_heads_.end() ? nullptr : &it->second;
 }
 
 void log_window::restore_selection()

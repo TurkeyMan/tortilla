@@ -151,6 +151,14 @@ public:
     }
     action_icon_style icon_style() const { return icon_style_; }
 
+    // The branches that are pull requests' heads, by full name: their labels
+    // wear the PR's number and checks.
+    void set_pull_requests(std::unordered_map<std::string, pr_mark> marks)
+    {
+        pr_marks_ = std::move(marks);
+        notify_changed(0, row_count());
+    }
+
     void set_labels(unsigned mask);
     unsigned labels() const { return labels_; }
 
@@ -211,6 +219,7 @@ private:
     // filled the column in again row by row.
     std::unordered_map<oid, uint8_t, oid_hash> actions_cache_;
     ref_map refs_;
+    std::unordered_map<std::string, pr_mark> pr_marks_;
     mutable std::unordered_map<oid, std::vector<label_box>, oid_hash> label_boxes_;  // as last painted
     std::optional<oid> head_;
     bool working_tree_ = false;

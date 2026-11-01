@@ -96,6 +96,57 @@ rap::sys::http_headers api_headers(forge_kind, std::string_view token);
 std::expected<forge_account, std::string> who_am_i(forge_kind, std::string_view host,
                                                    std::string_view token);
 
+// -- repositories and their pull requests -------------------------------------
+
+// A repository on a forge, from a remote's URL: its host, and its path there
+// as owner (a GitLab group may hold slashes) and name, without ".git".
+struct forge_repo
+{
+    std::string host, owner, name;
+    std::string path() const { return owner + "/" + name; }
+    bool operator==(const forge_repo&) const = default;
+};
+std::optional<forge_repo> repo_of_url(std::string_view url);
+
+// The checks on a pull request's head: CI's runs, combined.
+enum class check_state
+{
+    none,  // nothing reported
+    pending,
+    success,
+    failure,
+};
+
+struct pull_request
+{
+    int number = 0;
+    std::string title, url;  // url: its web page
+    forge_repo head;         // where its branch is: the repository, or a fork
+    std::string head_branch, base_branch, head_sha;
+    bool draft = false;
+    check_state checks = check_state::none;
+};
+
+// The repository's open pull requests (merge requests on GitLab), with their
+// checks: the newest hundred.
+std::expected<std::vector<pull_request>, std::string>
+open_pull_requests(forge_kind, const forge_repo&, std::string_view token);
+
+// The branch pull requests go into by default (main, say).
+std::expected<std::string, std::string> default_branch(forge_kind, const forge_repo&,
+                                                       std::string_view token);
+
+struct new_pull_request
+{
+    forge_repo head;  // where the branch is: `into` itself, or a fork of it
+    std::string head_branch, base_branch, title, body;
+    bool draft = false;
+};
+// Opens one on `into`; GitLab's only from a branch in the same repository.
+std::expected<pull_request, std::string> create_pull_request(forge_kind, const forge_repo& into,
+                                                             const new_pull_request&,
+                                                             std::string_view token);
+
 // -- signing in through the browser (OAuth's device flow) ---------------------
 
 // Whether Tortilla can: it needs an application registered on that host,

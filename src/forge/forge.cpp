@@ -429,6 +429,275 @@ std::expected<forge_account, std::string> who_am_i(forge_kind k, std::string_vie
     return a;
 }
 
+// -- repositories and their pull requests -------------------------------------
+
+std::optional<forge_repo> repo_of_url(std::string_view url)
+{
+    // scheme://[user@]host[:port]/path, or scp-style [user@]host:path.
+    std::string_view host, path;
+    if (const size_t scheme = url.find("://"); scheme != std::string_view::npos)
+    {
+        std::string_view rest = url.substr(scheme + 3);
+        const size_t slash = rest.find('/');
+        if (slash == std::string_view::npos) return std::nullopt;
+        host = rest.substr(0, slash);
+        path = rest.substr(slash + 1);
+        if (const size_t at = host.rfind('@'); at != std::string_view::npos)
+            host.remove_prefix(at + 1);
+        // An ssh port isn't the web's: ssh://git@host:2222/... is https://host/...
+        if (url.starts_with("ssh://")) host = host.substr(0, host.find(':'));
+    }
+    else
+    {
+        const size_t colon = url.find(':');
+        if (colon == std::string_view::npos) return std::nullopt;
+        host = url.substr(0, colon);
+        path = url.substr(colon + 1);
+        if (const size_t at = host.rfind('@'); at != std::string_view::npos)
+            host.remove_prefix(at + 1);
+    }
+    while (!path.empty() && path.back() == '/') path.remove_suffix(1);
+    if (path.ends_with(".git")) path.remove_suffix(4);
+    while (!path.empty() && path.front() == '/') path.remove_prefix(1);
+    const size_t last = path.rfind('/');
+    if (host.empty() || last == std::string_view::npos || last == 0 || last + 1 == path.size())
+        return std::nullopt;
+    return forge_repo{.host = std::string(host),
+                      .owner = std::string(path.substr(0, last)),
+                      .name = std::string(path.substr(last + 1))};
+}
+
+namespace
+{
+
+// GitLab names a project by its path, escaped: group%2Fsub%2Fname.
+std::string gitlab_project(const forge_repo& r)
+{
+    return api_root(forge_kind::gitlab, r.host) + "/projects/" + form_escape(r.path());
+}
+
+std::string repo_api(forge_kind k, const forge_repo& r)
+{
+    return k == forge_kind::gitlab ? gitlab_project(r) : api_root(k, r.host) + "/repos/" + r.path();
+}
+
+std::string graphql_url(std::string_view host)
+{
+    return host == "github.com" ? "https://api.github.com/graphql"
+                                : web_root(host) + "/api/graphql";
+}
+
+check_state github_rollup(std::string_view state)
+{
+    if (state == "SUCCESS") return check_state::success;
+    if (state == "FAILURE" || state == "ERROR") return check_state::failure;
+    if (state == "PENDING" || state == "EXPECTED") return check_state::pending;
+    return check_state::none;
+}
+
+// A combined commit status (Gitea), or a pipeline's (GitLab).
+check_state status_word(std::string_view s)
+{
+    if (s == "success") return check_state::success;
+    if (s == "failure" || s == "error" || s == "failed" || s == "canceled")
+        return check_state::failure;
+    if (s == "pending" || s == "running" || s == "created" || s == "preparing" ||
+        s == "waiting_for_resource" || s == "scheduled")
+        return check_state::pending;
+    return check_state::none;
+}
+
+std::expected<std::vector<pull_request>, std::string> github_pulls(const forge_repo& r,
+                                                                   std::string_view token)
+{
+    // One query for them all, checks included: what polling costs is one
+    // request a repository.
+    constexpr std::string_view query =
+        "query($owner:String!,$name:String!){repository(owner:$owner,name:$name){"
+        "pullRequests(states:OPEN,first:100,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{"
+        "number title url isDraft headRefName headRefOid baseRefName "
+        "headRepository{name owner{login}} "
+        "commits(last:1){nodes{commit{statusCheckRollup{state}}}}}}}}";
+    const std::string body = "{\"query\":" + json::quoted(query) +
+                             ",\"variables\":{\"owner\":" + json::quoted(r.owner) +
+                             ",\"name\":" + json::quoted(r.name) + "}}";
+    auto headers = api_headers(forge_kind::github, token);
+    headers.push_back({"Content-Type", "application/json"});
+    const auto reply =
+        rap::sys::http_request("POST", graphql_url(r.host), body, {.headers = headers});
+    const auto j = json::parse(reply.body);
+    if (reply.status != 200 || !j) return std::unexpected(failure(reply, j));
+    if (const json::value errors = (*j)["errors"]; errors.kind() == json::value::type::array)
+        for (const json::value& e : errors.elements())
+            return std::unexpected(e["message"].str(_("GitHub refused the query.")));
+    std::vector<pull_request> out;
+    for (const json::value& n : (*j)["data"]["repository"]["pullRequests"]["nodes"].elements())
+    {
+        pull_request pr{.number = int(n["number"].integer().value_or(0)),
+                        .title = n["title"].str(),
+                        .url = n["url"].str(),
+                        .head_branch = n["headRefName"].str(),
+                        .base_branch = n["baseRefName"].str(),
+                        .head_sha = n["headRefOid"].str(),
+                        .draft = n["isDraft"].boolean()};
+        const json::value head = n["headRepository"];  // null: the fork's gone
+        pr.head = {
+            .host = r.host, .owner = head["owner"]["login"].str(), .name = head["name"].str()};
+        for (const json::value& c : n["commits"]["nodes"].elements())
+            pr.checks = github_rollup(c["commit"]["statusCheckRollup"]["state"].str());
+        out.push_back(std::move(pr));
+    }
+    return out;
+}
+
+std::expected<std::vector<pull_request>, std::string> gitlab_pulls(const forge_repo& r,
+                                                                   std::string_view token)
+{
+    const auto headers = api_headers(forge_kind::gitlab, token);
+    const auto reply = rap::sys::http_get(
+        gitlab_project(r) + "/merge_requests?state=opened&per_page=100", {.headers = headers});
+    const auto j = json::parse(reply.body);
+    if (reply.status != 200 || !j) return std::unexpected(failure(reply, j));
+    // The list leaves pipelines out: the project's latest, matched by commit.
+    const auto pipes_reply =
+        rap::sys::http_get(gitlab_project(r) + "/pipelines?per_page=100", {.headers = headers});
+    const auto pipes = json::parse(pipes_reply.body);
+    std::vector<pull_request> out;
+    for (const json::value& m : j->elements())
+    {
+        pull_request pr{.number = int(m["iid"].integer().value_or(0)),
+                        .title = m["title"].str(),
+                        .url = m["web_url"].str(),
+                        .head = r,
+                        .head_branch = m["source_branch"].str(),
+                        .base_branch = m["target_branch"].str(),
+                        .head_sha = m["sha"].str(),
+                        .draft = m["draft"].boolean()};
+        // A fork's merge request: its project isn't this one, and its path
+        // would take another request; it's left unmatched.
+        if (m["source_project_id"].integer() != m["target_project_id"].integer()) pr.head = {};
+        if (pipes && pipes_reply.status == 200)
+            for (const json::value& p : pipes->elements())  // newest first
+                if (p["sha"].str_is(pr.head_sha))
+                {
+                    pr.checks = status_word(p["status"].str());
+                    break;
+                }
+        out.push_back(std::move(pr));
+    }
+    return out;
+}
+
+std::expected<std::vector<pull_request>, std::string> gitea_pulls(const forge_repo& r,
+                                                                  std::string_view token)
+{
+    const auto headers = api_headers(forge_kind::gitea, token);
+    const std::string root = repo_api(forge_kind::gitea, r);
+    const auto reply =
+        rap::sys::http_get(root + "/pulls?state=open&limit=50", {.headers = headers});
+    const auto j = json::parse(reply.body);
+    if (reply.status != 200 || !j) return std::unexpected(failure(reply, j));
+    std::vector<pull_request> out;
+    for (const json::value& p : j->elements())
+    {
+        const json::value head = p["head"];
+        pull_request pr{.number = int(p["number"].integer().value_or(0)),
+                        .title = p["title"].str(),
+                        .url = p["html_url"].str(),
+                        .head_branch = head["ref"].str(),
+                        .base_branch = p["base"]["ref"].str(),
+                        .head_sha = head["sha"].str(),
+                        .draft = p["draft"].boolean()};
+        pr.head = {.host = r.host,
+                   .owner = head["repo"]["owner"]["login"].str(),
+                   .name = head["repo"]["name"].str()};
+        // Each one's checks: the head commit's combined status.
+        const auto status =
+            rap::sys::http_get(root + "/commits/" + pr.head_sha + "/status", {.headers = headers});
+        if (const auto s = json::parse(status.body);
+            s && status.status == 200 && (*s)["total_count"].integer().value_or(0) > 0)
+            pr.checks = status_word((*s)["state"].str());
+        out.push_back(std::move(pr));
+    }
+    return out;
+}
+
+}  // namespace
+
+std::expected<std::vector<pull_request>, std::string>
+open_pull_requests(forge_kind k, const forge_repo& r, std::string_view token)
+{
+    switch (k)
+    {
+    case forge_kind::github: return github_pulls(r, token);
+    case forge_kind::gitlab: return gitlab_pulls(r, token);
+    case forge_kind::gitea: return gitea_pulls(r, token);
+    }
+    return {};
+}
+
+std::expected<std::string, std::string> default_branch(forge_kind k, const forge_repo& r,
+                                                       std::string_view token)
+{
+    const auto reply = rap::sys::http_get(repo_api(k, r), {.headers = api_headers(k, token)});
+    const auto j = json::parse(reply.body);
+    if (reply.status != 200 || !j) return std::unexpected(failure(reply, j));
+    std::string branch = (*j)["default_branch"].str();
+    if (branch.empty()) return std::unexpected(std::string(_("The server didn't say.")));
+    return branch;
+}
+
+std::expected<pull_request, std::string> create_pull_request(forge_kind k, const forge_repo& into,
+                                                             const new_pull_request& n,
+                                                             std::string_view token)
+{
+    auto headers = api_headers(k, token);
+    headers.push_back({"Content-Type", "application/json"});
+    std::string body, url;
+    if (k == forge_kind::gitlab)
+    {
+        if (!(n.head == into))
+            return std::unexpected(std::string(
+                _("Tortilla opens GitLab merge requests only from a branch in the same project.")));
+        // A draft is one titled so.
+        url = gitlab_project(into) + "/merge_requests";
+        body = "{\"source_branch\":" + json::quoted(n.head_branch) +
+               ",\"target_branch\":" + json::quoted(n.base_branch) +
+               ",\"title\":" + json::quoted((n.draft ? "Draft: " : "") + n.title) +
+               ",\"description\":" + json::quoted(n.body) + "}";
+    }
+    else
+    {
+        // A fork's branch is named owner:branch.
+        const std::string head =
+            n.head == into ? n.head_branch : n.head.owner + ":" + n.head_branch;
+        url = repo_api(k, into) + "/pulls";
+        body = "{\"head\":" + json::quoted(head) + ",\"base\":" + json::quoted(n.base_branch) +
+               ",\"title\":" + json::quoted(n.title) + ",\"body\":" + json::quoted(n.body) +
+               (k == forge_kind::github ? std::string(",\"draft\":") + (n.draft ? "true" : "false")
+                                        : std::string()) +
+               "}";
+    }
+    const auto reply = rap::sys::http_request("POST", url, body, {.headers = headers});
+    const auto j = json::parse(reply.body);
+    if (reply.status != 201 || !j)
+    {
+        // GitHub says what's wrong in errors[]: "A pull request already exists...".
+        if (j)
+            for (const json::value& e : (*j)["errors"].elements())
+                if (const std::string m = e["message"].str(); !m.empty()) return std::unexpected(m);
+        return std::unexpected(failure(reply, j));
+    }
+    return pull_request{
+        .number = int((*j)[k == forge_kind::gitlab ? "iid" : "number"].integer().value_or(0)),
+        .title = n.title,
+        .url = (*j)[k == forge_kind::gitlab ? "web_url" : "html_url"].str(),
+        .head = n.head,
+        .head_branch = n.head_branch,
+        .base_branch = n.base_branch,
+        .draft = n.draft};
+}
+
 // -- signing in through the browser -------------------------------------------
 
 bool browser_sign_in(forge_kind k, std::string_view host)

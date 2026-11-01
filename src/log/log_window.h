@@ -3,6 +3,7 @@
 #pragma once
 
 #include "changes/changes_view.h"
+#include "forge/pr_watch.h"
 #include "git/command.h"
 #include "git/repo_worker.h"
 #include "log/log_model.h"
@@ -78,6 +79,15 @@ private:
                      std::function<void(bool ok, const std::string& output)> after,
                      bool show_failure = true);
     void refs_changed();
+    // The forge's open pull requests: the branches that are their heads, for
+    // the labels and the menus. pr_watch_ is made once the window is.
+    std::unique_ptr<pr_watch> pr_watch_;
+    std::unordered_map<std::string, open_pr> pr_heads_;
+    void update_pull_requests();
+    // A label's pull request, if it's one's head.
+    const open_pr* pull_request_of(const ref&) const;
+    void create_pull_request(const ref&);
+    void open_pull_request_menu(rap::menu&, const ref&);
     void open_settings(settings_page);
     std::string title_text() const;
     bool path_limited() const;

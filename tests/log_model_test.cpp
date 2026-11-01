@@ -8,6 +8,7 @@
 #include "changes/file_model.h"
 #include "changes/working_tree.h"
 #include "forge/forge.h"
+#include "forge/pr_watch.h"
 #include "git/archive.h"
 #include "git/badges.h"
 #include "git/blame.h"
@@ -154,6 +155,49 @@ int main(int argc, char** argv)
                   tortilla::api_root(forge_kind::gitea, "codeberg.org") ==
                       "https://codeberg.org/api/v1",
               "forge: API roots");
+        // A remote's repository on its forge.
+        {
+            using tortilla::forge_repo;
+            const auto https = tortilla::repo_of_url("https://github.com/ada/engine.git");
+            const auto scp = tortilla::repo_of_url("git@gitlab.com:group/sub/engine.git");
+            const auto ssh = tortilla::repo_of_url("ssh://git@git.corp:2222/ada/engine/");
+            check(https && *https == forge_repo{"github.com", "ada", "engine"} && scp &&
+                      *scp == forge_repo{"gitlab.com", "group/sub", "engine"} && ssh &&
+                      *ssh == forge_repo{"git.corp", "ada", "engine"} &&
+                      !tortilla::repo_of_url("/srv/git/engine") &&
+                      !tortilla::repo_of_url("https://github.com/engine"),
+                  "forge: a remote's repository, owner and name");
+        }
+        // Which branches are pull requests' heads: the head repository's
+        // remote branch, and a local branch tracking it; a fork's is matched
+        // through the fork's remote.
+        {
+            using namespace tortilla;
+            const forge_repo base{"github.com", "org", "engine"},
+                fork{"github.com", "ada", "engine"};
+            const std::vector<forge_remote> remotes{{.name = "upstream", .repo = base},
+                                                    {.name = "origin", .repo = fork}};
+            std::vector<open_pr> prs;
+            prs.push_back(
+                {.pr = {.number = 7, .head = fork, .head_branch = "fix"}, .into = remotes[0]});
+            prs.push_back(
+                {.pr = {.number = 8, .head = base, .head_branch = "feat/x"}, .into = remotes[0]});
+            ref_map refs;
+            refs[oid{}] = {{.name = "fix",
+                            .full_name = "refs/heads/fix",
+                            .kind = ref_kind::local_branch,
+                            .upstream = "refs/remotes/origin/fix"},
+                           {.name = "other",
+                            .full_name = "refs/heads/other",
+                            .kind = ref_kind::local_branch,
+                            .upstream = "refs/remotes/upstream/fix"}};
+            const auto heads = match_pull_requests(remotes, prs, refs);
+            check(heads.size() == 3 && heads.at("refs/remotes/origin/fix").pr.number == 7 &&
+                      heads.at("refs/heads/fix").pr.number == 7 &&
+                      heads.at("refs/remotes/upstream/feat/x").pr.number == 8 &&
+                      !heads.contains("refs/heads/other"),
+                  "forge: pull requests' head branches, local and remote");
+        }
 #ifndef _WIN32
         // The GitHub CLI's token, from a stand-in gh first on PATH.
         const std::string bin = std::string(argv[1]) + "/fake-gh";

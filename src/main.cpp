@@ -26,6 +26,7 @@
 //   tortilla reflog [path] [ref]       the RefLog dialog, on HEAD or ref
 //   tortilla stashlist [path]          the RefLog dialog on the stash
 //   tortilla worktrees [path]          the repository's worktrees: add, remove, lock, prune
+//   tortilla pullrequest [path] [branch]  Create Pull Request for a branch (the current one)
 //   tortilla prevdiff [path]           the file against its previous version
 //   tortilla stashsave|stashapply|stashpop [path]  Stash changes, Apply or Pop
 //   tortilla subadd|subupdate|subsync [path]  Submodule Add or Update (their dialogs),
@@ -85,6 +86,7 @@
 #include "ui/diff_window.h"
 #include "ui/export_dialog.h"
 #include "ui/progress_dialog.h"
+#include "ui/pull_request_dialog.h"
 #include "ui/repo_browser.h"
 #include "ui/repo_icon.h"
 #include "ui/settings_dialog.h"
@@ -273,8 +275,8 @@ int main(int argc, char** argv)
                   std::strcmp(argv[i], "conflicteditor") == 0 ||
                   std::strcmp(argv[i], "bisect") == 0 || std::strcmp(argv[i], "about") == 0 ||
                   std::strcmp(argv[i], "help") == 0 || std::strcmp(argv[i], "worktrees") == 0 ||
-                  std::strcmp(argv[i], "remove") == 0 || std::strcmp(argv[i], "removekeep") == 0 ||
-                  std::strcmp(argv[i], "ignore") == 0))
+                  std::strcmp(argv[i], "pullrequest") == 0 || std::strcmp(argv[i], "remove") == 0 ||
+                  std::strcmp(argv[i], "removekeep") == 0 || std::strcmp(argv[i], "ignore") == 0))
         {
             command = argv[i];
             named = true;
@@ -522,7 +524,7 @@ int main(int argc, char** argv)
         command == "branch" || command == "tag" || command == "switch" || command == "merge" ||
         command == "mergeabort" || command == "refbrowse" || command == "reflog" ||
         command == "stashlist" || command == "blame" || command == "repobrowser" ||
-        command == "showcompare" || command == "worktrees")
+        command == "showcompare" || command == "worktrees" || command == "pullrequest")
     {
         tortilla::windows::init(**ui);
         // The branch dialogs: the second argument preselects a ref or hash.
@@ -564,6 +566,23 @@ int main(int argc, char** argv)
                                                              args.size() > 2 ? args[2] : ""))
                        ? (*ui)->run()
                        : 1;
+        if (command == "pullrequest")
+        {
+            auto repo = tortilla::repo::open(path);
+            if (!repo)
+                return keep(std::expected<std::unique_ptr<tortilla::pull_request_dialog>,
+                                          std::string>(std::unexpected(repo.error())))
+                           ? (*ui)->run()
+                           : 1;
+            const std::string name = rev.empty() ? repo->head_name() : rev;
+            const tortilla::ref branch{.name = name,
+                                       .full_name = "refs/heads/" + name,
+                                       .kind = tortilla::ref_kind::local_branch};
+            return keep(tortilla::pull_request_dialog::open(
+                       **ui, repo->workdir(), branch, tortilla::forge_remotes(repo->workdir())))
+                       ? (*ui)->run()
+                       : 1;
+        }
         if (command == "worktrees")
             return keep(tortilla::worktree_window::open(**ui, path)) ? (*ui)->run() : 1;
         if (command == "reflog" || command == "stashlist")

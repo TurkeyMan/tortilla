@@ -13,6 +13,7 @@
 #include "log/reflog_window.h"
 #include "remote/pull_fetch_dialog.h"
 #include "remote/push_dialog.h"
+#include "ui/pull_request_dialog.h"
 #include "ui/windows.h"
 
 #include "git/command.h"
@@ -136,6 +137,8 @@ void log_window::refs_changed()
         {
             if (reload_needed) return reload();
             update_ref_button();
+            update_pull_requests();
+            if (pr_watch_) pr_watch_->nudge();  // a push or fetch may have changed them
             if (auto sel = commit_list_->selection(); sel.size() == 1) show_commit(sel.front());
         });
 }
@@ -629,6 +632,15 @@ menu log_window::context_menu(std::optional<size_t> clicked)
                 if (r.kind == ref_kind::local_branch && local.empty()) local = r.name;
             m.push_back(item(_("Pus_h..."), [this, local]
                              { keep_dialog(push_dialog::open(ui_, repo_.workdir(), local)); }));
+            // The branch's pull request, or making one: the label clicked,
+            // else the row's first branch.
+            const ref* branch = nullptr;
+            for (const auto& r : *refs)
+                if ((r.kind == ref_kind::local_branch || r.kind == ref_kind::remote_branch) &&
+                    (!branch ||
+                     (branch->kind == ref_kind::remote_branch && r.kind == ref_kind::local_branch)))
+                    branch = &r;
+            if (branch) open_pull_request_menu(m, *branch);
         }
         if (log_.is_head(row) && has_wc && !merging)
             m.push_back(
@@ -1251,6 +1263,36 @@ void log_window::open_rebase(const std::string& upstream)
         });
     raw->show();
     rebases_.push_back(std::move(*w));
+}
+
+void log_window::create_pull_request(const ref& r)
+{
+    auto d = pull_request_dialog::open(ui_, repo_location(), r, pr_watch_->remotes());
+    if (!d) return keep_dialog(std::move(d));
+    (*d)->on_done(
+        [this, alive = std::weak_ptr<bool>(alive_)](const pull_request&)
+        {
+            if (!alive.lock()) return;
+            refs_changed();  // a push moved the remote branch
+            pr_watch_->refresh();
+        });
+    windows::keep(std::move(*d));
+}
+
+// A PR's entries for its head branch; for any other branch on a forge Tortilla
+// has an account for, making one.
+void log_window::open_pull_request_menu(rap::menu& m, const ref& r)
+{
+    if (const open_pr* p = pull_request_of(r))
+    {
+        rap::menu_item sub{.label = rap::i18n::format(_("Pull request #{0}"), p->pr.number)};
+        sub.children.push_back(
+            item(_("_Open in the browser"), [url = p->pr.url] { rap::sys::open_url(url); }));
+        m.push_back(std::move(sub));
+        return;
+    }
+    if (pr_watch_ && !pr_watch_->remotes().empty())
+        m.push_back(item(_("Create pull _request..."), [this, r] { create_pull_request(r); }));
 }
 
 }  // namespace tortilla

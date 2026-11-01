@@ -894,7 +894,13 @@ void log_model::paint_message(size_t row, rap::painter& p, const rap::cell_info&
     if (auto it = refs_.find(c.id); it != refs_.end())
     {
         float end = paint_ref_labels(
-            p, it->second, x, h, [this](const ref& r) { return show_label(r); }, &label_boxes_[c.id]);
+            p, it->second, x, h, [this](const ref& r) { return show_label(r); },
+            &label_boxes_[c.id],
+            [this](const ref& r) -> std::optional<pr_mark>
+            {
+                if (auto m = pr_marks_.find(r.full_name); m != pr_marks_.end()) return m->second;
+                return std::nullopt;
+            });
         if (end > x) x = end + p.measure(" ", subject).w;
     }
 

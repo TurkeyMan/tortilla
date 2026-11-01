@@ -1,6 +1,7 @@
 // TortoiseGit's ref labels, shared by the Log and Rebase lists.
 #pragma once
 
+#include "forge/forge.h"
 #include "git/repo.h"
 
 #include <rapport/rapport.h>
@@ -17,12 +18,22 @@ struct label_box
     tortilla::ref ref;
 };
 
+// A branch that's a pull request's head wears its number and its checks:
+// a tick, a cross, or a ring while they run.
+struct pr_mark
+{
+    int number = 0;
+    check_state checks = check_state::none;
+    bool draft = false;
+};
+
 // Draws a commit's labels from `x` across a cell `height` tall and returns
 // the x after the last one (`x` itself when nothing was drawn). `show`
 // filters labels (View > Labels); empty shows them all. `boxes`, if given,
 // gets each label's extent.
 float paint_ref_labels(rap::painter&, const std::vector<ref>& refs, float x, float height,
-                     const std::function<bool(const ref&)>& show = {},
-                     std::vector<label_box>* boxes = nullptr);
+                       const std::function<bool(const ref&)>& show = {},
+                       std::vector<label_box>* boxes = nullptr,
+                       const std::function<std::optional<pr_mark>(const ref&)>& pr = {});
 
 }  // namespace tortilla

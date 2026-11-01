@@ -75,6 +75,7 @@ add_library(tortilla_git STATIC
     src/util/sha256.cpp
     src/util/json.cpp
     src/forge/forge.cpp
+    src/forge/pr_watch.cpp
     src/git/ignore_patterns.cpp
     src/git/ref_list.cpp
     src/git/reflog.cpp
@@ -112,6 +113,7 @@ add_executable(tortilla
     src/ui/reset_dialog.cpp
     src/ui/remotes_page.cpp
     src/ui/accounts_page.cpp
+    src/ui/pull_request_dialog.cpp
     src/blame/blame_window.cpp
     src/ui/repo_browser.cpp
     src/rebase/rebase_window.cpp
