@@ -16,6 +16,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -65,6 +66,9 @@ public:
         std::function<void()> selection_changed;
         // With checkboxes: which files are checked changed.
         std::function<void()> checks_changed = {};
+        // The working tree's files: the window's own items, after Revert
+        // (the Commit dialog's Restore after commit).
+        std::function<void(rap::menu&, const std::vector<file_change>&)> more_items = {};
     };
 
     explicit changes_view(host);
@@ -84,6 +88,11 @@ public:
     void clear() { set_files({}); }
     // Which files show, and which are greyed (the Log dialog's).
     void set_view(file_view v) { model_.set_view(std::move(v)); }
+    // The files to be put back after the commit, marked as such.
+    void set_restoring(std::set<std::string, std::less<>> paths)
+    {
+        model_.set_restoring(std::move(paths));
+    }
 
     const std::vector<file_change>& files() const { return model_.files(); }
     std::vector<size_t> selection() const;

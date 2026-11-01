@@ -12,6 +12,7 @@
 
 #include <expected>
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -49,7 +50,18 @@ private:
     void amend_toggled(bool on);
     void add_signoff();
     void commit();
+    // Cancel or the close box: asks first about files to be restored.
+    void cancel();
     void close(bool committed);
+    // Restore after commit [TortoiseGit]: a file's content kept as it is
+    // now, to put back after the commit, so it can be cut down to what this
+    // commit should have and the rest is left as a change for the next.
+    void restore_items(rap::menu&, const std::vector<file_change>&);
+    void restore_after_commit(const std::vector<std::string>& paths);
+    // Puts them back and forgets them; the paths that couldn't be.
+    std::vector<std::string> restore(const std::vector<std::string>& paths);
+    std::vector<std::string> restoring() const;
+    void show_restoring();
     std::string config(const std::string& key) const;
 
     rap::ui& ui_;
@@ -63,6 +75,9 @@ private:
     std::unique_ptr<rap::window> window_;
     std::function<void(bool)> closed_;
     std::string pre_amend_message_;  // the message before Amend replaced it
+    // Restore after commit: by path, the kept content as a blob in the
+    // repository, byte for byte (git's filters skipped).
+    std::map<std::string, std::string, std::less<>> restore_;
     bool committing_ = false;
     bool can_commit_ = false;  // Commit's enabled state
 

@@ -3,6 +3,7 @@
 #include "git/remotes.h"
 #include "i18n.h"
 #include "settings.h"
+#include "ui/menu_items.h"
 #include "ui/progress_dialog.h"
 #include "ui/repo_icon.h"
 #include "ui/settings_dialog.h"
@@ -14,6 +15,7 @@
 #include <cstdio>
 #include <ctime>
 #include <filesystem>
+#include <set>
 
 namespace tortilla
 {
@@ -41,6 +43,14 @@ std::string trimmed(std::string s)
     size_t start = 0;
     while (start < s.size() && std::isspace(static_cast<unsigned char>(s[start]))) ++start;
     return s.substr(start);
+}
+
+// One per line, for a message.
+std::string lines(const std::vector<std::string>& items)
+{
+    std::string out;
+    for (const std::string& i : items) out += (out.empty() ? "" : "\n") + i;
+    return out;
 }
 
 bool versioned(const file_change& f)
@@ -95,7 +105,9 @@ commit_window::commit_window(rap::ui& ui, repo r, std::vector<std::string> relat
               .open_settings = [this](settings_page page)
               { show_settings(ui_, window_.get(), workdir_, page); },
               .selection_changed = {},
-              .checks_changed = [this] { update_state(); }})
+              .checks_changed = [this] { update_state(); },
+              .more_items = [this](rap::menu& m, const std::vector<file_change>& files)
+              { restore_items(m, files); }})
 {
     root_ = std::ranges::any_of(relative, [](const std::string& p) { return p.empty(); });
     if (!root_) paths_ = std::move(relative);
@@ -249,7 +261,7 @@ void commit_window::build()
                     spacer{},
                     button{_("C_ommit")}.bind(commit_).enabled(false).on_click([this]
                                                                                { commit(); }),
-                    button{_("Cancel")}.on_click([this] { close(false); }),
+                    button{_("Cancel")}.on_click([this] { cancel(); }),
                 },
             }}}
             .size(100_ch, 44_lines));
@@ -257,7 +269,7 @@ void commit_window::build()
     window_->on_close_request(
         [this]
         {
-            close(false);
+            cancel();
             return false;  // close() closes it
         });
     // F5 refreshes; Ctrl+Enter commits [spec 5.4.3].
@@ -496,13 +508,134 @@ void commit_window::commit()
                             fs::remove(paths_file, ec);
                             committing_ = false;
                             if (ok)
-                                close(true);
+                            {
+                                const std::vector<std::string> failed = restore(restoring());
+                                if (failed.empty()) return close(true);
+                                ui_.message(
+                                    window_.get(),
+                                    {.icon = rap::message_spec::icon::error,
+                                     .title = _("Restore after commit"),
+                                     .text = rap::i18n::format(
+                                         _("Committed, but these files couldn't be put back:\n{0}"),
+                                         lines(failed))},
+                                    [this](rap::dialog_role) { close(true); });
+                            }
                             else
                             {
                                 update_state();
                                 reload();
                             }
                         });
+}
+
+void commit_window::cancel()
+{
+    if (restore_.empty()) return close(false);
+    ui_.message(
+        window_.get(),
+        {.icon = rap::message_spec::icon::question,
+         .title = _("Restore after commit"),
+         .text = _("Put the files marked “restore after commit” back as they were "
+                   "when marked? No leaves them as they are now."),
+         .buttons = {rap::dialog_role::yes, rap::dialog_role::no, rap::dialog_role::cancel}},
+        [this](rap::dialog_role r)
+        {
+            if (r == rap::dialog_role::cancel) return;
+            if (r == rap::dialog_role::yes)
+                if (const std::vector<std::string> failed = restore(restoring()); !failed.empty())
+                {
+                    ui_.message(window_.get(),
+                                {.icon = rap::message_spec::icon::error,
+                                 .title = _("Restore after commit"),
+                                 .text = rap::i18n::format(
+                                     _("These files couldn't be put back:\n{0}"), lines(failed))});
+                    return;  // open still, with what's left marked
+                }
+            close(false);
+        });
+}
+
+void commit_window::show_restoring()
+{
+    std::set<std::string, std::less<>> marked;
+    for (const auto& [path, blob] : restore_) marked.insert(path);
+    files_.set_restoring(std::move(marked));
+}
+
+std::vector<std::string> commit_window::restoring() const
+{
+    std::vector<std::string> out;
+    for (const auto& [path, blob] : restore_) out.push_back(path);
+    return out;
+}
+
+void commit_window::restore_items(rap::menu& m, const std::vector<file_change>& files)
+{
+    std::vector<std::string> marked, unmarked;
+    for (const file_change& f : files)
+        if (f.status != 'D') (restore_.contains(f.path) ? marked : unmarked).push_back(f.path);
+    if (!unmarked.empty())
+        m.push_back(item(_("Restore after commit"), "stashsave",
+                         [this, unmarked] { restore_after_commit(unmarked); }));
+    if (!marked.empty())
+        m.push_back(item(
+            _("Restore"), "stashpop",
+            [this, marked]
+            {
+                if (const std::vector<std::string> failed = restore(marked); !failed.empty())
+                    ui_.message(window_.get(),
+                                {.icon = rap::message_spec::icon::error,
+                                 .title = _("Restore"),
+                                 .text = rap::i18n::format(
+                                     _("These files couldn't be put back:\n{0}"), lines(failed))});
+                reload();
+            }));
+}
+
+// Kept in the repository's objects: exact, whatever the file's size, and
+// still there if Tortilla isn't (git gc leaves loose objects two weeks).
+void commit_window::restore_after_commit(const std::vector<std::string>& paths)
+{
+    std::vector<std::string> failed;
+    for (const std::string& p : paths)
+    {
+        const git_result r = run_git(workdir_, {"hash-object", "-w", "--no-filters", "--", p},
+                                     git_output::stdout_only);
+        if (const std::string blob = trimmed(r.output); r.ok() && !blob.empty())
+            restore_[p] = blob;
+        else
+            failed.push_back(p);
+    }
+    show_restoring();
+    if (!failed.empty())
+        ui_.message(window_.get(), {.icon = rap::message_spec::icon::error,
+                                    .title = _("Restore after commit"),
+                                    .text = rap::i18n::format(
+                                        _("These files couldn't be kept:\n{0}"), lines(failed))});
+}
+
+std::vector<std::string> commit_window::restore(const std::vector<std::string>& paths)
+{
+    std::vector<std::string> failed;
+    for (const std::string& p : paths)
+    {
+        auto it = restore_.find(p);
+        if (it == restore_.end()) continue;
+        const git_result r =
+            run_git(workdir_, {"cat-file", "blob", it->second}, git_output::stdout_only);
+        const fs::path file = rap::sys::path_from_utf8(workdir_) / rap::sys::path_from_utf8(p);
+        std::error_code ec;
+        fs::create_directories(file.parent_path(), ec);
+        std::FILE* f = r.ok() ? rap::sys::fopen(file, "wb") : nullptr;
+        bool ok = f && std::fwrite(r.output.data(), 1, r.output.size(), f) == r.output.size();
+        if (f) ok = std::fclose(f) == 0 && ok;
+        if (ok)
+            restore_.erase(it);
+        else
+            failed.push_back(p);
+    }
+    show_restoring();
+    return failed;
 }
 
 void commit_window::close(bool committed)

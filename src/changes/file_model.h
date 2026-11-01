@@ -8,6 +8,8 @@
 
 #include <algorithm>
 #include <functional>
+#include <set>
+#include <string>
 #include <string_view>
 #include <unordered_map>
 
@@ -155,6 +157,13 @@ public:
 
     const std::vector<file_change>& files() const { return files_; }
 
+    // Files the Commit dialog puts back after committing, said in their status.
+    void set_restoring(std::set<std::string, std::less<>> paths)
+    {
+        restoring_ = std::move(paths);
+        if (!files_.empty()) notify_changed(0, files_.size());
+    }
+
     size_t row_count() const override { return files_.size(); }
 
     // The file's type, as the file manager shows it, before its path.
@@ -179,7 +188,10 @@ public:
             if (dot == std::string::npos || (slash != std::string::npos && dot < slash)) return {};
             return f.path.substr(dot);
         }
-        case status: return status_name(f.status);
+        case status:
+            return restoring_.contains(f.path)
+                       ? rap::i18n::format(_("{0}, restore after commit"), status_name(f.status))
+                       : status_name(f.status);
         case added: return f.binary || f.status == '?' || !f.counted ? "" : std::to_string(f.added);
         case removed:
             return f.binary || f.status == '?' || !f.counted ? "" : std::to_string(f.removed);
@@ -258,6 +270,7 @@ private:
     std::vector<bool> grayed_;                          // per row
     std::vector<bool> checked_;                         // per row, with checkboxes
     std::unordered_map<std::string, bool> remembered_;  // by path, as the user set them
+    std::set<std::string, std::less<>> restoring_;      // by path
 };
 
 }  // namespace tortilla

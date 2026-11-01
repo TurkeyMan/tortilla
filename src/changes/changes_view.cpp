@@ -220,7 +220,7 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
     auto compare_two = [&]
     {
         if (files.size() == 2)
-            m.push_back(item(_("Compare two files"),
+            m.push_back(item(_("Compare two files"), "diff",
                              [this, a = version_of(files[0]), b = version_of(files[1])]
                              { compare(a, b, _("Compare two files")); }));
     };
@@ -236,11 +236,14 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
             const std::string question =
                 _("Are you sure you want to mark the conflicted file(s) as resolved?");
             if (one)
-                m.push_back(item(_("_Edit conflicts"),
+                m.push_back(item(_("_Edit conflicts"), "conflicteditor",
                                  [this, path = files.front().path] { edit_conflict(path); }));
-            m.push_back(item(
-                _("Resolved"), [confirm_local, question, conflicts]
-                { confirm_local(question, _("Resolve"), {plus({"add", "-f", "--"}, conflicts)}); }));
+            m.push_back(item(_("Resolved"), "resolve",
+                             [confirm_local, question, conflicts]
+                             {
+                                 confirm_local(question, _("Resolve"),
+                                               {plus({"add", "-f", "--"}, conflicts)});
+                             }));
             // During a rebase git's "ours" is the branch being rebased onto
             // and "theirs" the commit being replayed: mine is then theirs.
             const bool rebasing = rebase_in_progress(dir);
@@ -286,15 +289,17 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
         }
         if (unversioned)
         {
-            m.push_back(
-                item(_("Add"), [local, paths] { local(_("Add"), {plus({"add", "--"}, paths)}); }));
-            m.push_back(item(_("Commit..."), [this, files] { commit(files); }));
+            m.push_back(item(_("Add"), "add",
+                             [local, paths] { local(_("Add"), {plus({"add", "--"}, paths)}); }));
+            m.push_back(item(_("Commit..."), "commit", [this, files] { commit(files); }));
+            if (host_.more_items) host_.more_items(m, files);
             compare_two();
         }
         else if (!conflicted)
         {
-            m.push_back(item(_("Compare with b_ase"), [this, paths] { difftool({"HEAD"}, paths); }));
-            m.push_back(item(_("Show changes as _unified diff"),
+            m.push_back(item(_("Compare with b_ase"), "diff",
+                             [this, paths] { difftool({"HEAD"}, paths); }));
+            m.push_back(item(_("Show changes as _unified diff"), "patch",
                              [this, paths, dir, count]
                              {
                                  show_unified_diff(host_.ui,
@@ -303,11 +308,11 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
                              }));
             separator(m);
             compare_two();
-            m.push_back(item(_("Commit..."), [this, files] { commit(files); }));
+            m.push_back(item(_("Commit..."), "commit", [this, files] { commit(files); }));
             // New files leave the index (the file stays); the rest go
             // back to HEAD, in the index and the working tree.
             m.push_back(item(
-                _("Re_vert..."),
+                _("Re_vert..."), "revert",
                 [confirm_local, files, count]
                 {
                     arg_list added, changed;
@@ -326,6 +331,7 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
                         rap::i18n::format(_("Revert {0}? Their local changes will be lost."), count),
                         _("Revert"), commands);
                 }));
+            if (host_.more_items) host_.more_items(m, files);
             m.push_back(item(_("Skip worktree"),
                              [local, paths]
                              {
@@ -357,28 +363,28 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
         // with one compares it with the working tree.
         const std::vector<std::string> sides =
             vs_wc ? std::vector<std::string>{parent} : std::vector<std::string>{parent, hash};
-        m.push_back(
-            item(_("Compare with b_ase"), [this, sides, paths] { difftool(sides, paths); }));
-        m.push_back(item(_("Show changes as _unified diff"),
+        m.push_back(item(_("Compare with b_ase"), "diff",
+                         [this, sides, paths] { difftool(sides, paths); }));
+        m.push_back(item(_("Show changes as _unified diff"), "patch",
                          [this, sides, paths, dir, count, title = vs_wc ? parent : hash]
                          {
                              show_unified_diff(host_.ui, count + " " + title.substr(0, 8), dir,
                                                plus(plus({"diff"}, sides), plus({"--"}, paths)));
                          }));
         if (!vs_wc)
-            m.push_back(item(_("Compare with _working tree"),
+            m.push_back(item(_("Compare with _working tree"), "diff",
                              [this, hash, paths] { difftool({hash}, paths); }));
         if (!parent_title.empty())
             m.push_back(item(rap::i18n::format(_("Compare parent with working tree: {0}"),
                                                menu_text(parent_title)),
-                             [this, parent, paths] { difftool({parent}, paths); }));
+                             "diff", [this, parent, paths] { difftool({parent}, paths); }));
         separator(m);
         compare_two();
         // The working tree's files replaced with this commit's (or its
         // parent's) versions, as TortoiseGit's Revert to revision.
         if (!deleted)
             m.push_back(item(
-                _("R_evert to this revision"),
+                _("R_evert to this revision"), "revert",
                 [confirm_local, hash = vs_wc ? parent : hash, files, count]
                 {
                     confirm_local(rap::i18n::format(_("Replace {0} in the working tree with the "
@@ -395,6 +401,7 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
                 files, [](const file_change& f) { return f.status == 'A' || !f.old_path.empty(); });
             m.push_back(item(
                 rap::i18n::format(_("Revert to parent revision: {0}"), menu_text(parent_title)),
+                "revert",
                 [confirm_local, parent, files, count]
                 {
                     confirm_local(rap::i18n::format(_("Replace {0} in the working tree with the "
@@ -413,21 +420,21 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
         const file_change f = files.front();
         // The working file's history where the list is the working tree's.
         const bool working = wc || vs_wc;
-        m.push_back(item(_("Show _log"), [this, f, working]
+        m.push_back(item(_("Show _log"), "log", [this, f, working]
                          { show_log(f.path, working ? std::string() : source_.hash); }));
         // The old name's history, from before the change.
         if (renamed)
-            m.push_back(item(_("Show log _before rename/copy"), [this, f, wc]
+            m.push_back(item(_("Show log _before rename/copy"), "log", [this, f, wc]
                              { show_log(f.old_path, wc ? std::string("HEAD") : source_.parent); }));
         // The file as it is here: in the working tree, or in this commit.
         m.push_back(item(
-            _("_Blame"),
+            _("_Blame"), "blame",
             [this, f, working] { blame(f.path, working ? std::string() : source_.hash); },
             f.status != 'D' && !(wc && f.status == '?')));
     }
     if (!wc && !vs_wc && !deleted)
     {
-        m.push_back(item(_("Export selection to..."),
+        m.push_back(item(_("Export selection to..."), "export",
                          [this, hash = source_.hash, files] { save_revisions(hash, files); }));
     }
     if (one)
@@ -475,7 +482,7 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
     if (wc && unversioned)
     {
         m.push_back(item(
-            _("_Delete"),
+            _("_Delete"), "remove",
             [confirm_local, paths, count]
             {
                 confirm_local(rap::i18n::format(_("Delete {0}? They aren't in git, so this can't "
@@ -520,7 +527,9 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
             for (const std::string& e : by_extension) label += (label.empty() ? "" : ", ") + e;
             sub.push_back(item(menu_text(label), [ignore, by_extension] { ignore(by_extension); }));
         }
-        m.push_back({.label = _("Add to _ignore list"), .children = std::move(sub)});
+        m.push_back({.label = _("Add to _ignore list"),
+                     .children = std::move(sub),
+                     .icon = menu_icon("ignore")});
     }
 
     separator(m);
