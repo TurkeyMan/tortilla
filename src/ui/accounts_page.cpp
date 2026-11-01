@@ -379,8 +379,8 @@ rap::node accounts_page(rap::ui& ui, std::function<rap::window*()> parent)
     return vbox{
         group{_("Signed in"),
               vbox{
-                  list{std::vector<rap::column>{{.title = _("Account"), .width = 22_ch},
-                                                {.title = _("Forge"), .width = 20_ch},
+                  list{std::vector<rap::column>{{.title = _("Account"), .width = 20_ch},
+                                                {.title = _("Forge"), .width = 23_ch},
                                                 {.title = _("Server"), .width = 14_ch},
                                                 {.title = _("Status"), .width = 18_ch}},
                        &st->rows}
