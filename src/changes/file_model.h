@@ -7,6 +7,7 @@
 #include <rapport/rapport.h>
 
 #include <algorithm>
+#include <cmath>
 #include <functional>
 #include <set>
 #include <string>
@@ -166,11 +167,32 @@ public:
 
     size_t row_count() const override { return files_.size(); }
 
-    // The file's type, as the file manager shows it, before its path.
+    // The file's type, as the file manager shows it, before its path; a
+    // file to restore after the commit wears a badge.
     rap::icon icon(size_t row, size_t column) const override
     {
         if (column != path || row >= files_.size()) return {};
-        return rap::icon::for_file(files_[row].path);
+        rap::icon i = rap::icon::for_file(files_[row].path);
+        if (restoring_.contains(files_[row].path)) i.overlay = restore_badge;
+        return i;
+    }
+
+    // A round arrow turning back, in the corner of the file's icon.
+    static void restore_badge(rap::painter& p, rap::size_f s)
+    {
+        const float r = std::min(s.w, s.h) * 0.34f;
+        const rap::point_f c{s.w - r, s.h - r};
+        p.circle(c, r, rap::color{250, 140, 60}, rap::color{255, 255, 255});
+        const float a = r * 0.55f, width = std::max(1.f, r * 0.28f);
+        constexpr float pi = 3.14159265f;
+        p.arc(c, a, -pi * 0.35f, pi * 1.25f, rap::color{255, 255, 255}, width);
+        // The head, at the arc's start (up and right), pointing back along it.
+        const rap::point_f tip{c.x + a * std::cos(-pi * 0.35f), c.y + a * std::sin(-pi * 0.35f)};
+        const float h = r * 0.5f;
+        p.polygon({{tip.x - h * 0.9f, tip.y - h * 0.2f},
+                   {tip.x + h * 0.5f, tip.y - h * 0.9f},
+                   {tip.x + h * 0.4f, tip.y + h * 0.6f}},
+                  rap::color{255, 255, 255}, std::nullopt);
     }
 
     std::string text(size_t row, size_t column) const override
