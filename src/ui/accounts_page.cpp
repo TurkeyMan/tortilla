@@ -2,6 +2,7 @@
 
 #include "forge/forge.h"
 #include "i18n.h"
+#include "log/ref_labels.h"
 
 #include <rapport/sys.h>
 
@@ -25,12 +26,31 @@ std::string browser_unavailable()
 
 constexpr forge_kind k_kinds[] = {forge_kind::github, forge_kind::gitlab, forge_kind::gitea};
 
+// Whether an account's token works, as asked when the page opens.
+struct account_status
+{
+    check_state state = check_state::pending;  // success: signed in; failure: not
+    std::string why;
+};
+
 class account_rows : public rap::list_model
 {
 public:
+    using rap::list_model::notify_changed;
     using rap::list_model::notify_reset;
     std::vector<forge_account> accounts;
+    std::vector<account_status> status;  // alongside
     size_t row_count() const override { return accounts.size(); }
+    rap::icon icon(size_t row, size_t column) const override
+    {
+        if (column != 0 || row >= status.size()) return {};
+        return rap::icon::drawn(
+            [s = status[row].state](rap::painter& p, rap::size_f size)
+            {
+                const float d = std::min(size.w, size.h) - 2;
+                paint_check_mark(p, {size.w / 2, size.h / 2}, d, s);
+            });
+    }
     std::string text(size_t row, size_t column) const override
     {
         if (row >= accounts.size()) return "";
@@ -40,7 +60,15 @@ public:
         case 0:
             return a.name.empty() || a.name == a.login ? a.login : a.login + " (" + a.name + ")";
         case 1: return a.via_gh ? forge_name(a.kind) + _(" (through gh)") : forge_name(a.kind);
-        default: return a.host;
+        case 2: return a.host;
+        default:
+            if (row >= status.size()) return "";
+            switch (status[row].state)
+            {
+            case check_state::success: return _("Signed in");
+            case check_state::failure: return status[row].why;
+            default: return _("Checking...");
+            }
         }
     }
 };
@@ -122,8 +150,50 @@ struct accounts_state : std::enable_shared_from_this<accounts_state>
     void reload()
     {
         rows.accounts = accounts();
+        rows.status.assign(rows.accounts.size(), {});
         rows.notify_reset();
         update();
+        check_accounts();
+    }
+
+    // Each account's token tried on the forge (GET /user), on a worker: the
+    // Status column says whether it's signed in, and why not.
+    void check_accounts()
+    {
+        std::weak_ptr<accounts_state> weak = weak_from_this();
+        std::thread(
+            [weak, list = rows.accounts, &ui = ui]
+            {
+                for (const forge_account& a : list)
+                {
+                    account_status st{.state = check_state::success};
+                    std::string why;
+                    if (auto t = load_token(a, &why))
+                    {
+                        if (auto who = who_am_i(a.kind, a.host, t->access); !who)
+                            st = {check_state::failure, who.error()};
+                    }
+                    else
+                        st = {check_state::failure,
+                              why.empty() ? std::string(_("No token in the keychain.")) : why};
+                    ui.post(
+                        [weak, a, st]
+                        {
+                            auto s = weak.lock();
+                            if (!s) return;
+                            for (size_t i = 0; i < s->rows.accounts.size(); ++i)
+                            {
+                                const forge_account& b = s->rows.accounts[i];
+                                if (b.host != a.host || b.login != a.login || b.kind != a.kind ||
+                                    i >= s->rows.status.size())
+                                    continue;
+                                s->rows.status[i] = st;
+                                s->rows.notify_changed(i, 1);
+                            }
+                        });
+                }
+            })
+            .detach();
     }
 
     // On a worker: `work` with the flag that stops it; then `done` here.
@@ -299,6 +369,8 @@ rap::node accounts_page(rap::ui& ui, std::function<rap::window*()> parent)
     using namespace rap::literals;
     auto st = std::make_shared<accounts_state>(ui, std::move(parent));
     st->rows.accounts = accounts();
+    st->rows.status.assign(st->rows.accounts.size(), {});
+    st->check_accounts();
     // The widgets' callbacks keep the state, which goes with the window; the
     // state keeps no widget alive, so there's no cycle.
     auto with = [st](auto f) { return [st, f] { f(*st); }; };
@@ -307,9 +379,10 @@ rap::node accounts_page(rap::ui& ui, std::function<rap::window*()> parent)
     return vbox{
         group{_("Signed in"),
               vbox{
-                  list{std::vector<rap::column>{{.title = _("Account"), .width = 24_ch},
-                                                {.title = _("Forge"), .width = 22_ch},
-                                                {.title = _("Server"), .width = 20_ch}},
+                  list{std::vector<rap::column>{{.title = _("Account"), .width = 22_ch},
+                                                {.title = _("Forge"), .width = 20_ch},
+                                                {.title = _("Server"), .width = 14_ch},
+                                                {.title = _("Status"), .width = 18_ch}},
                        &st->rows}
                       .bind(st->list)
                       .selection(rap::selection_mode::single)
