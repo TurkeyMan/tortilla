@@ -100,7 +100,8 @@ private:
 // A member key from members() (escaped) against plain text.
 bool key_is(std::string_view escaped, std::string_view key);
 
-// The whole text as one value; nullopt when it isn't JSON.
+// The whole text as one value, viewing it: the text must outlive what
+// comes from it. nullopt when it isn't JSON.
 std::optional<value> parse(std::string_view text);
 
 // `s` as a JSON string, quotes and all, for building a request's body.

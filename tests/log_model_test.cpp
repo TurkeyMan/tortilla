@@ -119,7 +119,9 @@ int main(int argc, char** argv)
         check(tortilla::json::parse(std::string(300, '[') + std::string(300, ']')) == std::nullopt,
               "json: nesting too deep refused");
         check(tortilla::json::quoted("a\"b\\c\nd\x01") == R"("a\"b\\c\nd\u0001")", "json: quoting");
-        const auto round = tortilla::json::parse(tortilla::json::quoted("x\ty\"\x1f"));
+        // parse() views the text: it must outlive the value.
+        const std::string text = tortilla::json::quoted("x\ty\"\x1f");
+        const auto round = tortilla::json::parse(text);
         check(round && round->str() == "x\ty\"\x1f", "json: quoted reads back");
     }
 

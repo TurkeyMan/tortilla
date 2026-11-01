@@ -100,23 +100,15 @@ std::string web_root(std::string_view host)
     return "https://" + std::string(host);
 }
 
-// A POST of a form to the forge's OAuth endpoints, the reply as JSON.
-struct oauth_reply
+// A POST of a form to the forge's OAuth endpoints, which answer in JSON.
+// (The reply's JSON is parsed where the reply is kept: a value views it.)
+rap::sys::http_response oauth_post(const std::string& url, const std::string& body)
 {
-    rap::sys::http_response response;
-    std::optional<json::value> json;
-};
-
-oauth_reply oauth_post(const std::string& url, const std::string& body)
-{
-    oauth_reply r;
-    r.response =
-        rap::sys::http_request("POST", url, body,
-                               {.headers = {{"Accept", "application/json"},
-                                            {"Content-Type", "application/x-www-form-urlencoded"},
-                                            {"User-Agent", "Tortilla"}}});
-    r.json = json::parse(r.response.body);
-    return r;
+    return rap::sys::http_request(
+        "POST", url, body,
+        {.headers = {{"Accept", "application/json"},
+                     {"Content-Type", "application/x-www-form-urlencoded"},
+                     {"User-Agent", "Tortilla"}}});
 }
 
 // Why a request failed, in words: no answer, or the forge's message.
@@ -365,18 +357,19 @@ std::expected<device_code, std::string> start_sign_in(forge_kind k, std::string_
                                                     : web_root(host) + "/oauth/authorize_device";
     const auto r = oauth_post(url, form({{"client_id", client_id(k)},
                                          {"scope", k == forge_kind::github ? "repo" : "api"}}));
-    if (r.response.status != 200 || !r.json) return std::unexpected(failure(r.response, r.json));
-    const json::value& j = *r.json;
-    device_code c{.device = j["device_code"].str(),
-                  .user = j["user_code"].str(),
-                  .verification = j["verification_uri"].str(),
-                  .verification_full = j["verification_uri_complete"].str()};
+    const auto j = json::parse(r.body);
+    if (r.status != 200 || !j) return std::unexpected(failure(r, j));
+    const json::value& reply = *j;
+    device_code c{.device = reply["device_code"].str(),
+                  .user = reply["user_code"].str(),
+                  .verification = reply["verification_uri"].str(),
+                  .verification_full = reply["verification_uri_complete"].str()};
     if (c.device.empty() || c.user.empty() || c.verification.empty())
-        return std::unexpected(failure(r.response, r.json));
+        return std::unexpected(failure(r, j));
     c.interval =
-        std::chrono::seconds(std::max<std::int64_t>(j["interval"].integer().value_or(5), 1));
+        std::chrono::seconds(std::max<std::int64_t>(reply["interval"].integer().value_or(5), 1));
     c.expires = std::chrono::steady_clock::now() +
-                std::chrono::seconds(j["expires_in"].integer().value_or(900));
+                std::chrono::seconds(reply["expires_in"].integer().value_or(900));
     return c;
 }
 
@@ -402,26 +395,27 @@ std::expected<forge_token, std::string> finish_sign_in(forge_kind k, std::string
         if (std::chrono::steady_clock::now() >= code.expires)
             return std::unexpected(std::string(_("The code expired before it was entered.")));
         const auto r = oauth_post(url, body);
-        if (!r.json)
+        const auto j = json::parse(r.body);
+        if (!j)
         {
-            if (r.response.status == 0) continue;  // a dropped connection: ask again
-            return std::unexpected(failure(r.response, r.json));
+            if (r.status == 0) continue;  // a dropped connection: ask again
+            return std::unexpected(failure(r, j));
         }
         // GitHub answers 200 with an error; GitLab 400.
-        const json::value error = (*r.json)["error"];
-        if (!error) return token_from(*r.json);
+        const json::value error = (*j)["error"];
+        if (!error) return token_from(*j);
         if (error.str_is("authorization_pending")) continue;
         if (error.str_is("slow_down"))
         {
-            interval = std::chrono::seconds(
-                (*r.json)["interval"].integer().value_or(interval.count() + 5));
+            interval =
+                std::chrono::seconds((*j)["interval"].integer().value_or(interval.count() + 5));
             continue;
         }
         if (error.str_is("expired_token"))
             return std::unexpected(std::string(_("The code expired before it was entered.")));
         if (error.str_is("access_denied"))
             return std::unexpected(std::string(_("Signing in was refused in the browser.")));
-        return std::unexpected(failure(r.response, r.json));
+        return std::unexpected(failure(r, j));
     }
 }
 
@@ -434,8 +428,9 @@ std::expected<forge_token, std::string> renew(forge_kind k, std::string_view hos
         oauth_post(web_root(host) + "/oauth/token", form({{"client_id", client_id(k)},
                                                           {"grant_type", "refresh_token"},
                                                           {"refresh_token", t.refresh}}));
-    if (r.response.status != 200 || !r.json) return std::unexpected(failure(r.response, r.json));
-    return token_from(*r.json);
+    const auto j = json::parse(r.body);
+    if (r.status != 200 || !j) return std::unexpected(failure(r, j));
+    return token_from(*j);
 }
 
 }  // namespace tortilla
