@@ -1,0 +1,110 @@
+// The forges Tortilla signs in to: GitHub (and GitHub Enterprise), GitLab,
+// and Gitea (Forgejo and Codeberg too: Forgejo speaks Gitea's API). An
+// account is the forge, its host and the user; its token is in the user's
+// keychain (rap::sys secrets), never in Tortilla's settings.
+//
+// Everything here that talks to a forge or the keychain blocks: for a
+// worker thread.
+#pragma once
+
+#include <rapport/sys.h>
+
+#include <atomic>
+#include <chrono>
+#include <cstdint>
+#include <expected>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace tortilla
+{
+
+enum class forge_kind
+{
+    github,
+    gitlab,
+    gitea,
+};
+
+// "GitHub", "GitLab", "Gitea / Forgejo".
+std::string forge_name(forge_kind);
+// Where an account on it usually is: github.com, gitlab.com, codeberg.org.
+std::string_view default_host(forge_kind);
+
+struct forge_account
+{
+    forge_kind kind = forge_kind::github;
+    std::string host;        // github.com, gitlab.example.org: no scheme
+    std::string login;       // the user name on it
+    std::string name;        // their display name; may be empty
+    std::string avatar_url;  // may be empty
+};
+
+// What signing in gives. A GitLab sign-in through the browser expires and
+// is renewed with its refresh token; a pasted token lasts until revoked.
+struct forge_token
+{
+    std::string access;
+    std::string refresh;          // empty: can't be renewed
+    std::int64_t expires_at = 0;  // seconds since 1970; 0: doesn't expire
+};
+
+// -- accounts -----------------------------------------------------------------
+
+// The signed-in accounts, as saved ("forge.accounts").
+std::vector<forge_account> saved_accounts();
+void save_accounts(const std::vector<forge_account>&);
+// The account for a remote's URL (https or ssh, scp-style too), by host;
+// the first, if several share it.
+std::optional<forge_account> account_for_url(std::string_view url,
+                                             const std::vector<forge_account>&);
+
+// The keychain's copy of an account's token.
+bool store_token(const forge_account&, const forge_token&);
+// nullopt when there's none, or the keychain can't be read (then why).
+std::optional<forge_token> load_token(const forge_account&, std::string* why = nullptr);
+bool erase_token(const forge_account&);
+
+// -- talking to it ------------------------------------------------------------
+
+// The API's root: https://api.github.com, https://host/api/v4, ...
+std::string api_root(forge_kind, std::string_view host);
+// Authorization and the forge's Accept and User-Agent.
+rap::sys::http_headers api_headers(forge_kind, std::string_view token);
+
+// Who the token belongs to (GET /user); why not, in words.
+std::expected<forge_account, std::string> who_am_i(forge_kind, std::string_view host,
+                                                   std::string_view token);
+
+// -- signing in through the browser (OAuth's device flow) ---------------------
+
+// Whether Tortilla can: it needs an application registered on that host,
+// which it has only for github.com and gitlab.com.
+bool browser_sign_in(forge_kind, std::string_view host);
+// Where to make a token by hand, for pasting.
+std::string token_page(forge_kind, std::string_view host);
+// What a pasted token needs to be allowed, in words.
+std::string token_scopes(forge_kind);
+
+struct device_code
+{
+    std::string device;             // Tortilla's, for asking
+    std::string user;               // the user's, to type: WDJB-MJHT
+    std::string verification;       // where to type it
+    std::string verification_full;  // a page with the code filled in, if the forge gives one
+    std::chrono::seconds interval{5};
+    std::chrono::steady_clock::time_point expires;
+};
+
+std::expected<device_code, std::string> start_sign_in(forge_kind, std::string_view host);
+// Asks until the user approves, refuses, the code expires or `cancelled`.
+std::expected<forge_token, std::string> finish_sign_in(forge_kind, std::string_view host,
+                                                       const device_code&,
+                                                       const std::atomic<bool>& cancelled);
+// A new token for an expired one, where it can be.
+std::expected<forge_token, std::string> renew(forge_kind, std::string_view host,
+                                              const forge_token&);
+
+}  // namespace tortilla

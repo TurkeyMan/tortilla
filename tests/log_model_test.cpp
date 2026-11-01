@@ -7,6 +7,7 @@
 #include "cache/channel.h"
 #include "changes/file_model.h"
 #include "changes/working_tree.h"
+#include "forge/forge.h"
 #include "git/archive.h"
 #include "git/badges.h"
 #include "git/blame.h"
@@ -27,6 +28,7 @@
 #include "git/worktrees.h"
 #include "log/log_model.h"
 #include "shell.h"
+#include "util/json.h"
 #include "util/sha256.h"
 
 #include <algorithm>
@@ -77,6 +79,80 @@ int main(int argc, char** argv)
     check(tortilla::sha256_hex(std::string(1000, 'a')) ==
               "41edece42d63e8d9bf515a9ba6932e1c20cbc9f5a5d134645adb5db1b9737ea3",
           "sha256 of 1000 bytes");
+
+    // JSON, as the forges answer.
+    {
+        using tortilla::json::value;
+        const std::string reply = R"( {"login": "ada", "id": 42, "admin": false, "name": null,
+            "bio": "tab\there \"q\" \u00e9 \ud83c\udf2e", "list": [1, [2, {"x": "]"}], "three"],
+            "esc\u0061ped": 7, "neg": -3.5e2, "empty": {}, "none": []} )";
+        const auto j = tortilla::json::parse(reply);
+        check(j && j->kind() == value::type::object, "json: an object parses");
+        check(j && (*j)["login"].str() == "ada" && (*j)["login"].str_is("ada"),
+              "json: a string member");
+        check(j && (*j)["id"].integer() == 42 && !(*j)["neg"].integer(),
+              "json: integers, and a non-integer");
+        check(j && !(*j)["admin"].boolean(true) && (*j)["name"].is_null() && (*j)["name"],
+              "json: false and null");
+        check(j && !(*j)["nothing"] && (*j)["nothing"].str("x") == "x", "json: a missing member");
+        check(j && (*j)["bio"].str() == "tab\there \"q\" \xc3\xa9 \xf0\x9f\x8c\xae",
+              "json: escapes and a surrogate pair to UTF-8");
+        check(j && (*j)["list"][1][1]["x"].str() == "]" && (*j)["list"][2].str() == "three" &&
+                  !(*j)["list"][3],
+              "json: nested arrays, a bracket in a string");
+        check(j && (*j)["escaped"].integer() == 7, "json: an escaped key");
+        int n = 0;
+        if (j)
+            for (value e : (*j)["list"].elements()) n += e ? 1 : 0;
+        int members = 0;
+        if (j)
+            for (auto [key, v] : j->members()) members += !key.empty() && v ? 1 : 0;
+        check(n == 3 && members == 10, "json: elements and members in order");
+        check(j && (*j)["empty"].members().begin() == (*j)["empty"].members().end() &&
+                  (*j)["none"].elements().begin() == (*j)["none"].elements().end(),
+              "json: empty object and array");
+        bool bad = false;
+        for (const char* text : {"", "{", "{\"a\":}", "[1,]", "{\"a\" 1}", "\"\\x\"", "01", "1.",
+                                 "tru", "[1] 2", "\"a\nb\"", "{\"a\":1,}"})
+            bad |= tortilla::json::parse(text).has_value();
+        check(!bad, "json: malformed text refused");
+        check(tortilla::json::parse(std::string(300, '[') + std::string(300, ']')) == std::nullopt,
+              "json: nesting too deep refused");
+        check(tortilla::json::quoted("a\"b\\c\nd\x01") == R"("a\"b\\c\nd\u0001")", "json: quoting");
+        const auto round = tortilla::json::parse(tortilla::json::quoted("x\ty\"\x1f"));
+        check(round && round->str() == "x\ty\"\x1f", "json: quoted reads back");
+    }
+
+    // A remote's URL to its account, by host.
+    {
+        using tortilla::forge_account;
+        using tortilla::forge_kind;
+        const std::vector<forge_account> accounts{
+            {.kind = forge_kind::github, .host = "github.com", .login = "ada"},
+            {.kind = forge_kind::gitea, .host = "git.example.org:3000", .login = "bob"}};
+        auto login = [&](std::string_view url)
+        {
+            const auto a = tortilla::account_for_url(url, accounts);
+            return a ? a->login : std::string("-");
+        };
+        check(login("https://github.com/x/y.git") == "ada" &&
+                  login("git@github.com:x/y.git") == "ada" &&
+                  login("ssh://git@GitHub.com/x/y") == "ada" &&
+                  login("https://ada:tok@github.com:443/x") == "ada",
+              "forge: https, scp-style and ssh URLs find the account");
+        check(login("https://git.example.org:3000/x/y") == "bob" &&
+                  login("ssh://git@git.example.org:2222/x/y") == "bob",
+              "forge: a host with a port, by its name");
+        check(login("https://gitlab.com/x/y") == "-" && login("/srv/repo.git") == "-",
+              "forge: no account for another host or a path");
+        check(tortilla::api_root(forge_kind::github, "github.com") == "https://api.github.com" &&
+                  tortilla::api_root(forge_kind::github, "ghe.corp") == "https://ghe.corp/api/v3" &&
+                  tortilla::api_root(forge_kind::gitlab, "gitlab.com") ==
+                      "https://gitlab.com/api/v4" &&
+                  tortilla::api_root(forge_kind::gitea, "codeberg.org") ==
+                      "https://codeberg.org/api/v1",
+              "forge: API roots");
+    }
 
     // The log's file list: unrelated paths (outside the log's path) and the
     // path filter box [spec 1.9.5, 1.11.2].

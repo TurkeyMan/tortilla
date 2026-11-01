@@ -9,6 +9,7 @@
 #include "shell/fm_actions.h"
 #include "shell/menu_icons.h"
 #include "shell/menu_table.h"
+#include "ui/accounts_page.h"
 #include "ui/remotes_page.h"
 #include "ui/repo_icon.h"
 
@@ -583,6 +584,16 @@ void show_settings(rap::ui& ui, rap::window* parent, const std::string& repo_dir
                                                     },
                                                     s->repo_dir);
                                             }}},
+                    page{_("Accounts"), lazy{[weak, &ui]
+                                             {
+                                                 return accounts_page(ui,
+                                                                      [weak]
+                                                                      {
+                                                                          auto s = weak.lock();
+                                                                          return s ? s->window.get()
+                                                                                   : nullptr;
+                                                                      });
+                                             }}},
                 }
                     .sidebar()
                     .bind(page_tabs)
