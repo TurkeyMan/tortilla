@@ -88,6 +88,14 @@ private:
     // local branch's upstream's.
     const open_pr* pull_request_of(const ref&) const;
     void create_pull_request(const ref&);
+    void merge_pull_request(const open_pr&);
+    void close_pull_request(const open_pr&);
+    // After the forge changed the repository: its remote fetched quietly,
+    // the labels refreshed.
+    void fetch_after_forge(const std::string& remote);
+    // PRs set to merge when ready, by remote and number: fetched when the
+    // watch no longer sees them open.
+    std::vector<std::pair<std::string, int>> awaiting_merge_;
     void open_pull_request_menu(rap::menu&, const ref&);
     void open_settings(settings_page);
     std::string title_text() const;

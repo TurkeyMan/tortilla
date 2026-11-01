@@ -114,6 +114,7 @@ add_executable(tortilla
     src/ui/remotes_page.cpp
     src/ui/accounts_page.cpp
     src/ui/pull_request_dialog.cpp
+    src/ui/merge_pr_dialog.cpp
     src/blame/blame_window.cpp
     src/ui/repo_browser.cpp
     src/rebase/rebase_window.cpp

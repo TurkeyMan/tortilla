@@ -515,7 +515,8 @@ std::expected<std::vector<pull_request>, std::string> github_pulls(const forge_r
     constexpr std::string_view query =
         "query($owner:String!,$name:String!){repository(owner:$owner,name:$name){"
         "pullRequests(states:OPEN,first:100,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{"
-        "number title url isDraft headRefName headRefOid baseRefName "
+        "number title url isDraft headRefName headRefOid baseRefName reviewDecision mergeable "
+        "mergeStateStatus "
         "headRepository{name owner{login}} "
         "commits(last:1){nodes{commit{statusCheckRollup{state}}}}}}}}";
     const std::string body = "{\"query\":" + json::quoted(query) +
@@ -545,6 +546,15 @@ std::expected<std::vector<pull_request>, std::string> github_pulls(const forge_r
             .host = r.host, .owner = head["owner"]["login"].str(), .name = head["name"].str()};
         for (const json::value& c : n["commits"]["nodes"].elements())
             pr.checks = github_rollup(c["commit"]["statusCheckRollup"]["state"].str());
+        // A list's merge state can be UNKNOWN until GitHub works it out; the
+        // review decision is always there.
+        pr.conflicts =
+            n["mergeable"].str_is("CONFLICTING") || n["mergeStateStatus"].str_is("DIRTY");
+        pr.blocked = n["reviewDecision"].str_is("REVIEW_REQUIRED") ||
+                     n["reviewDecision"].str_is("CHANGES_REQUESTED") ||
+                     n["mergeStateStatus"].str_is("BEHIND") ||
+                     (n["mergeStateStatus"].str_is("BLOCKED") &&
+                      pr.checks != check_state::pending && pr.checks != check_state::failure);
         out.push_back(std::move(pr));
     }
     return out;
@@ -576,6 +586,11 @@ std::expected<std::vector<pull_request>, std::string> gitlab_pulls(const forge_r
         // A fork's merge request: its project isn't this one, and its path
         // would take another request; it's left unmatched.
         if (m["source_project_id"].integer() != m["target_project_id"].integer()) pr.head = {};
+        const std::string status = m["detailed_merge_status"].str();
+        pr.conflicts = status == "conflict";
+        pr.blocked = status == "not_approved" || status == "need_rebase" ||
+                     status == "discussions_not_resolved" || status == "blocked_status" ||
+                     status == "requested_changes";
         if (pipes && pipes_reply.status == 200)
             for (const json::value& p : pipes->elements())  // newest first
                 if (p["sha"].str_is(pr.head_sha))
@@ -608,6 +623,7 @@ std::expected<std::vector<pull_request>, std::string> gitea_pulls(const forge_re
                         .base_branch = p["base"]["ref"].str(),
                         .head_sha = head["sha"].str(),
                         .draft = p["draft"].boolean()};
+        pr.conflicts = !p["mergeable"].boolean(true);  // Gitea's "not mergeable" is conflicts
         pr.head = {.host = r.host,
                    .owner = head["repo"]["owner"]["login"].str(),
                    .name = head["repo"]["name"].str()};
@@ -724,6 +740,321 @@ std::expected<pull_request, std::string> create_pull_request(forge_kind k, const
         .head_branch = n.head_branch,
         .base_branch = n.base_branch,
         .draft = n.draft};
+}
+
+// -- merging and closing ------------------------------------------------------
+
+namespace
+{
+
+std::string_view method_word(merge_method m)
+{
+    switch (m)
+    {
+    case merge_method::squash: return "squash";
+    case merge_method::rebase: return "rebase";
+    default: return "merge";
+    }
+}
+
+// A request with a JSON body; "" when the forge said 2xx, else why not.
+std::string send_json(forge_kind k, std::string_view method, const std::string& url,
+                      const std::string& body, std::string_view token)
+{
+    auto headers = api_headers(k, token);
+    if (!body.empty()) headers.push_back({"Content-Type", "application/json"});
+    const auto reply = rap::sys::http_request(method, url, body, {.headers = headers});
+    if (reply.status >= 200 && reply.status < 300) return {};
+    const auto j = json::parse(reply.body);
+    return failure(reply, j);
+}
+
+std::expected<merge_state, std::string> github_merge_state(const forge_repo& r, int number,
+                                                           std::string_view token)
+{
+    constexpr std::string_view query =
+        "query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){"
+        "mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed autoMergeAllowed "
+        "deleteBranchOnMerge viewerDefaultMergeMethod viewerPermission "
+        "pullRequest(number:$number){id title headRefOid isDraft mergeable mergeStateStatus "
+        "viewerCanMergeAsAdmin viewerCanEnableAutoMerge autoMergeRequest{enabledAt} "
+        "commits(last:1){nodes{commit{statusCheckRollup{state}}}}}}}";
+    const std::string body =
+        "{\"query\":" + json::quoted(query) + ",\"variables\":{\"owner\":" + json::quoted(r.owner) +
+        ",\"name\":" + json::quoted(r.name) + ",\"number\":" + std::to_string(number) + "}}";
+    auto headers = api_headers(forge_kind::github, token);
+    headers.push_back({"Content-Type", "application/json"});
+    const auto reply =
+        rap::sys::http_request("POST", graphql_url(r.host), body, {.headers = headers});
+    const auto j = json::parse(reply.body);
+    if (reply.status != 200 || !j) return std::unexpected(failure(reply, j));
+    for (const json::value& e : (*j)["errors"].elements())
+        return std::unexpected(e["message"].str(_("GitHub refused the query.")));
+    const json::value repo = (*j)["data"]["repository"];
+    const json::value pr = repo["pullRequest"];
+    merge_state m;
+    if (repo["mergeCommitAllowed"].boolean()) m.methods.push_back(merge_method::merge);
+    if (repo["squashMergeAllowed"].boolean()) m.methods.push_back(merge_method::squash);
+    if (repo["rebaseMergeAllowed"].boolean()) m.methods.push_back(merge_method::rebase);
+    const std::string preferred = repo["viewerDefaultMergeMethod"].str();
+    m.preferred = preferred == "SQUASH"   ? merge_method::squash
+                  : preferred == "REBASE" ? merge_method::rebase
+                                          : merge_method::merge;
+    if (std::ranges::find(m.methods, m.preferred) == m.methods.end() && !m.methods.empty())
+        m.preferred = m.methods.front();
+    m.forge_deletes_branch = repo["deleteBranchOnMerge"].boolean();
+    m.title = pr["title"].str();
+    m.head_sha = pr["headRefOid"].str();
+    m.node_id = pr["id"].str();
+    m.can_bypass = pr["viewerCanMergeAsAdmin"].boolean();
+    m.merge_when_ready_set = !pr["autoMergeRequest"].is_null() && bool(pr["autoMergeRequest"]);
+    m.can_merge_when_ready =
+        repo["autoMergeAllowed"].boolean() && pr["viewerCanEnableAutoMerge"].boolean();
+    check_state checks = check_state::none;
+    for (const json::value& c : pr["commits"]["nodes"].elements())
+        checks = github_rollup(c["commit"]["statusCheckRollup"]["state"].str());
+
+    const std::string permission = repo["viewerPermission"].str();
+    const std::string status = pr["mergeStateStatus"].str();
+    using v = merge_state::verdict;
+    if (permission != "ADMIN" && permission != "MAINTAIN" && permission != "WRITE")
+        m = {.state = v::blocked,
+             .why = _("You can't merge into this repository: it takes write access.")};
+    else if (pr["isDraft"].boolean() || status == "DRAFT")
+        m.state = v::blocked, m.why = _("It's a draft: mark it ready for review first.");
+    else if (status == "DIRTY" || pr["mergeable"].str_is("CONFLICTING"))
+        m.state = v::blocked,
+        m.why = _("It conflicts with its base branch: resolve the conflicts first.");
+    else if (status == "CLEAN" || status == "UNSTABLE" || status == "HAS_HOOKS")
+        m.state = v::ready;
+    else if (status == "BEHIND")
+        m.state = v::blocked, m.why = _("Its branch is behind the base, which this repository "
+                                        "doesn't allow: update the branch first.");
+    else if (status == "BLOCKED")
+    {
+        m.state = checks == check_state::pending ? v::waiting : v::blocked;
+        m.why = checks == check_state::pending ? _("Required checks are still running.")
+                : checks == check_state::failure
+                    ? _("Required checks failed.")
+                    : _("The branch's rules block it: a review or a check they require.");
+    }
+    else
+        m.state = v::checking, m.why = _("GitHub is still working out whether it can be merged.");
+    if (m.methods.empty() && m.state != v::blocked)
+        m.state = v::blocked, m.why = _("The repository allows no way of merging.");
+    return m;
+}
+
+std::expected<merge_state, std::string> gitlab_merge_state(const forge_repo& r, int number,
+                                                           std::string_view token)
+{
+    const auto headers = api_headers(forge_kind::gitlab, token);
+    const auto project_reply = rap::sys::http_get(gitlab_project(r), {.headers = headers});
+    const auto project = json::parse(project_reply.body);
+    if (project_reply.status != 200 || !project)
+        return std::unexpected(failure(project_reply, project));
+    const auto reply = rap::sys::http_get(
+        gitlab_project(r) + "/merge_requests/" + std::to_string(number), {.headers = headers});
+    const auto mr = json::parse(reply.body);
+    if (reply.status != 200 || !mr) return std::unexpected(failure(reply, mr));
+    merge_state m;
+    // The project's one method; squashing is an option on top of it.
+    const std::string method = (*project)["merge_method"].str();
+    m.methods.push_back(method == "merge" ? merge_method::merge : merge_method::rebase);
+    const std::string squash = (*project)["squash_option"].str();
+    if (squash != "never") m.methods.push_back(merge_method::squash);
+    if (squash == "always") m.methods = {merge_method::squash};
+    m.preferred =
+        squash == "default_on" || squash == "always" ? merge_method::squash : m.methods.front();
+    m.forge_deletes_branch = (*mr)["force_remove_source_branch"].boolean();
+    m.title = (*mr)["title"].str();
+    m.head_sha = (*mr)["sha"].str();
+    m.merge_when_ready_set = (*mr)["merge_when_pipeline_succeeds"].boolean();
+    using v = merge_state::verdict;
+    if (!(*mr)["user"]["can_merge"].boolean())
+        return merge_state{.state = v::blocked, .why = _("You can't merge into this project.")};
+    const std::string status = (*mr)["detailed_merge_status"].str();
+    if (status == "mergeable")
+        m.state = v::ready;
+    else if (status == "ci_still_running")
+        m.state = v::waiting, m.why = _("The pipeline is still running."),
+        m.can_merge_when_ready = true;
+    else if (status == "checking" || status == "unchecked" || status == "preparing" ||
+             status == "approvals_syncing")
+        m.state = v::checking, m.why = _("GitLab is still working out whether it can be merged.");
+    else
+    {
+        m.state = v::blocked;
+        m.why = status == "conflict"
+                    ? _("It conflicts with its target branch: resolve the conflicts first.")
+                : status == "need_rebase"  ? _("It needs rebasing onto its target branch first.")
+                : status == "draft_status" ? _("It's a draft: mark it ready first.")
+                : status == "not_approved" ? _("It needs approval first.")
+                : status == "discussions_not_resolved"
+                    ? _("Its discussions must be resolved first.")
+                : status == "ci_must_pass"
+                    ? _("The pipeline must pass first.")
+                    : rap::i18n::format(_("GitLab says it can't be merged ({0})."), status);
+    }
+    return m;
+}
+
+std::expected<merge_state, std::string> gitea_merge_state(const forge_repo& r, int number,
+                                                          std::string_view token)
+{
+    const auto headers = api_headers(forge_kind::gitea, token);
+    const auto repo_reply =
+        rap::sys::http_get(repo_api(forge_kind::gitea, r), {.headers = headers});
+    const auto repo = json::parse(repo_reply.body);
+    if (repo_reply.status != 200 || !repo) return std::unexpected(failure(repo_reply, repo));
+    const auto reply = rap::sys::http_get(
+        repo_api(forge_kind::gitea, r) + "/pulls/" + std::to_string(number), {.headers = headers});
+    const auto pr = json::parse(reply.body);
+    if (reply.status != 200 || !pr) return std::unexpected(failure(reply, pr));
+    merge_state m;
+    if ((*repo)["allow_merge_commits"].boolean(true)) m.methods.push_back(merge_method::merge);
+    if ((*repo)["allow_squash_merge"].boolean(true)) m.methods.push_back(merge_method::squash);
+    if ((*repo)["allow_rebase"].boolean(true)) m.methods.push_back(merge_method::rebase);
+    const std::string style = (*repo)["default_merge_style"].str();
+    m.preferred = style == "squash"   ? merge_method::squash
+                  : style == "rebase" ? merge_method::rebase
+                                      : merge_method::merge;
+    if (std::ranges::find(m.methods, m.preferred) == m.methods.end() && !m.methods.empty())
+        m.preferred = m.methods.front();
+    m.forge_deletes_branch = (*repo)["default_delete_branch_after_merge"].boolean();
+    m.title = (*pr)["title"].str();
+    m.head_sha = (*pr)["head"]["sha"].str();
+    using v = merge_state::verdict;
+    if (!(*repo)["permissions"]["push"].boolean())
+        return merge_state{.state = v::blocked,
+                           .why =
+                               _("You can't merge into this repository: it takes write access.")};
+    if ((*pr)["mergeable"].boolean())
+        m.state = v::ready;
+    else
+        m.state = v::blocked,
+        m.why = _("The server says it can't be merged: conflicts, or the branch's rules.");
+    return m;
+}
+
+}  // namespace
+
+std::expected<merge_state, std::string> pull_request_merge_state(forge_kind k, const forge_repo& r,
+                                                                 int number, std::string_view token)
+{
+    switch (k)
+    {
+    case forge_kind::github: return github_merge_state(r, number, token);
+    case forge_kind::gitlab: return gitlab_merge_state(r, number, token);
+    case forge_kind::gitea: return gitea_merge_state(r, number, token);
+    }
+    return {};
+}
+
+std::string merge_pull_request(forge_kind k, const forge_repo& r, int number,
+                               const merge_request& m, std::string_view token)
+{
+    const std::string n = std::to_string(number);
+    switch (k)
+    {
+    case forge_kind::github:
+    {
+        if (m.when_ready)
+        {
+            // Auto-merge is GraphQL's alone.
+            std::string method(method_word(m.method));
+            for (char& c : method) c = char(std::toupper(static_cast<unsigned char>(c)));
+            const std::string body =
+                "{\"query\":" +
+                json::quoted(
+                    "mutation($id:ID!,$method:PullRequestMergeMethod!,$sha:GitObjectID){"
+                    "enablePullRequestAutoMerge(input:{pullRequestId:$id,mergeMethod:$method,"
+                    "expectedHeadOid:$sha}){clientMutationId}}") +
+                ",\"variables\":{\"id\":" + json::quoted(m.node_id) +
+                ",\"method\":" + json::quoted(method) + ",\"sha\":" + json::quoted(m.head_sha) +
+                "}}";
+            auto headers = api_headers(k, token);
+            headers.push_back({"Content-Type", "application/json"});
+            const auto reply =
+                rap::sys::http_request("POST", graphql_url(r.host), body, {.headers = headers});
+            const auto j = json::parse(reply.body);
+            if (reply.status != 200 || !j) return failure(reply, j);
+            for (const json::value& e : (*j)["errors"].elements()) return e["message"].str();
+            return {};
+        }
+        std::string body = "{\"merge_method\":" + json::quoted(method_word(m.method)) +
+                           ",\"sha\":" + json::quoted(m.head_sha);
+        if (!m.commit_title.empty()) body += ",\"commit_title\":" + json::quoted(m.commit_title);
+        if (!m.commit_message.empty())
+            body += ",\"commit_message\":" + json::quoted(m.commit_message);
+        body += "}";
+        return send_json(k, "PUT", repo_api(k, r) + "/pulls/" + n + "/merge", body, token);
+    }
+    case forge_kind::gitlab:
+    {
+        std::string body = "{\"sha\":" + json::quoted(m.head_sha) +
+                           ",\"squash\":" + (m.method == merge_method::squash ? "true" : "false");
+        if (m.when_ready) body += ",\"merge_when_pipeline_succeeds\":true";
+        if (!m.commit_message.empty())
+            body += std::string(m.method == merge_method::squash ? ",\"squash_commit_message\":"
+                                                                 : ",\"merge_commit_message\":") +
+                    json::quoted(m.commit_title + (m.commit_title.empty() ? "" : "\n\n") +
+                                 m.commit_message);
+        body += "}";
+        return send_json(k, "PUT", gitlab_project(r) + "/merge_requests/" + n + "/merge", body,
+                         token);
+    }
+    case forge_kind::gitea:
+    {
+        std::string body = "{\"Do\":" + json::quoted(method_word(m.method)) +
+                           ",\"head_commit_id\":" + json::quoted(m.head_sha);
+        if (!m.commit_title.empty()) body += ",\"MergeTitleField\":" + json::quoted(m.commit_title);
+        if (!m.commit_message.empty())
+            body += ",\"MergeMessageField\":" + json::quoted(m.commit_message);
+        if (m.when_ready) body += ",\"merge_when_checks_succeed\":true";
+        body += "}";
+        return send_json(k, "POST", repo_api(k, r) + "/pulls/" + n + "/merge", body, token);
+    }
+    }
+    return {};
+}
+
+std::string close_pull_request(forge_kind k, const forge_repo& r, int number,
+                               std::string_view comment, std::string_view token)
+{
+    const std::string n = std::to_string(number);
+    if (!comment.empty())
+    {
+        const std::string body = "{\"body\":" + json::quoted(comment) + "}";
+        const std::string url = k == forge_kind::gitlab
+                                    ? gitlab_project(r) + "/merge_requests/" + n + "/notes"
+                                    : repo_api(k, r) + "/issues/" + n + "/comments";
+        if (std::string why = send_json(k, "POST", url, body, token); !why.empty())
+            return rap::i18n::format(_("The reason couldn't be posted: {0}"), why);
+    }
+    if (k == forge_kind::gitlab)
+        return send_json(k, "PUT", gitlab_project(r) + "/merge_requests/" + n,
+                         "{\"state_event\":\"close\"}", token);
+    return send_json(k, "PATCH", repo_api(k, r) + "/pulls/" + n, "{\"state\":\"closed\"}", token);
+}
+
+std::string delete_branch(forge_kind k, const forge_repo& r, std::string_view branch,
+                          std::string_view token)
+{
+    const std::string escaped = form_escape(branch);
+    switch (k)
+    {
+    case forge_kind::github:
+        return send_json(k, "DELETE", repo_api(k, r) + "/git/refs/heads/" + std::string(branch), {},
+                         token);
+    case forge_kind::gitlab:
+        return send_json(k, "DELETE", gitlab_project(r) + "/repository/branches/" + escaped, {},
+                         token);
+    case forge_kind::gitea:
+        return send_json(k, "DELETE", repo_api(k, r) + "/branches/" + std::string(branch), {},
+                         token);
+    }
+    return {};
 }
 
 // -- signing in through the browser -------------------------------------------

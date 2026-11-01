@@ -666,11 +666,25 @@ void log_window::loaded(const std::string& error)
 void log_window::update_pull_requests()
 {
     if (!pr_watch_) return;
+    // Ones set to merge when ready that have gone: merged, so fetched.
+    std::erase_if(awaiting_merge_,
+                  [this](const std::pair<std::string, int>& a)
+                  {
+                      if (!pr_watch_->error().empty()) return false;
+                      const bool open = std::ranges::any_of(
+                          pr_watch_->pull_requests(), [&](const open_pr& p)
+                          { return p.into.name == a.first && p.pr.number == a.second; });
+                      if (!open) fetch_after_forge(a.first);
+                      return !open;
+                  });
     pr_heads_ = match_pull_requests(pr_watch_->remotes(), pr_watch_->pull_requests());
     std::unordered_map<std::string, pr_mark> marks;
     for (const auto& [name, p] : pr_heads_)
-        marks.emplace(name,
-                      pr_mark{.number = p.pr.number, .checks = p.pr.checks, .draft = p.pr.draft});
+        marks.emplace(name, pr_mark{.number = p.pr.number,
+                                    .checks = p.pr.checks,
+                                    .draft = p.pr.draft,
+                                    .blocked = p.pr.blocked,
+                                    .conflicts = p.pr.conflicts});
     log_.set_pull_requests(std::move(marks));
 }
 

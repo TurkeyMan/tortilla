@@ -125,6 +125,11 @@ struct pull_request
     std::string head_branch, base_branch, head_sha;
     bool draft = false;
     check_state checks = check_state::none;
+    // The forge's own rules stand in the way of merging, whatever the checks
+    // say: a review it requires, changes asked for.
+    bool blocked = false;
+    // It conflicts with its base: it can't be merged at all as it is.
+    bool conflicts = false;
 };
 
 // The repository's open pull requests (merge requests on GitLab), with their
@@ -151,6 +156,62 @@ struct new_pull_request
 std::expected<pull_request, std::string> create_pull_request(forge_kind, const forge_repo& into,
                                                              const new_pull_request&,
                                                              std::string_view token);
+
+// -- merging and closing ------------------------------------------------------
+
+enum class merge_method
+{
+    merge,   // a merge commit
+    squash,  // the branch's commits as one
+    rebase,  // the branch's commits replayed onto the base
+};
+
+// What merging a pull request takes, as the forge's own page would say: the
+// methods the repository allows, and whether it can be merged now.
+struct merge_state
+{
+    enum class verdict
+    {
+        ready,     // it can be merged
+        waiting,   // only checks still running stand in the way
+        blocked,   // something else does: `why`
+        checking,  // the forge is still working it out: ask again shortly
+    };
+    verdict state = verdict::checking;
+    std::string why;  // when it isn't ready, in words
+    std::vector<merge_method> methods;
+    merge_method preferred = merge_method::merge;
+    bool can_merge_when_ready = false;  // the forge merges it itself once checks pass
+    bool can_bypass = false;            // an admin may merge it despite the rules
+    bool merge_when_ready_set = false;  // already set to merge when ready
+    bool forge_deletes_branch = false;  // the repository deletes merged branches itself
+    std::string title, head_sha;
+    std::string node_id;  // GitHub's id for the PR, for merging when ready
+};
+
+std::expected<merge_state, std::string>
+pull_request_merge_state(forge_kind, const forge_repo&, int number, std::string_view token);
+
+struct merge_request
+{
+    merge_method method = merge_method::merge;
+    std::string commit_title, commit_message;  // empty: the forge's own
+    std::string head_sha;                      // refused if the branch has moved since
+    bool when_ready = false;                   // merge once the checks pass, rather than now
+    std::string node_id;                       // (GitHub, for when_ready)
+};
+// Merges it (on the forge, which does the work), or sets it to merge when
+// ready. "" when done; else why not.
+std::string merge_pull_request(forge_kind, const forge_repo&, int number, const merge_request&,
+                               std::string_view token);
+
+// Closes it without merging, `comment` (the reason) posted first if given.
+std::string close_pull_request(forge_kind, const forge_repo&, int number, std::string_view comment,
+                               std::string_view token);
+
+// Deletes a branch on the forge (after its PR is merged or closed).
+std::string delete_branch(forge_kind, const forge_repo&, std::string_view branch,
+                          std::string_view token);
 
 // -- signing in through the browser (OAuth's device flow) ---------------------
 

@@ -47,14 +47,18 @@ bool is_dark(color c)
 
 }  // namespace
 
-void paint_check_mark(rap::painter& p, rap::point_f c, float d, check_state s)
+void paint_check_mark(rap::painter& p, rap::point_f c, float d, check_state s, mergeable m)
 {
     const float r = d / 2;
     const color white{255, 255, 255};
     switch (s)
     {
     case check_state::success:
-        p.circle(c, r, paint{color{26, 127, 55}}, paint{white});
+        p.circle(c, r,
+                 paint{m == mergeable::conflicts ? color{110, 119, 129}
+                       : m == mergeable::not_yet ? color{191, 135, 0}
+                                                 : color{26, 127, 55}},
+                 paint{white});
         {
             const float w = std::max(1.5f, d / 8);
             const rap::point_f a{c.x - r * 0.45f, c.y + r * 0.02f},
@@ -167,7 +171,10 @@ float paint_ref_labels(rap::painter& p, const std::vector<ref>& refs, float x, f
             p.text({nx, ty}, number, number_style);
             if (has_dot)
                 paint_check_mark(p, {nx + number_w + 3 + dot / 2, (h - (rounded ? 2 : 0)) / 2}, dot,
-                                 mark->checks);
+                                 mark->checks,
+                                 mark->conflicts ? mergeable::conflicts
+                                 : mark->blocked ? mergeable::not_yet
+                                                 : mergeable::yes);
         }
         if (boxes) boxes->push_back({x, x + w, *ref});
         x += w + 1;

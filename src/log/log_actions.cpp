@@ -13,6 +13,7 @@
 #include "log/reflog_window.h"
 #include "remote/pull_fetch_dialog.h"
 #include "remote/push_dialog.h"
+#include "ui/merge_pr_dialog.h"
 #include "ui/pull_request_dialog.h"
 #include "ui/windows.h"
 
@@ -1279,6 +1280,48 @@ void log_window::create_pull_request(const ref& r)
     windows::keep(std::move(*d));
 }
 
+// The forge merges; then its result is fetched, quietly. Set to merge when
+// ready, the fetch waits for the watch to see it go.
+void log_window::merge_pull_request(const open_pr& p)
+{
+    auto d = merge_pr_dialog::open(ui_, p);
+    d->on_done(
+        [this, alive = std::weak_ptr<bool>(alive_), p](bool now)
+        {
+            if (!alive.lock()) return;
+            if (now)
+                fetch_after_forge(p.into.name);
+            else
+                awaiting_merge_.push_back({p.into.name, p.pr.number});
+            pr_watch_->refresh();
+        });
+    windows::keep(std::move(d));
+}
+
+void log_window::close_pull_request(const open_pr& p)
+{
+    auto d = close_pr_dialog::open(ui_, p);
+    d->on_done(
+        [this, alive = std::weak_ptr<bool>(alive_), remote = p.into.name]
+        {
+            if (!alive.lock()) return;
+            fetch_after_forge(remote);  // a branch deleted there goes here too
+            pr_watch_->refresh();
+        });
+    windows::keep(std::move(d));
+}
+
+void log_window::fetch_after_forge(const std::string& remote)
+{
+    status_->set_text(rap::i18n::format(_("Fetching {0}..."), remote));
+    run_quietly(_("Fetch"), {{"fetch", "--prune", remote}},
+                [this](bool, const std::string&)
+                {
+                    refs_changed();
+                    update_status();
+                });
+}
+
 // A PR's entries for its head branch; for any other branch on a forge Tortilla
 // has an account for, making one.
 void log_window::open_pull_request_menu(rap::menu& m, const ref& r)
@@ -1288,6 +1331,9 @@ void log_window::open_pull_request_menu(rap::menu& m, const ref& r)
         rap::menu_item sub{.label = rap::i18n::format(_("Pull request #{0}"), p->pr.number)};
         sub.children.push_back(
             item(_("_Open in the browser"), [url = p->pr.url] { rap::sys::open_url(url); }));
+        sub.children.push_back(rap::menu_item::separator());
+        sub.children.push_back(item(_("_Merge..."), [this, pr = *p] { merge_pull_request(pr); }));
+        sub.children.push_back(item(_("_Close..."), [this, pr = *p] { close_pull_request(pr); }));
         m.push_back(std::move(sub));
         return;
     }

@@ -416,13 +416,15 @@ rap::node diff_viewer_page(std::shared_ptr<state> st)
                     {_("Compare with"),
                      drop_down{choices, current}.bind(st->diff_tool_select).on_changed(chosen)},
                     {_("Command"), entry{command}
-                                    .bind(st->diff_command)
-                                    .placeholder(_("program %base %mine"))
-                                    .visible(custom)},
-                },
-                label{_("%base and %mine are the two sides compared: folders when a whole commit is "
-                        "compared. %bname and %yname are their names. Without placeholders the two "
-                        "sides go at the end of the command.")}
+                                       .bind(st->diff_command)
+                                       .placeholder(_("program %base %mine"))
+                                       .visible(custom)},
+                }
+                    .align_group("diff"),
+                label{
+                    _("%base and %mine are the two sides compared: folders when a whole commit is "
+                      "compared. %bname and %yname are their names. Without placeholders the two "
+                      "sides go at the end of the command.")}
                     .wrap()
                     .handle(st->custom_help)
                     .visible(custom),
@@ -432,17 +434,20 @@ rap::node diff_viewer_page(std::shared_ptr<state> st)
                   form{
                       {_("Compare with"),
                        drop_down{{_("The diff tool above"),
-                                  ifritview ? std::string("IfritView") : std::string(_("IfritView (not installed)")),
+                                  ifritview ? std::string("IfritView")
+                                            : std::string(_("IfritView (not installed)")),
                                   _("Custom...")},
                                  image_current}
                            .bind(st->image_select)
                            .on_changed(image_chosen)},
                       {_("Command"), entry{image_command()}
-                                      .bind(st->image_command)
-                                      .placeholder(_("program %base %mine"))
-                                      .visible(image_current == 2)},
-                  },
-                  label{_("IfritView: a fast image viewer that compares two images side by side, by swipe, or "
+                                         .bind(st->image_command)
+                                         .placeholder(_("program %base %mine"))
+                                         .visible(image_current == 2)},
+                  }
+                      .align_group("diff"),
+                  label{_("IfritView: a fast image viewer that compares two images side by side, "
+                          "by swipe, or "
                           "as their difference, pixel for pixel.")}
                       .wrap(),
                   label{_("Get IfritView")}
@@ -453,15 +458,16 @@ rap::node diff_viewer_page(std::shared_ptr<state> st)
               vbox{
                   form{
                       {_("Merge with"), drop_down{merge_choices, merge_current}
-                                         .bind(st->merge_select)
-                                         .on_changed(merge_chosen)},
+                                            .bind(st->merge_select)
+                                            .on_changed(merge_chosen)},
                       {_("Command"), entry{saved_merge.empty() && !st->merge_tools.empty()
-                                            ? st->merge_tools.front().command
-                                            : saved_merge}
-                                      .bind(st->merge_command)
-                                      .placeholder(_("program %base %theirs %mine %merged"))
-                                      .visible(merge_custom)},
-                  },
+                                               ? st->merge_tools.front().command
+                                               : saved_merge}
+                                         .bind(st->merge_command)
+                                         .placeholder(_("program %base %theirs %mine %merged"))
+                                         .visible(merge_custom)},
+                  }
+                      .align_group("diff"),
                   label{_("%base, %theirs and %mine are the conflict's three sides and %merged the "
                           "file to save; %bname, %tname, %yname and %mname their titles. Without "
                           "placeholders the four files go at the end.")}
