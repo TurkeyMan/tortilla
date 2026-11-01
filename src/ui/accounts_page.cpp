@@ -39,7 +39,7 @@ public:
         {
         case 0:
             return a.name.empty() || a.name == a.login ? a.login : a.login + " (" + a.name + ")";
-        case 1: return forge_name(a.kind);
+        case 1: return a.via_gh ? forge_name(a.kind) + _(" (through gh)") : forge_name(a.kind);
         default: return a.host;
         }
     }
@@ -56,6 +56,8 @@ struct accounts_state : std::enable_shared_from_this<accounts_state>
     rap::entry* host = nullptr;
     rap::button* browser = nullptr;
     rap::button* stop = nullptr;
+    rap::button* use_gh = nullptr;
+    bool has_gh = gh_installed();
     rap::entry* token = nullptr;
     rap::button* use_token = nullptr;
     rap::label* scopes = nullptr;
@@ -107,6 +109,8 @@ struct accounts_state : std::enable_shared_from_this<accounts_state>
         browser->set_enabled(!busy && can_browse);
         browser->set_tooltip(can_browse ? "" : browser_unavailable());
         stop->set_visible(busy);
+        use_gh->set_visible(has_gh && chosen_kind() == forge_kind::github);
+        use_gh->set_enabled(!busy);
         use_token->set_enabled(!busy && !token->text().empty());
         kind->set_enabled(!busy);
         host->set_enabled(!busy);
@@ -191,6 +195,26 @@ struct accounts_state : std::enable_shared_from_this<accounts_state>
                       [](accounts_state& s, signed_in who) { s.add(std::move(who)); });
     }
 
+    // The GitHub CLI's sign-in, asked for each time rather than copied.
+    void sign_in_with_gh()
+    {
+        const std::string h = chosen_host();
+        status->set_text(
+            rap::i18n::format(_("Asking the GitHub CLI for its sign-in to {0}..."), h));
+        in_background(
+            [h](const std::atomic<bool>&) -> signed_in
+            {
+                auto token = gh_token(h);
+                if (!token) return std::unexpected(token.error());
+                auto who = who_am_i(forge_kind::github, h, *token);
+                if (!who) return who;
+                erase_token(*who);  // a token kept before, now gh's to hold
+                who->via_gh = true;
+                return who;
+            },
+            [](accounts_state& s, signed_in who) { s.add(std::move(who)); });
+    }
+
     void sign_in_with_browser()
     {
         const forge_kind k = chosen_kind();
@@ -236,8 +260,11 @@ struct accounts_state : std::enable_shared_from_this<accounts_state>
             {.icon = rap::message_spec::icon::question,
              .title = _("Accounts"),
              .text = rap::i18n::format(_("Sign out of {0} on {1}?"), a.login, a.host),
-             .detail = _("Tortilla forgets its token. The token itself stays valid until "
-                         "it's revoked on the server, in your account's settings."),
+             .detail = a.via_gh ? _("Tortilla stops using the GitHub CLI's sign-in; gh stays "
+                                    "signed in.")
+                                : _("Tortilla forgets its token. The token itself stays valid "
+                                    "until it's revoked on the server, in your account's "
+                                    "settings."),
              .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
             [weak = weak_from_this(), a](rap::dialog_role role)
             {
@@ -325,6 +352,12 @@ rap::node accounts_page(rap::ui& ui, std::function<rap::window*()> parent)
                                            ? ""
                                            : browser_unavailable())
                               .on_click(with([](accounts_state& s) { s.sign_in_with_browser(); })),
+                          button{_("Use _gh's sign-in")}
+                              .bind(st->use_gh)
+                              .visible(st->has_gh)
+                              .tooltip(_("The GitHub CLI's: Tortilla asks gh for its token each "
+                                         "time, so gh's sign-out signs Tortilla out too."))
+                              .on_click(with([](accounts_state& s) { s.sign_in_with_gh(); })),
                           button{_("Stop")}.bind(st->stop).visible(false).on_click(with(
                               [](accounts_state& s)
                               {

@@ -3,6 +3,7 @@
 #include "i18n.h"
 #include "settings.h"
 #include "util/json.h"
+#include "util/programs.h"
 
 #include <algorithm>
 #include <cctype>
@@ -162,7 +163,7 @@ std::string_view default_host(forge_kind k)
 
 // -- accounts -----------------------------------------------------------------
 
-// One account a tab apart: "<kind> <host> <login> <avatar or -> <name>",
+// One account a tab apart: "<kind>[+gh] <host> <login> <avatar or -> <name>",
 // the name last, as the one field that may hold spaces.
 std::vector<forge_account> saved_accounts()
 {
@@ -172,12 +173,14 @@ std::vector<forge_account> saved_accounts()
     while (!rest.empty())
     {
         std::string_view record = take(rest, '\t');
-        const auto kind = kind_of(take(record, ' '));
+        std::string_view kind_field = take(record, ' ');
+        const auto kind = kind_of(take(kind_field, '+'));
         forge_account a{.host = std::string(take(record, ' ')),
                         .login = std::string(take(record, ' '))};
         const std::string_view avatar = take(record, ' ');
         if (!kind || a.host.empty() || a.login.empty()) continue;
         a.kind = *kind;
+        a.via_gh = kind_field == "gh";
         if (avatar != "-") a.avatar_url = avatar;
         a.name = record;
         out.push_back(std::move(a));
@@ -194,8 +197,8 @@ void save_accounts(const std::vector<forge_account>& accounts)
         for (char& c : name)
             if (c == '\t' || c == '\n' || c == '\r') c = ' ';
         if (!saved.empty()) saved += '\t';
-        saved += std::string(kind_id(a.kind)) + ' ' + a.host + ' ' + a.login + ' ' +
-                 (a.avatar_url.empty() ? "-" : a.avatar_url) + ' ' + name;
+        saved += std::string(kind_id(a.kind)) + (a.via_gh ? "+gh " : " ") + a.host + ' ' + a.login +
+                 ' ' + (a.avatar_url.empty() ? "-" : a.avatar_url) + ' ' + name;
     }
     if (saved.empty())
         settings::get().remove(k_accounts_setting);
@@ -231,6 +234,7 @@ std::optional<forge_account> account_for_url(std::string_view url,
 // The keychain holds the token as JSON: {"access":..,"refresh":..,"expires_at":..}.
 bool store_token(const forge_account& a, const forge_token& t)
 {
+    if (a.via_gh) return true;  // gh keeps it
     const std::string blob = "{\"access\":" + json::quoted(t.access) +
                              ",\"refresh\":" + json::quoted(t.refresh) +
                              ",\"expires_at\":" + std::to_string(t.expires_at) + "}";
@@ -240,6 +244,13 @@ bool store_token(const forge_account& a, const forge_token& t)
 
 std::optional<forge_token> load_token(const forge_account& a, std::string* why)
 {
+    if (a.via_gh)
+    {
+        auto token = gh_token(a.host);
+        if (why) *why = token ? std::string() : token.error();
+        if (!token) return std::nullopt;
+        return forge_token{.access = std::move(*token)};
+    }
     const auto blob = rap::sys::load_secret(secret_name(a));
     if (why) *why = rap::sys::secret_error();
     if (!blob) return std::nullopt;
@@ -253,7 +264,28 @@ std::optional<forge_token> load_token(const forge_account& a, std::string* why)
 
 bool erase_token(const forge_account& a)
 {
-    return rap::sys::erase_secret(secret_name(a));
+    return a.via_gh || rap::sys::erase_secret(secret_name(a));  // gh's sign-in stays gh's
+}
+
+bool gh_installed()
+{
+    return !find_program("gh").empty();
+}
+
+std::expected<std::string, std::string> gh_token(std::string_view host)
+{
+    const std::vector<std::string> args{"auth", "token", "--hostname", std::string(host)};
+    auto run = rap::sys::process::run("gh", args, {.merge_stderr = false});
+    if (!run)
+        return std::unexpected(
+            rap::i18n::format(_("The GitHub CLI (gh) couldn't be run: {0}"), run.error()));
+    std::string token = std::move(run->output);
+    while (!token.empty() && std::isspace(static_cast<unsigned char>(token.back())))
+        token.pop_back();
+    if (run->exit_code != 0 || token.empty())
+        return std::unexpected(rap::i18n::format(
+            _("The GitHub CLI isn't signed in to {0}: run “gh auth login” first."), host));
+    return token;
 }
 
 // -- talking to it ------------------------------------------------------------

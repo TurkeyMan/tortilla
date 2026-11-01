@@ -154,6 +154,26 @@ int main(int argc, char** argv)
                   tortilla::api_root(forge_kind::gitea, "codeberg.org") ==
                       "https://codeberg.org/api/v1",
               "forge: API roots");
+#ifndef _WIN32
+        // The GitHub CLI's token, from a stand-in gh first on PATH.
+        const std::string bin = std::string(argv[1]) + "/fake-gh";
+        std::filesystem::create_directories(bin);
+        tortilla::test::sh("printf '#!/bin/sh\\n[ \"$4\" = github.com ] && "
+                           "echo tok-123 && exit 0\\necho no >&2; exit 1\\n' > '" +
+                           bin + "/gh' && chmod +x '" + bin + "/gh'");
+        const std::string path = std::getenv("PATH") ? std::getenv("PATH") : "";
+        setenv("PATH", (bin + ":" + path).c_str(), 1);
+        const auto token = tortilla::gh_token("github.com");
+        const auto other = tortilla::gh_token("ghe.corp");
+        check(tortilla::gh_installed() && token && *token == "tok-123",
+              "forge: gh's token for its host, trimmed");
+        check(!other && other.error().find("gh auth login") != std::string::npos,
+              "forge: gh not signed in to a host says so");
+        const auto via =
+            tortilla::load_token({.host = "github.com", .login = "ada", .via_gh = true});
+        check(via && via->access == "tok-123", "forge: an account through gh asks gh");
+        setenv("PATH", path.c_str(), 1);
+#endif
     }
 
     // The log's file list: unrelated paths (outside the log's path) and the

@@ -40,6 +40,9 @@ struct forge_account
     std::string login;       // the user name on it
     std::string name;        // their display name; may be empty
     std::string avatar_url;  // may be empty
+    // Where its token is: the keychain, or (true) the GitHub CLI's sign-in,
+    // asked each time (`gh auth token`), so gh's logins and renewals hold.
+    bool via_gh = false;
 };
 
 // What signing in gives. A GitLab sign-in through the browser expires and
@@ -66,6 +69,11 @@ bool store_token(const forge_account&, const forge_token&);
 // nullopt when there's none, or the keychain can't be read (then why).
 std::optional<forge_token> load_token(const forge_account&, std::string* why = nullptr);
 bool erase_token(const forge_account&);
+
+// The GitHub CLI, where it's installed: its token for `host`, or why not
+// (not signed in there, say).
+bool gh_installed();
+std::expected<std::string, std::string> gh_token(std::string_view host);
 
 // -- talking to it ------------------------------------------------------------
 
