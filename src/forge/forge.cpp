@@ -7,6 +7,10 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <thread>
 
 namespace tortilla
@@ -21,6 +25,8 @@ constexpr std::string_view k_github_client_id = "Ov23liL6L4nZYOzFMVRj";
 constexpr std::string_view k_gitlab_client_id = "";
 
 constexpr const char* k_accounts_setting = "forge.accounts";
+// The GitHub CLI's sign-ins not to use: "<host> <login>", a tab apart.
+constexpr const char* k_gh_off_setting = "forge.gh_off";
 
 std::string_view kind_id(forge_kind k)
 {
@@ -206,6 +212,37 @@ void save_accounts(const std::vector<forge_account>& accounts)
         settings::get().set(k_accounts_setting, saved);
 }
 
+std::vector<forge_account> accounts()
+{
+    std::vector<forge_account> out = saved_accounts();
+    const std::string off = settings::get().value(k_gh_off_setting);
+    for (forge_account& g : gh_accounts())
+    {
+        const std::string id = g.host + ' ' + g.login;
+        bool skip = false;
+        for (std::string_view rest = off; !rest.empty() && !skip;) skip = take(rest, '\t') == id;
+        skip = skip || std::ranges::any_of(out, [&](const forge_account& a)
+                                           { return a.host == g.host && a.login == g.login; });
+        if (!skip) out.push_back(std::move(g));
+    }
+    return out;
+}
+
+void set_gh_account_off(const forge_account& a, bool off)
+{
+    const std::string id = a.host + ' ' + a.login;
+    std::string kept;
+    const std::string saved = settings::get().value(k_gh_off_setting);
+    for (std::string_view rest = saved; !rest.empty();)
+        if (const std::string_view entry = take(rest, '\t'); entry != id && !entry.empty())
+            kept += (kept.empty() ? "" : "\t") + std::string(entry);
+    if (off) kept += (kept.empty() ? "" : "\t") + id;
+    if (kept.empty())
+        settings::get().remove(k_gh_off_setting);
+    else
+        settings::get().set(k_gh_off_setting, kept);
+}
+
 std::optional<forge_account> account_for_url(std::string_view url,
                                              const std::vector<forge_account>& accounts)
 {
@@ -270,6 +307,53 @@ bool erase_token(const forge_account& a)
 bool gh_installed()
 {
     return !find_program("gh").empty();
+}
+
+// hosts.yml: each host a key at the left, its active user under it:
+//   github.com:
+//       users:
+//           ada:
+//       user: ada
+std::vector<forge_account> gh_accounts()
+{
+    std::vector<forge_account> out;
+    if (!gh_installed()) return out;
+    std::filesystem::path dir;
+    if (const char* own = std::getenv("GH_CONFIG_DIR"); own && *own)
+        dir = rap::sys::path_from_utf8(own);
+    else
+#ifdef _WIN32
+        dir = rap::sys::config_dir("") / "GitHub CLI";
+#else
+        dir = rap::sys::config_dir("") / "gh";
+#endif
+    std::ifstream in(dir / "hosts.yml", std::ios::binary);
+    const std::string text{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+    std::string_view host;
+    for (std::string_view rest = text; !rest.empty();)
+    {
+        std::string_view line = take(rest, '\n');
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.remove_suffix(1);
+        if (line.empty() || line.front() == '#') continue;
+        if (line.front() != ' ')
+        {
+            host = line.back() == ':' ? line.substr(0, line.size() - 1) : std::string_view();
+            continue;
+        }
+        line.remove_prefix(std::min(line.find_first_not_of(' '), line.size()));
+        if (host.empty() || !line.starts_with("user:")) continue;
+        std::string_view login = line.substr(5);
+        login.remove_prefix(std::min(login.find_first_not_of(' '), login.size()));
+        if (login.size() >= 2 && (login.front() == '"' || login.front() == '\''))
+            login = login.substr(1, login.size() - 2);
+        if (login.empty()) continue;
+        out.push_back({.kind = forge_kind::github,
+                       .host = std::string(host),
+                       .login = std::string(login),
+                       .via_gh = true});
+        host = {};  // one active user a host
+    }
+    return out;
 }
 
 std::expected<std::string, std::string> gh_token(std::string_view host)

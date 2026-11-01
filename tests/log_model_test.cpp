@@ -172,6 +172,17 @@ int main(int argc, char** argv)
         const auto via =
             tortilla::load_token({.host = "github.com", .login = "ada", .via_gh = true});
         check(via && via->access == "tok-123", "forge: an account through gh asks gh");
+        // Who gh is signed in as, from its hosts.yml: the active user on each.
+        tortilla::test::sh("printf 'github.com:\\n    git_protocol: ssh\\n    users:\\n        "
+                           "ada:\\n        bob:\\n    user: bob\\nghe.corp:\\n    "
+                           "oauth_token: x\\n    user: \"cy\"\\n' > '" +
+                           bin + "/hosts.yml'");
+        setenv("GH_CONFIG_DIR", bin.c_str(), 1);
+        const auto gh = tortilla::gh_accounts();
+        check(gh.size() == 2 && gh[0].host == "github.com" && gh[0].login == "bob" &&
+                  gh[0].via_gh && gh[1].host == "ghe.corp" && gh[1].login == "cy",
+              "forge: gh's sign-ins, from its hosts.yml");
+        unsetenv("GH_CONFIG_DIR");
         setenv("PATH", path.c_str(), 1);
 #endif
     }

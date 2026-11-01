@@ -59,6 +59,13 @@ struct forge_token
 // The signed-in accounts, as saved ("forge.accounts").
 std::vector<forge_account> saved_accounts();
 void save_accounts(const std::vector<forge_account>&);
+// The accounts Tortilla uses: the saved ones, and the GitHub CLI's sign-ins
+// (gh_accounts) as they are, with nothing to set up, unless signed out of
+// here (gh_account_off).
+std::vector<forge_account> accounts();
+// Whether Tortilla is told not to use gh's sign-in to that account; signing
+// in through gh again lifts it.
+void set_gh_account_off(const forge_account&, bool off);
 // The account for a remote's URL (https or ssh, scp-style too), by host;
 // the first, if several share it.
 std::optional<forge_account> account_for_url(std::string_view url,
@@ -73,6 +80,9 @@ bool erase_token(const forge_account&);
 // The GitHub CLI, where it's installed: its token for `host`, or why not
 // (not signed in there, say).
 bool gh_installed();
+// Who the GitHub CLI is signed in as, on each host, from its hosts.yml (no gh
+// run, so it's quick): the accounts, via_gh, without a name or avatar.
+std::vector<forge_account> gh_accounts();
 std::expected<std::string, std::string> gh_token(std::string_view host);
 
 // -- talking to it ------------------------------------------------------------

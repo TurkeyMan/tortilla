@@ -121,7 +121,7 @@ struct accounts_state : std::enable_shared_from_this<accounts_state>
 
     void reload()
     {
-        rows.accounts = saved_accounts();
+        rows.accounts = accounts();
         rows.notify_reset();
         update();
     }
@@ -176,6 +176,7 @@ struct accounts_state : std::enable_shared_from_this<accounts_state>
             { return a.kind == who->kind && a.host == who->host && a.login == who->login; });
         accounts.push_back(*who);
         save_accounts(accounts);
+        if (who->via_gh) set_gh_account_off(*who, false);
         token->set_text("");
         status->set_text(rap::i18n::format(_("Signed in as {0} on {1}."), who->login, who->host));
         reload();
@@ -282,6 +283,7 @@ struct accounts_state : std::enable_shared_from_this<accounts_state>
                             accounts, [&](const forge_account& b)
                             { return b.kind == a.kind && b.host == a.host && b.login == a.login; });
                         save_accounts(accounts);
+                        if (a.via_gh) set_gh_account_off(a, true);  // or it's back from gh
                         s.status->set_text("");
                         s.reload();
                     });
@@ -296,7 +298,7 @@ rap::node accounts_page(rap::ui& ui, std::function<rap::window*()> parent)
     using namespace rap::layout;
     using namespace rap::literals;
     auto st = std::make_shared<accounts_state>(ui, std::move(parent));
-    st->rows.accounts = saved_accounts();
+    st->rows.accounts = accounts();
     // The widgets' callbacks keep the state, which goes with the window; the
     // state keeps no widget alive, so there's no cycle.
     auto with = [st](auto f) { return [st, f] { f(*st); }; };
@@ -305,8 +307,8 @@ rap::node accounts_page(rap::ui& ui, std::function<rap::window*()> parent)
     return vbox{
         group{_("Signed in"),
               vbox{
-                  list{std::vector<rap::column>{{.title = _("Account"), .width = 28_ch},
-                                                {.title = _("Forge"), .width = 16_ch},
+                  list{std::vector<rap::column>{{.title = _("Account"), .width = 24_ch},
+                                                {.title = _("Forge"), .width = 22_ch},
                                                 {.title = _("Server"), .width = 20_ch}},
                        &st->rows}
                       .bind(st->list)
@@ -355,8 +357,9 @@ rap::node accounts_page(rap::ui& ui, std::function<rap::window*()> parent)
                           button{_("Use _gh's sign-in")}
                               .bind(st->use_gh)
                               .visible(st->has_gh)
-                              .tooltip(_("The GitHub CLI's: Tortilla asks gh for its token each "
-                                         "time, so gh's sign-out signs Tortilla out too."))
+                              .tooltip(_("The GitHub CLI's sign-ins are used as they are, with "
+                                         "nothing to set up: this brings one back after signing "
+                                         "out of it here."))
                               .on_click(with([](accounts_state& s) { s.sign_in_with_gh(); })),
                           button{_("Stop")}.bind(st->stop).visible(false).on_click(with(
                               [](accounts_state& s)
