@@ -16,7 +16,7 @@ namespace
 // Tortilla's applications, registered on github.com and gitlab.com for the
 // device flow. Public by design (a device-flow client has no secret); empty
 // until registered, and then only token pasting is offered.
-constexpr std::string_view k_github_client_id = "";
+constexpr std::string_view k_github_client_id = "Ov23liL6L4nZYOzFMVRj";
 constexpr std::string_view k_gitlab_client_id = "";
 
 constexpr const char* k_accounts_setting = "forge.accounts";
