@@ -38,10 +38,11 @@ struct open_pr
     forge_remote into;
 };
 
-// Which refs are pull requests' heads: a remote's branch when the remote is
-// the PR's head repository, and a local branch tracking one. By full name.
-std::unordered_map<std::string, open_pr>
-match_pull_requests(const std::vector<forge_remote>&, const std::vector<open_pr>&, const ref_map&);
+// Which remote branches are pull requests' heads (the remote being the PR's
+// head repository), by full name. Only those: a local branch can be moved
+// anywhere until it's pushed, and the PR follows the push, not the branch.
+std::unordered_map<std::string, open_pr> match_pull_requests(const std::vector<forge_remote>&,
+                                                             const std::vector<open_pr>&);
 
 class pr_watch
 {

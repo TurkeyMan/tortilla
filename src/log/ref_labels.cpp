@@ -45,9 +45,9 @@ bool is_dark(color c)
     return c.r * 30 + c.g * 59 + c.b * 11 <= 12800;
 }
 
-// The checks' mark, in a circle `d` across at `c`, ringed in white to stand
-// out on any label.
-void paint_checks(rap::painter& p, rap::point_f c, float d, check_state s)
+}  // namespace
+
+void paint_check_mark(rap::painter& p, rap::point_f c, float d, check_state s)
 {
     const float r = d / 2;
     const color white{255, 255, 255};
@@ -79,7 +79,6 @@ void paint_checks(rap::painter& p, rap::point_f c, float d, check_state s)
     }
 }
 
-}  // namespace
 
 // [GLLB:523-657]: full-height rectangles, text width + 8, 1 px apart.
 // Branches with an upstream are rounded with a drop shadow and their
@@ -111,7 +110,6 @@ float paint_ref_labels(rap::painter& p, const std::vector<ref>& refs, float x, f
     }
 
     float start = x;
-    int marked = 0;  // the PR the label before showed: its upstream needn't again
     for (auto [ref, rounded] : order)
     {
         color fill = label_colour(*ref);
@@ -120,9 +118,7 @@ float paint_ref_labels(rap::painter& p, const std::vector<ref>& refs, float x, f
         rap::size_f t = p.measure(ref->name, ts);
         float w = t.w + 8;
         // A pull request's "#12" and its checks, after the name.
-        std::optional<pr_mark> mark = pr ? pr(*ref) : std::nullopt;
-        if (mark && ref->kind == ref_kind::remote_branch && mark->number == marked) mark.reset();
-        marked = mark ? mark->number : 0;
+        const std::optional<pr_mark> mark = pr ? pr(*ref) : std::nullopt;
         const std::string number = mark ? "#" + std::to_string(mark->number) : "";
         rap::text_style number_style = ts;
         if (mark && mark->draft)  // a draft's number fainter
@@ -170,8 +166,8 @@ float paint_ref_labels(rap::painter& p, const std::vector<ref>& refs, float x, f
             p.line({nx - 2.5f, 3}, {nx - 2.5f, h - (rounded ? 5 : 3)}, paint{darken(fill, 60)}, 1);
             p.text({nx, ty}, number, number_style);
             if (has_dot)
-                paint_checks(p, {nx + number_w + 3 + dot / 2, (h - (rounded ? 2 : 0)) / 2}, dot,
-                             mark->checks);
+                paint_check_mark(p, {nx + number_w + 3 + dot / 2, (h - (rounded ? 2 : 0)) / 2}, dot,
+                                 mark->checks);
         }
         if (boxes) boxes->push_back({x, x + w, *ref});
         x += w + 1;

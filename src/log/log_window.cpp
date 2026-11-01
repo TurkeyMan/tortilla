@@ -663,7 +663,7 @@ void log_window::loaded(const std::string& error)
 void log_window::update_pull_requests()
 {
     if (!pr_watch_) return;
-    pr_heads_ = match_pull_requests(pr_watch_->remotes(), pr_watch_->pull_requests(), log_.refs());
+    pr_heads_ = match_pull_requests(pr_watch_->remotes(), pr_watch_->pull_requests());
     std::unordered_map<std::string, pr_mark> marks;
     for (const auto& [name, p] : pr_heads_)
         marks.emplace(name,
@@ -673,7 +673,8 @@ void log_window::update_pull_requests()
 
 const open_pr* log_window::pull_request_of(const ref& r) const
 {
-    auto it = pr_heads_.find(r.full_name);
+    // A local branch's is its upstream's, for the menu.
+    auto it = pr_heads_.find(r.kind == ref_kind::local_branch ? r.upstream : r.full_name);
     return it == pr_heads_.end() ? nullptr : &it->second;
 }
 

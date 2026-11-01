@@ -84,7 +84,8 @@ private:
     std::unique_ptr<pr_watch> pr_watch_;
     std::unordered_map<std::string, open_pr> pr_heads_;
     void update_pull_requests();
-    // A label's pull request, if it's one's head.
+    // A label's pull request: a remote branch's, if it's one's head; a
+    // local branch's upstream's.
     const open_pr* pull_request_of(const ref&) const;
     void create_pull_request(const ref&);
     void open_pull_request_menu(rap::menu&, const ref&);

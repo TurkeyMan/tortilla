@@ -51,7 +51,8 @@ private:
     size_t head_remote_ = 0;   // into remotes_
     std::string head_branch_;  // its name there
     std::string tip_;          // the commit proposed
-    bool needs_push_ = false;
+    bool on_forge_ = true;     // the forge has the branch (maybe an older copy)
+    bool needs_push_ = false;  // the forge's copy isn't the branch as it is here
     bool sets_upstream_ = false;          // a local branch with no upstream yet
     std::string auto_title_, auto_body_;  // as last filled, to refill if untouched
 
@@ -60,7 +61,7 @@ private:
     rap::entry* title_ = nullptr;
     rap::text_view* body_ = nullptr;
     rap::check* draft_ = nullptr;
-    rap::check* push_ = nullptr;
+    rap::check* push_ = nullptr;  // newer commits pushed first: when it's on the forge already
     rap::check* browse_ = nullptr;
     rap::label* commits_ = nullptr;
     rap::label* status_ = nullptr;

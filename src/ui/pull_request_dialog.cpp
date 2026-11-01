@@ -74,8 +74,10 @@ pull_request_dialog::open(rap::ui& ui, const std::string& workdir, const ref& br
             d->head_branch_ = branch.name;
             d->sets_upstream_ = true;
         }
-        d->needs_push_ = resolve(workdir, "refs/remotes/" + d->remotes_[d->head_remote_].name +
-                                              "/" + d->head_branch_) != d->tip_;
+        const std::string pushed = resolve(
+            workdir, "refs/remotes/" + d->remotes_[d->head_remote_].name + "/" + d->head_branch_);
+        d->on_forge_ = !pushed.empty();
+        d->needs_push_ = pushed != d->tip_;
     }
     else
     {
@@ -134,14 +136,21 @@ void pull_request_dialog::build()
                                          [this](const std::string&) { base_changed(); })}},
                     {_("Title"), entry{}.bind(title_).width(60_ch)},
                 },
-                group{_("Description"), text_view{}.bind(body_).height(10_lines).stretch()},
+                group{_("Description"), text_view{}.bind(body_).height(10_lines).stretch()}
+                    .stretch(),
                 label{}.bind(commits_),
+                // A PR needs its branch on the forge: pushed first, if it isn't;
+                // a newer copy here is the user's to push or hold back.
+                label{rap::i18n::format(_("{0} will be pushed to {1} first."), local_, head.name)}
+                    .visible(!on_forge_),
                 hbox{
-                    check{rap::i18n::format(_("_Push {0} to {1} first"), local_, head.name),
-                          needs_push_}
+                    check{rap::i18n::format(_("_Push your newer commits to {0} first"), head.name),
+                          true}
                         .bind(push_)
-                        .visible(needs_push_),
-                    check{_("_Draft")}.bind(draft_).visible(head.account.kind != forge_kind::gitea),
+                        .visible(on_forge_ && needs_push_),
+                    check{_("_Draft"), settings::get().value("pr.draft") == "1"}
+                        .bind(draft_)
+                        .visible(head.account.kind != forge_kind::gitea),
                     check{_("Open it in the _browser"),
                           settings::get().value("pr.browse", "1") == "1"}
                         .bind(browse_),
@@ -256,7 +265,8 @@ void pull_request_dialog::create()
         return;
     }
     settings::get().set("pr.browse", browse_->checked() ? "1" : "0");
-    if (!push_->checked() || !needs_push_ || local_.empty()) return send();
+    settings::get().set("pr.draft", draft_->checked() ? "1" : "0");
+    if (local_.empty() || !needs_push_ || (on_forge_ && !push_->checked())) return send();
     // The branch first, then (if that worked) the pull request.
     std::vector<std::string> push{"push"};
     if (sets_upstream_) push.push_back("--set-upstream");

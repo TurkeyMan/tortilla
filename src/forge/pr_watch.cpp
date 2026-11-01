@@ -26,22 +26,13 @@ std::vector<forge_remote> forge_remotes(const std::string& workdir)
 }
 
 std::unordered_map<std::string, open_pr>
-match_pull_requests(const std::vector<forge_remote>& remotes, const std::vector<open_pr>& prs,
-                    const ref_map& refs)
+match_pull_requests(const std::vector<forge_remote>& remotes, const std::vector<open_pr>& prs)
 {
     std::unordered_map<std::string, open_pr> out;
     for (const open_pr& p : prs)
         for (const forge_remote& r : remotes)
             if (r.repo == p.pr.head)
                 out.emplace("refs/remotes/" + r.name + "/" + p.pr.head_branch, p);
-    for (const auto& [id, list] : refs)
-        for (const ref& r : list)
-            if (r.kind == ref_kind::local_branch && !r.upstream.empty())
-                if (auto it = out.find(r.upstream); it != out.end())
-                {
-                    open_pr p = it->second;  // (a copy: emplace may move the table)
-                    out.emplace(r.full_name, std::move(p));
-                }
     return out;
 }
 

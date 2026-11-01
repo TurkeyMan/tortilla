@@ -27,6 +27,10 @@ struct pr_mark
     bool draft = false;
 };
 
+// The checks' mark, in a circle `diameter` across at `centre`, ringed in
+// white to stand out on any label: a tick, a cross, or a ring while they run.
+void paint_check_mark(rap::painter&, rap::point_f centre, float diameter, check_state);
+
 // Draws a commit's labels from `x` across a cell `height` tall and returns
 // the x after the last one (`x` itself when nothing was drawn). `show`
 // filters labels (View > Labels); empty shows them all. `boxes`, if given,

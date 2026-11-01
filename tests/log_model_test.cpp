@@ -169,8 +169,7 @@ int main(int argc, char** argv)
                   "forge: a remote's repository, owner and name");
         }
         // Which branches are pull requests' heads: the head repository's
-        // remote branch, and a local branch tracking it; a fork's is matched
-        // through the fork's remote.
+        // remote branch (a fork's through the fork's remote); never a local one.
         {
             using namespace tortilla;
             const forge_repo base{"github.com", "org", "engine"},
@@ -182,21 +181,10 @@ int main(int argc, char** argv)
                 {.pr = {.number = 7, .head = fork, .head_branch = "fix"}, .into = remotes[0]});
             prs.push_back(
                 {.pr = {.number = 8, .head = base, .head_branch = "feat/x"}, .into = remotes[0]});
-            ref_map refs;
-            refs[oid{}] = {{.name = "fix",
-                            .full_name = "refs/heads/fix",
-                            .kind = ref_kind::local_branch,
-                            .upstream = "refs/remotes/origin/fix"},
-                           {.name = "other",
-                            .full_name = "refs/heads/other",
-                            .kind = ref_kind::local_branch,
-                            .upstream = "refs/remotes/upstream/fix"}};
-            const auto heads = match_pull_requests(remotes, prs, refs);
-            check(heads.size() == 3 && heads.at("refs/remotes/origin/fix").pr.number == 7 &&
-                      heads.at("refs/heads/fix").pr.number == 7 &&
-                      heads.at("refs/remotes/upstream/feat/x").pr.number == 8 &&
-                      !heads.contains("refs/heads/other"),
-                  "forge: pull requests' head branches, local and remote");
+            const auto heads = match_pull_requests(remotes, prs);
+            check(heads.size() == 2 && heads.at("refs/remotes/origin/fix").pr.number == 7 &&
+                      heads.at("refs/remotes/upstream/feat/x").pr.number == 8,
+                  "forge: pull requests' head branches, remote ones only");
         }
 #ifndef _WIN32
         // The GitHub CLI's token, from a stand-in gh first on PATH.
