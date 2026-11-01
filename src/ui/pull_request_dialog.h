@@ -32,11 +32,18 @@ public:
 private:
     pull_request_dialog(rap::ui&, std::string workdir);
     void build();
-    void into_changed();
+    void fill_into();
     void base_changed();
     void create();
     void send();
-    const forge_remote& into() const;
+    // What Into names: a remote and its branch ("upstream/main", or just
+    // "main" with one remote).
+    struct target
+    {
+        const forge_remote* remote;
+        std::string branch;
+    };
+    target into() const;
 
     rap::ui& ui_;
     std::string workdir_;
@@ -56,7 +63,7 @@ private:
     bool sets_upstream_ = false;          // a local branch with no upstream yet
     std::string auto_title_, auto_body_;  // as last filled, to refill if untouched
 
-    rap::drop_down* into_ = nullptr;
+    size_t preferred_ = 0;  // the remote Into means without a prefix
     rap::combo* base_ = nullptr;
     rap::entry* title_ = nullptr;
     rap::text_view* body_ = nullptr;

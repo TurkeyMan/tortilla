@@ -105,9 +105,17 @@ pull_request_dialog::pull_request_dialog(rap::ui& ui, std::string workdir)
 {
 }
 
-const forge_remote& pull_request_dialog::into() const
+pull_request_dialog::target pull_request_dialog::into() const
 {
-    return remotes_[std::clamp<int>(into_->current(), 0, int(remotes_.size()) - 1)];
+    const std::string text = trimmed(base_->text());
+    // The longest remote name it starts with, as remote names may hold slashes.
+    const forge_remote* remote = nullptr;
+    if (remotes_.size() > 1)
+        for (const forge_remote& r : remotes_)
+            if (text.starts_with(r.name + "/") && (!remote || r.name.size() > remote->name.size()))
+                remote = &r;
+    if (!remote) return {&remotes_[preferred_], text};
+    return {remote, text.substr(remote->name.size() + 1)};
 }
 
 void pull_request_dialog::build()
@@ -115,11 +123,9 @@ void pull_request_dialog::build()
     using namespace rap::layout;
     using namespace rap::literals;
     // Into the repository it was forked from, if there's a remote for it.
-    size_t into = head_remote_;
+    preferred_ = head_remote_;
     for (size_t i = 0; i < remotes_.size(); ++i)
-        if (remotes_[i].name == "upstream") into = i;
-    std::vector<std::string> names;
-    for (const forge_remote& r : remotes_) names.push_back(r.name + " (" + r.repo.path() + ")");
+        if (remotes_[i].name == "upstream") preferred_ = i;
     const forge_remote& head = remotes_[head_remote_];
     const std::string from = head.repo.path() + ": " + head_branch_ +
                              (tip_.empty() ? "" : "  (" + tip_.substr(0, 8) + ")");
@@ -130,13 +136,11 @@ void pull_request_dialog::build()
             {vbox{
                 form{
                     {_("From"), label{from}},
-                    {_("Into"), hbox{drop_down{names, int(into)}.bind(into_).on_changed(
-                                         [this](int) { into_changed(); }),
-                                     combo{}.bind(base_).width(24_ch).stretch().on_changed(
-                                         [this](const std::string&) { base_changed(); })}},
-                    {_("Title"), entry{}.bind(title_).width(60_ch)},
+                    {_("Into"), combo{}.bind(base_).stretch().on_changed([this](const std::string&)
+                                                                         { base_changed(); })},
+                    {_("Title"), entry{}.bind(title_).width(72_ch)},
                 },
-                group{_("Description"), text_view{}.bind(body_).height(10_lines).stretch()}
+                group{_("Description"), text_view{}.bind(body_).height(18_lines).stretch()}
                     .stretch(),
                 label{}.bind(commits_),
                 // A PR needs its branch on the forge: pushed first, if it isn't;
@@ -166,7 +170,7 @@ void pull_request_dialog::build()
         {
             if (closed_) closed_();
         });
-    into_changed();
+    fill_into();
 }
 
 void pull_request_dialog::show()
@@ -175,31 +179,49 @@ void pull_request_dialog::show()
     title_->focus();
 }
 
-// The target's branches, and its default chosen: what the remote's HEAD names
-// locally, else main or master.
-void pull_request_dialog::into_changed()
+// The branches a PR can go into: the preferred remote's first, then the
+// others', each named with its remote when there's more than one; the
+// preferred remote's default chosen (what its HEAD names locally, else main or
+// master).
+void pull_request_dialog::fill_into()
 {
-    const std::string remote = into().name;
-    const auto listed = run_git(
-        workdir_, {"for-each-ref", "--format=%(refname:lstrip=3)", "refs/remotes/" + remote + "/"},
-        git_output::stdout_only);
-    std::vector<std::string> branches;
-    for (std::string_view rest = listed.output; !rest.empty();)
+    std::vector<std::string> items;
+    std::string chosen;
+    std::vector<size_t> order{preferred_};
+    for (size_t i = 0; i < remotes_.size(); ++i)
+        if (i != preferred_) order.push_back(i);
+    for (size_t i : order)
     {
-        const size_t nl = rest.find('\n');
-        const std::string_view line = rest.substr(0, nl);
-        rest.remove_prefix(nl == std::string_view::npos ? rest.size() : nl + 1);
-        if (!line.empty() && line != "HEAD") branches.emplace_back(line);
-    }
-    std::string chosen =
-        trimmed(run_git(workdir_, {"symbolic-ref", "--short", "refs/remotes/" + remote + "/HEAD"},
+        const std::string remote = remotes_[i].name;
+        const std::string prefix = remotes_.size() > 1 ? remote + "/" : "";
+        const auto listed = run_git(
+            workdir_,
+            {"for-each-ref", "--format=%(refname:lstrip=3)", "refs/remotes/" + remote + "/"},
+            git_output::stdout_only);
+        std::vector<std::string> branches;
+        for (std::string_view rest = listed.output; !rest.empty();)
+        {
+            const size_t nl = rest.find('\n');
+            const std::string_view line = rest.substr(0, nl);
+            rest.remove_prefix(nl == std::string_view::npos ? rest.size() : nl + 1);
+            if (!line.empty() && line != "HEAD") branches.emplace_back(line);
+        }
+        if (i == preferred_)
+        {
+            chosen = trimmed(
+                run_git(workdir_, {"symbolic-ref", "--short", "refs/remotes/" + remote + "/HEAD"},
                         git_output::stdout_only)
                     .output);
-    if (chosen.starts_with(remote + "/")) chosen = chosen.substr(remote.size() + 1);
-    for (const char* usual : {"main", "master"})
-        if (chosen.empty() && std::ranges::find(branches, usual) != branches.end()) chosen = usual;
-    if (chosen.empty() && !branches.empty()) chosen = branches.front();
-    base_->set_items(branches);
+            if (chosen.starts_with(remote + "/")) chosen = chosen.substr(remote.size() + 1);
+            for (const char* usual : {"main", "master"})
+                if (chosen.empty() && std::ranges::find(branches, usual) != branches.end())
+                    chosen = usual;
+            if (chosen.empty() && !branches.empty()) chosen = branches.front();
+            if (!chosen.empty()) chosen = prefix + chosen;
+        }
+        for (const std::string& b : branches) items.push_back(prefix + b);
+    }
+    base_->set_items(items);
     base_->set_text(chosen);
     base_changed();
 }
@@ -208,8 +230,10 @@ void pull_request_dialog::into_changed()
 // title and description from them, unless they've been written.
 void pull_request_dialog::base_changed()
 {
-    const std::string base = trimmed(base_->text());
-    const std::string base_ref = "refs/remotes/" + into().name + "/" + base;
+    const target into = this->into();
+    const std::string& base = into.branch;
+    const std::string shown = into.remote->name + "/" + base;
+    const std::string base_ref = "refs/remotes/" + shown;
     std::vector<std::pair<std::string, std::string>> commits;  // subject, body
     const bool fetched = !base.empty() && !resolve(workdir_, base_ref).empty();
     if (fetched)
@@ -227,17 +251,16 @@ void pull_request_dialog::base_changed()
             commits.push_back({trimmed(one.substr(0, sep)),
                                sep == std::string_view::npos ? "" : trimmed(one.substr(sep + 1))});
         }
-        commits_->set_text(commits.empty()
-                               ? rap::i18n::format(_("{0} already has everything on this branch."),
-                                                   into().name + "/" + base)
-                               : rap::i18n::format(N_("{0} commit to merge.",
-                                                      "{0} commits to merge.", commits.size()),
-                                                   commits.size()));
+        commits_->set_text(
+            commits.empty()
+                ? rap::i18n::format(_("{0} already has everything on this branch."), shown)
+                : rap::i18n::format(
+                      N_("{0} commit to merge.", "{0} commits to merge.", commits.size()),
+                      commits.size()));
     }
     else
         commits_->set_text(base.empty() ? ""
-                                        : rap::i18n::format(_("{0} isn't fetched here."),
-                                                            into().name + "/" + base));
+                                        : rap::i18n::format(_("{0} isn't fetched here."), shown));
     ok_->set_enabled(!base.empty() && !(fetched && commits.empty()));
 
     // One commit speaks for itself; several are listed under the branch's name.
@@ -287,10 +310,11 @@ void pull_request_dialog::create()
 void pull_request_dialog::send()
 {
     ok_->set_enabled(false);
-    const forge_remote target = into();
+    const auto [remote, branch] = into();
+    const forge_remote target = *remote;
     new_pull_request n{.head = remotes_[head_remote_].repo,
                        .head_branch = head_branch_,
-                       .base_branch = trimmed(base_->text()),
+                       .base_branch = branch,
                        .title = trimmed(title_->text()),
                        .body = trimmed(body_->text()),
                        .draft = draft_->checked()};
