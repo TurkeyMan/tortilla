@@ -600,13 +600,14 @@ void show_settings(rap::ui& ui, rap::window* parent, const std::string& repo_dir
                     .stretch(),
                 buttons{ok, cancel},
             }}}
-            .size(96_ch, 30_lines),
+            .size(950_px, 650_px),
         parent);
 
     st->window->on_finished(
         [st, saved, closed, &ui](rap::dialog_role role) mutable
         {
             auto keep = std::move(st);
+            settings::get().save_window("settings.window", *keep->window);  // however it closed
             if (role == rap::dialog_role::ok)
             {
                 settings& settings = settings::get();
@@ -708,6 +709,7 @@ void show_settings(rap::ui& ui, rap::window* parent, const std::string& repo_dir
             ui.post([keep] {});  // destroy after this callback returns
         });
     page_tabs->set_current(int(first));
+    settings::get().restore_window("settings.window", *st->window);
     st->window->show();
 }
 

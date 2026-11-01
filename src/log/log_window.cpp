@@ -24,6 +24,9 @@ namespace tortilla
 namespace
 {
 
+// The author's picture, top right of the details, in logical px.
+constexpr int k_avatar_size = 96;
+
 // Jump combo entries [spec 1.9.6], in order.
 enum jump_type
 {
@@ -275,8 +278,8 @@ void log_window::build()
                                                  float(avatar_->height())},
                                                 {0, 0, size.w, size.h});
                                     })
-                                .width(64_px)
-                                .height(64_px)
+                                .width(rap::extent{k_avatar_size, rap::extent::unit::px})
+                                .height(rap::extent{k_avatar_size, rap::extent::unit::px})
                                 .bind(avatar_canvas_),
                             spacer{},
                         },
@@ -736,7 +739,7 @@ void log_window::update_pick_button()
 void log_window::show_avatar(const std::string& email)
 {
     const float scale = avatar_canvas_ ? avatar_canvas_->device_scale() : 1;
-    const int px = int(std::lround(64 * std::max(scale, 1.f)));
+    const int px = int(std::lround(k_avatar_size * std::max(scale, 1.f)));
     bool answered = false;
     auto show = [this](std::shared_ptr<rap::image> image)
     {

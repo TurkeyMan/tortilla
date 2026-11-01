@@ -647,6 +647,34 @@ std::expected<std::string, std::string> default_branch(forge_kind k, const forge
     return branch;
 }
 
+std::expected<std::vector<forge_repo>, std::string>
+pull_request_targets(forge_kind k, const forge_repo& head, std::string_view token)
+{
+    const auto reply = rap::sys::http_get(repo_api(k, head), {.headers = api_headers(k, token)});
+    const auto j = json::parse(reply.body);
+    if (reply.status != 200 || !j) return std::unexpected(failure(reply, j));
+    std::vector<forge_repo> out{head};
+    auto add = [&](std::string_view path)
+    {
+        const size_t slash = path.rfind('/');
+        if (slash == std::string_view::npos) return;
+        forge_repo r{.host = head.host,
+                     .owner = std::string(path.substr(0, slash)),
+                     .name = std::string(path.substr(slash + 1))};
+        if (std::ranges::find(out, r) == out.end()) out.push_back(std::move(r));
+    };
+    // GitHub names the parent and the network's root; Gitea the parent;
+    // GitLab the project it was forked from.
+    if (k == forge_kind::gitlab)
+        add((*j)["forked_from_project"]["path_with_namespace"].str());
+    else
+    {
+        add((*j)["parent"]["full_name"].str());
+        add((*j)["source"]["full_name"].str());
+    }
+    return out;
+}
+
 std::expected<pull_request, std::string> create_pull_request(forge_kind k, const forge_repo& into,
                                                              const new_pull_request& n,
                                                              std::string_view token)

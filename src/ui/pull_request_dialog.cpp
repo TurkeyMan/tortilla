@@ -26,6 +26,22 @@ std::string trimmed(std::string_view s)
     return std::string(s);
 }
 
+bool same_repo(const forge_repo& a, const forge_repo& b)
+{
+    // Forges' paths ignore case: TurkeyMan/CLI is turkeyman/cli.
+    auto eq = [](std::string_view x, std::string_view y)
+    {
+        return x.size() == y.size() &&
+               std::equal(x.begin(), x.end(), y.begin(),
+                          [](char p, char q)
+                          {
+                              return std::tolower(static_cast<unsigned char>(p)) ==
+                                     std::tolower(static_cast<unsigned char>(q));
+                          });
+    };
+    return eq(a.host, b.host) && eq(a.owner, b.owner) && eq(a.name, b.name);
+}
+
 // A branch's name as a title: "fix-login_page" -> "Fix login page".
 std::string title_from(std::string_view branch)
 {
@@ -110,10 +126,13 @@ pull_request_dialog::target pull_request_dialog::into() const
     const std::string text = trimmed(base_->text());
     // The longest remote name it starts with, as remote names may hold slashes.
     const forge_remote* remote = nullptr;
-    if (remotes_.size() > 1)
-        for (const forge_remote& r : remotes_)
+    if (listed_.size() > 1)
+        for (size_t i : listed_)
+        {
+            const forge_remote& r = remotes_[i];
             if (text.starts_with(r.name + "/") && (!remote || r.name.size() > remote->name.size()))
                 remote = &r;
+        }
     if (!remote) return {&remotes_[preferred_], text};
     return {remote, text.substr(remote->name.size() + 1)};
 }
@@ -125,7 +144,10 @@ void pull_request_dialog::build()
     // Into the repository it was forked from, if there's a remote for it.
     preferred_ = head_remote_;
     for (size_t i = 0; i < remotes_.size(); ++i)
-        if (remotes_[i].name == "upstream") preferred_ = i;
+        if (remotes_[i].name == "upstream" &&
+            remotes_[i].repo.host == remotes_[head_remote_].repo.host &&
+            remotes_[i].account.kind == remotes_[head_remote_].account.kind)
+            preferred_ = i;
     const forge_remote& head = remotes_[head_remote_];
     const std::string from = head.repo.path() + ": " + head_branch_ +
                              (tip_.empty() ? "" : "  (" + tip_.substr(0, 8) + ")");
@@ -164,13 +186,39 @@ void pull_request_dialog::build()
                 buttons{dialog_button{rap::dialog_role::ok, _("_Create")}.bind(ok_).on_click(
                             [this] { create(); }),
                         cancel},
-            }}});
+            }}}
+            .size(720_px, 560_px));
     window_->on_finished(
         [this](rap::dialog_role)
         {
             if (closed_) closed_();
         });
     fill_into();
+    ask_family();
+}
+
+// Which of the remotes are the branch's fork family, asked of the forge; Into
+// is refilled with only those. Without an answer it stays as it is: the forge
+// will say if a target won't do.
+void pull_request_dialog::ask_family()
+{
+    const forge_remote head = remotes_[head_remote_];
+    std::thread(
+        [this, alive = std::weak_ptr<bool>(alive_), head, &ui = ui_]
+        {
+            std::expected<std::vector<forge_repo>, std::string> family =
+                std::unexpected(std::string());
+            if (auto token = load_token(head.account))
+                family = pull_request_targets(head.account.kind, head.repo, token->access);
+            ui.post(
+                [this, alive, family = std::move(family)]
+                {
+                    if (!alive.lock() || !family) return;
+                    family_ = *family;
+                    fill_into();
+                });
+        })
+        .detach();
 }
 
 void pull_request_dialog::show()
@@ -187,13 +235,22 @@ void pull_request_dialog::fill_into()
 {
     std::vector<std::string> items;
     std::string chosen;
+    // Only the branch's own forge: a PR can't cross from one server to another.
+    const forge_remote& head = remotes_[head_remote_];
+    auto same_forge = [&](const forge_remote& r)
+    {
+        if (r.account.kind != head.account.kind || r.repo.host != head.repo.host) return false;
+        return !family_ || std::ranges::any_of(*family_, [&](const forge_repo& f)
+                                               { return same_repo(f, r.repo); });
+    };
+    if (!same_forge(remotes_[preferred_])) preferred_ = head_remote_;
     std::vector<size_t> order{preferred_};
     for (size_t i = 0; i < remotes_.size(); ++i)
-        if (i != preferred_) order.push_back(i);
+        if (i != preferred_ && same_forge(remotes_[i])) order.push_back(i);
     for (size_t i : order)
     {
         const std::string remote = remotes_[i].name;
-        const std::string prefix = remotes_.size() > 1 ? remote + "/" : "";
+        const std::string prefix = order.size() > 1 ? remote + "/" : "";
         const auto listed = run_git(
             workdir_,
             {"for-each-ref", "--format=%(refname:lstrip=3)", "refs/remotes/" + remote + "/"},
@@ -221,6 +278,10 @@ void pull_request_dialog::fill_into()
         }
         for (const std::string& b : branches) items.push_back(prefix + b);
     }
+    listed_ = order;
+    // A refill keeps what was chosen, if it's still there.
+    const std::string before = base_->text();
+    if (std::ranges::find(items, before) != items.end()) chosen = before;
     base_->set_items(items);
     base_->set_text(chosen);
     base_changed();

@@ -10,6 +10,7 @@
 #include <expected>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -63,7 +64,12 @@ private:
     bool sets_upstream_ = false;          // a local branch with no upstream yet
     std::string auto_title_, auto_body_;  // as last filled, to refill if untouched
 
-    size_t preferred_ = 0;  // the remote Into means without a prefix
+    size_t preferred_ = 0;        // the remote Into means without a prefix
+    std::vector<size_t> listed_;  // the remotes Into lists: the branch's forge's
+    // The repositories the branch's can open PRs on (itself and what it's a
+    // fork of), once the forge has said: Into lists only their remotes.
+    std::optional<std::vector<forge_repo>> family_;
+    void ask_family();
     rap::combo* base_ = nullptr;
     rap::entry* title_ = nullptr;
     rap::text_view* body_ = nullptr;

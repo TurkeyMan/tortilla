@@ -136,6 +136,11 @@ open_pull_requests(forge_kind, const forge_repo&, std::string_view token);
 std::expected<std::string, std::string> default_branch(forge_kind, const forge_repo&,
                                                        std::string_view token);
 
+// Where a pull request from `head` can go: itself, and the repositories it's
+// a fork of (its parent and, a fork of a fork, the original).
+std::expected<std::vector<forge_repo>, std::string>
+pull_request_targets(forge_kind, const forge_repo& head, std::string_view token);
+
 struct new_pull_request
 {
     forge_repo head;  // where the branch is: `into` itself, or a fork of it
