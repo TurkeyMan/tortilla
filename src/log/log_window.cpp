@@ -760,7 +760,10 @@ void log_window::show_avatar(const commit* c)
     if (c)
     {
         who = {.email = c->email, .commit = c->id.hex(), .workdir = repo_location()};
-        if (pr_watch_) who.remotes = pr_watch_->remotes();
+        // Not those that can't be seen: asking would only spend an allowance.
+        if (pr_watch_)
+            for (const forge_remote& r : pr_watch_->remotes())
+                if (pr_watch_->access(r) != repo_access::hidden) who.remotes.push_back(r);
     }
     avatars_.request(std::move(who), px,
                      [show, &answered](std::shared_ptr<rap::image> image)

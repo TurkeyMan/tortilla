@@ -1,6 +1,7 @@
 #include "accounts_page.h"
 
 #include "forge/forge.h"
+#include "forge/pr_watch.h"
 #include "i18n.h"
 #include "log/ref_labels.h"
 
@@ -22,6 +23,19 @@ std::string browser_unavailable()
 {
     return _("Only for github.com and gitlab.com: for another server, make a token there and "
              "paste it below.");
+}
+
+// The open repositories' remotes that couldn't be seen as no one, on a
+// forge still not signed in to: signing in may show their pull requests.
+std::string hints_text()
+{
+    const auto all = accounts();
+    std::string names;
+    for (const forge_remote& r : pr_watch::all_hints())
+        if (!account_for_url("https://" + r.repo.host + "/", all))
+            names += (names.empty() ? "" : ", ") + r.repo.host + "/" + r.repo.path();
+    return names.empty() ? std::string()
+                         : rap::i18n::format(_("Sign in to see pull requests for: {0}"), names);
 }
 
 constexpr forge_kind k_kinds[] = {forge_kind::github, forge_kind::gitlab, forge_kind::gitea};
@@ -90,6 +104,7 @@ struct accounts_state : std::enable_shared_from_this<accounts_state>
     rap::button* use_token = nullptr;
     rap::label* scopes = nullptr;
     rap::label* status = nullptr;
+    rap::label* hints = nullptr;
     // The sign-in under way, told to stop when the page goes.
     std::shared_ptr<std::atomic<bool>> cancelled;
 
@@ -152,6 +167,9 @@ struct accounts_state : std::enable_shared_from_this<accounts_state>
         rows.accounts = accounts();
         rows.status.assign(rows.accounts.size(), {});
         rows.notify_reset();
+        const std::string h = hints_text();
+        hints->set_text(h);
+        hints->set_visible(!h.empty());
         update();
         check_accounts();
     }
@@ -376,6 +394,7 @@ rap::node accounts_page(rap::ui& ui, std::function<rap::window*()> parent)
     auto with = [st](auto f) { return [st, f] { f(*st); }; };
     std::vector<std::string> kinds;
     for (forge_kind k : k_kinds) kinds.push_back(forge_name(k));
+    const std::string hints = hints_text();
     return vbox{
         group{_("Signed in"),
               vbox{
@@ -388,6 +407,7 @@ rap::node accounts_page(rap::ui& ui, std::function<rap::window*()> parent)
                       .selection(rap::selection_mode::single)
                       .on_selection_changed(with([](accounts_state& s) { s.update(); }))
                       .stretch(),
+                  label{hints}.bind(st->hints).wrap().visible(!hints.empty()),
                   hbox{spacer{},
                        button{_("Sign _out")}
                            .bind(st->sign_out)

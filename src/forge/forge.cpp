@@ -7,10 +7,13 @@
 
 #include <algorithm>
 #include <cctype>
+#include <charconv>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <map>
+#include <mutex>
 #include <thread>
 
 namespace tortilla
@@ -394,18 +397,75 @@ rap::sys::http_headers api_headers(forge_kind k, std::string_view token)
     case forge_kind::github:
         h.emplace_back("Accept", "application/vnd.github+json");
         h.emplace_back("X-GitHub-Api-Version", "2022-11-28");
-        h.emplace_back("Authorization", "Bearer " + std::string(token));
         break;
     case forge_kind::gitlab:
-        h.emplace_back("Accept", "application/json");
-        h.emplace_back("Authorization", "Bearer " + std::string(token));
-        break;
-    case forge_kind::gitea:
-        h.emplace_back("Accept", "application/json");
-        h.emplace_back("Authorization", "token " + std::string(token));
-        break;
+    case forge_kind::gitea: h.emplace_back("Accept", "application/json"); break;
     }
+    if (!token.empty())
+        h.emplace_back("Authorization",
+                       (k == forge_kind::gitea ? "token " : "Bearer ") + std::string(token));
     return h;
+}
+
+std::optional<forge_kind> known_forge(std::string_view host)
+{
+    for (forge_kind k : {forge_kind::github, forge_kind::gitlab, forge_kind::gitea})
+    {
+        const std::string_view own = default_host(k);
+        if (std::ranges::equal(host, own, [](char x, char y)
+                               { return std::tolower(static_cast<unsigned char>(x)) == y; }))
+            return k;
+    }
+    return std::nullopt;
+}
+
+namespace
+{
+
+std::mutex budget_mutex;
+rate_budget budget;
+
+// A header's value, by its name in any case; "" when it isn't there.
+std::string_view header(const rap::sys::http_response& r, std::string_view name)
+{
+    for (const auto& [n, v] : r.headers)
+        if (std::ranges::equal(n, name, [](char x, char y)
+                               { return std::tolower(static_cast<unsigned char>(x)) == y; }))
+            return v;
+    return {};
+}
+
+// What an anonymous reply says is left of the allowance.
+void note_budget(const rap::sys::http_response& r)
+{
+    const std::string_view left = header(r, "x-ratelimit-remaining"),
+                           reset = header(r, "x-ratelimit-reset");
+    int remaining = -1;
+    std::int64_t reset_at = 0;
+    if (std::from_chars(left.data(), left.data() + left.size(), remaining).ec != std::errc{} ||
+        std::from_chars(reset.data(), reset.data() + reset.size(), reset_at).ec != std::errc{})
+        return;
+    std::lock_guard lock(budget_mutex);
+    budget = {.remaining = remaining, .reset_at = reset_at};
+}
+
+// GitHub's "you've asked too much": a 403 or 429 with nothing left.
+bool rate_limited(const rap::sys::http_response& r)
+{
+    return (r.status == 403 || r.status == 429) && header(r, "x-ratelimit-remaining") == "0";
+}
+
+}  // namespace
+
+rate_budget anonymous_budget()
+{
+    std::lock_guard lock(budget_mutex);
+    return budget;
+}
+
+bool budget_allows(const rate_budget& b, int want, int reserve, std::int64_t now)
+{
+    return b.remaining < 0 || now >= b.reset_at || b.remaining - want >= reserve;
 }
 
 std::expected<forge_account, std::string> who_am_i(forge_kind k, std::string_view host,
@@ -545,16 +605,37 @@ check_state status_word(std::string_view s)
     return check_state::none;
 }
 
-std::expected<std::vector<pull_request>, std::string> github_pulls(const forge_repo& r,
-                                                                   std::string_view token)
+// What a permission word gives: GitHub's ADMIN, MAINTAIN, WRITE, TRIAGE, READ.
+repo_access github_access(std::string_view permission)
 {
+    if (permission == "ADMIN" || permission == "MAINTAIN" || permission == "WRITE")
+        return repo_access::write;
+    if (permission == "TRIAGE") return repo_access::triage;
+    return permission.empty() ? repo_access::unknown : repo_access::read;
+}
+
+// A reply that says the repository can't be seen, as whoever asked: 404, or
+// 403 signed in (GitLab's, Gitea's: the project's rules keep the token out).
+// GitHub's 403 is its allowance, said apart.
+bool hidden_reply(const rap::sys::http_response& r)
+{
+    return r.status == 404 || r.status == 403;
+}
+
+std::expected<pull_requests_reply, std::string> github_rest_pulls(const forge_repo& r);
+
+std::expected<pull_requests_reply, std::string> github_pulls(const forge_repo& r,
+                                                             std::string_view token)
+{
+    if (token.empty()) return github_rest_pulls(r);
     // One query for them all, checks included: what polling costs is one
     // request a repository.
     constexpr std::string_view query =
         "query($owner:String!,$name:String!){repository(owner:$owner,name:$name){"
+        "viewerPermission "
         "pullRequests(states:OPEN,first:100,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{"
         "number title url isDraft headRefName headRefOid baseRefName reviewDecision mergeable "
-        "mergeStateStatus "
+        "mergeStateStatus author{login} "
         "headRepository{name owner{login}} "
         "commits(last:1){nodes{commit{statusCheckRollup{state contexts(first:50){nodes{"
         "__typename ... on CheckRun{name status conclusion startedAt completedAt} "
@@ -567,11 +648,20 @@ std::expected<std::vector<pull_request>, std::string> github_pulls(const forge_r
     const auto reply =
         rap::sys::http_request("POST", graphql_url(r.host), body, {.headers = headers});
     const auto j = json::parse(reply.body);
+    if (rate_limited(reply)) return pull_requests_reply{.rate_limited = true};
     if (reply.status != 200 || !j) return std::unexpected(failure(reply, j));
     if (const json::value errors = (*j)["errors"]; errors.kind() == json::value::type::array)
         for (const json::value& e : errors.elements())
+        {
+            // A repository it can't see is one it can't find; an
+            // organisation's rules (SAML, say) may keep the token out.
+            if (e["type"].str_is("NOT_FOUND") || e["type"].str_is("FORBIDDEN"))
+                return pull_requests_reply{.access = repo_access::hidden};
             return std::unexpected(e["message"].str(_("GitHub refused the query.")));
-    std::vector<pull_request> out;
+        }
+    pull_requests_reply answer{
+        .access = github_access((*j)["data"]["repository"]["viewerPermission"].str())};
+    std::vector<pull_request>& out = answer.prs;
     for (const json::value& n : (*j)["data"]["repository"]["pullRequests"]["nodes"].elements())
     {
         pull_request pr{.number = int(n["number"].integer().value_or(0)),
@@ -580,7 +670,8 @@ std::expected<std::vector<pull_request>, std::string> github_pulls(const forge_r
                         .head_branch = n["headRefName"].str(),
                         .base_branch = n["baseRefName"].str(),
                         .head_sha = n["headRefOid"].str(),
-                        .draft = n["isDraft"].boolean()};
+                        .draft = n["isDraft"].boolean(),
+                        .author = n["author"]["login"].str()};
         const json::value head = n["headRepository"];  // null: the fork's gone
         pr.head = {
             .host = r.host, .owner = head["owner"]["login"].str(), .name = head["name"].str()};
@@ -611,22 +702,40 @@ std::expected<std::vector<pull_request>, std::string> github_pulls(const forge_r
         if (pr.blocked && pr.blocks.empty()) pr.blocks.push_back(merge_block::blocked_other);
         out.push_back(std::move(pr));
     }
-    return out;
+    return answer;
 }
 
-std::expected<std::vector<pull_request>, std::string> gitlab_pulls(const forge_repo& r,
-                                                                   std::string_view token)
+// GitLab's access levels: developer (30) and up push and merge, as the
+// branch's protection allows; signed in, the project says the user's own.
+repo_access gitlab_access(const forge_repo& r, std::string_view token)
+{
+    if (token.empty()) return repo_access::read;
+    const auto reply =
+        rap::sys::http_get(gitlab_project(r), {.headers = api_headers(forge_kind::gitlab, token)});
+    const auto j = json::parse(reply.body);
+    if (reply.status != 200 || !j) return repo_access::unknown;
+    const json::value p = (*j)["permissions"];
+    const std::int64_t level = std::max(p["project_access"]["access_level"].integer().value_or(0),
+                                        p["group_access"]["access_level"].integer().value_or(0));
+    return level >= 30 ? repo_access::write : repo_access::read;
+}
+
+std::expected<pull_requests_reply, std::string>
+gitlab_pulls(const forge_repo& r, std::string_view token, bool ask_access)
 {
     const auto headers = api_headers(forge_kind::gitlab, token);
     const auto reply = rap::sys::http_get(
         gitlab_project(r) + "/merge_requests?state=opened&per_page=100", {.headers = headers});
     const auto j = json::parse(reply.body);
+    if (hidden_reply(reply)) return pull_requests_reply{.access = repo_access::hidden};
     if (reply.status != 200 || !j) return std::unexpected(failure(reply, j));
     // The list leaves pipelines out: the project's latest, matched by commit.
     const auto pipes_reply =
         rap::sys::http_get(gitlab_project(r) + "/pipelines?per_page=100", {.headers = headers});
     const auto pipes = json::parse(pipes_reply.body);
-    std::vector<pull_request> out;
+    pull_requests_reply answer{.access =
+                                   ask_access ? gitlab_access(r, token) : repo_access::unknown};
+    std::vector<pull_request>& out = answer.prs;
     for (const json::value& m : j->elements())
     {
         pull_request pr{.number = int(m["iid"].integer().value_or(0)),
@@ -636,7 +745,8 @@ std::expected<std::vector<pull_request>, std::string> gitlab_pulls(const forge_r
                         .head_branch = m["source_branch"].str(),
                         .base_branch = m["target_branch"].str(),
                         .head_sha = m["sha"].str(),
-                        .draft = m["draft"].boolean()};
+                        .draft = m["draft"].boolean(),
+                        .author = m["author"]["username"].str()};
         // A fork's merge request: its project isn't this one, and its path
         // would take another request; it's left unmatched.
         if (m["source_project_id"].integer() != m["target_project_id"].integer()) pr.head = {};
@@ -686,19 +796,33 @@ std::expected<std::vector<pull_request>, std::string> gitlab_pulls(const forge_r
                 }
         out.push_back(std::move(pr));
     }
-    return out;
+    return answer;
 }
 
-std::expected<std::vector<pull_request>, std::string> gitea_pulls(const forge_repo& r,
-                                                                  std::string_view token)
+// Gitea's repository says what the asker may do: push is merging too.
+repo_access gitea_access(const forge_repo& r, std::string_view token)
+{
+    if (token.empty()) return repo_access::read;
+    const auto reply = rap::sys::http_get(repo_api(forge_kind::gitea, r),
+                                          {.headers = api_headers(forge_kind::gitea, token)});
+    const auto j = json::parse(reply.body);
+    if (reply.status != 200 || !j) return repo_access::unknown;
+    return (*j)["permissions"]["push"].boolean() ? repo_access::write : repo_access::read;
+}
+
+std::expected<pull_requests_reply, std::string> gitea_pulls(const forge_repo& r,
+                                                            std::string_view token, bool ask_access)
 {
     const auto headers = api_headers(forge_kind::gitea, token);
     const std::string root = repo_api(forge_kind::gitea, r);
     const auto reply =
         rap::sys::http_get(root + "/pulls?state=open&limit=50", {.headers = headers});
     const auto j = json::parse(reply.body);
+    if (hidden_reply(reply)) return pull_requests_reply{.access = repo_access::hidden};
     if (reply.status != 200 || !j) return std::unexpected(failure(reply, j));
-    std::vector<pull_request> out;
+    pull_requests_reply answer{.access =
+                                   ask_access ? gitea_access(r, token) : repo_access::unknown};
+    std::vector<pull_request>& out = answer.prs;
     for (const json::value& p : j->elements())
     {
         const json::value head = p["head"];
@@ -708,7 +832,8 @@ std::expected<std::vector<pull_request>, std::string> gitea_pulls(const forge_re
                         .head_branch = head["ref"].str(),
                         .base_branch = p["base"]["ref"].str(),
                         .head_sha = head["sha"].str(),
-                        .draft = p["draft"].boolean()};
+                        .draft = p["draft"].boolean(),
+                        .author = p["user"]["login"].str()};
         pr.conflicts = !p["mergeable"].boolean(true);  // Gitea's "not mergeable" is conflicts
         if (pr.conflicts) pr.blocks.push_back(merge_block::conflicts);
         if (pr.draft) pr.blocks.push_back(merge_block::draft);
@@ -741,10 +866,188 @@ std::expected<std::vector<pull_request>, std::string> gitea_pulls(const forge_re
         }
         out.push_back(std::move(pr));
     }
+    return answer;
+}
+
+// -- GitHub as no one ---------------------------------------------------------
+
+// A REST check run's or workflow run's state: status and conclusion in
+// lowercase, as GraphQL's in capitals.
+check_state rest_run_state(const json::value& run)
+{
+    if (!run["status"].str_is("completed")) return check_state::pending;
+    const json::value c = run["conclusion"];
+    if (c.str_is("success") || c.str_is("neutral") || c.str_is("skipped"))
+        return check_state::success;
+    if (c.str_is("failure") || c.str_is("timed_out") || c.str_is("cancelled") ||
+        c.str_is("action_required") || c.str_is("startup_failure") || c.str_is("stale"))
+        return check_state::failure;
+    return check_state::none;
+}
+
+// The runs combined, as GitHub's rollup: any failed, else any running, else
+// passed.
+check_state combined(const std::vector<check_run>& runs)
+{
+    check_state out = check_state::none;
+    for (const check_run& r : runs)
+        if (r.state == check_state::failure)
+            return check_state::failure;
+        else if (r.state == check_state::pending)
+            out = check_state::pending;
+        else if (r.state == check_state::success && out == check_state::none)
+            out = check_state::success;
     return out;
 }
 
+// Checks finished on a head don't change: kept for the program's life, so
+// an old PR's are asked once. "host owner/name sha" -> its runs.
+std::mutex finished_mutex;
+std::map<std::string, std::vector<check_run>, std::less<>> finished_checks;
+
+std::string checks_key(const forge_repo& r, std::string_view sha)
+{
+    return r.host + ' ' + r.path() + ' ' + std::string(sha);
+}
+
+// What polling as no one costs: the list, then the repository's latest
+// workflow runs, which give the checks of every PR that ran lately; an older
+// PR's own check runs only while the allowance has plenty left, a few each
+// time, and once. Whether one can be merged is a request a PR: not asked.
+std::expected<pull_requests_reply, std::string> github_rest_pulls(const forge_repo& r)
+{
+    const auto now = now_seconds();
+    if (!budget_allows(anonymous_budget(), 2, 2, now))
+        return pull_requests_reply{.rate_limited = true};
+    const auto headers = api_headers(forge_kind::github, "");
+    const std::string root = repo_api(forge_kind::github, r);
+    const auto reply =
+        rap::sys::http_get(root + "/pulls?state=open&per_page=100", {.headers = headers});
+    note_budget(reply);
+    // Its 403s are limits (a secondary one has some left), not a repository
+    // it can't see: that's a 404.
+    if (reply.status == 403 || reply.status == 429)
+        return pull_requests_reply{.rate_limited = true};
+    if (reply.status == 404) return pull_requests_reply{.access = repo_access::hidden};
+    if (const auto j = json::parse(reply.body); reply.status != 200 || !j)
+        return std::unexpected(failure(reply, j));
+    pull_requests_reply answer{.prs = parse_github_rest_pulls(reply.body, r),
+                               .access = repo_access::read};
+    {
+        std::lock_guard lock(finished_mutex);
+        for (pull_request& pr : answer.prs)
+            if (auto it = finished_checks.find(checks_key(r, pr.head_sha));
+                it != finished_checks.end())
+            {
+                pr.runs = it->second;
+                pr.checks = combined(pr.runs);
+                pr.checks_known = true;
+            }
+    }
+    if (std::ranges::all_of(answer.prs, &pull_request::checks_known)) return answer;
+    if (budget_allows(anonymous_budget(), 1, 2, now))
+    {
+        const auto runs = rap::sys::http_get(root + "/actions/runs?event=pull_request&per_page=100",
+                                             {.headers = headers});
+        note_budget(runs);
+        if (runs.status == 200) apply_github_workflow_runs(runs.body, answer.prs);
+    }
+    constexpr int k_per_poll = 3, k_reserve = 30;
+    int asked = 0;
+    for (pull_request& pr : answer.prs)
+    {
+        if (pr.checks_known || pr.head_sha.empty()) continue;
+        if (asked == k_per_poll || !budget_allows(anonymous_budget(), 1, k_reserve, now)) break;
+        ++asked;
+        const auto checks = rap::sys::http_get(
+            root + "/commits/" + pr.head_sha + "/check-runs?per_page=100", {.headers = headers});
+        note_budget(checks);
+        if (checks.status == 200) apply_github_check_runs(checks.body, pr);
+    }
+    std::lock_guard lock(finished_mutex);
+    for (const pull_request& pr : answer.prs)
+        if (pr.checks_known && pr.checks != check_state::pending)
+            finished_checks.insert_or_assign(checks_key(r, pr.head_sha), pr.runs);
+    return answer;
+}
+
 }  // namespace
+
+std::vector<pull_request> parse_github_rest_pulls(std::string_view text, const forge_repo& r)
+{
+    std::vector<pull_request> out;
+    const auto j = json::parse(text);
+    if (!j) return out;
+    for (const json::value& p : j->elements())
+    {
+        const json::value head = p["head"];
+        pull_request pr{.number = int(p["number"].integer().value_or(0)),
+                        .title = p["title"].str(),
+                        .url = p["html_url"].str(),
+                        .head_branch = head["ref"].str(),
+                        .base_branch = p["base"]["ref"].str(),
+                        .head_sha = head["sha"].str(),
+                        .draft = p["draft"].boolean(),
+                        .author = p["user"]["login"].str(),
+                        .merge_known = false,
+                        .checks_known = false};
+        // null: the fork's gone.
+        pr.head = {.host = r.host,
+                   .owner = head["repo"]["owner"]["login"].str(),
+                   .name = head["repo"]["name"].str()};
+        if (pr.draft) pr.blocks.push_back(merge_block::draft);
+        out.push_back(std::move(pr));
+    }
+    return out;
+}
+
+// Newest first: each workflow's first run on a head is its latest.
+void apply_github_workflow_runs(std::string_view text, std::vector<pull_request>& prs)
+{
+    const auto j = json::parse(text);
+    if (!j) return;
+    std::vector<std::pair<std::string_view, std::string_view>> seen;  // head, workflow id
+    for (const json::value& w : (*j)["workflow_runs"].elements())
+    {
+        const json::value sha = w["head_sha"];
+        const auto pr = std::ranges::find_if(prs, [&](const pull_request& p)
+                                             { return !p.checks_known && sha.str_is(p.head_sha); });
+        if (pr == prs.end()) continue;
+        const std::pair id{sha.text(), w["workflow_id"].text()};
+        if (std::ranges::find(seen, id) != seen.end()) continue;
+        seen.push_back(id);
+        check_run run{.name = w["name"].str(),
+                      .state = rest_run_state(w),
+                      .started_at = time_of(w["run_started_at"])};
+        if (run.state != check_state::pending) run.completed_at = time_of(w["updated_at"]);
+        pr->runs.push_back(std::move(run));
+    }
+    for (pull_request& p : prs)
+        if (!p.checks_known && !p.runs.empty())
+        {
+            p.checks = combined(p.runs);
+            p.checks_known = true;
+        }
+}
+
+bool apply_github_check_runs(std::string_view text, pull_request& pr)
+{
+    const auto j = json::parse(text);
+    if (!j || !(*j)["check_runs"]) return false;
+    pr.runs.clear();
+    for (const json::value& c : (*j)["check_runs"].elements())
+    {
+        check_run run{.name = c["name"].str(),
+                      .state = rest_run_state(c),
+                      .started_at = time_of(c["started_at"]),
+                      .completed_at = time_of(c["completed_at"])};
+        if (c["conclusion"].str_is("skipped")) run.started_at = run.completed_at = 0;
+        pr.runs.push_back(std::move(run));
+    }
+    pr.checks = combined(pr.runs);
+    pr.checks_known = true;
+    return true;
+}
 
 std::int64_t parse_iso_time(std::string_view s)
 {
@@ -794,14 +1097,14 @@ std::int64_t parse_iso_time(std::string_view s)
     return days * 86400 + hour * 3600 + minute * 60 + second - offset;
 }
 
-std::expected<std::vector<pull_request>, std::string>
-open_pull_requests(forge_kind k, const forge_repo& r, std::string_view token)
+std::expected<pull_requests_reply, std::string>
+open_pull_requests(forge_kind k, const forge_repo& r, std::string_view token, bool ask_access)
 {
     switch (k)
     {
     case forge_kind::github: return github_pulls(r, token);
-    case forge_kind::gitlab: return gitlab_pulls(r, token);
-    case forge_kind::gitea: return gitea_pulls(r, token);
+    case forge_kind::gitlab: return gitlab_pulls(r, token, ask_access);
+    case forge_kind::gitea: return gitea_pulls(r, token, ask_access);
     }
     return {};
 }
@@ -1270,7 +1573,7 @@ std::expected<std::string, std::string> fetch_avatar(forge_kind k, const forge_r
                                    .timeout = std::chrono::seconds(10),
                                    .max_bytes = size_t(1) << 20,
                                    .cancelled = cancelled};
-    if (same_letters(host_of(url), r.host))
+    if (!token.empty() && same_letters(host_of(url), r.host))
         options.headers.emplace_back(
             "Authorization", (k == forge_kind::gitea ? "token " : "Bearer ") + std::string(token));
     auto reply = rap::sys::http_get(url, options);
@@ -1279,10 +1582,35 @@ std::expected<std::string, std::string> fetch_avatar(forge_kind k, const forge_r
     return std::move(reply.body);
 }
 
+// As no one, REST's commit (GraphQL needs a token), within the allowance:
+// GitHub's avatar URLs take a size.
+std::expected<std::string, std::string> github_rest_avatar(const forge_repo& r,
+                                                           std::string_view commit, int px,
+                                                           const std::atomic<bool>* cancelled)
+{
+    if (!budget_allows(anonymous_budget(), 1, 10, now_seconds()))
+        return std::unexpected(std::string(_("GitHub's hourly allowance is used up.")));
+    const auto reply =
+        rap::sys::http_get(repo_api(forge_kind::github, r) + "/commits/" + std::string(commit),
+                           {.headers = api_headers(forge_kind::github, ""),
+                            .timeout = std::chrono::seconds(10),
+                            .cancelled = cancelled});
+    note_budget(reply);
+    if (reply.status == 404 || reply.status == 422)
+        return std::unexpected(std::string(_("The commit isn't on the forge.")));
+    const auto j = json::parse(reply.body);
+    if (reply.status != 200 || !j) return std::unexpected(failure(reply, j));
+    std::string url = (*j)["author"]["avatar_url"].str();
+    if (url.empty()) return std::string();
+    url += (url.find('?') == std::string::npos ? "?s=" : "&s=") + std::to_string(px);
+    return fetch_avatar(forge_kind::github, r, url, "", cancelled);
+}
+
 std::expected<std::string, std::string> github_avatar(const forge_repo& r, std::string_view commit,
                                                       int px, std::string_view token,
                                                       const std::atomic<bool>* cancelled)
 {
+    if (token.empty()) return github_rest_avatar(r, commit, px, cancelled);
     constexpr std::string_view query =
         "query($owner:String!,$name:String!,$oid:GitObjectID!,$px:Int!){"
         "repository(owner:$owner,name:$name){object(oid:$oid){"

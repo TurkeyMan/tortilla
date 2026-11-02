@@ -136,7 +136,10 @@ std::string pr_tooltip(const pull_request& pr, std::int64_t now)
     const bool pipe = pr.pipeline;
     switch (pr.checks)
     {
-    case check_state::none: parts.push_back(_("No checks")); break;
+    case check_state::none:
+        // Not asked (GitHub as no one, its allowance short): nothing said.
+        if (pr.checks_known) parts.push_back(_("No checks"));
+        break;
     case check_state::success:
         // From the first to start to the last to finish.
         if (first_start && last_end > first_start)
@@ -186,10 +189,11 @@ std::string pr_tooltip(const pull_request& pr, std::int64_t now)
     }
 
     // What stands in the way of a merge; that nothing does only once the
-    // checks are through, or when there are none.
+    // checks are through, or when there are none, and the forge has said.
     if (pr.blocks.empty())
     {
-        if (pr.checks == check_state::success || pr.checks == check_state::none)
+        if (pr.merge_known && pr.checks_known &&
+            (pr.checks == check_state::success || pr.checks == check_state::none))
             parts.push_back(_("Can be merged"));
     }
     else

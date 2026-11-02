@@ -89,8 +89,27 @@ std::expected<std::string, std::string> gh_token(std::string_view host);
 
 // The API's root: https://api.github.com, https://host/api/v4, ...
 std::string api_root(forge_kind, std::string_view host);
-// Authorization and the forge's Accept and User-Agent.
+// Authorization and the forge's Accept and User-Agent; no Authorization
+// for an empty token, to ask as no one (a public repository's reads).
 rap::sys::http_headers api_headers(forge_kind, std::string_view token);
+
+// The forge a host is without an account for it: github.com, gitlab.com and
+// codeberg.org, which Tortilla asks about public repositories as no one;
+// nullopt for any other host, whose forge only an account says.
+std::optional<forge_kind> known_forge(std::string_view host);
+
+// GitHub's allowance for asking without signing in: 60 requests an hour
+// from an address, whatever asks. As its replies last said, shared by the
+// whole program (the watch's polls and the authors' pictures).
+struct rate_budget
+{
+    int remaining = -1;         // -1: not heard yet
+    std::int64_t reset_at = 0;  // seconds since 1970, when it's full again
+};
+rate_budget anonymous_budget();
+// Whether `want` more requests leave `reserve` of it, at `now`: yes before
+// anything's been heard, and once it's been reset.
+bool budget_allows(const rate_budget&, int want, int reserve, std::int64_t now);
 
 // Who the token belongs to (GET /user); why not, in words.
 std::expected<forge_account, std::string> who_am_i(forge_kind, std::string_view host,
@@ -158,6 +177,21 @@ struct pull_request
     bool pipeline = false;  // GitLab's: the runs are a pipeline's
     // What stands in the way of merging it: nothing, when it can be.
     std::vector<merge_block> blocks;
+    std::string author;  // who opened it: their login
+    // Asked as no one, GitHub's list doesn't say whether it can be merged
+    // (that's a request a PR), and its checks are asked only while the
+    // hourly allowance lasts: what's not known isn't "none".
+    bool merge_known = true, checks_known = true;
+};
+
+// What the signed-in user (or no one) may do with a repository.
+enum class repo_access
+{
+    unknown,  // not asked yet
+    hidden,   // it can't be seen: private, or gone (a forge doesn't say which)
+    read,     // its pull requests can be seen, not merged or closed
+    triage,   // closed too, not merged (GitHub's triage role)
+    write,
 };
 
 // An ISO 8601 time as the forges give it (2026-10-21T10:44:02Z, with a
@@ -165,9 +199,27 @@ struct pull_request
 std::int64_t parse_iso_time(std::string_view);
 
 // The repository's open pull requests (merge requests on GitLab), with their
-// checks: the newest hundred.
-std::expected<std::vector<pull_request>, std::string>
-open_pull_requests(forge_kind, const forge_repo&, std::string_view token);
+// checks: the newest hundred; and what the token may do there. Hidden (404,
+// or 403 signed in) isn't a failure: there's nothing to show. An empty token
+// asks as no one; GitHub's GraphQL needs one, so then its REST API, within
+// anonymous_budget().
+struct pull_requests_reply
+{
+    std::vector<pull_request> prs;
+    repo_access access = repo_access::unknown;
+    bool rate_limited = false;  // GitHub's allowance ran out: nothing was asked
+};
+// `ask_access`: GitLab's and Gitea's take a request more (GitHub's comes
+// with the list), wanted once.
+std::expected<pull_requests_reply, std::string>
+open_pull_requests(forge_kind, const forge_repo&, std::string_view token, bool ask_access = true);
+
+// GitHub's REST answers, as no one, for the tests: a /pulls list, and the
+// checks from an /actions/runs list (each workflow's latest run on a head)
+// or one head's /check-runs.
+std::vector<pull_request> parse_github_rest_pulls(std::string_view json, const forge_repo&);
+void apply_github_workflow_runs(std::string_view json, std::vector<pull_request>&);
+bool apply_github_check_runs(std::string_view json, pull_request&);
 
 // The branch pull requests go into by default (main, say).
 std::expected<std::string, std::string> default_branch(forge_kind, const forge_repo&,
@@ -257,7 +309,8 @@ std::string noreply_avatar_url(std::string_view email, int px);
 // GitLab's for the user with that public email. The picture's bytes; ""
 // when the forge knows the commit but has no picture for its author (a
 // made-up one, Gravatar's or an identicon, is none); why not, when it
-// couldn't say (offline, or the commit isn't there).
+// couldn't say (offline, or the commit isn't there). An empty token asks as
+// no one: GitHub's within anonymous_budget().
 std::expected<std::string, std::string>
 author_avatar(forge_kind, const forge_repo&, std::string_view commit, std::string_view email,
               int px, std::string_view token, const std::atomic<bool>* cancelled = nullptr);

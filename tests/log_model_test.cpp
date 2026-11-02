@@ -321,6 +321,186 @@ int main(int argc, char** argv)
                 many.runs.push_back(run(std::string(1, char('a' + i)), check_state::failure, 0, 0));
             check(pr_tooltip(many, t0) == "#1 · 6 of 6 checks failed: a, b, c, d and 2 more",
                   "pr tooltip: a long list cut short");
+            // Asked as no one: what GitHub's list doesn't say isn't claimed.
+            pull_request unknown{.number = 3, .merge_known = false, .checks_known = false};
+            check(pr_tooltip(unknown, t0) == "#3", "pr tooltip: unknown checks and merge, unsaid");
+            unknown.checks_known = true;
+            unknown.checks = check_state::success;
+            check(pr_tooltip(unknown, t0) == "#3 · Checks passed",
+                  "pr tooltip: checks known, merge not: no \"Can be merged\"");
+        }
+        // GitHub's REST answers, as no one (cli/cli's, trimmed): its open
+        // PRs, then the checks from its latest workflow runs.
+        {
+            using namespace tortilla;
+            const std::string pulls = R"([
+ {"url": "https://api.github.com/repos/cli/cli/pulls/14845", "id": 5038405753,
+  "html_url": "https://github.com/cli/cli/pull/14845", "number": 14845, "state": "open",
+  "title": "Skip token refresh when gh's state directory is not writable",
+  "user": {"login": "babakks", "type": "User"}, "draft": false,
+  "head": {"label": "cli:babakks/skip-refresh-ro-lock", "ref": "babakks/skip-refresh-ro-lock",
+           "sha": "04c4ebf5a1bc61e4a2b97a8a1f4c22e5d0c31f6e",
+           "repo": {"name": "cli", "full_name": "cli/cli", "owner": {"login": "cli"}}},
+  "base": {"ref": "trunk", "sha": "93d24ce9ffefb6cc86bde89b50271457bb0ef9cb"}},
+ {"url": "https://api.github.com/repos/cli/cli/pulls/14783", "id": 4987654321,
+  "html_url": "https://github.com/cli/cli/pull/14783", "number": 14783, "state": "open",
+  "title": "Verify release downloads", "user": {"login": "mrecachinas", "type": "User"},
+  "draft": true,
+  "head": {"label": "mrecachinas:release-download-verify", "ref": "release-download-verify",
+           "sha": "654d851d00000000000000000000000000000000",
+           "repo": {"name": "cli", "full_name": "mrecachinas/cli",
+                    "owner": {"login": "mrecachinas"}}},
+  "base": {"ref": "trunk", "sha": "93d24ce9ffefb6cc86bde89b50271457bb0ef9cb"}},
+ {"number": 9, "html_url": "https://github.com/cli/cli/pull/9", "title": "Gone fork",
+  "user": {"login": "x"}, "draft": false,
+  "head": {"ref": "old", "sha": "1111111111111111111111111111111111111111", "repo": null},
+  "base": {"ref": "trunk"}}
+])";
+            const forge_repo cli{"github.com", "cli", "cli"};
+            auto prs = parse_github_rest_pulls(pulls, cli);
+            check(prs.size() == 3 && prs[0].number == 14845 &&
+                      prs[0].url == "https://github.com/cli/cli/pull/14845" && prs[0].head == cli &&
+                      prs[0].head_branch == "babakks/skip-refresh-ro-lock" &&
+                      prs[0].base_branch == "trunk" && prs[0].author == "babakks" &&
+                      prs[0].head_sha.starts_with("04c4ebf5") && !prs[0].draft &&
+                      !prs[0].merge_known && !prs[0].checks_known && prs[0].blocks.empty(),
+                  "github rest: a PR from the repository itself");
+            check(prs.size() == 3 && prs[1].draft &&
+                      prs[1].head == forge_repo{"github.com", "mrecachinas", "cli"} &&
+                      prs[1].blocks == std::vector{merge_block::draft} &&
+                      prs[2].head.owner.empty() && prs[2].head.name.empty(),
+                  "github rest: a fork's draft, and a fork that's gone");
+            const std::string runs = R"({"total_count": 5, "workflow_runs": [
+ {"id": 5, "name": "Unit and Integration Tests", "workflow_id": 25016, "event": "pull_request",
+  "head_sha": "04c4ebf5a1bc61e4a2b97a8a1f4c22e5d0c31f6e", "status": "completed",
+  "conclusion": "success", "run_started_at": "2026-10-27T17:45:56Z",
+  "updated_at": "2026-10-27T17:53:45Z"},
+ {"id": 4, "name": "Lint", "workflow_id": 925645, "event": "pull_request",
+  "head_sha": "04c4ebf5a1bc61e4a2b97a8a1f4c22e5d0c31f6e", "status": "completed",
+  "conclusion": "success", "run_started_at": "2026-10-27T17:45:56Z",
+  "updated_at": "2026-10-27T17:48:21Z"},
+ {"id": 3, "name": "Lint", "workflow_id": 925645, "event": "pull_request",
+  "head_sha": "04c4ebf5a1bc61e4a2b97a8a1f4c22e5d0c31f6e", "status": "completed",
+  "conclusion": "failure", "run_started_at": "2026-10-27T16:00:00Z",
+  "updated_at": "2026-10-27T16:01:00Z"},
+ {"id": 2, "name": "Unit and Integration Tests", "workflow_id": 25016, "event": "pull_request",
+  "head_sha": "654d851d00000000000000000000000000000000", "status": "in_progress",
+  "conclusion": null, "run_started_at": "2026-10-28T02:11:58Z",
+  "updated_at": "2026-10-28T02:12:00Z"},
+ {"id": 1, "name": "Lint", "workflow_id": 925645, "event": "pull_request",
+  "head_sha": "ffffffffffffffffffffffffffffffffffffffff", "status": "completed",
+  "conclusion": "failure", "run_started_at": null, "updated_at": "2026-10-27T10:00:00Z"}
+]})";
+            apply_github_workflow_runs(runs, prs);
+            check(prs[0].checks_known && prs[0].checks == check_state::success &&
+                      prs[0].runs.size() == 2 && prs[0].runs[1].name == "Lint" &&
+                      prs[0].runs[1].completed_at - prs[0].runs[1].started_at == 145,
+                  "github rest: each workflow's latest run on a head, an older one passed over");
+            check(prs[1].checks_known && prs[1].checks == check_state::pending &&
+                      prs[1].runs.size() == 1 && prs[1].runs[0].completed_at == 0 &&
+                      !prs[2].checks_known && prs[2].runs.empty(),
+                  "github rest: a running one; a head without runs not known");
+            const std::string check_runs = R"({"total_count": 2, "check_runs": [
+ {"name": "build", "status": "completed", "conclusion": "failure",
+  "started_at": "2026-10-27T10:00:00Z", "completed_at": "2026-10-27T10:05:00Z"},
+ {"name": "docs", "status": "completed", "conclusion": "skipped",
+  "started_at": "2026-10-27T10:00:00Z", "completed_at": "2026-10-27T10:00:00Z"}]})";
+            check(apply_github_check_runs(check_runs, prs[2]) && prs[2].checks_known &&
+                      prs[2].checks == check_state::failure && prs[2].runs.size() == 2 &&
+                      prs[2].runs[1].state == check_state::success && !prs[2].runs[1].started_at,
+                  "github rest: a head's own check runs");
+            check(!apply_github_check_runs(R"({"message": "Not Found"})", prs[2]) &&
+                      prs[2].runs.size() == 2,
+                  "github rest: not check runs, left as it was");
+        }
+        // GitHub's anonymous allowance: what's asked, and when the next poll is.
+        {
+            using namespace tortilla;
+            const std::int64_t now = 1'800'000'000;
+            const rate_budget unheard, plenty{.remaining = 50, .reset_at = now + 1800},
+                low{.remaining = 3, .reset_at = now + 1800},
+                spent{.remaining = 0, .reset_at = now + 1800},
+                reset{.remaining = 0, .reset_at = now - 1};
+            check(budget_allows(unheard, 2, 2, now) && budget_allows(plenty, 1, 30, now) &&
+                      !budget_allows(low, 2, 2, now) && budget_allows(low, 1, 2, now) &&
+                      !budget_allows(spent, 1, 0, now) && budget_allows(reset, 2, 2, now),
+                  "budget: what's left, less a reserve; full again once reset");
+            check(anonymous_due(0, now, false, unheard) &&
+                      !anonymous_due(now - 300, now, false, plenty) &&
+                      anonymous_due(now - 600, now, false, plenty) &&
+                      anonymous_due(now - 61, now, true, plenty) &&
+                      !anonymous_due(now - 30, now, true, plenty) &&
+                      !anonymous_due(0, now, true, spent),
+                  "budget: anonymous GitHub every ten minutes, a minute after a refresh, "
+                  "never while spent");
+            check(poll_seconds(false, false, false, plenty, now) == 120 &&
+                      poll_seconds(false, true, false, plenty, now) == 20 &&
+                      poll_seconds(true, false, false, plenty, now) == 300 &&
+                      poll_seconds(false, true, true, plenty, now) == 600 &&
+                      poll_seconds(false, false, true, spent, now) == 1805 &&
+                      poll_seconds(false, false, false, spent, now) == 120 &&
+                      poll_seconds(false, false, true, reset, now) == 600,
+                  "budget: the poll's pace, and waiting for the allowance to reset");
+        }
+        // The PR menu's Merge... and Close..., greyed with why for each tier.
+        {
+            using namespace tortilla;
+            const forge_repo repo{"github.com", "org", "engine"};
+            const forge_remote anonymous{
+                .name = "origin",
+                .repo = repo,
+                .account = {.kind = forge_kind::github, .host = "github.com"}},
+                signed_in{
+                    .name = "origin",
+                    .repo = repo,
+                    .account = {.kind = forge_kind::github, .host = "github.com", .login = "Ada"}},
+                codeberg{.name = "cb",
+                         .repo = {"codeberg.org", "org", "engine"},
+                         .account = {.kind = forge_kind::gitea, .host = "codeberg.org"}};
+            const open_pr theirs{.pr = {.number = 1, .author = "bob"}, .into = anonymous},
+                as_reader{.pr = {.number = 1, .author = "bob"}, .into = signed_in},
+                own{.pr = {.number = 1, .author = "ada"}, .into = signed_in};
+            auto a = pr_menu_for(theirs, repo_access::read);
+            check(!a.can_merge && !a.can_close && a.merge == "_Merge... (sign in to GitHub)" &&
+                      a.close == "_Close... (sign in to GitHub)",
+                  "pr menu: not signed in, sign in to GitHub");
+            auto r = pr_menu_for(as_reader, repo_access::read);
+            check(!r.can_merge && !r.can_close && r.merge == "_Merge... (needs write access)" &&
+                      r.close == "_Close... (needs write access)",
+                  "pr menu: read access, needs write access");
+            auto o = pr_menu_for(own, repo_access::read);
+            check(!o.can_merge && o.can_close && o.close == "_Close...",
+                  "pr menu: its author may close their own");
+            auto t = pr_menu_for(as_reader, repo_access::triage);
+            check(!t.can_merge && t.can_close, "pr menu: a triager may close, not merge");
+            auto w = pr_menu_for(as_reader, repo_access::write);
+            check(w.can_merge && w.can_close && w.merge == "_Merge..." && w.close == "_Close...",
+                  "pr menu: write access, everything");
+            check(pr_menu_for(as_reader, repo_access::unknown).can_merge,
+                  "pr menu: access not heard yet, the dialog says");
+            open_pr conflicted = as_reader;
+            conflicted.pr.conflicts = true;
+            auto c = pr_menu_for(conflicted, repo_access::write);
+            check(!c.can_merge && c.can_close && c.merge == "_Merge... (conflicts)",
+                  "pr menu: conflicts, as before");
+            check(create_pr_blocker({anonymous}) == "sign in to GitHub" &&
+                      create_pr_blocker({codeberg}) == "sign in to Codeberg" &&
+                      create_pr_blocker({anonymous, signed_in}).empty() &&
+                      create_pr_blocker({}).empty(),
+                  "pr menu: Create pull request... until signed in");
+            check(hint_text(anonymous) == "github.com/org/engine: sign in to see its pull requests",
+                  "pr watch: a hidden repository's hint");
+            check(known_forge("GitHub.com") == forge_kind::github &&
+                      known_forge("codeberg.org") == forge_kind::gitea &&
+                      known_forge("gitlab.com") == forge_kind::gitlab &&
+                      !known_forge("git.example.org"),
+                  "forge: the public forges asked as no one");
+            const auto anon_headers = api_headers(forge_kind::gitea, "");
+            check(std::ranges::none_of(anon_headers,
+                                       [](const auto& h) { return h.first == "Authorization"; }) &&
+                      std::ranges::any_of(api_headers(forge_kind::gitea, "t"),
+                                          [](const auto& h) { return h.second == "token t"; }),
+                  "forge: no Authorization as no one");
         }
 #ifndef _WIN32
         // The GitHub CLI's token, from a stand-in gh first on PATH.
