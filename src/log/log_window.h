@@ -310,6 +310,9 @@ private:
     log_model log_;
     std::unique_ptr<repo_worker> files_worker_;  // the selected commit's files
     changes_view files_;  // the selected commit's (or the working tree's) files
+    // Before window_, so it goes after it: the window's lists use the panel's
+    // models, and a list tells its model it's going as it goes.
+    std::unique_ptr<forge_panel> forge_panel_;
     std::unique_ptr<rap::window> window_;
     std::function<void()> closed_;
     std::function<void(std::vector<commit>)> picked_;
@@ -342,7 +345,6 @@ private:
     // beside both, a column of its own (shown when it has something to say).
     rap::splitter* details_splitter_ = nullptr;
     rap::splitter* forge_splitter_ = nullptr;
-    std::unique_ptr<forge_panel> forge_panel_;  // after window_: goes first
     std::vector<float> forge_sizes_;            // as last shown, for showing it again
     bool forge_panel_visible_ = false;
     void forge_panel_shown(bool);
