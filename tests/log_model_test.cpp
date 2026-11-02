@@ -34,6 +34,7 @@
 #include "git/repo_worker.h"
 #include "git/status.h"
 #include "git/submodule.h"
+#include "git/svn.h"
 #include "git/sync.h"
 #include "git/temp_files.h"
 #include "git/tree_list.h"
@@ -2425,6 +2426,45 @@ int main(int argc, char** argv)
         // An untracked folder cleaned from inside goes as a whole: "./".
         check(listed({}, "tmp") == std::vector<std::string>{"./"},
               "clean up: a folder, from inside it");
+    }
+
+    // git-svn: which repositories are, the branch SVN Rebase rebases onto,
+    // the commands, and Import SVN Ignore's additions to info/exclude. (No
+    // SVN server here: git svn itself isn't run.)
+    {
+        namespace fs = std::filesystem;
+        const std::string base = std::string(argv[1]) + "/svn";
+        const fs::path plain = base + "/plain", svn = base + "/svn", meta = base + "/meta";
+        fs::create_directories(base);
+        for (const fs::path& p : {plain, svn, meta}) sh("git init -q '" + p.string() + "'");
+        sh("cd '" + svn.string() +
+           "' && git config svn-remote.svn.url file:///repo && git config svn-remote.svn.fetch "
+           "trunk:refs/remotes/origin/trunk");
+        fs::create_directories(meta / ".git/svn");
+        std::ofstream(meta / ".git/svn/.metadata") << "[svn-remote \"svn\"]\n";
+        check(!tortilla::is_git_svn(plain / ".git", plain / ".git") &&
+                  tortilla::is_git_svn(svn / ".git", svn / ".git") &&
+                  tortilla::is_git_svn(meta / ".git", meta / ".git"),
+              "git-svn: an svn-remote in the config, or git-svn's metadata");
+        check(tortilla::svn_upstream("trunk:refs/remotes/origin/trunk\n") ==
+                      "remotes/origin/trunk" &&
+                  tortilla::svn_upstream(":refs/remotes/git-svn") == "remotes/git-svn" &&
+                  tortilla::svn_upstream("") == "",
+              "git-svn: the branch fetched into, from svn-remote.svn.fetch");
+        check(tortilla::svn_dcommit_args(false) == std::vector<std::string>{"svn", "dcommit"} &&
+                  tortilla::svn_dcommit_args(true) ==
+                      std::vector<std::string>{"svn", "dcommit", "--rmdir"} &&
+                  tortilla::svn_fetch_args() == std::vector<std::string>{"svn", "fetch"} &&
+                  tortilla::svn_ignore_args(tortilla::svn_ignore_into::exclude) ==
+                      std::vector<std::string>{"svn", "show-ignore"} &&
+                  tortilla::svn_ignore_args(tortilla::svn_ignore_into::gitignore) ==
+                      std::vector<std::string>{"svn", "create-ignore"},
+              "git-svn: DCommit, Fetch and Import SVN Ignore's commands");
+        check(tortilla::merge_exclude("# mine\n*.tmp", "\n# /trunk/\n/build\n*.tmp\n") ==
+                      "# mine\n*.tmp\n# /trunk/\n/build\n" &&
+                  tortilla::merge_exclude("", "/a\r\n/a\r\n") == "/a\n" &&
+                  tortilla::merge_exclude("x\n", "x\n") == "x\n",
+              "git-svn: show-ignore's patterns added to info/exclude, once");
     }
 
     // Submodules: Add, Update and Sync's arguments, and the list Update

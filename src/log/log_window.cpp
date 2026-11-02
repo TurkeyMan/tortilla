@@ -4,6 +4,7 @@
 
 #include "git/command.h"
 #include "git/lfs.h"
+#include "git/svn.h"
 #include "i18n.h"
 #include "settings.h"
 #include "ui/menu_text.h"
@@ -18,6 +19,7 @@
 #include <ctime>
 #include <filesystem>
 #include <numeric>
+#include <thread>
 #include <unordered_set>
 
 namespace tortilla
@@ -519,6 +521,20 @@ void log_window::build()
         log_.set_action_icon_style(action_icon_style(std::clamp(std::atoi(saved.c_str()), 0, 3)));
     restore_layout();
     fit_timer_ = ui_.timer(300, false, [this] { fit_files(); });
+    // SVN DCommit is greyed without git svn, which takes a moment to ask.
+    if (!repo_.bare() && is_git_svn(rap::sys::path_from_utf8(repo_.git_dir()),
+                                    rap::sys::path_from_utf8(repo_.common_dir())))
+        std::thread(
+            [this, &ui = ui_, dir = repo_.workdir(), alive = std::weak_ptr<bool>(alive_)]
+            {
+                const bool ok = git_svn_installed(dir);
+                ui.post(
+                    [this, alive, ok]
+                    {
+                        if (alive.lock()) git_svn_ok_ = ok;
+                    });
+            })
+            .detach();
 }
 
 void log_window::closing()
