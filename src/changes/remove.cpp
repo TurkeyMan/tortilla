@@ -83,7 +83,7 @@ void remove_files(rap::ui& ui, const std::vector<std::string>& paths, bool keep_
                    std::vector<std::string> args{"rm", "-r", "-q", "--cached", "--ignore-unmatch",
                                                  "--"};
                    args.insert(args.end(), relative.begin(), relative.end());
-                   const git_result rm = run_git(workdir, args);
+                   const git_result rm = run_git(workdir, literal_paths(args));
                    if (!rm.ok())
                        return fail(N_("git couldn't stop tracking it.", "git couldn't stop tracking them.", n),
                                    rm.output);

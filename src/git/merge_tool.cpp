@@ -136,8 +136,8 @@ std::expected<conflict_sides, std::string> write_conflict_sides(const std::strin
 {
     conflict_sides s{.path = path};
     // The stages there are: 1 base, 2 ours (HEAD), 3 theirs.
-    const git_result u =
-        run_git(workdir, {"ls-files", "-u", "-z", "--", path}, git_output::stdout_only);
+    const git_result u = run_git(workdir, literal_paths({"ls-files", "-u", "-z", "--", path}),
+                                 git_output::stdout_only);
     if (!u.ok()) return std::unexpected(u.output);
     bool stage[4] = {};
     for (size_t at = 0; at < u.output.size();)
@@ -322,7 +322,8 @@ std::vector<std::string> merge_tool_command(const std::string& command, const co
 
 bool still_conflicted(const std::string& workdir, const std::string& path)
 {
-    const git_result u = run_git(workdir, {"ls-files", "-u", "--", path}, git_output::stdout_only);
+    const git_result u =
+        run_git(workdir, literal_paths({"ls-files", "-u", "--", path}), git_output::stdout_only);
     return u.ok() && u.output.find_first_not_of(" \r\n") != std::string::npos;
 }
 

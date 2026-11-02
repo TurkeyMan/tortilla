@@ -2749,6 +2749,41 @@ int main(int argc, char** argv)
               "revert: nothing else changed");
     }
 
+    // Selected names are names, not patterns: reverting "[ab].txt" leaves
+    // a.txt and b.txt alone, "*.txt" only itself, ":x" is no magic.
+    {
+        namespace fs = std::filesystem;
+        const std::string dir = std::string(argv[1]) + "/literal";
+        const std::string g = "git -C '" + dir + "' -c user.name=Ada -c user.email=ada@x ";
+        const std::vector<std::string> names{"a.txt", "b.txt", "[ab].txt", "*.txt", ":x", "c.txt"};
+        sh("git init -q -b main '" + dir + "'");
+        for (const std::string& n : names) sh("printf 'one\\n' > '" + dir + "/" + n + "'");
+        sh(g + "add -A && " + g + "commit -qm one");
+        for (const std::string& n : names) sh("printf 'work\\n' > '" + dir + "/" + n + "'");
+        const std::string trash = std::string(argv[1]) + "/literal-trash";
+        const std::string xdg = rap::sys::env("XDG_DATA_HOME").value_or("");
+        setenv("XDG_DATA_HOME", trash.c_str(), 1);
+        std::vector<tortilla::file_change> picked;
+        for (const char* n : {"[ab].txt", "*.txt", ":x"})
+            picked.push_back({.path = n, .status = 'M'});
+        const auto plan = tortilla::plan_revert(dir, picked);
+        const auto changed = tortilla::with_local_changes(dir, {"[ab].txt"});
+        for (const auto& c : tortilla::revert_commands(plan)) tortilla::run_git(dir, c);
+        if (xdg.empty())
+            unsetenv("XDG_DATA_HOME");
+        else
+            setenv("XDG_DATA_HOME", xdg.c_str(), 1);
+        const fs::path d(dir);
+        check(slurp(d / "[ab].txt") == "one\n" && slurp(d / "*.txt") == "one\n" &&
+                  slurp(d / ":x") == "one\n",
+              "literal: the picked files reverted");
+        check(slurp(d / "a.txt") == "work\n" && slurp(d / "b.txt") == "work\n" &&
+                  slurp(d / "c.txt") == "work\n",
+              "literal: no other file matched as a pattern");
+        check(changed.size() == 1 && changed.front().filename() == "[ab].txt",
+              "literal: local changes of only the named file");
+    }
+
     std::printf("%s\n", failures ? "FAILED" : "all passed");
     return failures ? 1 : 0;
 }

@@ -349,7 +349,7 @@ void file_action_window::run(const std::vector<file_change>& files)
         for (std::string& a : list->arguments()) args.push_back(std::move(a));
         args.insert(args.end(), after.begin(), after.end());
         lists.push_back(list);
-        commands.push_back(std::move(args));
+        commands.push_back(literal_paths(std::move(args)));
         return true;
     };
     std::vector<std::string> all;
@@ -412,7 +412,7 @@ void file_action_window::run(const std::vector<file_change>& files)
              {
                  std::vector<std::string> ls{"ls-files", "-s", "-z", "--"};
                  ls.insert(ls.end(), paths.begin(), paths.end());
-                 const git_result r = run_git(workdir, ls, git_output::stdout_only);
+                 const git_result r = run_git(workdir, literal_paths(ls), git_output::stdout_only);
                  std::vector<std::string> c{"update-index"};
                  // "<mode> <hash> <stage>\t<path>\0" each.
                  for (size_t at = 0; r.ok() && at < r.output.size();)

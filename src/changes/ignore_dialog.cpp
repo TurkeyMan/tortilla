@@ -133,7 +133,8 @@ void show_ignore_dialog(rap::ui& ui, std::vector<std::string> paths, bool by_ext
     std::vector<std::string> ls{"ls-files", "--"};
     ls.insert(ls.end(), st->relative.begin(), st->relative.end());
     const bool some_tracked =
-        !st->relative.empty() && !run_git(st->workdir, ls, git_output::stdout_only).output.empty();
+        !st->relative.empty() &&
+        !run_git(st->workdir, literal_paths(ls), git_output::stdout_only).output.empty();
     if (st->items.empty())
     {
         st->keep_alive.reset();
@@ -201,7 +202,7 @@ void show_ignore_dialog(rap::ui& ui, std::vector<std::string> paths, bool by_ext
             {
                 std::vector<std::string> args{"rm", "-r", "-q", "--cached", "--ignore-unmatch", "--"};
                 args.insert(args.end(), s->relative.begin(), s->relative.end());
-                if (const git_result rm = run_git(s->workdir, args); !rm.ok())
+                if (const git_result rm = run_git(s->workdir, literal_paths(args)); !rm.ok())
                     return s->fail(N_("git couldn't stop tracking it.", "git couldn't stop tracking them.",
                                       s->relative.size()),
                                    rm.output);

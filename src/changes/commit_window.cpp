@@ -477,7 +477,7 @@ void commit_window::commit()
     {
         std::vector<std::string> add{"add", "-f", "--"};
         add.insert(add.end(), unversioned.begin(), unversioned.end());
-        commands.push_back(add);
+        commands.push_back(literal_paths(add));
     }
     std::vector<std::string> c{"commit", "-F", rap::sys::path_to_utf8(message_file)};
     if (amend_->checked()) c.push_back("--amend");
@@ -495,7 +495,7 @@ void commit_window::commit()
     else
         c.insert(c.end(), {"--only", "--pathspec-from-file=" + rap::sys::path_to_utf8(paths_file),
                            "--pathspec-file-nul"});
-    commands.push_back(c);
+    commands.push_back(files.empty() ? c : literal_paths(c));
 
     committing_ = true;
     update_state();
