@@ -1,5 +1,7 @@
 #include "blame.h"
 
+#include "git/quoted_path.h"
+
 #include <cstdlib>
 #include <unordered_map>
 
@@ -91,10 +93,10 @@ std::vector<blame_line> parse_blame(std::string_view porcelain)
             const size_t gap = value.find(' ');
             c.previous_hash = std::string(value.substr(0, gap));
             if (gap != std::string_view::npos)
-                c.previous_filename = std::string(value.substr(gap + 1));
+                c.previous_filename = unquote_path(value.substr(gap + 1));
         }
         else if (key == "filename")
-            filenames[c.hash] = std::string(value);
+            filenames[c.hash] = unquote_path(value);
     }
     return lines;
 }
@@ -149,7 +151,7 @@ std::vector<file_revision> parse_file_revisions(std::string_view output)
             if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
             if (!line.empty())
             {
-                r.path = std::string(line);
+                r.path = unquote_path(line);
                 break;
             }
         }
