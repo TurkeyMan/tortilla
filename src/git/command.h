@@ -23,6 +23,17 @@ enum class git_output
     stdout_only,
 };
 
+// Whether git may ask the user anything (a password, a passphrase, an
+// unknown host): `never` for what runs unasked (the log's sync, a
+// background fetch), so a remote that wants a password fails at once
+// rather than waiting on a window. Tortilla's askpass says no, and Git
+// Credential Manager is told not to ask.
+enum class git_prompts
+{
+    ask,
+    never,
+};
+
 struct git_result
 {
     int exit_code = -1;
@@ -32,7 +43,7 @@ struct git_result
 
 // Runs `git <args>` in `dir` and waits. For quick queries only.
 git_result run_git(const std::string& dir, const std::vector<std::string>& args,
-                 git_output = git_output::all);
+                   git_output = git_output::all, git_prompts = git_prompts::ask);
 
 // A file as it is in `rev`, the way a checkout would write it: through the
 // repository's filters (Git LFS's smudge, line endings), where `git show
@@ -49,14 +60,14 @@ public:
 
 private:
     friend git_result run_git(const std::string&, const std::vector<std::string>&, git_output,
-                              git_canceller&);
+                              git_canceller&, git_prompts);
     mutable std::mutex mutex_;
     std::shared_ptr<rap::sys::process> current_;
     bool cancelled_ = false;
 };
 
 git_result run_git(const std::string& dir, const std::vector<std::string>& args, git_output,
-                   git_canceller&);
+                   git_canceller&, git_prompts = git_prompts::ask);
 
 // Runs `git <args>` in `dir` on a worker thread. Output arrives in chunks on
 // the UI thread; `done` gets the exit code. The process is killed if the
@@ -64,11 +75,10 @@ git_result run_git(const std::string& dir, const std::vector<std::string>& args,
 class git_process
 {
 public:
-    static std::shared_ptr<git_process> start(rap::ui&, const std::string& dir,
-                                             std::vector<std::string> args,
-                                             std::function<void(const std::string&)> output,
-                                             std::function<void(int exit_code)> done,
-                                             git_output = git_output::all);
+    static std::shared_ptr<git_process>
+    start(rap::ui&, const std::string& dir, std::vector<std::string> args,
+          std::function<void(const std::string&)> output, std::function<void(int exit_code)> done,
+          git_output = git_output::all, git_prompts = git_prompts::ask);
     ~git_process();
     void kill();
 

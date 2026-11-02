@@ -208,10 +208,12 @@ struct pr_watch::shared
     bool alive = true;
 };
 
-pr_watch::pr_watch(rap::ui& ui, std::string workdir, std::function<void()> changed)
+pr_watch::pr_watch(rap::ui& ui, std::string workdir, std::function<void()> changed,
+                   bool branch_tips)
     : ui_(ui)
     , workdir_(std::move(workdir))
     , changed_(std::move(changed))
+    , want_tips_(branch_tips)
     , shared_(std::make_shared<shared>())
 {
     watches().push_back(this);
@@ -259,6 +261,7 @@ void pr_watch::ask(bool forced)
     if (remotes_.empty())
     {
         hints_.clear();
+        tips_.clear();
         if (!prs_.empty())
         {
             prs_.clear();
@@ -269,9 +272,10 @@ void pr_watch::ask(bool forced)
     asking_ = true;
     asked_ = std::chrono::steady_clock::now();
     std::thread(
-        [this, sh = shared_, remotes = remotes_, forced, &ui = ui_]
+        [this, sh = shared_, remotes = remotes_, forced, &ui = ui_, want_tips = want_tips_]
         {
             std::vector<open_pr> found;
+            std::map<std::string, remote_tips, std::less<>> tips;
             std::string error;
             std::vector<forge_repo> asked, kept;  // kept: not asked now, as last heard
             for (const forge_remote& r : remotes)
@@ -307,7 +311,8 @@ void pr_watch::ask(bool forced)
                         continue;
                     }
                 }
-                auto reply = open_pull_requests(r.account.kind, r.repo, token, ask_access);
+                auto reply = open_pull_requests(r.account.kind, r.repo, token, ask_access,
+                                                want_tips && !anonymous_github(r));
                 std::lock_guard lock(sh->mutex);
                 if (!reply)
                 {
@@ -323,6 +328,10 @@ void pr_watch::ask(bool forced)
                 }
                 if (anonymous_github(r)) sh->anonymous_asked[seen] = now_seconds();
                 if (reply->access != repo_access::unknown) sh->access[seen] = reply->access;
+                // Every remote that is this repository has its branches.
+                if (reply->tips)
+                    for (const forge_remote& same : remotes)
+                        if (same.repo == r.repo) tips[same.name] = *reply->tips;
                 for (pull_request& pr : reply->prs) found.push_back({std::move(pr), r});
             }
             std::map<std::string, repo_access> access;
@@ -332,7 +341,8 @@ void pr_watch::ask(bool forced)
             }
             ui.post(
                 [this, sh, found = std::move(found), error = std::move(error),
-                 kept = std::move(kept), access = std::move(access)]() mutable
+                 kept = std::move(kept), access = std::move(access),
+                 tips = std::move(tips)]() mutable
                 {
                     {
                         std::lock_guard lock(sh->mutex);
@@ -344,6 +354,7 @@ void pr_watch::ask(bool forced)
                         if (std::ranges::find(kept, p.into.repo) != kept.end())
                             found.push_back(std::move(p));
                     prs_ = std::move(found);
+                    tips_ = std::move(tips);
                     access_ = std::move(access);
                     hints_.clear();
                     for (const forge_remote& r : remotes_)

@@ -87,6 +87,7 @@ add_library(tortilla_git STATIC
     src/git/tree_list.cpp
     src/git/archive.cpp
     src/git/badges.cpp
+    src/git/sync.cpp
     src/cache/badge_cache.cpp
     src/cache/cache_main.cpp
     src/cache/channel.cpp
@@ -100,6 +101,7 @@ add_executable(tortilla
     src/main.cpp
     src/log/log_window.cpp
     src/log/log_actions.cpp
+    src/log/log_sync.cpp
     src/log/reflog_window.cpp
     src/log/worktree_window.cpp
     src/log/bisect_dialog.cpp

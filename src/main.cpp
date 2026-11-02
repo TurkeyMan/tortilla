@@ -68,6 +68,7 @@
 #include "changes/ignore_dialog.h"
 #include "changes/remove.h"
 #include "changes/rename_dialog.h"
+#include "git/askpass_env.h"
 #include "git/repo.h"
 #include "git/ssh_client.h"
 #include "i18n.h"
@@ -172,6 +173,10 @@ int main(int argc, char** argv)
     // in a window, answered on our output, so before the console is taken.
     if (tortilla::started_as_askpass(argc))
     {
+        // For git that mustn't ask (a sync, a background fetch): no.
+        if (const char* m = std::getenv(tortilla::k_askpass_marker);
+            m && std::strcmp(m, tortilla::k_askpass_never) == 0)
+            return 1;
         auto ui = rap::ui::load(argc, argv, {});
         if (!ui) return 1;
         return tortilla::run_askpass(**ui, argv[1]);

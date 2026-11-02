@@ -20,12 +20,17 @@ using rap::sys::process;
 // GIT_EDITOR=true never opens an editor (merge messages etc.). The SSH
 // client is the one chosen in Settings, if any; passwords, passphrases and
 // unknown hosts are asked in a window (askpass_env.h).
-process::options git_options(git_output output)
+process::options git_options(git_output output, git_prompts prompts = git_prompts::ask)
 {
     process::options o{.env = {{"GIT_TERMINAL_PROMPT", "0"}, {"GIT_EDITOR", "true"}},
                        .merge_stderr = output == git_output::all};
     for (auto& e : ssh_environment()) o.env.push_back(std::move(e));
-    for (const auto& e : askpass_environment()) o.env.push_back(e);
+    for (const auto& e : askpass_environment())
+        // Never asking: tortilla, started as askpass, says no at once.
+        o.env.push_back(prompts == git_prompts::never && e.first == k_askpass_marker
+                            ? std::pair<std::string, std::string>{e.first, k_askpass_never}
+                            : e);
+    if (prompts == git_prompts::never) o.env.push_back({"GCM_INTERACTIVE", "never"});
     return o;
 }
 
@@ -50,10 +55,11 @@ std::string command_line(const std::vector<std::string>& args)
     return s;
 }
 
-git_result run_git(const std::string& dir, const std::vector<std::string>& args, git_output output)
+git_result run_git(const std::string& dir, const std::vector<std::string>& args, git_output output,
+                   git_prompts prompts)
 {
     git_result r;
-    auto run = process::run("git", git_command_line(dir, args), git_options(output));
+    auto run = process::run("git", git_command_line(dir, args), git_options(output, prompts));
     if (!run)
     {
         r.output = rap::i18n::format(_("could not start git: {0}"), run.error());
@@ -83,7 +89,7 @@ bool git_canceller::cancelled() const
 }
 
 git_result run_git(const std::string& dir, const std::vector<std::string>& args, git_output output,
-                   git_canceller& canceller)
+                   git_canceller& canceller, git_prompts prompts)
 {
     git_result r;
     std::shared_ptr<process> p;
@@ -94,7 +100,8 @@ git_result run_git(const std::string& dir, const std::vector<std::string>& args,
             r.output = "cancelled";
             return r;
         }
-        auto started = process::start("git", git_command_line(dir, args), git_options(output));
+        auto started =
+            process::start("git", git_command_line(dir, args), git_options(output, prompts));
         if (!started)
         {
             r.output = rap::i18n::format(_("could not start git: {0}"), started.error());
@@ -122,13 +129,14 @@ struct git_process::state
 };
 
 std::shared_ptr<git_process> git_process::start(rap::ui& ui, const std::string& dir,
-                                              std::vector<std::string> args,
-                                              std::function<void(const std::string&)> output,
-                                              std::function<void(int)> done, git_output mode)
+                                                std::vector<std::string> args,
+                                                std::function<void(const std::string&)> output,
+                                                std::function<void(int)> done, git_output mode,
+                                                git_prompts prompts)
 {
     auto p = std::shared_ptr<git_process>(new git_process);
     auto state = p->state_ = std::make_shared<git_process::state>();
-    auto started = process::start("git", git_command_line(dir, args), git_options(mode));
+    auto started = process::start("git", git_command_line(dir, args), git_options(mode, prompts));
     if (!started)
     {
         ui.post(

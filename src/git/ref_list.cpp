@@ -1,6 +1,7 @@
 #include "ref_list.h"
 
 #include "git/command.h"
+#include "git/repo.h"
 
 #include <algorithm>
 #include <cctype>
@@ -74,7 +75,7 @@ ref_list_result list_refs(const std::string& workdir, merged_filter filter)
     {
         if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
         const auto f = split(line, '\0');
-        if (f.size() < 11) continue;
+        if (f.size() < 11 || is_prefetch_ref(f[0])) continue;  // the sync's, not the user's
         ref_entry e;
         e.full = f[0];
         e.hash = f[1];

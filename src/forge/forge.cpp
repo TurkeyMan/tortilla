@@ -624,14 +624,32 @@ bool hidden_reply(const rap::sys::http_response& r)
 
 std::expected<pull_requests_reply, std::string> github_rest_pulls(const forge_repo& r);
 
-std::expected<pull_requests_reply, std::string> github_pulls(const forge_repo& r,
-                                                             std::string_view token)
+// A branch list's entries ({name, commit: {id}}), GitLab's and Gitea's;
+// nullopt unless it's one. A full page may not be all of them.
+std::optional<remote_tips> branch_list(const rap::sys::http_response& reply, size_t page)
 {
+    const auto j = json::parse(reply.body);
+    if (reply.status != 200 || !j || j->kind() != json::value::type::array) return std::nullopt;
+    remote_tips out;
+    for (const json::value& b : j->elements())
+        out.branches.push_back({.name = b["name"].str(), .sha = b["commit"]["id"].str()});
+    out.complete = out.branches.size() < page;
+    return out;
+}
+
+std::expected<pull_requests_reply, std::string> github_pulls(const forge_repo& r,
+                                                             std::string_view token, bool ask_tips)
+{
+    // As no one: REST, and no branches (ls-remote finds those for free).
     if (token.empty()) return github_rest_pulls(r);
     // One query for them all, checks included: what polling costs is one
-    // request a repository.
-    constexpr std::string_view query =
-        "query($owner:String!,$name:String!){repository(owner:$owner,name:$name){"
+    // request a repository. The branches' tips ride along, newest first.
+    const std::string query =
+        std::string("query($owner:String!,$name:String!){repository(owner:$owner,name:$name){") +
+        (ask_tips ? "refs(refPrefix:\"refs/heads/\",first:100,"
+                    "orderBy:{field:TAG_COMMIT_DATE,direction:DESC}){totalCount nodes{name "
+                    "target{oid}}} "
+                  : "") +
         "viewerPermission "
         "pullRequests(states:OPEN,first:100,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{"
         "number title url isDraft headRefName headRefOid baseRefName reviewDecision mergeable "
@@ -661,6 +679,15 @@ std::expected<pull_requests_reply, std::string> github_pulls(const forge_repo& r
         }
     pull_requests_reply answer{
         .access = github_access((*j)["data"]["repository"]["viewerPermission"].str())};
+    if (const json::value refs = (*j)["data"]["repository"]["refs"]; ask_tips && refs)
+    {
+        remote_tips found;
+        for (const json::value& n : refs["nodes"].elements())
+            found.branches.push_back({.name = n["name"].str(), .sha = n["target"]["oid"].str()});
+        found.complete =
+            refs["totalCount"].integer().value_or(0) <= std::int64_t(found.branches.size());
+        answer.tips = std::move(found);
+    }
     std::vector<pull_request>& out = answer.prs;
     for (const json::value& n : (*j)["data"]["repository"]["pullRequests"]["nodes"].elements())
     {
@@ -721,7 +748,7 @@ repo_access gitlab_access(const forge_repo& r, std::string_view token)
 }
 
 std::expected<pull_requests_reply, std::string>
-gitlab_pulls(const forge_repo& r, std::string_view token, bool ask_access)
+gitlab_pulls(const forge_repo& r, std::string_view token, bool ask_access, bool ask_tips)
 {
     const auto headers = api_headers(forge_kind::gitlab, token);
     const auto reply = rap::sys::http_get(
@@ -735,6 +762,11 @@ gitlab_pulls(const forge_repo& r, std::string_view token, bool ask_access)
     const auto pipes = json::parse(pipes_reply.body);
     pull_requests_reply answer{.access =
                                    ask_access ? gitlab_access(r, token) : repo_access::unknown};
+    if (ask_tips)
+        answer.tips =
+            branch_list(rap::sys::http_get(gitlab_project(r) + "/repository/branches?per_page=100",
+                                           {.headers = headers}),
+                        100);
     std::vector<pull_request>& out = answer.prs;
     for (const json::value& m : j->elements())
     {
@@ -810,8 +842,8 @@ repo_access gitea_access(const forge_repo& r, std::string_view token)
     return (*j)["permissions"]["push"].boolean() ? repo_access::write : repo_access::read;
 }
 
-std::expected<pull_requests_reply, std::string> gitea_pulls(const forge_repo& r,
-                                                            std::string_view token, bool ask_access)
+std::expected<pull_requests_reply, std::string>
+gitea_pulls(const forge_repo& r, std::string_view token, bool ask_access, bool ask_tips)
 {
     const auto headers = api_headers(forge_kind::gitea, token);
     const std::string root = repo_api(forge_kind::gitea, r);
@@ -822,6 +854,10 @@ std::expected<pull_requests_reply, std::string> gitea_pulls(const forge_repo& r,
     if (reply.status != 200 || !j) return std::unexpected(failure(reply, j));
     pull_requests_reply answer{.access =
                                    ask_access ? gitea_access(r, token) : repo_access::unknown};
+    // (Gitea's pages are 50 at most, unless the server says otherwise.)
+    if (ask_tips)
+        answer.tips =
+            branch_list(rap::sys::http_get(root + "/branches?limit=50", {.headers = headers}), 50);
     std::vector<pull_request>& out = answer.prs;
     for (const json::value& p : j->elements())
     {
@@ -1097,14 +1133,16 @@ std::int64_t parse_iso_time(std::string_view s)
     return days * 86400 + hour * 3600 + minute * 60 + second - offset;
 }
 
-std::expected<pull_requests_reply, std::string>
-open_pull_requests(forge_kind k, const forge_repo& r, std::string_view token, bool ask_access)
+std::expected<pull_requests_reply, std::string> open_pull_requests(forge_kind k,
+                                                                   const forge_repo& r,
+                                                                   std::string_view token,
+                                                                   bool ask_access, bool ask_tips)
 {
     switch (k)
     {
-    case forge_kind::github: return github_pulls(r, token);
-    case forge_kind::gitlab: return gitlab_pulls(r, token, ask_access);
-    case forge_kind::gitea: return gitea_pulls(r, token, ask_access);
+    case forge_kind::github: return github_pulls(r, token, ask_tips);
+    case forge_kind::gitlab: return gitlab_pulls(r, token, ask_access, ask_tips);
+    case forge_kind::gitea: return gitea_pulls(r, token, ask_access, ask_tips);
     }
     return {};
 }

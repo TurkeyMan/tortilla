@@ -289,6 +289,8 @@ ref_map repo::refs() const
             ref.kind = ref_kind::stash;
             ref.name = "stash";
         }
+        else if (is_prefetch_ref(full))
+            continue;
         else
             ref.name = full.starts_with("refs/") ? strip("refs/") : std::string(full);
         ref.upstream = f[4];
@@ -370,7 +372,7 @@ bool walks_ref(walk_refs refs, std::string_view full_name)
 {
     switch (refs)
     {
-    case walk_refs::all: return true;
+    case walk_refs::all: return !is_prefetch_ref(full_name);
     case walk_refs::basic:
         return full_name.starts_with("refs/heads/") || full_name.starts_with("refs/remotes/") ||
                full_name.starts_with("refs/tags/");

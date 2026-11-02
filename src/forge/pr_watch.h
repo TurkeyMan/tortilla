@@ -90,8 +90,10 @@ std::string hint_text(const forge_remote&);
 class pr_watch
 {
 public:
-    // `changed` after each answer that changes what's known.
-    pr_watch(rap::ui&, std::string workdir, std::function<void()> changed);
+    // `changed` after each answer that changes what's known. `branch_tips`:
+    // want_branch_tips from the first ask.
+    pr_watch(rap::ui&, std::string workdir, std::function<void()> changed,
+             bool branch_tips = false);
     ~pr_watch();
 
     // Asks now: after a push, a fetch, or a PR made or merged here.
@@ -111,6 +113,12 @@ public:
     // The remotes asked as no one that came back hidden: signing in may show
     // their pull requests (hint_text says so).
     const std::vector<forge_remote>& hints() const { return hints_; }
+    // Whether to ask for the remotes' branches too, for the log's sync; from
+    // the next ask on. Never as no one on GitHub (its allowance is short).
+    void want_branch_tips(bool on) { want_tips_ = on; }
+    // The branches of each forge remote that answered the last ask, by
+    // remote name.
+    const std::map<std::string, remote_tips, std::less<>>& branch_tips() const { return tips_; }
 
     // Every open watch's hints, each repository once: for Settings >
     // Accounts. The UI thread's.
@@ -126,6 +134,8 @@ private:
     std::function<void()> changed_;
     std::vector<forge_remote> remotes_;
     std::vector<open_pr> prs_;
+    std::map<std::string, remote_tips, std::less<>> tips_;
+    bool want_tips_ = false;
     std::string error_;
     std::map<std::string, repo_access> access_;  // by access_key
     std::vector<forge_remote> hints_;

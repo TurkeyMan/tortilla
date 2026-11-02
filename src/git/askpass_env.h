@@ -12,6 +12,9 @@ namespace tortilla
 {
 
 inline constexpr const char* k_askpass_marker = "TORTILLA_ASKPASS";
+// Its value for git that mustn't ask (git_prompts::never): the answer is
+// no, at once, with no window.
+inline constexpr const char* k_askpass_never = "never";
 
 std::vector<std::pair<std::string, std::string>> askpass_environment();
 

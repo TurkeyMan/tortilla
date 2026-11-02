@@ -198,6 +198,20 @@ enum class repo_access
 // fraction or an offset too), in seconds since 1970; 0 if it isn't one.
 std::int64_t parse_iso_time(std::string_view);
 
+// A branch on a remote, and the commit it's at.
+struct branch_tip
+{
+    std::string name, sha;  // name without refs/heads/
+};
+// A remote's branches as it lists them. A long list comes in pages: then
+// only the first, and `complete` is false (a branch missing from it may
+// still be there).
+struct remote_tips
+{
+    std::vector<branch_tip> branches;
+    bool complete = true;
+};
+
 // The repository's open pull requests (merge requests on GitLab), with their
 // checks: the newest hundred; and what the token may do there. Hidden (404,
 // or 403 signed in) isn't a failure: there's nothing to show. An empty token
@@ -208,11 +222,18 @@ struct pull_requests_reply
     std::vector<pull_request> prs;
     repo_access access = repo_access::unknown;
     bool rate_limited = false;  // GitHub's allowance ran out: nothing was asked
+    // Its branches, when asked for and the forge said: for telling a fetch
+    // has something to bring.
+    std::optional<remote_tips> tips;
 };
 // `ask_access`: GitLab's and Gitea's take a request more (GitHub's comes
-// with the list), wanted once.
-std::expected<pull_requests_reply, std::string>
-open_pull_requests(forge_kind, const forge_repo&, std::string_view token, bool ask_access = true);
+// with the list), wanted once. `ask_tips`: the branches too, in the same
+// query on GitHub signed in, a request more on GitLab and Gitea; never as
+// no one on GitHub (its allowance is short: ls-remote costs none of it).
+std::expected<pull_requests_reply, std::string> open_pull_requests(forge_kind, const forge_repo&,
+                                                                   std::string_view token,
+                                                                   bool ask_access = true,
+                                                                   bool ask_tips = false);
 
 // GitHub's REST answers, as no one, for the tests: a /pulls list, and the
 // checks from an /actions/runs list (each workflow's latest run on a head)

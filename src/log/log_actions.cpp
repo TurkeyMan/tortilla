@@ -92,7 +92,7 @@ void log_window::run_ref_commands(const std::string& title, std::vector<arg_list
 
 void log_window::run_quietly(const std::string& title, std::vector<arg_list> commands,
                              std::function<void(bool ok, const std::string& output)> after,
-                             bool show_failure)
+                             bool show_failure, git_prompts prompts)
 {
     // One after another; the first failure stops the rest.
     struct command_run
@@ -103,7 +103,7 @@ void log_window::run_quietly(const std::string& title, std::vector<arg_list> com
     };
     auto run = std::make_shared<command_run>(command_run{std::move(commands)});
     auto step = std::make_shared<std::function<void()>>();
-    *step = [this, title, run, after, show_failure,
+    *step = [this, title, run, after, show_failure, prompts,
              weak_step = std::weak_ptr<std::function<void()>>(step)]
     {
         if (run->next == run->commands.size())
@@ -127,7 +127,8 @@ void log_window::run_quietly(const std::string& title, std::vector<arg_list> com
                                                 .text = rap::i18n::format(_("{0} failed."), title),
                                                 .detail = run->output});
                 if (after) after(false, run->output);  // an earlier command may have succeeded
-            });
+            },
+            git_output::all, prompts);
     };
     (*step)();
 }
@@ -141,6 +142,7 @@ void log_window::refs_changed()
             update_ref_button();
             update_pull_requests();
             if (pr_watch_) pr_watch_->nudge();  // a push or fetch may have changed them
+            recheck_changes();
             if (auto sel = commit_list_->selection(); sel.size() == 1) show_commit(sel.front());
         });
 }
@@ -1359,15 +1361,15 @@ void log_window::close_pull_request(const open_pr& p)
     windows::keep(std::move(d));
 }
 
+// The same as the Fetch button, for that remote.
 void log_window::fetch_after_forge(const std::string& remote)
 {
-    status_->set_text(rap::i18n::format(_("Fetching {0}..."), remote));
-    run_quietly(_("Fetch"), {{"fetch", "--prune", remote}},
-                [this](bool, const std::string&)
-                {
-                    refs_changed();
-                    update_status();
-                });
+    sync(remote);
+}
+
+void log_window::keep_pull_dialog()
+{
+    keep_dialog(pull_fetch_dialog::open(ui_, repo_.workdir(), true));
 }
 
 // What can be done with a PR: its submenu on the branch's menu, and the
