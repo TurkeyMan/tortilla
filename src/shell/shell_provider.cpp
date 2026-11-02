@@ -119,7 +119,8 @@ bool is_submodule(const fs::path& top)
     if (!top.has_relative_path() || top.parent_path() == top) return false;
     auto outer = find_work_tree(top.parent_path());
     if (!outer) return false;
-    const std::string rel = top.lexically_relative(outer->top).generic_string();
+    const std::u8string generic = top.lexically_relative(outer->top).generic_u8string();
+    const std::string rel(generic.begin(), generic.end());
     std::ifstream in(outer->top / ".gitmodules");
     for (std::string line; std::getline(in, line);)
     {
@@ -162,7 +163,8 @@ uint32_t admin_dir_mask(const fs::path& path)
 
 bool is_patch(const fs::path& p)
 {
-    std::string ext = p.extension().string();
+    const std::u8string u = p.extension().u8string();
+    std::string ext(u.begin(), u.end());
     for (char& c : ext) c = char(std::tolower(static_cast<unsigned char>(c)));
     return ext == ".diff" || ext == ".patch";
 }

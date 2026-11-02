@@ -274,6 +274,30 @@ int main(int argc, char** argv)
                   git(h.repo, {"show", "HEAD~1:" + name}) == "resolved\n",
               "quoted name: resolved and committed");
     }
+    // A repository under a non-ASCII folder: the engine's own files (the
+    // marker, the message) and the markers check open by UTF-8 path, which
+    // on Windows the narrow C calls couldn't.
+    {
+        harness h(**ui, make_repo(root, "r\xc3\xa9po \xe2\x82\xac", true));
+        h.start();
+        check(h.engine->stage() == rebase_stage::conflict &&
+                  std::filesystem::exists(rap::sys::path_from_utf8(h.repo) / ".git" /
+                                          "tortilla-rebase-active"),
+              "non-ASCII folder: stops at F2, marked as rebasing");
+        h.engine->resume("F2\n");
+        h.settle();
+        check(h.engine->stage() == rebase_stage::conflict &&
+                  h.log.find("WARN") != std::string::npos,
+              "non-ASCII folder: the markers seen");
+        sh("printf 'resolved\\n' > '" + h.repo + "/shared.txt'");
+        h.engine->resume("F2 (resolved)\n");
+        h.settle();
+        check(h.engine->stage() == rebase_stage::done &&
+                  git(h.repo, {"log", "-1", "--format=%s", "HEAD~1"}) == "F2 (resolved)\n" &&
+                  !std::filesystem::exists(rap::sys::path_from_utf8(h.repo) / ".git" /
+                                           "tortilla-rebase-active"),
+              "non-ASCII folder: the message written, the marker removed");
+    }
     // Fast-forward: the branch moves to main, and no rebase is left marked
     // as going on (a later merge's conflicts would take the sides swapped).
     {

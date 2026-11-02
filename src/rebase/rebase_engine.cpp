@@ -2,9 +2,13 @@
 
 #include "i18n.h"
 
+#include <rapport/sys.h>
+
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <string_view>
+#include <system_error>
 #include <unordered_set>
 
 namespace tortilla
@@ -12,10 +16,18 @@ namespace tortilla
 namespace
 {
 
+// Paths are UTF-8 here; on Windows the narrow C calls would read them in the
+// ANSI code page, so they go through std::filesystem and rap::sys.
+void remove_file(const std::string& path)
+{
+    std::error_code ec;
+    std::filesystem::remove(rap::sys::path_from_utf8(path), ec);
+}
+
 // Lines git writes around conflicting hunks.
 bool has_conflict_markers(const std::string& path)
 {
-    std::FILE* f = std::fopen(path.c_str(), "r");
+    std::FILE* f = rap::sys::fopen(rap::sys::path_from_utf8(path), "rb");
     if (!f) return false;
     char line[4096];
     bool found = false;
@@ -119,7 +131,7 @@ void rebase_engine::run(std::vector<std::string> args, done_fn done, bool quiet)
 void rebase_engine::start(const start_args& s)
 {
     start_ = s;
-    if (std::FILE* f = std::fopen(active_file_.c_str(), "w"))
+    if (std::FILE* f = rap::sys::fopen(rap::sys::path_from_utf8(active_file_), "wb"))
     {
         std::fprintf(f, "onto=%s\nbranch=%s\n", s.onto_name.c_str(), s.branch.c_str());
         std::fclose(f);
@@ -140,7 +152,7 @@ void rebase_engine::start(const start_args& s)
                 if (code != 0) return stop(rebase_stage::error);
                 // Done, so no longer a rebase: the marker would swap a later
                 // merge's mine and theirs.
-                std::remove(active_file_.c_str());
+                remove_file(active_file_);
                 hooks_.log(rap::i18n::format(_("Fast forward to \"{0}\""), start_.onto.hex(8)) +
                                "\n",
                            true);
@@ -278,7 +290,7 @@ void rebase_engine::advance()
 
 void rebase_engine::write_message(const std::string& message)
 {
-    if (std::FILE* f = std::fopen(msg_file_.c_str(), "w"))
+    if (std::FILE* f = rap::sys::fopen(rap::sys::path_from_utf8(msg_file_), "wb"))
     {
         std::fwrite(message.data(), 1, message.size(), f);
         std::fclose(f);
@@ -394,8 +406,8 @@ void rebase_engine::finish()
         [this](int code, auto&)
         {
             if (code != 0) return stop(rebase_stage::error);
-            std::remove(msg_file_.c_str());
-            std::remove(active_file_.c_str());
+            remove_file(msg_file_);
+            remove_file(active_file_);
             hooks_.log(std::string(_("Finished rebasing.")) + "\n", true);
             stop(rebase_stage::done);
         });
@@ -434,8 +446,8 @@ void rebase_engine::abort(std::function<void()> done)
                                             "\n\n" + output);
                                 return stop(rebase_stage::error);
                             }
-                            std::remove(msg_file_.c_str());
-                            std::remove(active_file_.c_str());
+                            remove_file(msg_file_);
+                            remove_file(active_file_);
                             hooks_.log(std::string(_("Rebase aborted.")) + "\n", true);
                             stage_ = rebase_stage::done;
                             hooks_.stage_changed();
