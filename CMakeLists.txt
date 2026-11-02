@@ -123,6 +123,7 @@ add_executable(tortilla
     src/ui/submodule_dialogs.cpp
     src/ui/svn_dialogs.cpp
     src/ui/patch_serial_dialogs.cpp
+    src/ui/review_patch.cpp
     src/ui/reset_dialog.cpp
     src/ui/remotes_page.cpp
     src/ui/accounts_page.cpp

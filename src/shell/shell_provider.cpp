@@ -895,6 +895,7 @@ public:
         case run::svn_fetch: rap::shell::launch(tortilla_exe(), {"svnfetch", folder}); return;
         case run::svn_ignore: rap::shell::launch(tortilla_exe(), {"svnignore", folder}); return;
         case run::format_patch: rap::shell::launch(tortilla_exe(), {"formatpatch", folder}); return;
+        case run::review_patch: rap::shell::launch(tortilla_exe(), {"reviewpatch", first}); return;
         case run::import_patch:
         {
             std::vector<std::string> args{"importpatch"};
