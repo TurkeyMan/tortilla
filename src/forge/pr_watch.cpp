@@ -9,6 +9,7 @@
 #include <cctype>
 #include <charconv>
 #include <cstdint>
+#include <ctime>
 #include <limits>
 #include <map>
 #include <mutex>
@@ -206,6 +207,10 @@ struct pr_watch::shared
     std::map<std::string, repo_access> access;  // by access_key
     std::map<std::string, std::int64_t> anonymous_asked;
     bool alive = true;
+    // The quick asks' (one worker at a time uses them): replies by URL with
+    // their ETags, and each workflow's last time.
+    etag_cache etags;
+    std::map<std::int64_t, std::int64_t> durations;
 };
 
 pr_watch::pr_watch(rap::ui& ui, std::string workdir, std::function<void()> changed,
@@ -363,6 +368,7 @@ void pr_watch::ask(bool forced)
                                                  { return h.repo == r.repo; }))
                             hints_.push_back(r);
                     if (changed_) changed_();
+                    update_fast_timer();
                     if (std::exchange(again_, false))
                         ask(std::exchange(again_forced_, false));
                     else
@@ -386,10 +392,196 @@ void pr_watch::schedule()
 {
     const bool running = std::ranges::any_of(prs_, [](const open_pr& p)
                                              { return p.pr.checks == check_state::pending; });
+    // With the quick asks watching running checks, the list needn't hurry.
     const bool only_anonymous = std::ranges::all_of(remotes_, anonymous_github);
-    const int seconds =
-        poll_seconds(!error_.empty(), running, only_anonymous, anonymous_budget(), now_seconds());
+    const int seconds = poll_seconds(!error_.empty(), running && fast_.empty(), only_anonymous,
+                                     anonymous_budget(), now_seconds());
     timer_ = ui_.timer(seconds * 1000, false, [this] { ask(false); });
+}
+
+void pr_watch::watch(std::optional<std::string> sha, std::optional<forge_remote> where,
+                     bool pending)
+{
+    watched_ = std::move(sha);
+    watched_where_ = std::move(where);
+    watched_pending_ = watched_ && watched_where_ && pending;
+    update_fast_timer();
+}
+
+namespace
+{
+
+// The earliest start of the runs still going: when the checks began, for
+// how far through they are.
+std::int64_t running_since(const std::vector<check_run>& runs)
+{
+    std::int64_t since = 0;
+    for (const check_run& r : runs)
+        if (r.state == check_state::pending && r.started_at && (!since || r.started_at < since))
+            since = r.started_at;
+    return since;
+}
+
+}  // namespace
+
+void pr_watch::update_fast_timer()
+{
+    // GitHub's only: GitLab's and Gitea's checks wait for the list's ask.
+    const bool any = (watched_pending_ && watched_where_->account.kind == forge_kind::github) ||
+                     std::ranges::any_of(prs_,
+                                         [](const open_pr& p)
+                                         {
+                                             return p.pr.checks == check_state::pending &&
+                                                    p.into.account.kind == forge_kind::github;
+                                         });
+    if (!any)
+    {
+        fast_timer_.reset();
+        fast_.clear();
+        return;
+    }
+    if (!fast_timer_) fast_timer_ = ui_.timer(1000, true, [this] { fast_tick(); });
+}
+
+void pr_watch::fast_tick()
+{
+    const auto now = std::chrono::steady_clock::now();
+    const std::int64_t wall = std::int64_t(std::time(nullptr));
+    // Who's due: the plan's, in its order.
+    std::vector<pending_head> pending;
+    std::map<std::string, forge_remote> where;
+    // Signed in, every pending PR; as no one, GitHub's allowance is short.
+    for (const open_pr& p : prs_)
+        if (p.pr.checks == check_state::pending && p.into.account.kind == forge_kind::github &&
+            p.into.signed_in() && !where.contains(p.pr.head_sha))
+        {
+            pending.push_back({.sha = p.pr.head_sha,
+                               .started_at = running_since(p.pr.runs),
+                               .expected = fast_[p.pr.head_sha].expected});
+            where.emplace(p.pr.head_sha, p.into);
+        }
+    std::optional<pending_head> watched;
+    if (watched_pending_ && watched_where_->account.kind == forge_kind::github)
+    {
+        std::int64_t since = 0;
+        for (const open_pr& p : prs_)
+            if (p.pr.head_sha == *watched_) since = running_since(p.pr.runs);
+        watched = pending_head{
+            .sha = *watched_, .started_at = since, .expected = fast_[*watched_].expected};
+        where.insert_or_assign(*watched_, *watched_where_);
+    }
+    // The watched one as no one only while the allowance lasts.
+    const bool anonymous = watched && !watched_where_->signed_in();
+    auto plan = plan_fast_polls(pending, anonymous ? std::nullopt : watched, wall, true, 0);
+    if (anonymous)
+    {
+        const int left = budget_allows(anonymous_budget(), 1, 31, wall) ? 31 : 0;
+        auto first = plan_fast_polls({}, watched, wall, false, left);
+        plan.insert(plan.begin(), first.begin(), first.end());
+    }
+    std::erase_if(fast_,
+                  [&](const auto& f)
+                  {
+                      return std::ranges::none_of(plan, [&](const fast_poll& p)
+                                                  { return p.sha == f.first; });
+                  });
+    if (plan.empty())
+    {
+        update_fast_timer();
+        return;
+    }
+    if (fast_busy_ || now < backoff_until_) return;
+
+    struct ask
+    {
+        std::string sha;
+        forge_remote where;
+        bool expected_known;
+    };
+    std::vector<ask> due;
+    for (const fast_poll& p : plan)
+    {
+        fast_state& f = fast_[p.sha];
+        // Just seen running: its first quick ask after one interval.
+        if (f.due == std::chrono::steady_clock::time_point{}) f.due = now + p.interval;
+        if (f.due > now) continue;
+        f.due = now + p.interval;
+        due.push_back({p.sha, where.at(p.sha), f.expected_known});
+    }
+    if (due.empty()) return;
+    fast_busy_ = true;
+    std::thread(
+        [this, sh = shared_, due = std::move(due), &ui = ui_]
+        {
+            struct answer
+            {
+                std::string sha;
+                std::optional<commit_runs> runs;
+                std::optional<std::int64_t> expected;
+            };
+            std::vector<answer> answers;
+            std::chrono::seconds wait{0};
+            for (const ask& a : due)
+            {
+                std::string token;
+                {
+                    std::lock_guard lock(sh->mutex);
+                    if (!sh->alive) return;
+                    token = sh->tokens[a.where.account.host + ' ' + a.where.account.login];
+                }
+                // Signed in, the list's ask fetches the token first.
+                if (token.empty() && a.where.signed_in()) continue;
+                answer got{.sha = a.sha};
+                // The worker's alone with these: one at a time. As no one,
+                // the workflows' times aren't worth the allowance.
+                if (!a.expected_known && a.where.signed_in())
+                    got.expected = expected_duration(a.where.repo, a.sha, token, sh->durations);
+                if (auto r = poll_commit_runs(a.where.repo, a.sha, token, sh->etags))
+                {
+                    wait = std::max(wait, r->retry_after);
+                    if (!r->retry_after.count()) got.runs = std::move(*r);
+                }
+                answers.push_back(std::move(got));
+                if (wait.count()) break;  // asked to slow down: the rest later
+            }
+            ui.post(
+                [this, sh, answers = std::move(answers), wait]
+                {
+                    {
+                        std::lock_guard lock(sh->mutex);
+                        if (!sh->alive) return;
+                    }
+                    fast_busy_ = false;
+                    if (wait.count()) backoff_until_ = std::chrono::steady_clock::now() + wait;
+                    bool changed = false;
+                    for (const answer& a : answers)
+                    {
+                        if (a.expected)
+                        {
+                            fast_[a.sha].expected = *a.expected;
+                            fast_[a.sha].expected_known = true;
+                        }
+                        if (!a.runs || !a.runs->changed) continue;
+                        // The label's mark and tooltip at once; a finished
+                        // head drops out of the plan.
+                        for (open_pr& p : prs_)
+                            if (p.pr.head_sha == a.sha && !a.runs->runs.empty())
+                            {
+                                p.pr.runs = a.runs->runs;
+                                p.pr.checks = a.runs->state;
+                                changed = true;
+                            }
+                        if (watched_ == a.sha)
+                        {
+                            if (a.runs->state != check_state::pending) watched_pending_ = false;
+                            if (commit_checks_) commit_checks_(a.sha, *a.runs);
+                        }
+                    }
+                    if (changed && changed_) changed_();
+                    update_fast_timer();
+                });
+        })
+        .detach();
 }
 
 }  // namespace tortilla

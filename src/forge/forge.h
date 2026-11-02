@@ -144,6 +144,7 @@ struct check_run
     check_state state = check_state::none;
     // Seconds since 1970; 0 when the forge doesn't say.
     std::int64_t started_at = 0, completed_at = 0;
+    std::string url;  // its page on the forge; may be empty
 };
 
 // What stands in the way of merging, besides the checks.
@@ -156,6 +157,20 @@ enum class merge_block
     draft,
     discussions,    // threads to resolve (GitLab)
     blocked_other,  // the forge's other rules
+};
+
+// A reviewer's say on a pull request, latest first per reviewer.
+struct pr_review
+{
+    enum class verdict
+    {
+        approved,
+        changes_requested,
+        commented,
+        requested,  // asked to review, not yet done
+    };
+    std::string who;  // a login, or a team's name
+    verdict say = verdict::commented;
 };
 
 struct pull_request
@@ -182,6 +197,16 @@ struct pull_request
     // (that's a request a PR), and its checks are asked only while the
     // hourly allowance lasts: what's not known isn't "none".
     bool merge_known = true, checks_known = true;
+    std::string author_avatar;  // their picture's address; may be empty
+    // Its description: GitLab's and Gitea's lists have it; GitHub's is
+    // asked for when it's shown (pull_request_details).
+    std::string body;
+    bool body_known = false;
+    // Its reviewers: GitHub's, GitLab's approvals and Gitea's
+    // reviews asked for when it's shown (GitLab's and Gitea's list has
+    // those asked to review).
+    std::vector<pr_review> reviews;
+    bool reviews_known = false;
 };
 
 // What the signed-in user (or no one) may do with a repository.

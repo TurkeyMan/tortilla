@@ -125,7 +125,7 @@ pr_mark mark_of(const pull_request& pr)
             .conflicts = pr.conflicts};
 }
 
-std::string pr_tooltip(const pull_request& pr, std::int64_t now)
+std::string checks_text(const pull_request& pr, std::int64_t now)
 {
     // The runs that ran (or will): a GitLab job skipped or left to start by
     // hand doesn't count.
@@ -148,7 +148,7 @@ std::string pr_tooltip(const pull_request& pr, std::int64_t now)
     }
     if (!running_since) running_since = first_start;
 
-    std::vector<std::string> parts{"#" + count(pr.number)};
+    std::vector<std::string> parts;
     const bool pipe = pr.pipeline;
     switch (pr.checks)
     {
@@ -203,21 +203,38 @@ std::string pr_tooltip(const pull_request& pr, std::int64_t now)
         break;
     }
     }
+    std::string out;
+    for (const std::string& p : parts) out += (out.empty() ? "" : " · ") + p;
+    return out;
+}
 
+std::string merge_text(const pull_request& pr)
+{
     // What stands in the way of a merge; that nothing does only once the
     // checks are through, or when there are none, and the forge has said.
+    std::string out;
     if (pr.blocks.empty())
     {
         if (pr.merge_known && pr.checks_known &&
             (pr.checks == check_state::success || pr.checks == check_state::none))
-            parts.push_back(_("Can be merged"));
+            out = _("Can be merged");
     }
     else
-        for (merge_block b : pr.blocks) parts.push_back(block_text(b, pr));
-
-    std::string out;
-    for (const std::string& p : parts) out += (out.empty() ? "" : " · ") + p;
+        for (merge_block b : pr.blocks) out += (out.empty() ? "" : " · ") + block_text(b, pr);
     return out;
+}
+
+std::string pr_tooltip(const pull_request& pr, std::int64_t now)
+{
+    std::string out = "#" + count(pr.number);
+    if (std::string checks = checks_text(pr, now); !checks.empty()) out += " · " + checks;
+    if (std::string merge = merge_text(pr); !merge.empty()) out += " · " + merge;
+    return out;
+}
+
+std::string check_duration(std::int64_t seconds, bool to_the_minute)
+{
+    return duration_text(seconds, to_the_minute);
 }
 
 void paint_check_mark(rap::painter& p, rap::point_f c, float d, check_state s, mergeable m)

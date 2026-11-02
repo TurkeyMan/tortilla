@@ -7,7 +7,10 @@
 #include "cache/channel.h"
 #include "changes/file_model.h"
 #include "changes/working_tree.h"
+#include "forge/ci.h"
+#include "forge/ci_poll.h"
 #include "forge/forge.h"
+#include "forge/pr_details.h"
 #include "forge/pr_watch.h"
 #include "forge/remote_sign_in.h"
 #include "git/archive.h"
@@ -366,6 +369,10 @@ int main(int argc, char** argv)
                 many.runs.push_back(run(std::string(1, char('a' + i)), check_state::failure, 0, 0));
             check(pr_tooltip(many, t0) == "#1 · 6 of 6 checks failed: a, b, c, d and 2 more",
                   "pr tooltip: a long list cut short");
+            check(checks_text(passed, t0 + 999) == "Checks passed in 6 min 12 s" &&
+                      merge_text(review) == "Needs an approving review" &&
+                      merge_text(failed).empty(),
+                  "pr tooltip: its parts, for the forge panel");
             // Asked as no one: what GitHub's list doesn't say isn't claimed.
             pull_request unknown{.number = 3, .merge_known = false, .checks_known = false};
             check(pr_tooltip(unknown, t0) == "#3", "pr tooltip: unknown checks and merge, unsaid");
@@ -546,6 +553,146 @@ int main(int argc, char** argv)
                       std::ranges::any_of(api_headers(forge_kind::gitea, "t"),
                                           [](const auto& h) { return h.second == "token t"; }),
                   "forge: no Authorization as no one");
+        }
+        // The forge panel's build: failures first, a matrix's names, a log's tail.
+        {
+            using namespace tortilla;
+            commit_ci ci;
+            ci.workflows = {
+                {.name = "Lint", .jobs = {{.name = "lint", .state = check_state::success}}},
+                {.name = "Tests",
+                 .jobs = {{.name = "build (ubuntu)", .state = check_state::success},
+                          {.name = "build (windows)", .state = check_state::failure},
+                          {.name = "build (macos)", .state = check_state::pending},
+                          {.name = "docs", .state = check_state::failure}}},
+                {.name = "Deploy", .jobs = {{.name = "deploy", .state = check_state::pending}}}};
+            order_failures_first(ci);
+            std::string order;
+            for (const ci_workflow& w : ci.workflows)
+            {
+                order += w.name + ":";
+                for (const ci_job& j : w.jobs) order += " " + j.name;
+                order += "; ";
+            }
+            check(order == "Tests: build (windows) docs build (macos) build (ubuntu); Deploy: "
+                           "deploy; Lint: lint; ",
+                  "ci: failures first, then what runs, as listed otherwise");
+            check(ci.state() == check_state::failure && !ci.empty() && commit_ci{}.empty() &&
+                      commit_ci{}.state() == check_state::none,
+                  "ci: the commit's state, combined");
+            check(matrix_parts("build (fedora arm64)") ==
+                          std::pair<std::string_view, std::string_view>{"build", "fedora arm64"} &&
+                      matrix_parts("lint").second.empty() &&
+                      matrix_parts("odd (x) y").first == "odd (x) y",
+                  "ci: a matrix job's name and its variant");
+            const std::string log = "2026-11-01T01:04:45.0326415Z ##[group]Run make\n"
+                                    "2026-11-01T01:04:45.0326415Z make all\n"
+                                    "2026-11-01T01:04:45.0326415Z ##[endgroup]\n"
+                                    "2026-11-01T01:06:06.1477295Z builtin.c: undefined `drem'\n"
+                                    "2026-11-01T01:06:06.1691857Z ##[error]Process completed with "
+                                    "exit code 2.\n"
+                                    "2026-11-01T01:06:06.1787025Z ##[group]Run upload\n"
+                                    "2026-11-01T01:06:06.1787025Z uploading\n";
+            check(log_tail(log, 2) == "builtin.c: undefined `drem'\nProcess completed with exit "
+                                      "code 2.",
+                  "ci: a GitHub log's tail ends at the error, without timestamps");
+            check(log_tail("\x1b[0Ksection_start:1:step_script\r\x1b[0K$ make\n"
+                           "\x1b[31;1mERROR: Job failed\x1b[0;m\n\n",
+                           5) == "$ make\nERROR: Job failed",
+                  "ci: a GitLab trace's tail, without colours or sections");
+        }
+        // Quick asks after running checks: how often, and which.
+        {
+            using namespace tortilla;
+            using std::chrono::seconds;
+            check(fast_interval(0, 600, true) == seconds(10) &&
+                      fast_interval(240, 600, true) == seconds(9) &&
+                      fast_interval(480, 600, true) == seconds(5) &&
+                      fast_interval(9000, 600, true) == seconds(5),
+                  "fast polls: the watched commit, gently, then faster near its expected end");
+            check(fast_interval(0, 600, false) == seconds(30) &&
+                      fast_interval(480, 600, false) == seconds(15) &&
+                      fast_interval(100, 0, false) == seconds(20) &&
+                      fast_interval(100, 0, true) == seconds(8),
+                  "fast polls: the others more slowly; unknown times in between");
+            const std::int64_t now = 10'000;
+            std::vector<pending_head> pending;
+            for (int i = 0; i < 25; ++i)
+                pending.push_back(
+                    {.sha = "pr" + std::to_string(i), .started_at = now - 60, .expected = 600});
+            const pending_head shown{.sha = "shown", .started_at = now - 500, .expected = 600};
+            auto plan = plan_fast_polls(pending, shown, now, true, 0);
+            check(plan.size() == k_fast_poll_cap && plan[0].sha == "shown" && plan[0].watched &&
+                      plan[0].interval == seconds(5) && plan[1].sha == "pr0" &&
+                      plan[1].interval == seconds(30) && plan.back().sha == "pr18",
+                  "fast polls: the watched first, then the newest PRs, twenty in all");
+            plan = plan_fast_polls(pending, pending_head{.sha = "pr3"}, now, true, 0);
+            check(plan.size() == k_fast_poll_cap && plan[0].sha == "pr3" &&
+                      std::ranges::count(plan, std::string("pr3"), &fast_poll::sha) == 1,
+                  "fast polls: a watched PR head once");
+            check(plan_fast_polls(pending, std::nullopt, now, true, 0).size() == k_fast_poll_cap &&
+                      plan_fast_polls({}, std::nullopt, now, true, 0).empty(),
+                  "fast polls: none without running checks");
+            check(plan_fast_polls(pending, shown, now, false, 31).size() == 1 &&
+                      plan_fast_polls(pending, shown, now, false, 30).empty() &&
+                      plan_fast_polls(pending, std::nullopt, now, false, 60).empty(),
+                  "fast polls: without a token, only the watched one, while the budget lasts");
+        }
+        // Reviews summed up, each reviewer once by their latest say.
+        {
+            using namespace tortilla;
+            using v = pr_review::verdict;
+            const review_summary s = summarise_reviews({{"ada", v::approved},
+                                                        {"bob", v::commented},
+                                                        {"cy", v::changes_requested},
+                                                        {"ada", v::commented},
+                                                        {"dee", v::requested},
+                                                        {"bob", v::approved},
+                                                        {"cy", v::requested},
+                                                        {"", v::approved}});
+            using names = std::vector<std::string>;
+            check(s.approved == names{"ada", "bob"} && s.changes_requested.empty() &&
+                      s.commented.empty() && s.waiting == names{"cy", "dee"},
+                  "reviews: latest say each; a comment keeps an approval, asking again waits");
+        }
+        // Which commits are a pull request's: its head's, not its base's.
+        {
+            const std::string dir = std::string(argv[1]) + "/pr-members";
+            const std::string id = " -c user.name=Ada -c user.email=ada@example.com";
+            tortilla::test::sh(
+                "git init -q -b main '" + dir + "' && cd '" + dir + "' && git" + id +
+                " commit -q --allow-empty -m base1 && git" + id +
+                " commit -q --allow-empty -m base2 && git update-ref "
+                "refs/remotes/origin/main HEAD && git checkout -q -b feature && git" +
+                id + " commit -q --allow-empty -m one && git" + id +
+                " commit -q --allow-empty -m two && git update-ref "
+                "refs/remotes/fork/feature HEAD && git" +
+                id + " commit -q --allow-empty -m local");
+            auto rev = [&](const std::string& r)
+            {
+                std::string out =
+                    tortilla::run_git(dir, {"rev-parse", r}, tortilla::git_output::stdout_only)
+                        .output;
+                while (!out.empty() && out.back() == '\n') out.pop_back();
+                return out;
+            };
+            const auto commits = tortilla::pull_request_commits(dir, "refs/remotes/fork/feature",
+                                                                "refs/remotes/origin/main");
+            check(commits.size() == 2 && commits[0] == rev("HEAD~1") && commits[1] == rev("HEAD~2"),
+                  "pr commits: its head first, then the middle");
+            check(std::ranges::find(commits, rev("main")) == commits.end() &&
+                      std::ranges::find(commits, rev("HEAD")) == commits.end(),
+                  "pr commits: not the base's, nor a commit past the pushed head");
+            check(tortilla::pull_request_commits(dir, "refs/remotes/fork/gone",
+                                                 "refs/remotes/origin/main")
+                      .empty(),
+                  "pr commits: none for a missing ref");
+            const std::vector<tortilla::forge_remote> remotes{{.name = "origin"}, {.name = "fork"}};
+            const auto* base = tortilla::remote_with_commit(dir, rev("main~1"), remotes);
+            const auto* pushed = tortilla::remote_with_commit(dir, rev("HEAD~1"), remotes);
+            check(base && base->name == "origin" && pushed && pushed->name == "fork" &&
+                      !tortilla::remote_with_commit(dir, rev("HEAD"), remotes),
+                  "pr commits: where a commit was pushed, the first remote that has it");
         }
 #ifndef _WIN32
         // The GitHub CLI's token, from a stand-in gh first on PATH.
