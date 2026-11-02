@@ -58,6 +58,40 @@ void settings::remove(const std::string& key)
     if (values_.erase(key)) save();
 }
 
+std::vector<std::string> history_entries(std::string_view stored)
+{
+    std::vector<std::string> out;
+    for (size_t at = 0; at < stored.size();)
+    {
+        size_t end = stored.find('\t', at);
+        if (end == std::string_view::npos) end = stored.size();
+        if (end > at) out.emplace_back(stored.substr(at, end - at));
+        at = end + 1;
+    }
+    return out;
+}
+
+std::string history_with(std::string_view stored, const std::string& entry, size_t keep)
+{
+    std::vector<std::string> entries = history_entries(stored);
+    std::erase(entries, entry);
+    entries.insert(entries.begin(), entry);
+    if (entries.size() > keep) entries.resize(keep);
+    std::string out;
+    for (const std::string& e : entries) out += (out.empty() ? "" : "\t") + e;
+    return out;
+}
+
+std::vector<std::string> settings::history(const std::string& key) const
+{
+    return history_entries(value(key));
+}
+
+void settings::add_to_history(const std::string& key, const std::string& entry, size_t keep)
+{
+    set(key, history_with(value(key), entry, keep));
+}
+
 void settings::save() const
 {
     std::FILE* f = rap::sys::fopen(settings_file(), "w");

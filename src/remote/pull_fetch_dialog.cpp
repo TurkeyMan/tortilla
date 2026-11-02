@@ -42,27 +42,12 @@ std::string title(const std::string& workdir, const char* what)
 // The URLs typed before, newest first (TortoiseGit's History\PullURLS).
 std::vector<std::string> url_history()
 {
-    std::vector<std::string> out;
-    const std::string s = settings::get().value("pull.urls");
-    for (size_t at = 0; at < s.size();)
-    {
-        size_t end = s.find('\t', at);
-        if (end == std::string::npos) end = s.size();
-        if (end > at) out.push_back(s.substr(at, end - at));
-        at = end + 1;
-    }
-    return out;
+    return settings::get().history("pull.urls");
 }
 
 void remember_url(const std::string& url)
 {
-    std::vector<std::string> urls = url_history();
-    std::erase(urls, url);
-    urls.insert(urls.begin(), url);
-    if (urls.size() > 25) urls.resize(25);
-    std::string s;
-    for (const std::string& u : urls) s += (s.empty() ? "" : "\t") + u;
-    settings::get().set("pull.urls", s);
+    settings::get().add_to_history("pull.urls", url);
 }
 
 }  // namespace

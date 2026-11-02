@@ -30,27 +30,12 @@ namespace fs = std::filesystem;
 // The URLs added before, newest first (TortoiseGit's History\SubModuleRepoURLS).
 std::vector<std::string> url_history()
 {
-    std::vector<std::string> out;
-    const std::string s = settings::get().value("subadd.urls");
-    for (size_t at = 0; at < s.size();)
-    {
-        size_t end = s.find('\t', at);
-        if (end == std::string::npos) end = s.size();
-        if (end > at) out.push_back(s.substr(at, end - at));
-        at = end + 1;
-    }
-    return out;
+    return settings::get().history("subadd.urls");
 }
 
 void remember_url(const std::string& url)
 {
-    std::vector<std::string> urls = url_history();
-    std::erase(urls, url);
-    urls.insert(urls.begin(), url);
-    if (urls.size() > 25) urls.resize(25);
-    std::string s;
-    for (const std::string& u : urls) s += (s.empty() ? "" : "\t") + u;
-    settings::get().set("subadd.urls", s);
+    settings::get().add_to_history("subadd.urls", url);
 }
 
 // `folder` from the working tree's top, with '/'; "" for the top itself (or
