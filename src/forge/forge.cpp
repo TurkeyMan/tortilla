@@ -1,5 +1,6 @@
 #include "forge.h"
 
+#include "forge/forge_detail.h"
 #include "i18n.h"
 #include "settings.h"
 #include "util/json.h"
@@ -569,14 +570,17 @@ check_run github_run(const json::value& c)
 {
     if (c["__typename"].str_is("StatusContext"))
     {
-        check_run run{.name = c["context"].str(), .state = github_rollup(c["state"].str())};
+        check_run run{.name = c["context"].str(),
+                      .state = github_rollup(c["state"].str()),
+                      .url = c["targetUrl"].str()};
         (run.state == check_state::pending ? run.started_at : run.completed_at) =
             time_of(c["createdAt"]);
         return run;
     }
     check_run run{.name = c["name"].str(),
                   .started_at = time_of(c["startedAt"]),
-                  .completed_at = time_of(c["completedAt"])};
+                  .completed_at = time_of(c["completedAt"]),
+                  .url = c["detailsUrl"].str()};
     const json::value conclusion = c["conclusion"];
     if (!c["status"].str_is("COMPLETED"))
         run.state = check_state::pending;
@@ -645,26 +649,34 @@ std::expected<pull_requests_reply, std::string> github_pulls(const forge_repo& r
     // One query for them all, checks included: what polling costs is one
     // request a repository. The branches' tips ride along, newest first.
     const std::string query =
-        std::string("query($owner:String!,$name:String!){repository(owner:$owner,name:$name){") +
+        std::string("query($owner:String!,$name:String!,$first:Int!){repository(owner:$owner,name:$"
+                    "name){") +
         (ask_tips ? "refs(refPrefix:\"refs/heads/\",first:100,"
                     "orderBy:{field:TAG_COMMIT_DATE,direction:DESC}){totalCount nodes{name "
                     "target{oid}}} "
                   : "") +
         "viewerPermission "
-        "pullRequests(states:OPEN,first:100,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{"
+        "pullRequests(states:OPEN,first:$first,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{"
         "number title url isDraft headRefName headRefOid baseRefName reviewDecision mergeable "
-        "mergeStateStatus author{login} "
+        "mergeStateStatus author{login avatarUrl} "
         "headRepository{name owner{login}} "
         "commits(last:1){nodes{commit{statusCheckRollup{state contexts(first:50){nodes{"
-        "__typename ... on CheckRun{name status conclusion startedAt completedAt} "
-        "... on StatusContext{context state createdAt}}}}}}}}}}}";
-    const std::string body = "{\"query\":" + json::quoted(query) +
-                             ",\"variables\":{\"owner\":" + json::quoted(r.owner) +
-                             ",\"name\":" + json::quoted(r.name) + "}}";
+        "__typename ... on CheckRun{name status conclusion startedAt completedAt detailsUrl} "
+        "... on StatusContext{context state createdAt targetUrl}}}}}}}}}}}";
     auto headers = api_headers(forge_kind::github, token);
     headers.push_back({"Content-Type", "application/json"});
-    const auto reply =
-        rap::sys::http_request("POST", graphql_url(r.host), body, {.headers = headers});
+    auto ask = [&](int first)
+    {
+        const std::string body = "{\"query\":" + json::quoted(query) +
+                                 ",\"variables\":{\"owner\":" + json::quoted(r.owner) +
+                                 ",\"name\":" + json::quoted(r.name) +
+                                 ",\"first\":" + std::to_string(first) + "}}";
+        return rap::sys::http_request("POST", graphql_url(r.host), body, {.headers = headers});
+    };
+    // A hundred PRs with dozens of checks each can take GitHub past its time
+    // limit (a 502): then the newest thirty.
+    auto reply = ask(100);
+    if (reply.status == 502 || reply.status == 504) reply = ask(30);
     const auto j = json::parse(reply.body);
     if (rate_limited(reply)) return pull_requests_reply{.rate_limited = true};
     if (reply.status != 200 || !j) return std::unexpected(failure(reply, j));
@@ -727,6 +739,9 @@ std::expected<pull_requests_reply, std::string> github_pulls(const forge_repo& r
             pr.blocks.push_back(merge_block::review_required);
         if (merge.str_is("BEHIND")) pr.blocks.push_back(merge_block::behind);
         if (pr.blocked && pr.blocks.empty()) pr.blocks.push_back(merge_block::blocked_other);
+        pr.author_avatar = n["author"]["avatarUrl"].str();
+        // Its reviews and description are asked for when it's shown: in
+        // this query, a hundred PRs' reviews take GitHub past its time limit.
         out.push_back(std::move(pr));
     }
     return answer;
@@ -782,6 +797,13 @@ gitlab_pulls(const forge_repo& r, std::string_view token, bool ask_access, bool 
         // A fork's merge request: its project isn't this one, and its path
         // would take another request; it's left unmatched.
         if (m["source_project_id"].integer() != m["target_project_id"].integer()) pr.head = {};
+        pr.author_avatar = m["author"]["avatar_url"].str();
+        pr.body = m["description"].str();
+        pr.body_known = true;
+        // Who's asked to review; who approved takes another request.
+        for (const json::value& who : m["reviewers"].elements())
+            pr.reviews.push_back(
+                {.who = who["username"].str(), .say = pr_review::verdict::requested});
         const std::string status = m["detailed_merge_status"].str();
         pr.conflicts = status == "conflict";
         pr.blocked = status == "not_approved" || status == "need_rebase" ||
@@ -807,7 +829,8 @@ gitlab_pulls(const forge_repo& r, std::string_view token, bool ask_access, bool 
                                        .started_at = time_of(p["created_at"]),
                                        .completed_at = pr.checks == check_state::pending
                                                            ? 0
-                                                           : time_of(p["updated_at"])});
+                                                           : time_of(p["updated_at"]),
+                                       .url = p["web_url"].str()});
                     // A failed or running one's jobs instead, to say which:
                     // a few requests, and only then.
                     if (pr.checks != check_state::failure && pr.checks != check_state::pending)
@@ -823,7 +846,8 @@ gitlab_pulls(const forge_repo& r, std::string_view token, bool ask_access, bool 
                         pr.runs.push_back({.name = job["name"].str(),
                                            .state = status_word(job["status"].str()),
                                            .started_at = time_of(job["started_at"]),
-                                           .completed_at = time_of(job["finished_at"])});
+                                           .completed_at = time_of(job["finished_at"]),
+                                           .url = job["web_url"].str()});
                     break;
                 }
         out.push_back(std::move(pr));
@@ -871,6 +895,11 @@ gitea_pulls(const forge_repo& r, std::string_view token, bool ask_access, bool a
                         .draft = p["draft"].boolean(),
                         .author = p["user"]["login"].str()};
         pr.conflicts = !p["mergeable"].boolean(true);  // Gitea's "not mergeable" is conflicts
+        pr.author_avatar = p["user"]["avatar_url"].str();
+        pr.body = p["body"].str();
+        pr.body_known = true;
+        for (const json::value& who : p["requested_reviewers"].elements())
+            pr.reviews.push_back({.who = who["login"].str(), .say = pr_review::verdict::requested});
         if (pr.conflicts) pr.blocks.push_back(merge_block::conflicts);
         if (pr.draft) pr.blocks.push_back(merge_block::draft);
         pr.head = {.host = r.host,
@@ -892,7 +921,8 @@ gitea_pulls(const forge_repo& r, std::string_view token, bool ask_access, bool a
                 check_run run{.name = c["context"].str(),
                               .state = word.str_is("skipped") || word.str_is("warning")
                                            ? check_state::success
-                                           : status_word(word.str())};
+                                           : status_word(word.str()),
+                              .url = c["target_url"].str()};
                 if (run.state == check_state::pending)
                     run.started_at = time_of(c["created_at"]);
                 else
@@ -1878,3 +1908,54 @@ std::expected<forge_token, std::string> renew(forge_kind k, std::string_view hos
 }
 
 }  // namespace tortilla
+
+// The helpers above, for ci.cpp and pr_details.cpp.
+namespace tortilla::forge_detail
+{
+
+std::string failure(const rap::sys::http_response& r, const std::optional<json::value>& j)
+{
+    return tortilla::failure(r, j);
+}
+
+std::string graphql_url(std::string_view host)
+{
+    return tortilla::graphql_url(host);
+}
+
+std::string repo_api(forge_kind k, const forge_repo& r)
+{
+    return tortilla::repo_api(k, r);
+}
+
+std::int64_t time_of(const json::value& v)
+{
+    return tortilla::time_of(v);
+}
+
+check_state github_state(std::string_view s)
+{
+    return tortilla::github_rollup(s);
+}
+
+check_state status_word(std::string_view s)
+{
+    return tortilla::status_word(s);
+}
+
+check_run github_run(const json::value& c)
+{
+    return tortilla::github_run(c);
+}
+
+void note_budget(const rap::sys::http_response& r)
+{
+    tortilla::note_budget(r);
+}
+
+std::string url_escape(std::string_view s)
+{
+    return tortilla::form_escape(s);
+}
+
+}  // namespace tortilla::forge_detail

@@ -37,6 +37,13 @@ pr_mark mark_of(const pull_request&);
 // failed, which are still running and for how long, and why it can't be
 // merged yet, if it can't. `now` in seconds since 1970.
 std::string pr_tooltip(const pull_request&, std::int64_t now);
+// Its parts: what the checks say ("Checks passed in 6 min"), and what stands
+// in the way of a merge ("Needs an approving review", "Can be merged"; ""
+// while only the checks do).
+std::string checks_text(const pull_request&, std::int64_t now);
+std::string merge_text(const pull_request&);
+// "6 min 12 s", "45 s"; to the minute for what's still running.
+std::string check_duration(std::int64_t seconds, bool to_the_minute = false);
 
 // The checks' mark, in a circle `diameter` across at `centre`, ringed in
 // white to stand out on any label: a tick, a cross, or a ring while they run.

@@ -7,6 +7,7 @@
 // every ten minutes, within its hourly allowance.
 #pragma once
 
+#include "forge/ci_poll.h"
 #include "forge/forge.h"
 #include "git/repo.h"
 
@@ -124,10 +125,39 @@ public:
     // Accounts. The UI thread's.
     static std::vector<forge_remote> all_hints();
 
+    // Checks that run are asked after quickly (GitHub's, conditionally: a
+    // reply that hasn't changed costs nothing): every open PR's head whose
+    // checks run, and the commit on show (`sha`, on `where`, while `pending`).
+    // The commit on show's runs go to `checks` as they come.
+    void watch(std::optional<std::string> sha, std::optional<forge_remote> where = {},
+               bool pending = false);
+    void on_commit_checks(std::function<void(const std::string& sha, const commit_runs&)> f)
+    {
+        commit_checks_ = std::move(f);
+    }
+
 private:
     struct shared;
     void ask(bool forced);
     void schedule();
+    // The quick asks: each second while any are due; one worker at a time,
+    // asking one after another (never two at once of one forge).
+    void fast_tick();
+    void update_fast_timer();
+    struct fast_state
+    {
+        std::chrono::steady_clock::time_point due{};
+        std::int64_t expected = 0;  // the workflows' last time, seconds; 0: unknown
+        bool expected_known = false;
+    };
+    std::map<std::string, fast_state> fast_;
+    std::optional<std::string> watched_;
+    std::optional<forge_remote> watched_where_;
+    bool watched_pending_ = false;
+    bool fast_busy_ = false;
+    std::chrono::steady_clock::time_point backoff_until_{};
+    rap::subscription fast_timer_;
+    std::function<void(const std::string&, const commit_runs&)> commit_checks_;
 
     rap::ui& ui_;
     std::string workdir_;
