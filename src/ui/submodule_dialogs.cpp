@@ -59,7 +59,8 @@ std::string relative_folder(const std::string& workdir, const std::string& folde
     std::error_code ec;
     const fs::path top = fs::weakly_canonical(rap::sys::path_from_utf8(workdir), ec);
     const fs::path at = fs::weakly_canonical(rap::sys::path_from_utf8(folder), ec);
-    std::string rel = rap::sys::path_to_utf8(at.lexically_relative(top).generic_string());
+    const std::u8string generic = at.lexically_relative(top).generic_u8string();
+    std::string rel(generic.begin(), generic.end());
     while (rel.ends_with('/')) rel.pop_back();
     if (rel == "." || rel.starts_with("..")) return {};
     return rel;

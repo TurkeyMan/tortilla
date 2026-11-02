@@ -3,6 +3,7 @@
 #include "command.h"
 
 #include <git2.h>
+#include <rapport/sys.h>
 
 #include <algorithm>
 #include <cstdio>
@@ -490,7 +491,7 @@ std::expected<void, std::string> repo::walk(const walk_options& opts,
             for (size_t i = 0; i < names.count; ++i)
             {
                 std::string path = git_dir() + "worktrees/" + names.strings[i] + "/HEAD";
-                if (std::FILE* f = std::fopen(path.c_str(), "r"))
+                if (std::FILE* f = rap::sys::fopen(rap::sys::path_from_utf8(path), "rb"))
                 {
                     char line[128] = {};
                     if (std::fgets(line, sizeof line, f))

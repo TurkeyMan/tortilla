@@ -94,7 +94,9 @@ std::string append_ignore_lines(const std::filesystem::path& file, const std::ve
     std::filesystem::create_directories(file.parent_path(), ec);
     std::ofstream out(file, std::ios::binary | std::ios::app);
     out << add;
-    return out ? std::string() : "couldn't write " + file.string();
+    return out ? std::string()
+               : "couldn't write " +
+                     std::string(reinterpret_cast<const char*>(file.u8string().c_str()));
 }
 
 }  // namespace tortilla

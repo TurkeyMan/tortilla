@@ -640,7 +640,7 @@ int main(int argc, char** argv)
         const auto file = std::filesystem::weakly_canonical(
             std::filesystem::absolute(rap::sys::path_from_utf8(path)), ec);
         const std::string rel =
-            rap::sys::path_to_utf8(file.lexically_relative(root).generic_string());
+            rap::sys::path_to_utf8(file.lexically_relative(root).generic_u8string());
         tortilla::windows::init(**ui);
         const size_t running = tortilla::windows::hold({});
         const std::string workdir = repo->workdir();
