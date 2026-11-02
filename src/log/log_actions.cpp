@@ -39,6 +39,7 @@
 #include <cstdio>
 #include <ctime>
 #include <filesystem>
+#include <thread>
 
 namespace tortilla
 {
@@ -522,7 +523,8 @@ menu log_window::context_menu(std::optional<size_t> clicked)
                 range(a, "..", b);
                 range(b, "..", a);
                 range(a, "...", b);
-                m.push_back(todo(_("Comp_are change sets")));
+                m.push_back(
+                    item(_("Comp_are change sets"), [this, a, b] { compare_change_sets(a, b); }));
             }
             separator(m);
             if (has_wc && !merging)
@@ -1251,6 +1253,63 @@ void log_window::show_log_at(const std::string& rev)
             {.icon = rap::message_spec::icon::error, .title = "Tortilla", .text = log.error()});
     (*log)->start_at(rev);
     windows::keep(std::move(*log));
+}
+
+// TortoiseGit's Compare change sets [spec 1.11]: the two commits' patches,
+// as Format Patch writes them, side by side in the diff tool, to see how
+// one change differs from another (a cherry-pick from its original, a
+// rework from the first try). git runs off the UI thread; the files go
+// once the tool is done.
+void log_window::compare_change_sets(const std::string& a, const std::string& b)
+{
+    std::thread(
+        [this, &ui = ui_, a, b, dir = repo_.workdir(), alive = std::weak_ptr<bool>(alive_)]
+        {
+            std::error_code ec;
+            const fs::path folder = fs::temp_directory_path(ec) / "tortilla" / "change-sets";
+            fs::create_directories(folder, ec);
+            auto patches = std::make_shared<std::vector<fs::path>>();
+            std::string error;
+            for (const std::string& hash : {a, b})
+            {
+                const git_result r =
+                    run_git(dir, {"format-patch", "--stdout", "-1", hash}, git_output::stdout_only);
+                const fs::path file = folder / (hash.substr(0, 8) + ".patch");
+                std::FILE* f = r.ok() ? rap::sys::fopen(file, "wb") : nullptr;
+                if (!f)
+                {
+                    error = r.ok() ? rap::sys::path_to_utf8(file) : r.output;
+                    break;
+                }
+                std::fwrite(r.output.data(), 1, r.output.size(), f);
+                std::fclose(f);
+                patches->push_back(file);
+            }
+            ui.post(
+                [this, patches, error, alive]
+                {
+                    auto remove = [patches]
+                    {
+                        std::error_code ec;
+                        for (const fs::path& p : *patches) fs::remove(p, ec);
+                    };
+                    if (!alive.lock()) return remove();
+                    if (!error.empty())
+                    {
+                        remove();
+                        return ui_.message(window_.get(),
+                                           {.icon = rap::message_spec::icon::error,
+                                            .title = _("Compare change sets"),
+                                            .text = _("Could not write the commits' patches."),
+                                            .detail = error});
+                    }
+                    difftool_ = compare_files(
+                        ui_, window_.get(), rap::sys::path_to_utf8((*patches)[0]),
+                        rap::sys::path_to_utf8((*patches)[1]),
+                        [this] { open_settings(settings_page::diff_viewer); }, remove);
+                });
+        })
+        .detach();
 }
 
 // TortoiseGit's input dialog for the note [spec 1.11]. The note is read with
