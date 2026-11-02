@@ -676,8 +676,13 @@ void forge_panel::forget_misplaced_builds()
                       if (b.local) return true;
                       if (!b.answered || !b.ci.empty()) return false;
                       bool head = false;
-                      const pr_entry* e = pull_request_of(kept.first, head, nullptr);
-                      return e && e->pr.into.name != b.remote.name;
+                      if (const pr_entry* e = pull_request_of(kept.first, head, nullptr))
+                          return e->pr.into.name != b.remote.name;
+                      // Asked of a fork before the PRs said where they're open.
+                      return std::ranges::any_of(prs_, [&](const pr_entry& p)
+                                                 { return p.pr.into.name != b.remote.name; }) &&
+                             std::ranges::none_of(prs_, [&](const pr_entry& p)
+                                                  { return p.pr.into.name == b.remote.name; });
                   });
 }
 
@@ -949,7 +954,12 @@ void forge_panel::update_pull_request()
             for (const rap::menu_item& item : host_.actions(e->pr))
             {
                 if (item.is_separator() || b >= pr_buttons_.size()) continue;
-                pr_buttons_[b]->set_text(item.label);
+                // The menu's "Merge... (needs write access)": the why in the
+                // tooltip, so the buttons keep the column narrow.
+                const size_t why = item.label.find(" (");
+                pr_buttons_[b]->set_text(item.label.substr(0, why));
+                pr_buttons_[b]->set_tooltip(why == std::string::npos ? std::string()
+                                                                     : menu_text(item.label));
                 pr_buttons_[b]->set_enabled(item.enabled);
                 pr_buttons_[b]->set_visible(true);
                 pr_actions_.push_back(item.action);
@@ -1197,10 +1207,19 @@ void forge_panel::ask_build(const std::string& sha)
     std::vector<forge_remote> candidates;
     bool head = false;
     if (const pr_entry* e = pull_request_of(sha, head, nullptr)) candidates.push_back(e->pr.into);
-    for (const forge_remote& r : remotes_)
+    // Then where PRs are open (upstream, not a fork whose branch merely
+    // has the commit too), then the rest.
+    auto add = [&](const forge_remote& r)
+    {
         if (std::ranges::none_of(candidates,
                                  [&](const forge_remote& c) { return c.name == r.name; }))
             candidates.push_back(r);
+    };
+    for (const pr_entry& e : prs_)
+        if (std::ranges::any_of(remotes_,
+                                [&](const forge_remote& r) { return r.name == e.pr.into.name; }))
+            add(e.pr.into);
+    for (const forge_remote& r : remotes_) add(r);
     if (candidates.empty())
     {
         b.answered = b.local = true;
