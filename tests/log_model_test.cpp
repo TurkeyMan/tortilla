@@ -2286,6 +2286,8 @@ int main(int argc, char** argv)
         check(accented.size() == 5 && accented[0].filename == "f.txt" &&
                   accented[4].filename == cafe && accented[4].commit->previous_filename == cafe,
               "blame: an accented name as it is");
+        // A tab in a file's name is Linux's alone: Windows refuses it.
+#ifndef _WIN32
         sh(g + "mv '" + cafe + "' 'a\tb.txt' && " + g + "commit -qm tab");
         sh("printf 'y\\n' >> '" + dir + "/" + tabbed + "' && " + g + "commit -qam again");
         const auto tab = run({}, tabbed);
@@ -2298,6 +2300,9 @@ int main(int argc, char** argv)
                 .output);
         check(named.size() >= 3 && named[0].path == tabbed && named[2].path == cafe,
               "blame: the revisions' names as they are");
+#else
+        (void)tabbed;
+#endif
     }
 
     // The Repository Browser's reading: a revision's folders and files, in process.
@@ -3490,7 +3495,14 @@ int main(int argc, char** argv)
         namespace fs = std::filesystem;
         const std::string dir = std::string(argv[1]) + "/literal";
         const std::string g = "git -C '" + dir + "' -c user.name=Ada -c user.email=ada@x ";
-        const std::vector<std::string> names{"a.txt", "b.txt", "[ab].txt", "*.txt", ":x", "c.txt"};
+        // Windows refuses '*' and ':' in a name: there, the brackets alone.
+#ifdef _WIN32
+        const std::vector<std::string> odd{"[ab].txt"};
+#else
+        const std::vector<std::string> odd{"[ab].txt", "*.txt", ":x"};
+#endif
+        std::vector<std::string> names{"a.txt", "b.txt", "c.txt"};
+        names.insert(names.end(), odd.begin(), odd.end());
         sh("git init -q -b main '" + dir + "'");
         for (const std::string& n : names) sh("printf 'one\\n' > '" + dir + "/" + n + "'");
         sh(g + "add -A && " + g + "commit -qm one");
@@ -3499,16 +3511,15 @@ int main(int argc, char** argv)
         const std::string xdg = rap::sys::env("XDG_DATA_HOME").value_or("");
         set_env("XDG_DATA_HOME", trash);
         std::vector<tortilla::file_change> picked;
-        for (const char* n : {"[ab].txt", "*.txt", ":x"})
-            picked.push_back({.path = n, .status = 'M'});
+        for (const std::string& n : odd) picked.push_back({.path = n, .status = 'M'});
         const auto plan = tortilla::plan_revert(dir, picked);
         const auto changed = tortilla::with_local_changes(dir, {"[ab].txt"});
         for (const auto& c : tortilla::revert_commands(plan)) tortilla::run_git(dir, c);
         set_env("XDG_DATA_HOME", xdg);
         const fs::path d(dir);
-        check(slurp(d / "[ab].txt") == "one\n" && slurp(d / "*.txt") == "one\n" &&
-                  slurp(d / ":x") == "one\n",
-              "literal: the picked files reverted");
+        check(
+            std::ranges::all_of(odd, [&](const std::string& n) { return slurp(d / n) == "one\n"; }),
+            "literal: the picked files reverted");
         check(slurp(d / "a.txt") == "work\n" && slurp(d / "b.txt") == "work\n" &&
                   slurp(d / "c.txt") == "work\n",
               "literal: no other file matched as a pattern");
