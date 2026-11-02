@@ -10,6 +10,7 @@
 
 #include <rapport/sys.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <filesystem>
@@ -72,6 +73,8 @@ void review_patch(rap::ui& ui, rap::window* parent, const std::string& workdir,
         patch_file_rows rows;
         rap::list* list = nullptr;
         rap::label* status = nullptr;
+        rap::button* apply_selected = nullptr;
+        rap::button* apply_all = nullptr;
         std::shared_ptr<git_process> tool;  // the diff tool, while it runs
 
         std::vector<std::string> selected() const
@@ -168,16 +171,18 @@ void review_patch(rap::ui& ui, rap::window* parent, const std::string& workdir,
                        .stretch(),
                    buttons{dialog_button{rap::dialog_role::none, _("_Review")}.on_click(
                                [s, weak] { s->review(weak); }),
-                           dialog_button{rap::dialog_role::none, _("Apply _selected")}.on_click(
-                               [s]
-                               {
-                                   if (auto only = s->selected(); !only.empty())
+                           dialog_button{rap::dialog_role::none, _("Apply _selected")}
+                               .bind(s->apply_selected)
+                               .on_click(
+                                   [s]
                                    {
-                                       s->apply(only);
-                                       s->window->close();
-                                   }
-                               }),
-                           dialog_button{rap::dialog_role::ok, _("_Apply all")},
+                                       if (auto only = s->selected(); !only.empty())
+                                       {
+                                           s->apply(only);
+                                           s->window->close();
+                                       }
+                                   }),
+                           dialog_button{rap::dialog_role::ok, _("_Apply all")}.bind(s->apply_all),
                            dialog_button{rap::dialog_role::close}},
                }}}
             .size(72_ch, 22_lines),
@@ -224,6 +229,15 @@ void review_patch(rap::ui& ui, rap::window* parent, const std::string& workdir,
                     s->rows.applies = applies;
                     s->rows.checked = true;
                     s->rows.changed();
+                    // Nothing that applies: applying would only fail.
+                    if (std::ranges::none_of(s->rows.applies, [](char a) { return a != 0; }))
+                    {
+                        s->apply_selected->set_enabled(false);
+                        s->apply_all->set_enabled(false);
+                        if (!s->rows.applies.empty())
+                            s->status->set_text(
+                                _("None of it applies to this working tree as it is."));
+                    }
                 });
         })
         .detach();
