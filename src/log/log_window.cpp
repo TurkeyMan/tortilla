@@ -733,7 +733,7 @@ void log_window::selection_changed()
     else
     {
         details_->set_text("");
-        show_avatar({});
+        show_avatar(nullptr);
         files_.clear();
     }
     update_status();
@@ -750,7 +750,7 @@ void log_window::update_pick_button()
 }
 
 // The picture at the canvas's size in device pixels, so it's drawn 1:1.
-void log_window::show_avatar(const std::string& email)
+void log_window::show_avatar(const commit* c)
 {
     const float scale = avatar_canvas_ ? avatar_canvas_->device_scale() : 1;
     const int px = int(std::lround(k_avatar_size * std::max(scale, 1.f)));
@@ -761,12 +761,18 @@ void log_window::show_avatar(const std::string& email)
         avatar_ = std::move(image);
         if (avatar_canvas_) avatar_canvas_->invalidate();
     };
-    gravatar_.request(email, px,
-                      [show, &answered](std::shared_ptr<rap::image> image)
-                      {
-                          answered = true;
-                          show(std::move(image));
-                      });
+    avatars::author who;
+    if (c)
+    {
+        who = {.email = c->email, .commit = c->id.hex(), .workdir = repo_location()};
+        if (pr_watch_) who.remotes = pr_watch_->remotes();
+    }
+    avatars_.request(std::move(who), px,
+                     [show, &answered](std::shared_ptr<rap::image> image)
+                     {
+                         answered = true;
+                         show(std::move(image));
+                     });
     // Being fetched: not the last author's picture meanwhile.
     if (!answered) show(nullptr);
 }
@@ -775,7 +781,7 @@ void log_window::show_commit(size_t row)
 {
     if (log_.is_working_tree(row))
     {
-        show_avatar({});
+        show_avatar(nullptr);
         // [spec 1.8]: "Fetching Status..." until the status arrives.
         if (!log_.working_tree_known())
         {
@@ -809,7 +815,7 @@ void log_window::show_commit(size_t row)
     for (auto& p : c.parents) line(_("Parent: "), p.hex());
     text += "\n" + c.message;
     details_->set_text(text, spans);
-    show_avatar(c.email);
+    show_avatar(&c);
 
     // The file list comes from the worker, so the click (and its highlight)
     // never waits for git: the files as soon as the tree diff has them, then

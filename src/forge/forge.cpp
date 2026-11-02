@@ -1064,6 +1064,179 @@ std::string delete_branch(forge_kind k, const forge_repo& r, std::string_view br
     return {};
 }
 
+// -- authors' pictures --------------------------------------------------------
+
+namespace
+{
+
+bool same_letters(std::string_view a, std::string_view b)
+{
+    return std::ranges::equal(a, b,
+                              [](char x, char y)
+                              {
+                                  return std::tolower(static_cast<unsigned char>(x)) ==
+                                         std::tolower(static_cast<unsigned char>(y));
+                              });
+}
+
+// A GitHub login: letters, digits and hyphens.
+bool login_like(std::string_view s)
+{
+    return !s.empty() && s.size() <= 39 &&
+           std::ranges::all_of(s, [](char c)
+                               { return std::isalnum(static_cast<unsigned char>(c)) || c == '-'; });
+}
+
+std::string_view host_of(std::string_view url)
+{
+    if (const size_t scheme = url.find("://"); scheme != std::string_view::npos)
+        url.remove_prefix(scheme + 3);
+    return url.substr(0, url.find_first_of("/?#"));
+}
+
+// A stand-in rather than the user's own picture: what a forge gives for an
+// address it doesn't know, Gravatar's (an identicon, unless the address has
+// a picture there, which was asked already) or GitLab's own no_avatar.
+bool made_up_avatar(std::string_view url)
+{
+    const std::string_view host = host_of(url);
+    return host.ends_with("gravatar.com") || host.find("libravatar") != std::string_view::npos ||
+           url.find("/no_avatar") != std::string_view::npos;
+}
+
+// The picture at `url`, which the forge gave. Its token goes only to the
+// forge itself (a private instance's uploads may need it), not to where its
+// pictures are kept elsewhere.
+std::expected<std::string, std::string> fetch_avatar(forge_kind k, const forge_repo& r,
+                                                     std::string url, std::string_view token,
+                                                     const std::atomic<bool>* cancelled)
+{
+    if (url.starts_with('/')) url = web_root(r.host) + url;
+    rap::sys::http_options options{.headers = {{"User-Agent", "Tortilla"}},
+                                   .timeout = std::chrono::seconds(10),
+                                   .max_bytes = size_t(1) << 20,
+                                   .cancelled = cancelled};
+    if (same_letters(host_of(url), r.host))
+        options.headers.emplace_back(
+            "Authorization", (k == forge_kind::gitea ? "token " : "Bearer ") + std::string(token));
+    auto reply = rap::sys::http_get(url, options);
+    if (reply.status != 200 || reply.body.empty())
+        return std::unexpected(failure(reply, std::nullopt));
+    return std::move(reply.body);
+}
+
+std::expected<std::string, std::string> github_avatar(const forge_repo& r, std::string_view commit,
+                                                      int px, std::string_view token,
+                                                      const std::atomic<bool>* cancelled)
+{
+    constexpr std::string_view query =
+        "query($owner:String!,$name:String!,$oid:GitObjectID!,$px:Int!){"
+        "repository(owner:$owner,name:$name){object(oid:$oid){"
+        "... on Commit{author{user{avatarUrl(size:$px)}}}}}}";
+    const std::string body =
+        "{\"query\":" + json::quoted(query) + ",\"variables\":{\"owner\":" + json::quoted(r.owner) +
+        ",\"name\":" + json::quoted(r.name) + ",\"oid\":" + json::quoted(commit) +
+        ",\"px\":" + std::to_string(px) + "}}";
+    auto headers = api_headers(forge_kind::github, token);
+    headers.push_back({"Content-Type", "application/json"});
+    const auto reply = rap::sys::http_request(
+        "POST", graphql_url(r.host), body,
+        {.headers = headers, .timeout = std::chrono::seconds(10), .cancelled = cancelled});
+    const auto j = json::parse(reply.body);
+    if (reply.status != 200 || !j) return std::unexpected(failure(reply, j));
+    if (const json::value errors = (*j)["errors"]; errors.kind() == json::value::type::array)
+        for (const json::value& e : errors.elements())
+            return std::unexpected(e["message"].str(_("GitHub refused the query.")));
+    // Not pushed there: it can't say, which isn't "none".
+    const json::value object = (*j)["data"]["repository"]["object"];
+    if (object.kind() != json::value::type::object)
+        return std::unexpected(std::string(_("The commit isn't on the forge.")));
+    // No user: the author's address isn't one of a GitHub account's.
+    const std::string url = object["author"]["user"]["avatarUrl"].str();
+    if (url.empty()) return std::string();
+    return fetch_avatar(forge_kind::github, r, url, token, cancelled);
+}
+
+// By address, not commit: the user whose public email it is.
+std::expected<std::string, std::string> gitlab_avatar(const forge_repo& r, std::string_view email,
+                                                      int px, std::string_view token,
+                                                      const std::atomic<bool>* cancelled)
+{
+    const auto reply =
+        rap::sys::http_get(api_root(forge_kind::gitlab, r.host) + "/avatar?" +
+                               form({{"email", email}, {"size", std::to_string(px)}}),
+                           {.headers = api_headers(forge_kind::gitlab, token),
+                            .timeout = std::chrono::seconds(10),
+                            .cancelled = cancelled});
+    const auto j = json::parse(reply.body);
+    if (reply.status != 200 || !j) return std::unexpected(failure(reply, j));
+    const std::string url = (*j)["avatar_url"].str();
+    if (url.empty() || made_up_avatar(url)) return std::string();
+    return fetch_avatar(forge_kind::gitlab, r, url, token, cancelled);
+}
+
+// Gitea has no lookup by address but a commit's author is its user, as on
+// GitHub. Its avatar URLs refuse most sizes: the picture as it is.
+std::expected<std::string, std::string> gitea_avatar(const forge_repo& r, std::string_view commit,
+                                                     std::string_view token,
+                                                     const std::atomic<bool>* cancelled)
+{
+    const auto reply =
+        rap::sys::http_get(repo_api(forge_kind::gitea, r) + "/git/commits/" + std::string(commit) +
+                               "?stat=false&verification=false&files=false",
+                           {.headers = api_headers(forge_kind::gitea, token),
+                            .timeout = std::chrono::seconds(10),
+                            .cancelled = cancelled});
+    if (reply.status == 404)
+        return std::unexpected(std::string(_("The commit isn't on the forge.")));
+    const auto j = json::parse(reply.body);
+    if (reply.status != 200 || !j) return std::unexpected(failure(reply, j));
+    const std::string url = (*j)["author"]["avatar_url"].str();
+    if (url.empty() || made_up_avatar(url)) return std::string();
+    return fetch_avatar(forge_kind::gitea, r, url, token, cancelled);
+}
+
+}  // namespace
+
+std::string noreply_avatar_url(std::string_view email, int px)
+{
+    constexpr std::string_view domain = "@users.noreply.github.com";
+    while (!email.empty() && std::isspace(static_cast<unsigned char>(email.front())))
+        email.remove_prefix(1);
+    while (!email.empty() && std::isspace(static_cast<unsigned char>(email.back())))
+        email.remove_suffix(1);
+    if (email.size() <= domain.size() ||
+        !same_letters(email.substr(email.size() - domain.size()), domain))
+        return {};
+    const std::string_view local = email.substr(0, email.size() - domain.size());
+    const std::string size = std::to_string(px);
+    // id+login: the id is the account's for good, whatever it's renamed to.
+    if (const size_t plus = local.find('+'); plus != std::string_view::npos)
+    {
+        const std::string_view id = local.substr(0, plus);
+        if (id.empty() || plus + 1 == local.size() ||
+            !std::ranges::all_of(id, [](char c) { return c >= '0' && c <= '9'; }))
+            return {};
+        return "https://avatars.githubusercontent.com/u/" + std::string(id) + "?s=" + size;
+    }
+    // Only the login: github.com sends its picture on.
+    if (!login_like(local)) return {};
+    return "https://github.com/" + std::string(local) + ".png?size=" + size;
+}
+
+std::expected<std::string, std::string>
+author_avatar(forge_kind k, const forge_repo& r, std::string_view commit, std::string_view email,
+              int px, std::string_view token, const std::atomic<bool>* cancelled)
+{
+    switch (k)
+    {
+    case forge_kind::github: return github_avatar(r, commit, px, token, cancelled);
+    case forge_kind::gitlab: return gitlab_avatar(r, email, px, token, cancelled);
+    case forge_kind::gitea: return gitea_avatar(r, commit, token, cancelled);
+    }
+    return std::string();
+}
+
 // -- signing in through the browser -------------------------------------------
 
 bool browser_sign_in(forge_kind k, std::string_view host)

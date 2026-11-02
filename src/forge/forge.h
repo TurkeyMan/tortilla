@@ -213,6 +213,23 @@ std::string close_pull_request(forge_kind, const forge_repo&, int number, std::s
 std::string delete_branch(forge_kind, const forge_repo&, std::string_view branch,
                           std::string_view token);
 
+// -- authors' pictures --------------------------------------------------------
+
+// A GitHub noreply address's picture, `px` square, without asking the API:
+// 12345+login@users.noreply.github.com by its user id, the older
+// login@users.noreply.github.com by its login. "" for any other address.
+std::string noreply_avatar_url(std::string_view email, int px);
+
+// The forge's picture of a commit's author, `px` square (as near as the
+// forge has it): GitHub's and Gitea's for the user the commit's author is,
+// GitLab's for the user with that public email. The picture's bytes; ""
+// when the forge knows the commit but has no picture for its author (a
+// made-up one, Gravatar's or an identicon, is none); why not, when it
+// couldn't say (offline, or the commit isn't there).
+std::expected<std::string, std::string>
+author_avatar(forge_kind, const forge_repo&, std::string_view commit, std::string_view email,
+              int px, std::string_view token, const std::atomic<bool>* cancelled = nullptr);
+
 // -- signing in through the browser (OAuth's device flow) ---------------------
 
 // Whether Tortilla can: it needs an application registered on that host,

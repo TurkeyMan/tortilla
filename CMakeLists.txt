@@ -123,7 +123,7 @@ add_executable(tortilla
     src/ui/diff_window.cpp
     src/ui/settings_dialog.cpp
     src/shell/menu_icons.cpp
-    src/util/gravatar.cpp
+    src/forge/avatars.cpp
     src/ui/repo_icon.cpp
     src/util/restart_explorer.cpp
     src/ui/welcome_window.cpp

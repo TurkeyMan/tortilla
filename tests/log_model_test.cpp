@@ -186,6 +186,60 @@ int main(int argc, char** argv)
                       heads.at("refs/remotes/upstream/feat/x").pr.number == 8,
                   "forge: pull requests' head branches, remote ones only");
         }
+        // GitHub's noreply addresses name the account: its picture without the API.
+        {
+            using tortilla::noreply_avatar_url;
+            check(noreply_avatar_url("12345+ada@users.noreply.github.com", 96) ==
+                          "https://avatars.githubusercontent.com/u/12345?s=96" &&
+                      noreply_avatar_url(" 49699333+dependabot[bot]@Users.NoReply.GitHub.com ",
+                                         192) ==
+                          "https://avatars.githubusercontent.com/u/49699333?s=192",
+                  "avatars: a noreply address with an id, by the id");
+            check(noreply_avatar_url("ada-l@users.noreply.github.com", 96) ==
+                      "https://github.com/ada-l.png?size=96",
+                  "avatars: an older noreply address, by the login");
+            check(noreply_avatar_url("ada@example.com", 96).empty() &&
+                      noreply_avatar_url("@users.noreply.github.com", 96).empty() &&
+                      noreply_avatar_url("x1+@users.noreply.github.com", 96).empty() &&
+                      noreply_avatar_url("a/b@users.noreply.github.com", 96).empty() &&
+                      noreply_avatar_url("ada@users.noreply.github.com.evil", 96).empty() &&
+                      noreply_avatar_url("ada@xusers.noreply.github.com", 96).empty(),
+                  "avatars: anything else isn't one");
+        }
+        // Which remote leads, for asking a forge about an author: the newest
+        // default branch, each host once.
+        {
+            using namespace tortilla;
+            const std::string dir = std::string(argv[1]) + "/leading";
+            const std::string g = "git -C '" + dir + "' -c user.name=Ada -c user.email=a@b ";
+            sh("git init -q -b main '" + dir + "'");
+            auto commit_at = [&](const std::string& when)
+            { sh("GIT_COMMITTER_DATE='" + when + "' " + g + "commit -q --allow-empty -m x"); };
+            commit_at("2020-01-01T00:00:00Z");
+            sh(g + "update-ref refs/remotes/old/master HEAD");
+            commit_at("2021-01-01T00:00:00Z");
+            sh(g + "update-ref refs/remotes/upstream/trunk HEAD && " + g +
+               "symbolic-ref refs/remotes/upstream/HEAD refs/remotes/upstream/trunk");
+            sh(g + "update-ref refs/remotes/origin/master HEAD");  // main, below, comes first
+            commit_at("2022-01-01T00:00:00Z");
+            sh(g + "update-ref refs/remotes/lab/main HEAD");
+            sh(g + "update-ref refs/remotes/fork/main HEAD");
+            commit_at("2019-01-01T00:00:00Z");
+            sh(g + "update-ref refs/remotes/origin/main HEAD");
+            auto on = [](std::string name, std::string host)
+            {
+                return forge_remote{
+                    .name = std::move(name), .repo = {.host = host}, .account = {.host = host}};
+            };
+            const auto led =
+                leading_remotes(dir, {on("never", "github.com"), on("origin", "github.com"),
+                                      on("old", "codeberg.org"), on("upstream", "github.com"),
+                                      on("lab", "gitlab.com"), on("fork", "gitlab.com")});
+            std::string names;
+            for (const forge_remote& r : led) names += r.name + " ";
+            check(names == "lab upstream old ",
+                  "avatars: leading remotes, newest first, a host once");
+        }
 #ifndef _WIN32
         // The GitHub CLI's token, from a stand-in gh first on PATH.
         const std::string bin = std::string(argv[1]) + "/fake-gh";

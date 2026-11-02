@@ -1,8 +1,13 @@
 #include "pr_watch.h"
 
+#include "git/command.h"
 #include "git/remotes.h"
 
 #include <algorithm>
+#include <array>
+#include <charconv>
+#include <cstdint>
+#include <limits>
 #include <map>
 #include <mutex>
 #include <thread>
@@ -22,6 +27,49 @@ std::vector<forge_remote> forge_remotes(const std::string& workdir)
         if (repo && account)
             out.push_back({.name = name, .repo = std::move(*repo), .account = std::move(*account)});
     }
+    return out;
+}
+
+std::vector<forge_remote> leading_remotes(const std::string& workdir,
+                                          std::vector<forge_remote> remotes)
+{
+    if (remotes.empty()) return remotes;
+    constexpr std::array<std::string_view, 3> defaults{"/HEAD", "/main", "/master"};
+    // Every candidate in one git run: for-each-ref follows <remote>/HEAD to
+    // its branch.
+    std::vector<std::string> args{"for-each-ref", "--format=%(refname) %(committerdate:unix)"};
+    for (const forge_remote& r : remotes)
+        for (std::string_view b : defaults)
+            args.push_back("refs/remotes/" + r.name + std::string(b));
+    const git_result listed = run_git(workdir, args, git_output::stdout_only);
+    std::map<std::string_view, std::int64_t, std::less<>> tips;  // views `listed`
+    for (std::string_view rest = listed.output; !rest.empty();)
+    {
+        const size_t end = rest.find('\n');
+        const std::string_view line = rest.substr(0, end);
+        rest.remove_prefix(end == std::string_view::npos ? rest.size() : end + 1);
+        const size_t space = line.rfind(' ');
+        if (space == std::string_view::npos) continue;
+        std::int64_t when = 0;
+        const std::string_view time = line.substr(space + 1);
+        std::from_chars(time.data(), time.data() + time.size(), when);
+        tips.emplace(line.substr(0, space), when);
+    }
+    auto tip = [&](const forge_remote& r)
+    {
+        for (std::string_view b : defaults)
+            if (auto it = tips.find("refs/remotes/" + r.name + std::string(b)); it != tips.end())
+                return it->second;
+        return std::numeric_limits<std::int64_t>::min();
+    };
+    std::vector<std::pair<std::int64_t, forge_remote>> ranked;
+    for (forge_remote& r : remotes) ranked.emplace_back(tip(r), std::move(r));
+    std::ranges::stable_sort(ranked, std::greater<>{}, [](const auto& p) { return p.first; });
+    std::vector<forge_remote> out;
+    for (auto& [when, r] : ranked)
+        if (std::ranges::none_of(out, [&](const forge_remote& o)
+                                 { return o.account.host == r.account.host; }))
+            out.push_back(std::move(r));
     return out;
 }
 

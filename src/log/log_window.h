@@ -3,6 +3,7 @@
 #pragma once
 
 #include "changes/changes_view.h"
+#include "forge/avatars.h"
 #include "forge/pr_watch.h"
 #include "git/command.h"
 #include "git/repo_worker.h"
@@ -10,7 +11,6 @@
 #include "rebase/rebase_window.h"
 
 #include "ui/settings_dialog.h"
-#include "util/gravatar.h"
 
 #include <rapport/rapport.h>
 #include <rapport/sys.h>
@@ -233,9 +233,9 @@ private:
     void open_rebase(const std::string& upstream);
     std::vector<oid> history_;  // selection history, for the "Selection History" jump
     // The selected commit's author, top right of the details [spec 1.2].
-    void show_avatar(const std::string& email);
+    void show_avatar(const commit*);
     std::shared_ptr<rap::image> avatar_;
-    gravatar gravatar_{ui_};
+    avatars avatars_{ui_};
 
     // The selection across a reload, by commit (rows move): put back, and
     // the current row scrolled into view, once loading finishes.

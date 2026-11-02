@@ -30,6 +30,11 @@ struct forge_remote
 // The repository's remotes that are on a forge with an account; quick git
 // queries, for the UI thread.
 std::vector<forge_remote> forge_remotes(const std::string& workdir);
+// Of those, one a forge host, leading remote first: the newest tip of its
+// default branch (<remote>/HEAD, else main, else master) as last fetched.
+// A remote never fetched goes last. A git query: for a worker thread.
+std::vector<forge_remote> leading_remotes(const std::string& workdir,
+                                          std::vector<forge_remote> remotes);
 
 // A pull request, and where it's open.
 struct open_pr
