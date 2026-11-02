@@ -97,6 +97,7 @@ private:
     // watch no longer sees them open.
     std::vector<std::pair<std::string, int>> awaiting_merge_;
     void open_pull_request_menu(rap::menu&, const ref&);
+    rap::menu pull_request_items(const open_pr&);
     void open_settings(settings_page);
     std::string title_text() const;
     bool path_limited() const;

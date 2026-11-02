@@ -907,11 +907,16 @@ void log_window::move_ref(const ref& ref, const commit& target)
 }
 
 // A right-click on a label makes the menu about that label (checkout,
-// delete) rather than offering every label on the commit.
+// delete) rather than offering every label on the commit; one on a label's
+// pull request part (its "#12" and mark), the PR's.
 menu log_window::cell_menu(size_t row, size_t column, rap::point_f at)
 {
     if (column == log_model::message)
+    {
+        if (auto ref = log_.pr_at(row, at.x))
+            if (const open_pr* p = pull_request_of(*ref)) return pull_request_items(*p);
         if (auto ref = log_.label_at(row, at.x)) clicked_ref_ = ref->full_name;
+    }
     menu m = context_menu(row);
     clicked_ref_.reset();
     return m;
@@ -1322,6 +1327,21 @@ void log_window::fetch_after_forge(const std::string& remote)
                 });
 }
 
+// What can be done with a PR: its submenu on the branch's menu, and the
+// whole menu for a right-click on its number or mark.
+rap::menu log_window::pull_request_items(const open_pr& p)
+{
+    rap::menu m;
+    m.push_back(item(_("_Open in the browser"), [url = p.pr.url] { rap::sys::open_url(url); }));
+    m.push_back(rap::menu_item::separator());
+    // Conflicts can't be merged at all: nothing for the dialog to offer.
+    m.push_back(item(
+        p.pr.conflicts ? _("_Merge... (conflicts)") : _("_Merge..."),
+        [this, pr = p] { merge_pull_request(pr); }, !p.pr.conflicts));
+    m.push_back(item(_("_Close..."), [this, pr = p] { close_pull_request(pr); }));
+    return m;
+}
+
 // A PR's entries for its head branch; for any other branch on a forge Tortilla
 // has an account for, making one.
 void log_window::open_pull_request_menu(rap::menu& m, const ref& r)
@@ -1329,14 +1349,7 @@ void log_window::open_pull_request_menu(rap::menu& m, const ref& r)
     if (const open_pr* p = pull_request_of(r))
     {
         rap::menu_item sub{.label = rap::i18n::format(_("Pull request #{0}"), p->pr.number)};
-        sub.children.push_back(
-            item(_("_Open in the browser"), [url = p->pr.url] { rap::sys::open_url(url); }));
-        sub.children.push_back(rap::menu_item::separator());
-        // Conflicts can't be merged at all: nothing for the dialog to offer.
-        sub.children.push_back(item(
-            p->pr.conflicts ? _("_Merge... (conflicts)") : _("_Merge..."),
-            [this, pr = *p] { merge_pull_request(pr); }, !p->pr.conflicts));
-        sub.children.push_back(item(_("_Close..."), [this, pr = *p] { close_pull_request(pr); }));
+        sub.children = pull_request_items(*p);
         m.push_back(std::move(sub));
         return;
     }
