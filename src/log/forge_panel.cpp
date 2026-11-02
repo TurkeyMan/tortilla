@@ -1376,16 +1376,35 @@ void forge_panel::download_selected()
             download_status_->set_text(
                 a.size ? rap::i18n::format(_("Downloading {0} ({1})..."), a.name, size_text(a.size))
                        : rap::i18n::format(_("Downloading {0}..."), a.name));
-            // rapport's HTTP hands the body over whole: no byte count to
-            // show as it goes, so the bar says it's busy.
-            download_timer_ = host_.ui.timer(100, true, [this] { download_progress_->pulse(); });
+            // The bar fills as the bytes come, when the forge says how many;
+            // else it says it's busy.
+            download_progress_->set_fraction(0);
+            if (!a.size)
+                download_timer_ =
+                    host_.ui.timer(100, true, [this] { download_progress_->pulse(); });
             download_cancel_ = std::make_shared<std::atomic<bool>>(false);
+            auto progress = [this, alive = std::weak_ptr<bool>(alive_), &ui = host_.ui,
+                             size = a.size, last = std::make_shared<int>(-1)](
+                                std::uint64_t received, std::optional<std::uint64_t> total)
+            {
+                const std::uint64_t whole = total ? *total : std::uint64_t(size);
+                if (!whole) return;
+                const int percent = int(std::min<std::uint64_t>(100, received * 100 / whole));
+                if (percent == *last) return;  // a post a percent, not a chunk
+                *last = percent;
+                ui.post(
+                    [this, alive, percent]
+                    {
+                        if (alive.lock() && downloading_)
+                            download_progress_->set_fraction(float(percent) / 100);
+                    });
+            };
             with_token(remote,
-                       [this, a, to, kind = remote.account.kind,
-                        cancel = download_cancel_](std::string token) -> std::function<void()>
+                       [this, a, to, kind = remote.account.kind, cancel = download_cancel_,
+                        progress](std::string token) -> std::function<void()>
                        {
                            const std::string error =
-                               download_artifact(kind, a, to, token, cancel.get());
+                               download_artifact(kind, a, to, token, cancel.get(), progress);
                            return [this, error, to]
                            {
                                downloading_ = false;

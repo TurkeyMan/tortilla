@@ -458,34 +458,19 @@ commit_artifacts(forge_kind k, const forge_repo& r, std::string_view sha, const 
 }
 
 std::string download_artifact(forge_kind k, const ci_artifact& a, const std::filesystem::path& to,
-                              std::string_view token, const std::atomic<bool>* cancelled)
+                              std::string_view token, const std::atomic<bool>* cancelled,
+                              download_progress progress)
 {
-    if (a.size > k_artifact_max_bytes)
-        return rap::i18n::format(_("It's bigger than Tortilla downloads ({0} MB): download it from "
-                                   "the forge's page."),
-                                 std::to_string(k_artifact_max_bytes >> 20));
-    // GitHub's redirects to a signed address on another host, which takes no
-    // token; libcurl doesn't send the Authorization header to another host.
-    auto headers = api_headers(k, token);
-    const auto reply =
-        rap::sys::http_get(a.download_url, {.headers = std::move(headers),
-                                            .timeout = std::chrono::minutes(30),
-                                            .max_bytes = std::size_t(k_artifact_max_bytes) + 1,
-                                            .cancelled = cancelled});
-    if (reply.status != 200)
-        return reply.status == 0 ? failure(reply, std::nullopt)
-                                 : failure(reply, json::parse(reply.body));
-    if (!reply.error.empty()) return reply.error;  // cut short
-    std::ofstream file(to, std::ios::binary | std::ios::trunc);
-    if (!file) return rap::i18n::format(_("Couldn't write {0}."), to.string());
-    // In pieces, so a slow disk shows as it goes; the body is whole already.
-    constexpr size_t piece = size_t(1) << 20;
-    for (size_t at = 0; at < reply.body.size() && file; at += piece)
-        file.write(reply.body.data() + at,
-                   std::streamsize(std::min(piece, reply.body.size() - at)));
-    file.close();
-    if (!file) return rap::i18n::format(_("Couldn't write {0}."), to.string());
-    return {};
+    // GitHub's redirects to a signed address on another host; rapport sends
+    // the token only to the host it was asked of.
+    const auto reply = rap::sys::http_download(a.download_url, to,
+                                               {.headers = api_headers(k, token),
+                                                .timeout = std::chrono::seconds(30),
+                                                .stall = std::chrono::seconds(60),
+                                                .cancelled = cancelled,
+                                                .progress = std::move(progress)});
+    if (reply.status < 200 || reply.status >= 300) return failure(reply, std::nullopt);
+    return reply.error;  // "" when whole
 }
 
 std::expected<job_failure, std::string>

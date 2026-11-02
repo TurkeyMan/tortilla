@@ -13,6 +13,8 @@
 #include <cstdint>
 #include <expected>
 #include <filesystem>
+#include <functional>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -77,12 +79,15 @@ std::expected<std::vector<ci_artifact>, std::string> commit_artifacts(forge_kind
                                                                       const commit_ci&,
                                                                       std::string_view token);
 
-// Downloads it to `to` (a zip; GitHub's and Forgejo's are always zips). ""
-// when done; else why not. The forge's reply is held whole before it's
-// written, so it stops at `max_bytes`.
-constexpr std::int64_t k_artifact_max_bytes = std::int64_t(1) << 30;
+// Downloads it to `to` (a zip; GitHub's and Forgejo's are always zips),
+// streamed to disk as it comes (`progress`: bytes so far, and the total when
+// the forge says), stopping only when the connection stalls. "" when done;
+// else why not, and nothing is left at `to`.
+using download_progress =
+    std::function<void(std::uint64_t received, std::optional<std::uint64_t> total)>;
 std::string download_artifact(forge_kind, const ci_artifact&, const std::filesystem::path& to,
-                              std::string_view token, const std::atomic<bool>* cancelled = nullptr);
+                              std::string_view token, const std::atomic<bool>* cancelled = nullptr,
+                              download_progress progress = {});
 
 // Why a job failed, for its row in the panel.
 struct ci_annotation
