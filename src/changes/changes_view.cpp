@@ -9,6 +9,7 @@
 #include "changes/conflict_editor.h"
 #include "git/merge_tool.h"
 #include "git/remotes.h"
+#include "git/temp_files.h"
 #include "i18n.h"
 #include "log/log_window.h"
 #include "settings.h"
@@ -71,16 +72,6 @@ arg_list plus(arg_list a, const arg_list& b)
 {
     a.insert(a.end(), b.begin(), b.end());
     return a;
-}
-
-bool write_file(const std::filesystem::path& path, const std::string& content)
-{
-    std::error_code ec;
-    std::filesystem::create_directories(path.parent_path(), ec);
-    std::FILE* f = rap::sys::fopen(path, "wb");
-    bool ok = f && std::fwrite(content.data(), 1, content.size(), f) == content.size();
-    if (f) ok = std::fclose(f) == 0 && ok;
-    return ok;
 }
 
 }  // namespace
@@ -604,7 +595,8 @@ void changes_view::activated(size_t row)
 }
 
 // Open: the working file, or a revision's version of it written to a
-// temporary file named after it [TortoiseGit: Open / Open with].
+// temporary file named after it, in its folders [TortoiseGit: Open / Open
+// with].
 void changes_view::open_file(const file_change& f, bool choose)
 {
     std::filesystem::path path =
@@ -612,10 +604,7 @@ void changes_view::open_file(const file_change& f, bool choose)
     if (source_.what == changes_source::revision)
     {
         git_result r = revision_file(host_.workdir, source_.hash, f.path);
-        std::error_code ec;
-        const std::filesystem::path dir =
-            std::filesystem::temp_directory_path(ec) / "tortilla" / source_.hash.substr(0, 8);
-        path = dir / rap::sys::path_from_utf8(file_name(f.path));
+        path = revision_temp_path(source_.hash, f.path);
         if (!r.ok() || !write_file(path, r.output))
         {
             host_.ui.message(host_.window(), {.icon = rap::message_spec::icon::error,
@@ -658,9 +647,7 @@ std::optional<std::filesystem::path> changes_view::file_of(const version& v,
         rap::sys::path_from_utf8(v.workdir) / rap::sys::path_from_utf8(v.path);
     if (v.rev.empty()) return working;
     git_result r = revision_file(v.workdir, v.rev, v.path);
-    std::error_code ec;
-    const std::filesystem::path path = std::filesystem::temp_directory_path(ec) / "tortilla" /
-                                       v.rev.substr(0, 8) / rap::sys::path_from_utf8(v.path);
+    const std::filesystem::path path = revision_temp_path(v.rev, v.path);
     if (r.ok() && write_file(path, r.output)) return path;
     host_.ui.message(host_.window(), {.icon = rap::message_spec::icon::error,
                                       .title = title,
