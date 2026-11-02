@@ -43,6 +43,7 @@
 #include "git/worktrees.h"
 #include "i18n.h"
 #include "log/log_model.h"
+#include "log/ref_labels.h"
 #include "raw_client.h"
 #include "settings.h"
 #include "shell.h"
@@ -514,6 +515,30 @@ void history_edit_tests(const std::string& root)
 
 }  // namespace
 
+// Draws nothing; text is 7 px a character, for label layout.
+class null_painter : public rap::painter
+{
+public:
+    rap::color resolve(const rap::paint&) const override { return {}; }
+    void line(rap::point_f, rap::point_f, const rap::paint&, float, rap::line_cap) override {}
+    void curve(rap::point_f, rap::point_f, rap::point_f, rap::point_f, const rap::paint&,
+               float) override {}
+    void circle(rap::point_f, float, std::optional<rap::paint>, std::optional<rap::paint>) override {}
+    void rect(rap::rect_f, float, std::optional<rap::paint>, std::optional<rap::paint>) override {}
+    void polygon(const std::vector<rap::point_f>&, std::optional<rap::paint>,
+                 std::optional<rap::paint>, float) override {}
+    void arc(rap::point_f, float, float, float, const rap::paint&, float, rap::line_cap) override {}
+    void image(const rap::image&, rap::rect_f, rap::rect_f, rap::filter, float) override {}
+    float device_scale() const override { return 1; }
+    void push_clip(rap::rect_f) override {}
+    void pop_clip() override {}
+    void text(rap::point_f, const std::string&, const rap::text_style&) override {}
+    rap::size_f measure(const std::string& s, const rap::text_style&) const override
+    {
+        return {7.0f * s.size(), 14};
+    }
+};
+
 int main(int argc, char** argv)
 {
     if (argc < 2)
@@ -521,6 +546,29 @@ int main(int argc, char** argv)
         std::fprintf(stderr, "usage: %s <empty scratch dir>\n", argv[0]);
         return 2;
     }
+    // Several branches started from github/master all track it: its label
+    // shows once, after the branch of its own name, not after each of them.
+    {
+        using tortilla::ref, tortilla::ref_kind;
+        auto local = [](std::string n, std::string up)
+        {
+            return ref{.name = n, .full_name = "refs/heads/" + n, .kind = ref_kind::local_branch,
+                       .upstream = std::move(up)};
+        };
+        const std::string up = "refs/remotes/github/master";
+        const std::vector<ref> refs{
+            local("bss", up),
+            ref{.name = "github/master", .full_name = up, .kind = ref_kind::remote_branch},
+            local("light", up), local("master", up), local("print", up)};
+        null_painter p;
+        std::vector<tortilla::label_box> boxes;
+        tortilla::paint_ref_labels(p, refs, 0, 20, {}, &boxes, {}, {});
+        std::vector<std::string> names;
+        for (const auto& b : boxes) names.push_back(b.ref.name);
+        check(names == std::vector<std::string>{"bss", "light", "master", "github/master", "print"},
+              "a shared upstream's label: once, after the branch of its name");
+    }
+
     // FIPS 180-4's examples, and a message over one block's padding room.
     check(tortilla::sha256_hex("") ==
               "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",

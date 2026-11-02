@@ -337,19 +337,36 @@ float paint_ref_labels(rap::painter& p, const std::vector<ref>& refs, float x, f
     if (boxes) boxes->clear();
     auto visible = [&](const ref& r) { return !show || show(r); };
 
-    // Upstream labels move next to their tracking branch.
+    // Upstream labels move next to their tracking branch, once: several
+    // branches started from github/master all track it, and it follows the
+    // one of its own name (master), else the first.
+    auto follows = [&](const ref& up) -> const ref*
+    {
+        const ref* first = nullptr;
+        for (const ref& r : refs)
+        {
+            if (r.kind != ref_kind::local_branch || r.upstream != up.full_name || !visible(r))
+                continue;
+            if (up.name.ends_with("/" + r.name)) return &r;
+            if (!first) first = &r;
+        }
+        return first;
+    };
     std::vector<std::pair<const ref*, bool>> order;  // ref, rounded
     std::vector<const ref*> placed;
     for (const ref& r : refs)
     {
         if (!visible(r) || std::ranges::find(placed, &r) != placed.end()) continue;
+        if (r.kind == ref_kind::remote_branch && follows(r)) continue;  // placed after its branch
         bool tracking = r.kind == ref_kind::local_branch && !r.upstream.empty();
         order.push_back({&r, tracking});
         placed.push_back(&r);
         if (!tracking) continue;
         for (const ref& up : refs)
         {
-            if (up.full_name != r.upstream || !visible(up)) continue;
+            if (up.full_name != r.upstream || !visible(up) || follows(up) != &r ||
+                std::ranges::find(placed, &up) != placed.end())
+                continue;
             order.push_back({&up, true});
             placed.push_back(&up);
         }
