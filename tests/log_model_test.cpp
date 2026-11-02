@@ -478,12 +478,16 @@ void history_edit_tests(const std::string& root)
               "history: pushed commits are known");
         auto plan = plan_reword(*h, h->line[1], "pushed\n");
         auto tip = plan ? replay(*r, *plan) : std::unexpected(replay_failure{});
-        check(tip && edit_from(*r, *h, *plan, *tip, "x").pushed, "history: rewriting them says so");
-        check(force_push_args(*r, "refs/heads/feature") ==
-                      std::vector<std::string>{"push", "--force-with-lease", "origin",
-                                               "refs/heads/feature:refs/heads/feature"} &&
-                  force_push_args(*r, "refs/heads/main").empty(),
-              "history: the force push, with a lease, to the upstream only");
+        const auto edited = tip ? std::optional(edit_from(*r, *h, *plan, *tip, "x")) : std::nullopt;
+        check(edited && edited->pushed && edited->lease == h->upstream_tip,
+              "history: rewriting them says so, and what the upstream was");
+        const oid at = *h->upstream_tip, to = tip ? *tip : oid{};
+        check(force_push_args(*r, "refs/heads/feature", at, to) ==
+                      std::vector<std::string>{"push",
+                                               "--force-with-lease=refs/heads/feature:" + at.hex(),
+                                               "origin", to.hex() + ":refs/heads/feature"} &&
+                  force_push_args(*r, "refs/heads/main", at, to).empty(),
+              "history: the force push, leased on that, to the upstream only");
     }
 
     // Names beyond ASCII.
@@ -511,6 +515,76 @@ void history_edit_tests(const std::string& root)
                   git({"status", "--porcelain"}) == "?? untracked.bin",
               "history: drop with non-ASCII names");
         sh("cd '" + dir + "' && git stash pop -q --index");
+    }
+
+    // The force push after an edit is leased on the upstream the edit was
+    // made from, not on whatever was fetched since: Bob's push, fetched by
+    // Alice after her rewrite, is still not overwritten.
+    {
+        const std::string remote = root + "/lease-origin.git", alice = root + "/lease-alice",
+                          bob = root + "/lease-bob";
+        const std::string ag = "git -C '" + alice + "' ", bg = "git -C '" + bob + "' ";
+        auto setup = [&](const std::string& who, const std::string& name)
+        {
+            const std::string w = "git -C '" + who + "' ";
+            sh(w + "config user.name " + name + " && " + w + "config user.email " + name +
+               "@example.com && " + w + "config core.autocrlf false");
+        };
+        sh("git init -q --bare -b main '" + remote + "' && git clone -q '" + remote + "' '" +
+           alice + "' 2>&1");
+        setup(alice, "Alice");
+        sh("cd '" + alice +
+           "' && printf 'a\\n' > a.txt && git add a.txt && git commit -q -m a && " +
+           "printf 'b\\n' > b.txt && git add b.txt && git commit -q -m b && git push -q -u origin "
+           "main");
+        sh("git clone -q '" + remote + "' '" + bob + "' 2>&1");
+        setup(bob, "Bob");
+        auto ar = repo::open(alice);
+        auto h =
+            ar ? load_branch_history(*ar, "refs/heads/main", "") : std::unexpected(std::string());
+        auto plan =
+            h ? plan_reword(*h, h->line[0], "b, reworded\n") : std::unexpected(std::string());
+        auto tip = plan ? replay(*ar, *plan) : std::unexpected(replay_failure{});
+        std::optional<history_edit> e;
+        if (tip) e = edit_from(*ar, *h, *plan, *tip, "tortilla: reword");
+        check(e && e->pushed && apply_edit(*ar, *e),
+              "history lease: Alice rewrites a pushed commit");
+        sh("cd '" + bob +
+           "' && printf 'c\\n' > c.txt && git add c.txt && git commit -q -m c && "
+           "git push -q origin main");
+        const std::string bobs =
+            run_git(bob, {"rev-parse", "HEAD"}, git_output::stdout_only).output;
+        sh(ag + "fetch -q origin");
+        if (e)
+        {
+            const auto args =
+                force_push_args(*ar, e->moves.front().ref, *e->lease, *e->moves.front().to);
+            const git_result pushed = run_git(alice, args);
+            const std::string there =
+                run_git(remote, {"rev-parse", "refs/heads/main"}, git_output::stdout_only).output;
+            check(!args.empty() && !pushed.ok() && there == bobs,
+                  "history lease: a push fetched since the edit isn't overwritten");
+        }
+        // An edit made after that fetch leases on Bob's commit, seen: it goes.
+        auto seen =
+            ar ? load_branch_history(*ar, "refs/heads/main", "") : std::unexpected(std::string());
+        auto again = seen ? plan_reword(*seen, seen->line.back(), "a, reworded\n")
+                          : std::unexpected(std::string());
+        auto again_tip = again ? replay(*ar, *again) : std::unexpected(replay_failure{});
+        if (again_tip)
+        {
+            const history_edit e2 = edit_from(*ar, *seen, *again, *again_tip, "tortilla: reword");
+            const bool applied = e2.pushed && e2.lease && apply_edit(*ar, e2).has_value();
+            const bool pushed =
+                applied &&
+                run_git(alice, force_push_args(*ar, "refs/heads/main", *e2.lease, *again_tip)).ok();
+            const std::string there =
+                run_git(remote, {"rev-parse", "refs/heads/main"}, git_output::stdout_only).output;
+            check(pushed && there == again_tip->hex() + "\n",
+                  "history lease: the push goes when the upstream is as the edit saw it");
+        }
+        else
+            check(false, "history lease: the second edit replays");
     }
 
     // A commit in SVN (git svn's git-svn-id line) is never rewritten, by any

@@ -876,6 +876,7 @@ history_edit edit_from(const repo& repository, const branch_history& h, const ed
     }
     if (!above && !h.line.empty() && (!p.base || p.base == h.below)) above = h.line.size() - 1;
     e.pushed = above && rewrites_pushed(repository, h, h.line[*above]);
+    if (e.pushed) e.lease = h.upstream_tip;
     return e;
 }
 
@@ -928,7 +929,8 @@ move_commits(const repo& repository, const branch_history& from, const std::vect
     return e;
 }
 
-std::vector<std::string> force_push_args(const repo& repository, const std::string& branch)
+std::vector<std::string> force_push_args(const repo& repository, const std::string& branch,
+                                         const oid& expected, const oid& tip)
 {
     git_repository* r = repository.raw();
     git_buf remote{}, merge{};
@@ -936,8 +938,11 @@ std::vector<std::string> force_push_args(const repo& repository, const std::stri
     if (git_branch_upstream_remote(&remote, r, branch.c_str()) == 0 &&
         git_branch_upstream_merge(&merge, r, branch.c_str()) == 0 && remote.size &&
         std::string_view(remote.ptr, remote.size) != ".")
-        out = {"push", "--force-with-lease", std::string(remote.ptr, remote.size),
-               branch + ":" + std::string(merge.ptr, merge.size)};
+    {
+        const std::string there(merge.ptr, merge.size);
+        out = {"push", "--force-with-lease=" + there + ":" + expected.hex(),
+               std::string(remote.ptr, remote.size), tip.hex() + ":" + there};
+    }
     git_buf_dispose(&remote);
     git_buf_dispose(&merge);
     return out;
@@ -953,10 +958,12 @@ std::expected<history_edit, std::string> undo_last_commit(const repo& repository
     if (!h.svn.empty() && h.svn.front() == 0) return std::unexpected(std::string(_("in SVN")));
     const auto parent = h.parent_of(0);
     if (!parent) return std::unexpected(std::string(_("the first commit")));
+    const bool pushed = rewrites_pushed(repository, h, h.tip);
     return history_edit{.reflog = "tortilla: undo last commit",
                         .moves = {{h.branch, h.tip, *parent}},
                         .keep_index = true,
-                        .pushed = rewrites_pushed(repository, h, h.tip)};
+                        .pushed = pushed,
+                        .lease = pushed ? h.upstream_tip : std::nullopt};
 }
 
 }  // namespace tortilla
