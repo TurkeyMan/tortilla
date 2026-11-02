@@ -264,6 +264,8 @@ private:
     void save_patch_series(rap::window* viewer, const patch_range&);
     // Show log...: another log window walking from `rev`, or a range.
     void show_log_at(const std::string& rev);
+    // Compare change sets: each commit's patch, compared with the diff tool.
+    void compare_change_sets(const std::string& a, const std::string& b);
     // Edit Notes: the commit's note in a dialog, saved with git notes.
     void edit_notes(const commit&);
 
