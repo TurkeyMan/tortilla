@@ -7,7 +7,6 @@
 #include "log/branch_filter.h"
 #include "log/history_dialogs.h"
 
-#include "git/svn.h"
 #include "i18n.h"
 #include "ui/menu_items.h"
 #include "ui/menu_text.h"
@@ -108,21 +107,11 @@ void log_window::history_items(menu& m, const std::vector<size_t>& sel)
         case repo::repo_state::revert: why = _("reverting"); break;
         default: break;
         }
-    // A commit already in SVN (git svn's) can't be rewritten: the next
-    // dcommit or rebase would break.
-    auto in_svn_any = [&](const std::vector<oid>& which)
-    {
-        return std::ranges::any_of(which,
-                                   [&](const oid& id)
-                                   {
-                                       const auto c = repo_.lookup(id);
-                                       return c && in_svn(c->message);
-                                   });
-    };
+    // The edits' own rule (a commit in SVN, a merge, another worktree...),
+    // shown: each plan checks it again, whichever way it's asked for.
     auto why_not = [&](const std::vector<oid>& which, bool replays) -> std::optional<std::string>
     {
         if (why) return why;
-        if (in_svn_any(which)) return std::string(_("in SVN"));
         return why_not_editable(*found, which, replays);
     };
     const branch_history h = found ? *found : branch_history{};
@@ -377,7 +366,6 @@ void log_window::history_items(menu& m, const std::vector<size_t>& sel)
     if (n == 1 && found && h.checked_out && !h.line.empty() && h.line.front() == commits.front())
     {
         std::optional<std::string> undo_why = why;
-        if (!undo_why && in_svn_any({commits.front()})) undo_why = _("in SVN");
         if (!undo_why)
             if (auto e = undo_last_commit(repo_, h); !e) undo_why = e.error();
         m.push_back(maybe(

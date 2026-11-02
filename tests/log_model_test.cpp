@@ -511,6 +511,70 @@ void history_edit_tests(const std::string& root)
               "history: drop with non-ASCII names");
         sh("cd '" + dir + "' && git stash pop -q --index");
     }
+
+    // A commit in SVN (git svn's git-svn-id line) is never rewritten, by any
+    // way in: a menu's plan, a drag's reorder, a replay or an edit applied.
+    {
+        const std::string sd = root + "/history-svn";
+        const std::string sg = "git -C '" + sd + "' ";
+        sh("git init -q -b main '" + sd + "' && " + sg + "config user.name Tester && " + sg +
+           "config user.email t@example.com && " + sg + "config core.autocrlf false");
+        // A commit of `file`, its message's paragraphs a -m each.
+        auto svn_commit = [&](const std::string& file, const std::string& paragraphs)
+        {
+            sh("cd '" + sd + "' && printf '%s' '" + file + "' > '" + file + "' && git add -- '" +
+               file + "' && git commit -q " + paragraphs);
+        };
+        svn_commit("zero.txt", "-m zero");
+        svn_commit("svn.txt", "-m 'in svn' -m 'git-svn-id: https://svn.example/trunk@1 "
+                              "0b9d2c1e-0000-0000-0000-000000000000'");
+        svn_commit("a.txt", "-m 'local a'");
+        svn_commit("b.txt", "-m 'local b'");
+        auto sr = repo::open(sd);
+        auto h = sr ? load_branch_history(*sr, "refs/heads/main", "")
+                    : std::unexpected(std::string("no repository"));
+        check(h && h->line.size() == 4, "history svn: the line");
+        if (sr && h && h->line.size() == 4)
+        {
+            const oid b = h->line[0], a = h->line[1], in = h->line[2], zero = h->line[3];
+            auto refused = [](const auto& plan)
+            { return !plan && plan.error() == std::string(_("in SVN")); };
+            // Dragging b below the SVN commit replays it: refused. Above a,
+            // it rewrites local commits only: fine.
+            check(refused(plan_reorder(*h, {b}, 3)) && refused(plan_reorder(*h, {zero}, 0)),
+                  "history svn: a reorder that rewrites it is refused");
+            check(plan_reorder(*h, {b}, 2).has_value(), "history svn: one above it is not");
+            check(refused(plan_reword(*h, in, "x\n")) && refused(plan_drop(*h, {in})) &&
+                      refused(plan_fold(*h, a, in)) && refused(plan_combine(*h, {a, in}, "x\n")) &&
+                      refused(plan_reword(*h, zero, "x\n")),
+                  "history svn: reword, drop, fold and combine refuse it and what's below");
+            check(plan_reword(*h, a, "x\n").has_value() && plan_drop(*h, {b}).has_value(),
+                  "history svn: the commits above it can be edited");
+            auto moved = move_commits(*sr, *h, {in}, "refs/heads/elsewhere", true, "x");
+            check(!moved && moved.error().message == _("in SVN"),
+                  "history svn: moving it to another branch is refused");
+            // A plan made by hand, past the checks: replay won't make it.
+            edit_plan by_hand{.branch = h->branch, .old_tip = h->tip, .base = zero};
+            by_hand.steps = {{.commit = in, .message = std::string("rewritten\n")},
+                             {.commit = a},
+                             {.commit = b}};
+            auto tip = replay(*sr, by_hand);
+            check(!tip && !tip.error().conflict && tip.error().message == _("in SVN"),
+                  "history svn: replay refuses to rewrite it");
+            // Nor does applying an edit that leaves it behind, the branch
+            // moved below it.
+            const history_edit back{.reflog = "x", .moves = {{h->branch, h->tip, zero}}};
+            auto applied = apply_edit(*sr, back);
+            check(!applied && sr->resolve("main") == b,
+                  "history svn: an edit that leaves it behind isn't applied");
+            // Undo last commit, with the SVN commit on top.
+            sh(sg + "reset -q --hard HEAD~2");
+            auto top = load_branch_history(*sr, "refs/heads/main", "");
+            auto undo =
+                top ? undo_last_commit(*sr, *top) : std::unexpected(std::string("no history"));
+            check(!undo && undo.error() == _("in SVN"), "history svn: undo last commit refuses it");
+        }
+    }
 }
 
 }  // namespace

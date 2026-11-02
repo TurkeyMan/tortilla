@@ -1,6 +1,7 @@
 #include "history_edit.h"
 
 #include "git/command.h"
+#include "git/svn.h"
 #include "git/worktrees.h"
 #include "i18n.h"
 
@@ -172,6 +173,7 @@ load_branch_history(const repo& repository, const std::string& branch, const std
         owned_commit c;
         if (git_commit_lookup(&c.p, r, &id) != 0) return std::unexpected(last_git_error());
         if (git_commit_parentcount(c.p) > 1) h.merges.push_back(h.line.size());
+        if (const char* m = git_commit_message(c.p); m && in_svn(m)) h.svn.push_back(h.line.size());
         h.line.push_back(o);
         expected = git_commit_parentcount(c.p) ? std::optional(to_oid(git_commit_parent_id(c.p, 0)))
                                                : std::nullopt;
@@ -254,6 +256,9 @@ std::optional<std::string> why_not_editable(const branch_history& h,
         if (h.is_merge(*i)) return std::string(_("a merge"));
         oldest = std::max(oldest, *i);
     }
+    // Rewriting from the oldest up rewrites everything above it too.
+    for (size_t s : h.svn)
+        if (s <= oldest) return std::string(_("in SVN"));
     if (!h.worktree.empty()) return std::string(_("in another worktree"));
     if (replays)
         for (size_t m : h.merges)
@@ -302,6 +307,17 @@ std::expected<oid, replay_failure> replay(const repo& repository, const edit_pla
         return std::unexpected(
             replay_failure{.conflict = false, .commit = at, .message = std::move(message)});
     };
+
+    // Nothing in SVN is rewritten, before anything's made: a conflict
+    // further down mustn't offer the rebase window instead.
+    for (const edit_step& step : plan.steps)
+    {
+        git_oid cid = to_git(step.commit);
+        owned_commit c;
+        if (git_commit_lookup(&c.p, r, &cid) != 0) return fail(last_git_error(), step.commit);
+        if (const char* m = git_commit_message(c.p); m && in_svn(m))
+            return fail(_("in SVN"), step.commit);
+    }
 
     owned_signature committer;
     if (git_signature_default(&committer.p, r) != 0) return fail(no_identity());
@@ -529,10 +545,39 @@ tree_effect effect_of(const repo& repository, const history_edit& e)
     return has_local_changes(r) ? tree_effect::stash : tree_effect::follow;
 }
 
+namespace
+{
+
+// A commit in SVN that a move leaves behind (on `from`, not on `to`), if
+// any: moving past it would rewrite SVN's history.
+std::optional<oid> svn_left_behind(git_repository* r, const ref_move& m)
+{
+    if (!m.from || !m.to) return std::nullopt;  // made or deleted: nothing rewritten
+    owned_walk walk;
+    git_oid from = to_git(*m.from), to = to_git(*m.to);
+    if (git_revwalk_new(&walk.p, r) != 0 || git_revwalk_push(walk.p, &from) != 0)
+        return std::nullopt;
+    git_revwalk_hide(walk.p, &to);
+    git_oid id;
+    for (size_t n = 0; n < history_limit && git_revwalk_next(&id, walk.p) == 0; ++n)
+    {
+        owned_commit c;
+        if (git_commit_lookup(&c.p, r, &id) != 0) continue;
+        if (const char* msg = git_commit_message(c.p); msg && in_svn(msg)) return to_oid(&id);
+    }
+    return std::nullopt;
+}
+
+}  // namespace
+
 std::expected<std::string, std::string> apply_edit(const repo& repository, const history_edit& e,
                                                    bool stash)
 {
     git_repository* r = repository.raw();
+    for (const ref_move& m : e.moves)
+        if (const auto at = svn_left_behind(r, m))
+            return std::unexpected(rap::i18n::format(
+                _("{0} is in SVN: SVN's history can't be rewritten."), at->hex(8)));
     const tree_effect effect = effect_of(repository, e);
     if (effect == tree_effect::stash && !stash)
         return std::unexpected(std::string(_("The working tree has local changes.")));
@@ -896,6 +941,7 @@ std::expected<history_edit, std::string> undo_last_commit(const repo& repository
     if (h.line.empty()) return std::unexpected(std::string(_("merged")));
     if (h.is_merge(0)) return std::unexpected(std::string(_("a merge")));
     if (!h.worktree.empty()) return std::unexpected(std::string(_("in another worktree")));
+    if (!h.svn.empty() && h.svn.front() == 0) return std::unexpected(std::string(_("in SVN")));
     const auto parent = h.parent_of(0);
     if (!parent) return std::unexpected(std::string(_("the first commit")));
     return history_edit{.reflog = "tortilla: undo last commit",
