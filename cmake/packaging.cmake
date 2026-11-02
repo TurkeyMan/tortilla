@@ -230,12 +230,19 @@ list(APPEND CPACK_RPM_EXCLUDE_FROM_AUTO_FILELIST_ADDITION
     ${CMAKE_INSTALL_FULL_DATADIR}/applications
     ${CMAKE_INSTALL_FULL_DATADIR}/icons
     ${CMAKE_INSTALL_FULL_DATADIR}/icons/hicolor)
+# The icon theme's folders are hicolor-icon-theme's: the app's icons, the
+# menu's, and the badges' emblems (data/linux/icons).
 file(GLOB sizes RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}/data/icons/hicolor
      ${CMAKE_CURRENT_SOURCE_DIR}/data/icons/hicolor/*)
+file(GLOB linux_sizes RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}/data/linux/icons/hicolor
+     ${CMAKE_CURRENT_SOURCE_DIR}/data/linux/icons/hicolor/*)
+list(APPEND sizes ${linux_sizes})
+list(REMOVE_DUPLICATES sizes)
 foreach(size IN LISTS sizes)
     list(APPEND CPACK_RPM_EXCLUDE_FROM_AUTO_FILELIST_ADDITION
          ${CMAKE_INSTALL_FULL_DATADIR}/icons/hicolor/${size}
-         ${CMAKE_INSTALL_FULL_DATADIR}/icons/hicolor/${size}/apps)
+         ${CMAKE_INSTALL_FULL_DATADIR}/icons/hicolor/${size}/apps
+         ${CMAKE_INSTALL_FULL_DATADIR}/icons/hicolor/${size}/emblems)
 endforeach()
 
 include(CPack)

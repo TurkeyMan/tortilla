@@ -281,7 +281,8 @@ if(UNIX AND NOT APPLE)
     set_target_properties(tortilla PROPERTIES INSTALL_RPATH "$ORIGIN/${rapport_from_bin}")
     install(DIRECTORY data/icons/hicolor DESTINATION ${CMAKE_INSTALL_DATADIR}/icons
             COMPONENT tortilla)
-    # The file managers' menu icons, from the icon theme.
+    # The file managers' menu icons and the badges' emblems, from the icon
+    # theme (hicolor/<n>x<n>/emblems/tortilla-badge-<kind>.png).
     install(DIRECTORY data/linux/icons/hicolor DESTINATION ${CMAKE_INSTALL_DATADIR}/icons
             COMPONENT tortilla)
     install(FILES ${TORTILLA_TRANSLATIONS} DESTINATION ${CMAKE_INSTALL_DATADIR}/tortilla/translations
