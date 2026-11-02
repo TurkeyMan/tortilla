@@ -15,7 +15,7 @@ pkgname=(tortilla-rapport tortilla-rapport-gtk3 tortilla-rapport-gtk4 tortilla-r
          tortilla-core tortilla tortilla-gtk3 tortilla-gtk4 tortilla-qt
          tortilla-nautilus tortilla-nemo tortilla-caja tortilla-thunar tortilla-dolphin
          tortilla-pcmanfm)
-pkgver=0.1
+pkgver=0.1.0
 pkgrel=1
 pkgdesc='A fast, native git client'
 arch=(x86_64 aarch64)
@@ -26,11 +26,18 @@ makedepends=(cmake ninja git libgit2 gtk3 gtk4 qt6-base
 
 _root=$(realpath "$startdir/../..")
 
+# A tagged release is its tag's version (v0.1.0 is 0.1.0; v0.1.0-beta is
+# 0.1.0beta, which pacman puts before 0.1.0); anything else is a snapshot
+# after CMakeLists.txt's version, as the .deb and .rpm are.
 pkgver() {
   cd "$_root"
-  local base
+  local base tag
   base=$(sed -n 's/^project(tortilla VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
-  printf '%s.r%s.g%s' "$base" "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
+  if tag=$(git describe --tags --exact-match --match 'v[0-9]*' 2>/dev/null); then
+    printf '%s' "${tag#v}" | tr -d -
+  else
+    printf '%s.r%s.g%s' "$base" "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
+  fi
 }
 
 build() {

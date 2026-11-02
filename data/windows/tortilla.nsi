@@ -1,5 +1,7 @@
 ; Tortilla's Windows installer. Built by .github/ci/build-windows.ps1:
-;   makensis -DVERSION=0.1 -DSTAGE=<install tree> -DOUT=<setup.exe> tortilla.nsi
+;   makensis -DVERSION=0.1.0 -DVERSION4=0.1.0.0 -DSTAGE=<install tree> -DOUT=<setup.exe> tortilla.nsi
+; VERSION is CMakeLists.txt's project version (or the tag's, without a
+; -beta suffix); VERSION4 the same in the four numbers Windows wants.
 ; STAGE holds the app as installed: bin\ (tortilla.exe, self-contained, and
 ; the Explorer extension tortilla-shell.dll), translations\, and the README,
 ; licence and third-party notices.
@@ -37,7 +39,10 @@ SetCompressor /SOLID lzma
 !insertmacro MUI_UNPAGE_INSTFILES
 !insertmacro MUI_LANGUAGE "English"
 
-VIProductVersion "${VERSION}.0.0"
+!ifndef VERSION4
+!define VERSION4 "${VERSION}.0"
+!endif
+VIProductVersion "${VERSION4}"
 VIAddVersionKey "ProductName" "Tortilla"
 VIAddVersionKey "ProductVersion" "${VERSION}"
 VIAddVersionKey "FileDescription" "Tortilla installer"

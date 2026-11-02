@@ -2,7 +2,7 @@
 # in), run the tests, and package: a zip and an NSIS installer, each holding
 # a self-contained tortilla.exe and the Explorer extension. Leaves them in
 # dist\. Expects VCPKG_ROOT (rapport's vcpkg action sets it).
-#   .github/ci/build-windows.ps1 [-Version 0.2] [-ConfigureOnly]
+#   .github/ci/build-windows.ps1 [-Version 0.2.0] [-ConfigureOnly]
 # -ConfigureOnly stops once vcpkg has built the ports, so CI can save its
 # cache before anything else can fail.
 param([string]$Version = '', [switch]$ConfigureOnly)
@@ -30,6 +30,9 @@ $appVersion = if ($Version) { $Version -replace '-.*$', '' } else {
     (Select-String -Path CMakeLists.txt -Pattern 'project\(tortilla VERSION ([0-9.]+)').Matches[0].Groups[1].Value
 }
 $suffix = if ($Version) { "-$Version" } else { '' }
+# Windows' version resources want four numbers: 0.1.0 is 0.1.0.0.
+$parts = @($appVersion.Split('.')) + @('0', '0', '0', '0')
+$fileVersion = ($parts[0..3]) -join '.'
 
 Run 'configure' {
     cmake -S . -B build-win -G 'Visual Studio 17 2022' -A x64 `
@@ -75,7 +78,7 @@ if (-not $makensis) {
     $makensis = $default
 }
 Run 'makensis' {
-    & $makensis /V2 "/DVERSION=$appVersion" "/DSTAGE=$((Resolve-Path $stage).Path)" `
+    & $makensis /V2 "/DVERSION=$appVersion" "/DVERSION4=$fileVersion" "/DSTAGE=$((Resolve-Path $stage).Path)" `
         "/DOUT=$((Resolve-Path dist).Path)\tortilla$suffix-windows-x86_64-setup.exe" (Resolve-Path data/windows/tortilla.nsi).Path
 }
 Remove-Item -Recurse -Force $stage
