@@ -3,6 +3,9 @@
 // command lines their dialogs make.
 #pragma once
 
+#include "git/command.h"
+
+#include <filesystem>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -42,14 +45,46 @@ std::vector<std::string> am_args(const am_options&, const std::vector<std::strin
 // left is to go on, skip the patch, or abort.
 bool am_in_progress(const std::string& git_dir);
 
-// Review/apply single patch: the files a patch changes, from git apply
-// -z --numstat (a rename's new name).
-std::vector<std::string> numstat_paths(std::string_view numstat);
+// Review/apply single patch: a file a patch changes.
+struct patch_entry
+{
+    enum class change
+    {
+        modified,
+        added,
+        deleted,
+        renamed,
+        copied,
+    };
+    std::string old_path;  // where it was: a rename's or copy's source, else `path`
+    std::string path;      // where it goes, the name git apply --include matches
+    change kind = change::modified;
+    bool binary = false;
+};
+
+// The files a patch changes, in order: git apply -z --numstat's `numstat`
+// (its list and names), each with its old name and its change from the
+// `patch` text itself where git's headers say (a plain diff's are modified).
+std::vector<patch_entry> patch_entries(std::string_view numstat, std::string_view patch);
 
 // git apply [--check] [--include=<path>...] -- <patch>: the whole patch, or
 // only those files of it, each name taken literally (its wildcards escaped).
 // The applicability check, Review's preview and Apply selected all use it.
 std::vector<std::string> apply_args(const std::string& patch,
                                     const std::vector<std::string>& only = {}, bool check = false);
+
+struct patch_preview
+{
+    git_result applied;  // the entry applied in the folder
+    std::string base;    // the working file as it is (empty_file() for an added one)
+    std::string mine;    // as the patch leaves it (empty_file() for a deleted one)
+};
+
+// Review's preview of one entry: the file it starts from (a rename's old
+// one) copied from `workdir` into `folder`, an empty folder of the caller's,
+// and that entry of `patch` applied there. Names that wouldn't land in the
+// folder as themselves are refused.
+patch_preview preview_patch_entry(const std::string& workdir, const std::string& patch,
+                                  const patch_entry&, const std::filesystem::path& folder);
 
 }  // namespace tortilla

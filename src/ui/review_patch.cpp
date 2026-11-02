@@ -1,7 +1,6 @@
 #include "review_patch.h"
 
 #include "git/command.h"
-#include "git/diff_tool.h"
 #include "git/patch_serial.h"
 #include "i18n.h"
 #include "ui/compare.h"
@@ -13,6 +12,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstdio>
 #include <filesystem>
 #include <memory>
 #include <thread>
@@ -29,14 +29,18 @@ namespace fs = std::filesystem;
 class patch_file_rows : public rap::list_model
 {
 public:
-    std::vector<std::string> paths;
+    std::vector<patch_entry> entries;
     std::vector<char> applies;
     bool checked = false;  // applies is known
     void changed() { notify_reset(); }
-    size_t row_count() const override { return paths.size(); }
+    size_t row_count() const override { return entries.size(); }
     std::string text(size_t row, size_t column) const override
     {
-        if (column == 0) return paths[row];
+        const patch_entry& e = entries[row];
+        if (column == 0)
+            return e.old_path == e.path
+                       ? e.path
+                       : rap::i18n::format(_("{0} (from {1})"), e.path, e.old_path);
         if (!checked) return _("Checking...");
         return applies[row] ? _("Applies") : _("Doesn't apply");
     }
@@ -81,37 +85,27 @@ void review_patch(rap::ui& ui, rap::window* parent, const std::string& workdir,
         {
             std::vector<std::string> out;
             for (size_t row : list->selection())
-                if (row < rows.paths.size()) out.push_back(rows.paths[row]);
+                if (row < rows.entries.size()) out.push_back(rows.entries[row].path);
             return out;
         }
 
         // The file as it is against the file as the patch makes it: the
-        // file copied into a folder of its own and patched there (git apply
-        // outside a repository works as patch does).
+        // file it starts from (a rename's old one) copied into a folder of
+        // its own and patched there.
         void review(std::weak_ptr<state> weak)
         {
             const auto cur = list->current();
-            if (!cur || *cur >= rows.paths.size()) return;
-            const std::string path = rows.paths[*cur];
+            if (!cur || *cur >= rows.entries.size()) return;
+            const patch_entry entry = rows.entries[*cur];
             std::thread(
-                [weak, &ui = ui, workdir = workdir, patch = patch, path]
+                [weak, &ui = ui, workdir = workdir, patch = patch, entry]
                 {
                     const fs::path folder = scratch_folder();
-                    const fs::path original =
-                        rap::sys::path_from_utf8(workdir) / rap::sys::path_from_utf8(path);
-                    const fs::path patched = folder / rap::sys::path_from_utf8(path);
                     std::error_code ec;
-                    fs::create_directories(patched.parent_path(), ec);
-                    const bool existed = fs::exists(original, ec);
-                    if (existed) fs::copy_file(original, patched, ec);
-                    const git_result r =
-                        run_git(rap::sys::path_to_utf8(folder), apply_args(patch, {path}));
-                    const std::string base =
-                        existed ? rap::sys::path_to_utf8(original) : empty_file();
-                    const std::string mine =
-                        fs::exists(patched, ec) ? rap::sys::path_to_utf8(patched) : empty_file();
+                    fs::create_directories(folder, ec);
+                    const patch_preview p = preview_patch_entry(workdir, patch, entry, folder);
                     ui.post(
-                        [weak, r, base, mine]
+                        [weak, r = p.applied, base = p.base, mine = p.mine]
                         {
                             auto s = weak.lock();
                             if (!s || !s->window) return;
@@ -207,20 +201,28 @@ void review_patch(rap::ui& ui, rap::window* parent, const std::string& workdir,
         {
             const git_result r = run_git(workdir, {"apply", "-z", "--numstat", "--", patch},
                                          git_output::stdout_only);
-            std::vector<std::string> paths =
-                r.ok() ? numstat_paths(r.output) : std::vector<std::string>{};
+            std::string text;
+            if (std::FILE* f =
+                    r.ok() ? rap::sys::fopen(rap::sys::path_from_utf8(patch), "rb") : nullptr)
+            {
+                char buf[16384];
+                while (size_t n = std::fread(buf, 1, sizeof buf, f)) text.append(buf, n);
+                std::fclose(f);
+            }
+            std::vector<patch_entry> entries =
+                r.ok() ? patch_entries(r.output, text) : std::vector<patch_entry>{};
             ui.post(
-                [weak, paths, error = r.ok() ? std::string() : r.output]
+                [weak, entries, error = r.ok() ? std::string() : r.output]
                 {
                     auto s = weak.lock();
                     if (!s || !s->window) return;
                     if (!error.empty()) s->status->set_text(error);
-                    s->rows.paths = paths;
+                    s->rows.entries = entries;
                     s->rows.changed();
                 });
             std::vector<char> applies;
-            for (const std::string& p : paths)
-                applies.push_back(run_git(workdir, apply_args(patch, {p}, true)).ok());
+            for (const patch_entry& e : entries)
+                applies.push_back(run_git(workdir, apply_args(patch, {e.path}, true)).ok());
             ui.post(
                 [weak, applies = std::move(applies)]
                 {
