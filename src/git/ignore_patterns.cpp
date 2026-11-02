@@ -4,6 +4,7 @@
 #include <fstream>
 #include <iterator>
 #include <set>
+#include <string_view>
 #include <system_error>
 
 namespace tortilla
@@ -66,6 +67,28 @@ ignore_patterns(const std::vector<ignore_item>& items, bool by_extension, bool e
         if (std::ranges::find(it->second, pattern) == it->second.end()) it->second.push_back(pattern);
     }
     return out;
+}
+
+std::vector<ignore_item> ignore_items(const std::vector<std::string>& paths)
+{
+    std::vector<ignore_item> out;
+    for (std::string_view p : paths)
+    {
+        const bool folder = p.ends_with('/');
+        while (p.ends_with('/')) p.remove_suffix(1);
+        if (p.empty()) continue;
+        const size_t slash = p.rfind('/');
+        out.push_back(
+            {std::string(slash == std::string_view::npos ? std::string_view() : p.substr(0, slash)),
+             std::string(slash == std::string_view::npos ? p : p.substr(slash + 1)), folder});
+    }
+    return out;
+}
+
+std::vector<std::string> ignore_menu_lines(const std::vector<ignore_item>& items, bool by_extension)
+{
+    auto plan = ignore_patterns(items, by_extension, by_extension, ignore_target::repository);
+    return plan.empty() ? std::vector<std::string>{} : std::move(plan.front().second);
 }
 
 std::string append_ignore_lines(const std::filesystem::path& file, const std::vector<std::string>& lines)
