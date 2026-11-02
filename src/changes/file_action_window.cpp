@@ -45,7 +45,8 @@ file_action_window::open(rap::ui& ui, file_action action, const std::vector<std:
     {
         auto rel = repo_relative(repo->workdir(), p);
         if (!rel) continue;  // outside the working tree
-        if (!rel->empty() && !fs::is_directory(rap::sys::path_from_utf8(p), ec)) files.insert(*rel);
+        if (!rel->empty() && !fs::is_directory(fs::symlink_status(rap::sys::path_from_utf8(p), ec)))
+            files.insert(*rel);
         relative.push_back(std::move(*rel));
     }
     std::unique_ptr<file_action_window> w(

@@ -199,8 +199,8 @@ std::string log_window::path_text(size_t limit) const
 {
     std::string text = rel_path_;
     std::error_code ec;
-    if (std::filesystem::is_directory(
-            rap::sys::path_from_utf8(repo_.workdir()) / rap::sys::path_from_utf8(rel_path_), ec))
+    if (std::filesystem::is_directory(std::filesystem::symlink_status(
+            rap::sys::path_from_utf8(repo_.workdir()) / rap::sys::path_from_utf8(rel_path_), ec)))
         text += '/';
     if (limit && text.size() > limit)
     {
