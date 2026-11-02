@@ -620,13 +620,19 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
 // working tree, with HEAD).
 void changes_view::edit_conflict(const std::string& path)
 {
+    // The merge tool may still be open when this window has closed: the
+    // window's refresh and settings only while it's there.
+    std::weak_ptr<bool> alive = alive_;
     tortilla::edit_conflict(
         host_.ui, host_.window(), host_.workdir, path,
-        [refresh = host_.refresh](bool changed)
+        [alive, refresh = host_.refresh](bool changed)
         {
-            if (changed && refresh) refresh();
+            if (changed && refresh && alive.lock()) refresh();
         },
-        host_.open_settings);
+        [alive, open = host_.open_settings](settings_page page)
+        {
+            if (open && alive.lock()) open(page);
+        });
 }
 
 void changes_view::activated(size_t row)

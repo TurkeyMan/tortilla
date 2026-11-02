@@ -141,6 +141,8 @@ private:
     std::string settings_key_;
     changes_source source_;
     std::shared_ptr<git_process> difftool_;
+    // For callbacks that may outlive the list (the merge tool runs on).
+    std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
     // Mark for comparison: one file for the whole program, so a file in
     // one window can be compared with one in another [spec 5.2.8].
     inline static std::optional<version> marked_;
