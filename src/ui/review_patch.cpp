@@ -2,6 +2,7 @@
 
 #include "git/command.h"
 #include "git/patch_serial.h"
+#include "git/temp_files.h"
 #include "i18n.h"
 #include "ui/compare.h"
 #include "ui/progress_dialog.h"
@@ -10,8 +11,6 @@
 #include <rapport/sys.h>
 
 #include <algorithm>
-#include <atomic>
-#include <chrono>
 #include <cstdio>
 #include <filesystem>
 #include <memory>
@@ -53,16 +52,6 @@ std::string shown_path(const std::string& workdir)
     return rap::sys::path_to_utf8(rap::sys::path_from_utf8(root).make_preferred());
 }
 
-// A folder of its own for one file patched, under the temp folder.
-fs::path scratch_folder()
-{
-    static std::atomic<unsigned> count{0};
-    std::error_code ec;
-    const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
-    return fs::temp_directory_path(ec) / "tortilla" / "review-patch" /
-           (std::to_string(stamp) + "-" + std::to_string(count++));
-}
-
 }  // namespace
 
 void review_patch(rap::ui& ui, rap::window* parent, const std::string& workdir,
@@ -100,12 +89,16 @@ void review_patch(rap::ui& ui, rap::window* parent, const std::string& workdir,
             std::thread(
                 [weak, &ui = ui, workdir = workdir, patch = patch, entry]
                 {
-                    const fs::path folder = scratch_folder();
-                    std::error_code ec;
-                    fs::create_directories(folder, ec);
-                    const patch_preview p = preview_patch_entry(workdir, patch, entry, folder);
+                    // A folder of its own for the file patched, kept while
+                    // the tool may read it and removed after.
+                    auto scratch = std::make_shared<temp_dir>("review-patch");
+                    patch_preview p;
+                    if (scratch->path().empty())
+                        p.applied.output = _("Could not make a folder in the temporary folder.");
+                    else
+                        p = preview_patch_entry(workdir, patch, entry, scratch->path());
                     ui.post(
-                        [weak, r = p.applied, base = p.base, mine = p.mine]
+                        [weak, scratch, r = p.applied, base = p.base, mine = p.mine]
                         {
                             auto s = weak.lock();
                             if (!s || !s->window) return;
@@ -116,7 +109,8 @@ void review_patch(rap::ui& ui, rap::window* parent, const std::string& workdir,
                                      .title = _("Review Patch"),
                                      .text = _("This file's part of the patch doesn't apply."),
                                      .detail = r.output});
-                            s->tool = compare_files(s->ui, s->window.get(), base, mine, {});
+                            s->tool =
+                                compare_files(s->ui, s->window.get(), base, mine, {}, [scratch] {});
                         });
                 })
                 .detach();

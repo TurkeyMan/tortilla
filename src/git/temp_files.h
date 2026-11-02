@@ -32,6 +32,25 @@ std::filesystem::path revision_temp_path(std::string_view rev, std::string_view 
 // if it can't be made. Its maker removes it when done with it.
 std::filesystem::path unique_temp_dir(std::string_view prefix);
 
+// A unique_temp_dir() removed, with all in it, when this goes: a scratch
+// tree (Review Patch's previews) kept while something reads it.
+class temp_dir
+{
+public:
+    explicit temp_dir(std::string_view prefix)
+        : path_(unique_temp_dir(prefix))
+    {
+    }
+    ~temp_dir();
+    temp_dir(const temp_dir&) = delete;
+    temp_dir& operator=(const temp_dir&) = delete;
+    // Empty if it couldn't be made.
+    const std::filesystem::path& path() const { return path_; }
+
+private:
+    std::filesystem::path path_;
+};
+
 // `content` as the whole of `path`, byte for byte, making its folders.
 bool write_file(const std::filesystem::path& path, std::string_view content);
 

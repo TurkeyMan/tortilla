@@ -62,6 +62,12 @@ fs::path unique_temp_dir(std::string_view prefix)
     return {};
 }
 
+temp_dir::~temp_dir()
+{
+    std::error_code ec;
+    if (!path_.empty()) fs::remove_all(path_, ec);  // links in it go, not what they point at
+}
+
 fs::path revision_temp_path(std::string_view rev, std::string_view path)
 {
     // A hash is shortened as everywhere else; any other name (HEAD,
