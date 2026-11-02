@@ -503,7 +503,7 @@ rap::menu repo_browser::list_menu()
         if (is_blob(e))
         {
             m.push_back(item(_("_Open"), [this, path] { open_file(path, false); }));
-            m.push_back(item(_("Open with..."), [this, path] { open_file(path, true); }));
+            m.push_back(open_with_item([this, path] { open_file(path, true); }));
             m.push_back(item(_("Save revision _to..."), [this, path] { save_as(path); }));
             separator(m);
             if (history)

@@ -35,6 +35,7 @@
 #include "log/log_model.h"
 #include "raw_client.h"
 #include "shell.h"
+#include "ui/menu_items.h"
 #include "util/json.h"
 #include "util/sha256.h"
 
@@ -2614,6 +2615,17 @@ int main(int argc, char** argv)
                   classify_failure("git@github.com: Permission denied (publickey).").failure ==
                       fetch_failure::credentials,
               "sync: failures sorted by kind");
+    }
+
+    // "Open with..." greyed, saying why, where the desktop has no chooser.
+    // The system's own isn't asked here: it would show on the desktop.
+    {
+        const rap::menu_item yes = tortilla::open_with_item([] {}, true, true);
+        const rap::menu_item none = tortilla::open_with_item([] {}, true, false);
+        const rap::menu_item deleted = tortilla::open_with_item([] {}, false, true);
+        check(yes.enabled && !none.enabled && !deleted.enabled && none.label != yes.label &&
+                  deleted.label == yes.label,
+              "open with: greyed, with the reason, without a chooser");
     }
 
     std::printf("%s\n", failures ? "FAILED" : "all passed");
