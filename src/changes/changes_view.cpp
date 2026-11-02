@@ -20,6 +20,7 @@
 #include "ui/menu_items.h"
 #include "ui/menu_text.h"
 #include "ui/windows.h"
+#include "util/entry_path.h"
 
 #include <rapport/sys.h>
 
@@ -659,7 +660,7 @@ void changes_view::open_file(const file_change& f, bool choose)
     {
         git_result r = revision_file(host_.workdir, source_.hash, f.path);
         path = revision_temp_path(source_.hash, f.path);
-        if (!r.ok() || !write_file(path, r.output))
+        if (!r.ok() || path.empty() || !write_temp_file(path, r.output))
         {
             host_.ui.message(host_.window(), {.icon = rap::message_spec::icon::error,
                                               .title = _("Open"),
@@ -702,7 +703,7 @@ std::optional<std::filesystem::path> changes_view::file_of(const version& v,
     if (v.rev.empty()) return working;
     git_result r = revision_file(v.workdir, v.rev, v.path);
     const std::filesystem::path path = revision_temp_path(v.rev, v.path);
-    if (r.ok() && write_file(path, r.output)) return path;
+    if (r.ok() && !path.empty() && write_temp_file(path, r.output)) return path;
     host_.ui.message(host_.window(), {.icon = rap::message_spec::icon::error,
                                       .title = title,
                                       .text = rap::i18n::format(_("Could not get {0} at {1}."),
@@ -877,7 +878,10 @@ void changes_view::save_revisions(const std::string& rev, std::vector<file_chang
             for (const file_change& f : files)
             {
                 git_result r = revision_file(host_.workdir, rev, f.path);
-                if (!r.ok() || !write_file(folder / rap::sys::path_from_utf8(f.path), r.output))
+                // Its path under the folder, which must land there as that
+                // name (not C:\x, .., NUL).
+                const auto rel = entry_path(f.path);
+                if (!r.ok() || !rel || !write_file(folder / *rel, r.output))
                     failed += f.path + "\n";
             }
             if (!failed.empty())

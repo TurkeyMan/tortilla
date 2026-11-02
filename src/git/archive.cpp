@@ -1,6 +1,7 @@
 #include "archive.h"
 
 #include "i18n.h"
+#include "util/entry_path.h"
 
 #include <rapport/sys.h>
 
@@ -53,23 +54,8 @@ std::string export_name(const std::string& workdir, const std::string& rev)
 
 std::optional<fs::path> archive_entry_path(std::string_view name)
 {
-    if (name.empty() || name.front() == '/' || name.front() == '\\') return std::nullopt;
-    const fs::path p = rap::sys::path_from_utf8(name);
-    if (p.has_root_name() || p.has_root_directory()) return std::nullopt;
-    fs::path out;
-    for (const fs::path& part : p)
-    {
-        const std::string s = rap::sys::path_to_utf8(part);
-        if (s.empty() || s == ".") continue;  // a folder's trailing separator
-        if (s == "..") return std::nullopt;
-#ifdef _WIN32
-        // "name:stream" writes an NTFS alternate stream, not a file.
-        if (s.find(':') != std::string::npos) return std::nullopt;
-#endif
-        out /= part;
-    }
-    if (out.empty()) return std::nullopt;
-    return out;
+    // The rules any name from a git tree is written by (revision files too).
+    return entry_path(name);
 }
 
 namespace

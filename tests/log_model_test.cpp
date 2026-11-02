@@ -47,6 +47,7 @@
 #include "settings.h"
 #include "shell.h"
 #include "ui/menu_items.h"
+#include "util/entry_path.h"
 #include "util/json.h"
 #include "util/repo_path.h"
 #include "util/search_query.h"
@@ -546,9 +547,78 @@ int main(int argc, char** argv)
         check(tortilla::revision_temp_path("origin/main", "a.txt") ==
                   root / "origin_main" / "a.txt",
               "revision temp path: a ref name is one folder");
-        check(tortilla::revision_temp_path(hash, "../x/./y") == root / "01234567" / "x" / "y",
-              "revision temp path: stays under the revision's folder");
-        check(tortilla::write_file(a, "one") && tortilla::write_file(b, "two"),
+        // A name that could land anywhere else is refused, not trimmed into
+        // another file's name.
+        check(tortilla::revision_temp_path(hash, "../x/./y").empty() &&
+                  tortilla::revision_temp_path(hash, "x/../../y").empty() &&
+                  tortilla::revision_temp_path(hash, "/etc/y").empty() &&
+                  tortilla::revision_temp_path(hash, "a//b").empty() &&
+                  tortilla::revision_temp_path(hash, "").empty(),
+              "revision temp path: none for a name outside the revision's folder");
+#ifdef _WIN32
+        // Legal in a git tree, a drive and a root here: once it replaced the
+        // whole temporary folder.
+        check(tortilla::revision_temp_path("deadbeef", "C:\\audit-escape.txt").empty() &&
+                  tortilla::revision_temp_path("deadbeef", "C:audit.txt").empty() &&
+                  tortilla::revision_temp_path("deadbeef", "a\\..\\..\\x.txt").empty() &&
+                  tortilla::revision_temp_path("deadbeef", "a.txt:stream").empty() &&
+                  tortilla::revision_temp_path("deadbeef", "sub/nul.txt").empty(),
+              "revision temp path: no drive, \\, stream or device name on Windows");
+#endif
+        // The rules themselves, either system's, wherever the tests run.
+        using tortilla::entry_path;
+        using tortilla::path_rules;
+        const auto win = path_rules::windows, posix = path_rules::posix;
+        check(!entry_path("C:\\audit-escape.txt", win) && !entry_path("C:x", win) &&
+                  !entry_path("\\\\server\\share\\x", win) && !entry_path("a\\b", win) &&
+                  !entry_path("a.txt:s", win) && !entry_path("CON", win) &&
+                  !entry_path("sub/Nul.txt", win) && !entry_path("com1.log", win) &&
+                  !entry_path("lpt9", win) && !entry_path("a./b", win) && !entry_path("b ", win) &&
+                  !entry_path("a*b", win) && !entry_path("a\x01", win),
+              "entry path: Windows' drives, \\, streams, devices, dropped dots and spaces refused");
+#ifndef _WIN32
+        check(entry_path("C:\\x.txt", posix) == fs::path("C:\\x.txt") &&
+                  entry_path("a:b/con", posix) == fs::path("a:b") / "con",
+              "entry path: elsewhere \\, : and device names are just characters");
+#endif
+        for (const auto rules : {win, posix})
+            check(!entry_path("", rules) && !entry_path("/x", rules) && !entry_path("..", rules) &&
+                      !entry_path("a/../b", rules) && !entry_path("./a", rules) &&
+                      !entry_path("a//b", rules) && !entry_path("a/.", rules) &&
+                      entry_path("a/b.txt", rules) == fs::path("a") / "b.txt" &&
+                      entry_path("a/b/", rules) == fs::path("a") / "b" &&
+                      entry_path("console.txt", rules) == fs::path("console.txt"),
+                  "entry path: roots, .., . and empty parts refused, a folder's / kept");
+
+        // Writing a revision's file follows no link already in the
+        // temporary tree: one planted there can't send it elsewhere.
+        {
+            const fs::path victim = fs::path(rap::sys::path_from_utf8(argv[1])) / "victim";
+            fs::create_directories(victim);
+            std::error_code lec;
+            fs::create_directories(root / "feedface", lec);
+            fs::create_directory_symlink(victim, root / "feedface" / "dir", lec);
+            fs::create_symlink(victim / "file.txt", root / "feedface" / "file.txt", lec);
+            if (!lec)
+            {
+                check(!tortilla::write_temp_file(root / "feedface" / "dir" / "f.txt", "x") &&
+                          !fs::exists(victim / "f.txt"),
+                      "temp file: not written through a linked folder");
+                check(tortilla::write_temp_file(root / "feedface" / "file.txt", "x") &&
+                          !fs::exists(victim / "file.txt") &&
+                          !fs::is_symlink(fs::symlink_status(root / "feedface" / "file.txt")),
+                      "temp file: a link where it goes is replaced, its target untouched");
+            }
+            else
+                std::printf("skip symbolic links: %s\n", lec.message().c_str());
+            check(!tortilla::write_temp_file(
+                      fs::path(rap::sys::path_from_utf8(argv[1])) / "out.txt", "x") &&
+                      !tortilla::write_temp_file(root / ".." / "tortilla-escape-test.txt", "x") &&
+                      !fs::exists(fs::path(rap::sys::path_from_utf8(argv[1])) / "out.txt"),
+                  "temp file: nowhere outside the temporary folder");
+            fs::remove_all(root / "feedface", lec);
+        }
+        check(tortilla::write_temp_file(a, "one") && tortilla::write_temp_file(b, "two"),
               "revision temp files written, folders made");
         auto read = [](const fs::path& p)
         {
