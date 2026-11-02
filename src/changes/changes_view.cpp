@@ -9,6 +9,7 @@
 #include "changes/conflict_editor.h"
 #include "git/merge_tool.h"
 #include "git/remotes.h"
+#include "git/repo_operation.h"
 #include "i18n.h"
 #include "log/log_window.h"
 #include "settings.h"
@@ -270,9 +271,10 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
                                  confirm_local(question, _("Resolve"),
                                                {plus({"add", "-f", "--"}, conflicts)});
                              }));
-            // During a rebase git's "ours" is the branch being rebased onto
-            // and "theirs" the commit being replayed: mine is then theirs.
-            const bool rebasing = rebase_in_progress(dir);
+            // During a rebase (git's or Tortilla's) git's "ours" is the
+            // branch being rebased onto and "theirs" the commit being
+            // replayed: mine is then theirs. The merge tool asks the same.
+            const operation_state op = operation_in_progress(dir);
             auto take = [confirm_local, question, conflicts, dir](int stage)
             {
                 return [=]
@@ -309,8 +311,8 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
                     confirm_local(question, _("Resolve"), commands);
                 };
             };
-            m.push_back(item(_("Resolve conflict using “theirs”"), take(rebasing ? 2 : 3)));
-            m.push_back(item(_("Resolve conflict using “mine”"), take(rebasing ? 3 : 2)));
+            m.push_back(item(_("Resolve conflict using “theirs”"), take(op.theirs_stage())));
+            m.push_back(item(_("Resolve conflict using “mine”"), take(op.mine_stage())));
             separator(m);
         }
         if (unversioned)

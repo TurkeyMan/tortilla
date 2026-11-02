@@ -72,6 +72,7 @@ add_library(tortilla_git STATIC
     src/git/askpass_env.cpp
     src/git/remotes.cpp
     src/git/merge_tool.cpp
+    src/git/repo_operation.cpp
     src/util/programs.cpp
     src/util/sha256.cpp
     src/util/json.cpp

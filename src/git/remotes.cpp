@@ -206,17 +206,6 @@ bool has_conflicts(const std::string& workdir)
     return r.ok() && r.output.find_first_not_of(" \r\n") != std::string::npos;
 }
 
-bool rebase_in_progress(const std::string& workdir)
-{
-    auto r = local_repo(workdir);
-    if (!r) return false;
-    const int state = git_repository_state(r.get());
-    return state == GIT_REPOSITORY_STATE_REBASE ||
-           state == GIT_REPOSITORY_STATE_REBASE_INTERACTIVE ||
-           state == GIT_REPOSITORY_STATE_REBASE_MERGE ||
-           state == GIT_REPOSITORY_STATE_APPLY_MAILBOX_OR_REBASE;
-}
-
 upstream upstream_of(const std::string& workdir, const std::string& branch)
 {
     if (branch.empty()) return {};
