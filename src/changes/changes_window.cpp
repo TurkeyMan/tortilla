@@ -99,8 +99,9 @@ void changes_window::build()
     using namespace rap::literals;
     // Show unversioned and Show ignored only make sense for one folder [spec 5.3.3].
     one_folder_ =
-        root_ || (paths_.size() == 1 && fs::is_directory(rap::sys::path_from_utf8(workdir_) /
-                                                         rap::sys::path_from_utf8(paths_.front())));
+        root_ || (paths_.size() == 1 &&
+                  fs::is_directory(fs::symlink_status(rap::sys::path_from_utf8(workdir_) /
+                                                      rap::sys::path_from_utf8(paths_.front()))));
     const bool one_folder = one_folder_;
     auto close = [this]
     {

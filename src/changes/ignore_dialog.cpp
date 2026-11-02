@@ -124,9 +124,10 @@ void show_ignore_dialog(rap::ui& ui, std::vector<std::string> paths, bool by_ext
         std::string& r = *rel;
         std::error_code ec;
         const size_t slash = r.rfind('/');
-        st->items.push_back({slash == std::string::npos ? "" : r.substr(0, slash),
-                             slash == std::string::npos ? r : r.substr(slash + 1),
-                             fs::is_directory(rap::sys::path_from_utf8(p), ec)});
+        st->items.push_back(
+            {slash == std::string::npos ? "" : r.substr(0, slash),
+             slash == std::string::npos ? r : r.substr(slash + 1),
+             fs::is_directory(fs::symlink_status(rap::sys::path_from_utf8(p), ec))});
         st->relative.push_back(std::move(r));
     }
     // Which of them git tracks: those it can stop tracking.

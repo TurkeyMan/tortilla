@@ -33,16 +33,19 @@ void remove_files(rap::ui& ui, const std::vector<std::string>& paths, bool keep_
     auto repo = repo::open(paths.front());
     if (!repo) return fail(repo.error());
 
-    // Repository-relative, as git takes them; absolute, for the trash.
+    // Repository-relative, as git takes them; absolute, for the trash: the
+    // same entry both, the one under the working tree git names (a link
+    // itself, never its target).
     std::vector<std::string> relative;
     std::vector<fs::path> absolute;
     for (const std::string& p : paths)
     {
         auto rel = repo_relative(repo->workdir(), p);
         if (!rel || rel->empty()) continue;  // not inside it, or the top itself
-        std::error_code ec;
+        absolute.push_back(
+            (rap::sys::path_from_utf8(repo->workdir()) / rap::sys::path_from_utf8(*rel))
+                .make_preferred());
         relative.push_back(std::move(*rel));
-        absolute.push_back(fs::absolute(rap::sys::path_from_utf8(p), ec));
     }
     if (relative.empty()) return done(false);
 

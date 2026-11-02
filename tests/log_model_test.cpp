@@ -622,6 +622,62 @@ int main(int argc, char** argv)
         check(!tortilla::repo_relative(wt, std::string(argv[1])).has_value() &&
                   !tortilla::repo_relative(wt, wt + "/../elsewhere").has_value(),
               "repo relative: outside the working tree is none");
+
+        // A selected link is the link, wherever it points (or doesn't): its
+        // folders are resolved, never the entry itself. Skipped where the
+        // system won't make links (Windows without the privilege).
+        const std::string lt = std::string(argv[1]) + "/links";
+        sh("git init -q -b main '" + lt + "' && git -C '" + lt +
+           "' config core.autocrlf false && mkdir -p '" + lt + "/sub' && echo t > '" + lt +
+           "/target.txt' && echo x > '" + lt + "/sub/x.txt' && echo o > '" + argv[1] +
+           "/outside.txt'");
+        std::error_code lec;
+        const fs::path lp = rap::sys::path_from_utf8(lt);
+        fs::create_symlink("target.txt", lp / "link.txt", lec);
+        if (!lec)
+        {
+            fs::create_symlink(fs::path(rap::sys::path_from_utf8(argv[1])) / "outside.txt",
+                               lp / "ext.txt", lec);
+            fs::create_symlink("nowhere.txt", lp / "dangling.txt", lec);
+            fs::create_directory_symlink("sub", lp / "dirlink", lec);
+            fs::create_directory_symlink(".", lp / "self", lec);
+            fs::create_directory_symlink(lp, fs::path(rap::sys::path_from_utf8(argv[1])) / "alias",
+                                         lec);
+            const std::string alias = std::string(argv[1]) + "/alias";
+            check(!lec && tortilla::repo_relative(lt, lt + "/link.txt") == std::string("link.txt"),
+                  "repo relative: a link to a file is the link, not its target");
+            check(tortilla::repo_relative(lt, lt + "/ext.txt") == std::string("ext.txt") &&
+                      tortilla::repo_relative(lt, lt + "/dangling.txt") ==
+                          std::string("dangling.txt"),
+                  "repo relative: links outside and to nothing are the links");
+            check(tortilla::repo_relative(lt, lt + "/dirlink") == std::string("dirlink") &&
+                      tortilla::repo_relative(lt, lt + "/dirlink/") == std::string("dirlink") &&
+                      tortilla::repo_relative(lt, lt + "/self") == std::string("self"),
+                  "repo relative: a link to a folder is the link");
+            check(tortilla::repo_relative(lt, lt + "/dirlink/x.txt") == std::string("sub/x.txt"),
+                  "repo relative: through a linked folder, the file it reaches");
+            check(tortilla::repo_relative(lt, alias) == std::string() &&
+                      tortilla::repo_relative(lt, alias + "/sub/x.txt") ==
+                          std::string("sub/x.txt") &&
+                      tortilla::repo_relative(alias, lt + "/link.txt") == std::string("link.txt"),
+                  "repo relative: the working tree by another name");
+
+            // Remove's git half (git rm --cached, keep local) on the
+            // selected link: the link leaves the index, its target stays.
+            const std::string g = "git -C '" + lt + "' -c user.name=Ada -c user.email=ada@x ";
+            sh(g + "add target.txt link.txt sub && " + g + "commit -qm links");
+            const auto rel = tortilla::repo_relative(lt, lt + "/link.txt");
+            tortilla::run_git(
+                lt, tortilla::literal_paths({"rm", "-r", "-q", "--cached", "--ignore-unmatch", "--",
+                                             rel.value_or("link.txt")}));
+            check(tortilla::run_git(lt, {"ls-files"}, tortilla::git_output::stdout_only).output ==
+                          "sub/x.txt\ntarget.txt\n" &&
+                      read_bytes(lt + "/target.txt") == "t\n" &&
+                      fs::is_symlink(fs::symlink_status(lp / "link.txt")),
+                  "repo relative: Remove (keep local) stops tracking the link, not its target");
+        }
+        else
+            std::printf("skip symbolic links: %s\n", lec.message().c_str());
     }
 
     // trimmed() takes strings and views alike.
