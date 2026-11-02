@@ -55,6 +55,7 @@
 #include "util/strings.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <chrono>
 #include <cstdio>
@@ -660,6 +661,47 @@ int main(int argc, char** argv)
         std::fprintf(stderr, "usage: %s <empty scratch dir>\n", argv[0]);
         return 2;
     }
+    // The settings the tests read and write: their own, never the user's.
+    tortilla::settings::get().use_file(rap::sys::path_from_utf8(argv[1]) / "tortilla-settings");
+
+    // Settings read on workers (the forge accounts, sync's choices) while
+    // the UI thread writes them: each read whole, never torn or half-made.
+    {
+        auto& st = tortilla::settings::get();
+        const std::string a(200, 'a'), b(300, 'b');
+        std::atomic<bool> stop{false};
+        std::atomic<int> torn{0};
+        std::vector<std::thread> readers;
+        for (int t = 0; t < 4; ++t)
+            readers.emplace_back(
+                [&]
+                {
+                    while (!stop)
+                    {
+                        const std::string v = st.value("test.race");
+                        if (!v.empty() && v != a && v != b) ++torn;
+                        for (const std::string& e : st.history("test.list"))
+                            if (e.empty()) ++torn;
+                        (void)tortilla::saved_accounts();
+                    }
+                });
+        for (int i = 0; i < 300; ++i)
+        {
+            st.set("test.race", i % 2 ? a : b);
+            st.set("test.key" + std::to_string(i % 20), std::to_string(i));
+            if (i % 3 == 0) st.remove("test.race");
+            st.add_to_history("test.list", std::to_string(i), 5);
+        }
+        stop = true;
+        for (std::thread& t : readers) t.join();
+        check(torn == 0 && st.history("test.list").size() == 5 &&
+                  st.history("test.list").front() == "299",
+              "settings: read on workers while written");
+        for (int i = 0; i < 20; ++i) st.remove("test.key" + std::to_string(i));
+        st.remove("test.race");
+        st.remove("test.list");
+    }
+
     // FIPS 180-4's examples, and a message over one block's padding room.
     check(tortilla::sha256_hex("") ==
               "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",

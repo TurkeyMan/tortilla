@@ -1,10 +1,16 @@
 // tortilla's user settings: a key=value file in the platform config directory
 // (~/.config/tortilla/settings on Linux), read once and written on change.
+//
+// Any thread may read and write them (workers read the forge accounts and
+// sync's choices while the UI changes them): each call is whole, behind a
+// lock, and hands back a copy.
 #pragma once
 
 #include <rapport/rapport.h>
 
+#include <filesystem>
 #include <map>
+#include <shared_mutex>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -38,10 +44,20 @@ public:
     void save_window(const std::string& prefix, const rap::window&);
     void restore_window(const std::string& prefix, rap::window&) const;
 
+    // For the tests: the settings read from, and written to, `file` instead
+    // of the user's.
+    void use_file(const std::filesystem::path& file);
+
 private:
     settings();
+    void load();
+    // With the lock held.
+    std::string value_locked(const std::string& key, const std::string& fallback) const;
+    void set_locked(const std::string& key, const std::string& value);
     void save() const;
 
+    mutable std::shared_mutex mutex_;
+    std::filesystem::path file_;
     std::map<std::string, std::string> values_;
 };
 
