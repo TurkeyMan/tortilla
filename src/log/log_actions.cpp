@@ -1340,16 +1340,16 @@ rap::menu log_window::pull_request_items(const open_pr& p)
     rap::menu m;
     m.push_back(item(_("_Open in the browser"), [url = p.pr.url] { rap::sys::open_url(url); }));
     m.push_back(rap::menu_item::separator());
-    // Conflicts can't be merged at all: nothing for the dialog to offer.
-    m.push_back(item(
-        p.pr.conflicts ? _("_Merge... (conflicts)") : _("_Merge..."),
-        [this, pr = p] { merge_pull_request(pr); }, !p.pr.conflicts));
-    m.push_back(item(_("_Close..."), [this, pr = p] { close_pull_request(pr); }));
+    // Greyed, saying why, where Tortilla may not: signed out, or read only.
+    const pr_menu_labels can =
+        pr_menu_for(p, pr_watch_ ? pr_watch_->access(p.into) : repo_access::unknown);
+    m.push_back(item(can.merge, [this, pr = p] { merge_pull_request(pr); }, can.can_merge));
+    m.push_back(item(can.close, [this, pr = p] { close_pull_request(pr); }, can.can_close));
     return m;
 }
 
-// A PR's entries for its head branch; for any other branch on a forge Tortilla
-// has an account for, making one.
+// A PR's entries for its head branch; for any other branch on a forge,
+// making one (greyed until signed in to it).
 void log_window::open_pull_request_menu(rap::menu& m, const ref& r)
 {
     if (const open_pr* p = pull_request_of(r))
@@ -1360,7 +1360,13 @@ void log_window::open_pull_request_menu(rap::menu& m, const ref& r)
         return;
     }
     if (pr_watch_ && !pr_watch_->remotes().empty())
-        m.push_back(item(_("Create pull _request..."), [this, r] { create_pull_request(r); }));
+    {
+        const std::string why = create_pr_blocker(pr_watch_->remotes());
+        m.push_back(item(
+            why.empty() ? std::string(_("Create pull _request..."))
+                        : rap::i18n::format(_("Create pull _request... ({0})"), why),
+            [this, r] { create_pull_request(r); }, why.empty()));
+    }
 }
 
 }  // namespace tortilla

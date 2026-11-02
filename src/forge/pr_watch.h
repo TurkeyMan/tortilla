@@ -1,7 +1,10 @@
 // A repository's pull requests, kept up to date for the log: every remote on
-// a forge Tortilla has an account for is asked on a worker thread, and again
-// a while later (sooner while checks are running). Forges don't call back
-// a desktop program, so this polls: one request a repository on GitHub.
+// a forge Tortilla has an account for, or on github.com, gitlab.com or
+// codeberg.org without one (asked as no one, for a public repository's), is
+// asked on a worker thread, and again a while later (sooner while checks are
+// running). Forges don't call back a desktop program, so this polls: one
+// request a repository on GitHub signed in; as no one, its REST API's few,
+// every ten minutes, within its hourly allowance.
 #pragma once
 
 #include "forge/forge.h"
@@ -10,7 +13,9 @@
 #include <rapport/rapport.h>
 
 #include <chrono>
+#include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -20,15 +25,18 @@
 namespace tortilla
 {
 
-// A remote on a forge, and the account Tortilla talks to it as.
+// A remote on a forge, and the account Tortilla talks to it as. Without one
+// (a public forge's), the account holds only its kind and host, and it's
+// asked as no one.
 struct forge_remote
 {
     std::string name;  // origin
     forge_repo repo;
     forge_account account;
+    bool signed_in() const { return !account.login.empty(); }
 };
-// The repository's remotes that are on a forge with an account; quick git
-// queries, for the UI thread.
+// The repository's remotes that are on a forge with an account, or on one
+// known_forge() names; quick git queries, for the UI thread.
 std::vector<forge_remote> forge_remotes(const std::string& workdir);
 // Of those, one a forge host, leading remote first: the newest tip of its
 // default branch (<remote>/HEAD, else main, else master) as last fetched.
@@ -49,6 +57,36 @@ struct open_pr
 std::unordered_map<std::string, open_pr> match_pull_requests(const std::vector<forge_remote>&,
                                                              const std::vector<open_pr>&);
 
+// A PR's menu as what Tortilla may do there allows (`access`, pr_watch's):
+// Merge... and Close..., greyed with why not when they can't be, briefly:
+// "sign in to GitHub", "needs write access", "conflicts". Its author may
+// close their own.
+struct pr_menu_labels
+{
+    std::string merge, close;
+    bool can_merge = true, can_close = true;
+};
+pr_menu_labels pr_menu_for(const open_pr&, repo_access);
+// Create pull request...'s why not: "" when a remote is signed in.
+std::string create_pr_blocker(const std::vector<forge_remote>&);
+// "sign in to GitHub" (Codeberg, GitLab).
+std::string sign_in_to(const forge_remote&);
+
+// Whether an anonymous GitHub repository is asked now, last asked at `last`
+// (seconds since 1970; 0: never): every ten minutes, a minute after a
+// refresh() (a fetch, say), and not while what's left of the allowance is
+// short.
+bool anonymous_due(std::int64_t last, std::int64_t now, bool forced, const rate_budget&);
+// How long until the next poll: sooner while checks run; rarely when it
+// failed, or when only anonymous GitHub is asked (anonymous_due), and not
+// before the allowance is full again when it's run out.
+int poll_seconds(bool failed, bool running, bool only_anonymous_github, const rate_budget&,
+                 std::int64_t now);
+
+// A remote that came back hidden as no one (private, most likely, which a
+// forge won't say): "github.com/you/repo: sign in to see its pull requests".
+std::string hint_text(const forge_remote&);
+
 class pr_watch
 {
 public:
@@ -65,11 +103,22 @@ public:
     const std::vector<open_pr>& pull_requests() const { return prs_; }
     // The forge remotes, as last read.
     const std::vector<forge_remote>& remotes() const { return remotes_; }
-    // Why the last ask failed; "" when it didn't.
+    // Why the last ask failed; "" when it didn't. A repository that can't be
+    // seen isn't a failure: it's hidden (access, hints).
     const std::string& error() const { return error_; }
+    // What Tortilla may do with a remote's repository, as last heard.
+    repo_access access(const forge_remote&) const;
+    // The remotes asked as no one that came back hidden: signing in may show
+    // their pull requests (hint_text says so).
+    const std::vector<forge_remote>& hints() const { return hints_; }
+
+    // Every open watch's hints, each repository once: for Settings >
+    // Accounts. The UI thread's.
+    static std::vector<forge_remote> all_hints();
 
 private:
     struct shared;
+    void ask(bool forced);
     void schedule();
 
     rap::ui& ui_;
@@ -78,9 +127,11 @@ private:
     std::vector<forge_remote> remotes_;
     std::vector<open_pr> prs_;
     std::string error_;
+    std::map<std::string, repo_access> access_;  // by access_key
+    std::vector<forge_remote> hints_;
     std::shared_ptr<shared> shared_;
     rap::subscription timer_;
-    bool asking_ = false, again_ = false;
+    bool asking_ = false, again_ = false, again_forced_ = false;
     std::chrono::steady_clock::time_point asked_{};
 };
 

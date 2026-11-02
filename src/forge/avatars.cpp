@@ -151,16 +151,23 @@ std::optional<std::string> avatars::fetch(const job& j, bool& failed)
     for (const forge_remote& r : leading_remotes(j.who.workdir, j.who.remotes))
     {
         if (cancelled_) return std::nullopt;
-        const std::string key = r.account.host + ' ' + r.account.login;
-        auto known = tokens_.find(key);
-        if (known == tokens_.end())
+        // Without an account, a public forge is asked as no one (GitHub
+        // within its hourly allowance, shared with the pull requests' polls).
+        std::string token;
+        if (r.signed_in())
         {
-            auto t = load_token(r.account);
-            known = tokens_.emplace(key, t ? std::optional(t->access) : std::nullopt).first;
+            const std::string key = r.account.host + ' ' + r.account.login;
+            auto known = tokens_.find(key);
+            if (known == tokens_.end())
+            {
+                auto t = load_token(r.account);
+                known = tokens_.emplace(key, t ? std::optional(t->access) : std::nullopt).first;
+            }
+            if (!known->second) continue;  // no token: as good as no account
+            token = *known->second;
         }
-        if (!known->second) continue;  // no token: as good as no account
-        auto bytes = author_avatar(r.account.kind, r.repo, j.who.commit, j.who.email, j.px,
-                                   *known->second, &cancelled_);
+        auto bytes = author_avatar(r.account.kind, r.repo, j.who.commit, j.who.email, j.px, token,
+                                   &cancelled_);
         if (!bytes)
         {
             failed = true;

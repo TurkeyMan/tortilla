@@ -4,7 +4,9 @@
 // Asked on a thread of its own, at the size asked for, in turn until one has
 // a picture: a GitHub noreply address's own (no API call), Gravatar's (by
 // the SHA-256 of the trimmed, lowercased email), then the forges hosting the
-// repository's remotes, as the accounts signed in to them. The address goes
+// repository's remotes, as the accounts signed in to them (or as no one, on
+// a public forge without one: GitHub's within its hourly allowance, as
+// pr_watch's polls). The address goes
 // to Gravatar and to those forges only. Kept in memory and in Tortilla's
 // cache folder by that hash (a picture for a week, "has none" for a day,
 // once every way has said so), so stepping through a history doesn't fetch
