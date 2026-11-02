@@ -34,6 +34,8 @@
 //   tortilla svndcommit|svnrebase|svnfetch|svnignore [path]  git-svn: SVN DCommit,
 //                                     SVN Rebase, SVN Fetch or Import SVN Ignore
 //   tortilla formatpatch [path]       Create Patch Serial: git format-patch into a folder
+//   tortilla reviewpatch [patch] [path]  Review/apply single patch: its files, each
+//                                     reviewed in the diff tool, then git apply
 //   tortilla importpatch [path] [patch...]  Apply Patch Serial: git am, to the working
 //                                     tree at path (or the patches' own)
 //   tortilla repocreate [folder]       git init there, bare or not
@@ -96,6 +98,7 @@
 #include "ui/pull_request_dialog.h"
 #include "ui/repo_browser.h"
 #include "ui/repo_icon.h"
+#include "ui/review_patch.h"
 #include "ui/settings_dialog.h"
 #include "ui/stash_dialog.h"
 #include "ui/submodule_dialogs.h"
@@ -290,6 +293,7 @@ int main(int argc, char** argv)
                   std::strcmp(argv[i], "svnignore") == 0 ||
                   std::strcmp(argv[i], "formatpatch") == 0 ||
                   std::strcmp(argv[i], "importpatch") == 0 ||
+                  std::strcmp(argv[i], "reviewpatch") == 0 ||
                   std::strcmp(argv[i], "repocreate") == 0 || std::strcmp(argv[i], "rename") == 0 ||
                   std::strcmp(argv[i], "cleanup") == 0 || std::strcmp(argv[i], "compare") == 0 ||
                   std::strcmp(argv[i], "blame") == 0 || std::strcmp(argv[i], "showcompare") == 0 ||
@@ -538,6 +542,91 @@ int main(int argc, char** argv)
         else
             tortilla::sync_submodules(**ui, nullptr, repo->workdir(), done);
         return (*ui)->run();
+    }
+
+    // Explorer's Review/apply single patch [spec 4.2, row 58; 4.4]: the
+    // patch given, or one chosen (TortoiseGitMerge asks too), applied to the
+    // working tree given, else the one the patch (or the item) is in, else
+    // one chosen.
+    if (command == "reviewpatch")
+    {
+        auto is_patch = [](const std::string& a)
+        {
+            std::string ext = rap::sys::path_from_utf8(a).extension().string();
+            for (char& c : ext) c = char(std::tolower(static_cast<unsigned char>(c)));
+            return ext == ".patch" || ext == ".diff";
+        };
+        auto absolute = [](const std::string& a)
+        {
+            std::error_code ec;
+            const auto at = std::filesystem::absolute(rap::sys::path_from_utf8(a), ec);
+            return ec ? a : rap::sys::path_to_utf8(at);
+        };
+        std::string patch, where;
+        for (const std::string& a : args)
+            if (patch.empty() && is_patch(a))
+                patch = absolute(a);
+            else if (where.empty())
+                where = a;
+        if (where.empty())
+            where = patch.empty()
+                        ? "."
+                        : rap::sys::path_to_utf8(rap::sys::path_from_utf8(patch).parent_path());
+        tortilla::windows::init(**ui);
+        const size_t running = tortilla::windows::hold({});
+        int code = 1;
+        auto done = [running, &code](bool ok)
+        {
+            code = ok ? 0 : 1;
+            tortilla::windows::release(running);
+        };
+        auto review = [&ui, done](const std::string& at, const std::string& file)
+        {
+            auto repo = tortilla::repo::open(at);
+            if (!repo || repo->bare())
+            {
+                const std::string error =
+                    repo ? std::string(_("This needs a working tree.")) : repo.error();
+                (*ui)->message(
+                    nullptr,
+                    {.icon = rap::message_spec::icon::error, .title = "Tortilla", .text = error},
+                    [done](rap::dialog_role) { done(false); });
+                return;
+            }
+            tortilla::review_patch(**ui, nullptr, repo->workdir(), file, done);
+        };
+        // The working tree, then the patch, each asked for if not known.
+        auto with_tree = [&ui, review, done, where](const std::string& file)
+        {
+            if (tortilla::repo::open(where)) return review(where, file);
+            (*ui)->choose_files(nullptr,
+                                {.mode = rap::file_dialog_spec::mode::folder,
+                                 .title = _("Apply the patch to the working tree in")},
+                                [review, done, file](std::vector<std::string> chosen)
+                                {
+                                    if (chosen.empty())
+                                        done(false);
+                                    else
+                                        review(chosen.front(), file);
+                                });
+        };
+        if (!patch.empty())
+            with_tree(patch);
+        else
+            (*ui)->choose_files(
+                nullptr,
+                {.mode = rap::file_dialog_spec::mode::open,
+                 .title = _("Review a patch"),
+                 .filters = {{_("Patches"), "*.patch;*.diff"}, {_("All files"), "*"}}},
+                [with_tree, done](std::vector<std::string> chosen)
+                {
+                    if (chosen.empty())
+                        done(false);
+                    else
+                        with_tree(chosen.front());
+                });
+        (*ui)->run();
+        return code;
     }
 
     // Explorer's Apply Patch Serial [spec 4.2, row 57]: on a working tree's

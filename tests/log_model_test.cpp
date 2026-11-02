@@ -2573,6 +2573,40 @@ int main(int argc, char** argv)
               "patch serial: a patch that doesn't apply leaves git am stopped");
         tortilla::run_git(dst, {"am", "--abort"});
         check(!tortilla::am_in_progress(dst + "/.git"), "patch serial: aborted");
+
+        // Review/apply single patch: its files, whether each applies, and
+        // applying some of them.
+        using namespace std::string_literals;
+        check(tortilla::numstat_paths("1\t0\ta.txt\0"s
+                                      "2\t1\t\0old.txt\0new.txt\0"s
+                                      "-\t-\tbin\0"s) ==
+                      std::vector<std::string>{"a.txt", "new.txt", "bin"} &&
+                  tortilla::numstat_paths("").empty(),
+              "single patch: a patch's files, a rename's new name");
+        check(tortilla::apply_args("p.diff", {"a", "b"}, true) ==
+                  std::vector<std::string>{"apply", "--check", "--include=a", "--include=b", "--",
+                                           "p.diff"},
+              "single patch: git apply, for some files");
+        const std::string one = base + "/one";
+        sh("git init -q -b main '" + one + "' && printf 'a\\nb\\n' > '" + one +
+           "/x.txt' && echo y > '" + one + "/y.txt' && " + in(one) + "add . && " + in(one) +
+           "commit -qm base && printf 'a\\nB\\n' > '" + one + "/x.txt' && echo Y > '" + one +
+           "/y.txt' && echo z > '" + one + "/z.txt' && " + in(one) + "add . && " + in(one) +
+           "diff --cached > '" + base + "/one.diff' && " + in(one) + "reset -q --hard");
+        const std::string diff = base + "/one.diff";
+        const auto touched =
+            tortilla::numstat_paths(tortilla::run_git(one, {"apply", "-z", "--numstat", "--", diff},
+                                                      tortilla::git_output::stdout_only)
+                                        .output);
+        check(touched == std::vector<std::string>{"x.txt", "y.txt", "z.txt"} &&
+                  tortilla::run_git(one, tortilla::apply_args(diff, {"x.txt"}, true)).ok(),
+              "single patch: the files of a diff, which apply");
+        check(
+            tortilla::run_git(one, tortilla::apply_args(diff, {"x.txt", "z.txt"})).ok() &&
+                fs::exists(one + "/z.txt") &&
+                tortilla::run_git(one, {"status", "--porcelain"}, tortilla::git_output::stdout_only)
+                        .output == " M x.txt\n?? z.txt\n",
+            "single patch: the files chosen applied, the rest left");
     }
 
     // Submodules: Add, Update and Sync's arguments, and the list Update
