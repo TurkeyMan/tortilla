@@ -176,6 +176,12 @@ void reflog_window::build()
     list_->focus();
 }
 
+void reflog_window::acted(size_t select)
+{
+    reload(select);
+    if (done_) done_();
+}
+
 void reflog_window::reload(size_t select)
 {
     const std::string chosen = refs_.empty() ? initial_ref_ : ref();
@@ -373,7 +379,7 @@ void reflog_window::reset(const reflog_entry& e)
     tortilla::reset_to(ui_, window_.get(), workdir_, current_branch(workdir_), e.id, summary,
                        [this, alive = std::weak_ptr<bool>(alive_)](bool)
                        {
-                           if (alive.lock()) reload();
+                           if (alive.lock()) acted();
                        });
 }
 
@@ -419,7 +425,7 @@ void reflog_window::delete_entries(std::vector<size_t> sel)
                                                         .text = r.output});
                             break;
                         }
-                    reload(first);
+                    acted(first);
                 });
 }
 
@@ -465,7 +471,7 @@ void reflog_window::clear_stash()
                                                        {.icon = rap::message_spec::icon::error,
                                                         .title = "Tortilla",
                                                         .text = r.output});
-                                       reload();
+                                       acted();
                                    }),
                            dialog_button{rap::dialog_role::cancel, ""}.on_click(
                                [this] { confirm_->close(); })},
@@ -483,7 +489,7 @@ void reflog_window::run(const std::string& title, std::vector<std::vector<std::s
     run_progress_dialog(ui_, window_.get(), title, workdir_, std::move(c),
                         [this, alive = std::weak_ptr<bool>(alive_)](bool)
                         {
-                            if (alive.lock()) reload(list_->current().value_or(0));
+                            if (alive.lock()) acted(list_->current().value_or(0));
                         });
 }
 
@@ -502,7 +508,7 @@ void reflog_window::open_dialog(std::expected<std::unique_ptr<D>, std::string> d
     (*dialog)->on_done(
         [this, alive = std::weak_ptr<bool>(alive_)]
         {
-            if (alive.lock()) reload(list_->current().value_or(0));
+            if (alive.lock()) acted(list_->current().value_or(0));
         });
     windows::keep(std::move(*dialog));
 }

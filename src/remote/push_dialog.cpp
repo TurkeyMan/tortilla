@@ -288,7 +288,13 @@ void push_dialog::push()
     const size_t running = windows::hold({});
     run_progress_dialog(
         ui_, nullptr, title(workdir_, _("{0} - Push")), workdir_, std::move(commands),
-        [running](bool) { windows::release(running); }, std::move(follow_ups));
+        [running, done = done_](bool)
+        {
+            // (A push that failed may still have moved some branches.)
+            if (done) done();
+            windows::release(running);
+        },
+        std::move(follow_ups));
     // close() only hides it: what closing means (its release) is ours.
     window_->close();
     if (closed_) closed_();

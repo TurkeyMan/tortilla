@@ -29,6 +29,9 @@ public:
     ~reflog_window();
     void show() { window_->show(); }
     void on_closed(std::function<void()> f) { closed_ = std::move(f); }
+    // After something it ran changed the repository (a reset, a stash
+    // dropped or applied, a branch made): not when it only looked.
+    void on_done(std::function<void()> f) { done_ = std::move(f); }
 
 private:
     class rows;  // the list's model
@@ -37,6 +40,7 @@ private:
     void build();
     // The refs again, then the chosen one's entries, selecting `select`.
     void reload(size_t select = 0);
+    void acted(size_t select = 0);  // reload, and done_
     void load();
     void update_info();
     std::string ref() const;
@@ -64,7 +68,7 @@ private:
     std::unique_ptr<rap::window> window_;
     std::unique_ptr<rap::window> confirm_;  // Clear stash's
     std::shared_ptr<git_process> difftool_;
-    std::function<void()> closed_;
+    std::function<void()> closed_, done_;
     // Callbacks that outlive the window (a child dialog, a confirmation)
     // check this is still there.
     std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);

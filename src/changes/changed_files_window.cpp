@@ -52,9 +52,10 @@ changed_files_window::changed_files_window(rap::ui& ui, std::string workdir, std
                   [this](const std::string& title, std::vector<std::vector<std::string>> commands)
               {
                   run_progress_dialog(ui_, window_.get(), title, workdir_, std::move(commands),
-                                      [this](bool) { load(); });
+                                      [this](bool) { changed(); });
               },
-              .refresh = [this] { load(); },
+              // (An ignore list written, a conflict resolved: F5 is load's.)
+              .refresh = [this] { changed(); },
               .open_settings = [this](settings_page page)
               { show_settings(ui_, window_.get(), workdir_, page); },
               .selection_changed = [this] { update_status(); }})
@@ -133,6 +134,12 @@ void changed_files_window::load()
             if (done) return {};
             return [this, error = done.error()] { status_->set_text(error); };
         });
+}
+
+void changed_files_window::changed()
+{
+    load();
+    if (done_) done_();
 }
 
 void changed_files_window::update_status()

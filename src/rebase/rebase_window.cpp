@@ -710,6 +710,11 @@ void rebase_window::abort_pressed()
                 });
 }
 
+bool rebase_window::acted() const
+{
+    return stashed_ || (engine_ && engine_->started());
+}
+
 void rebase_window::close()
 {
     closing_ = true;
