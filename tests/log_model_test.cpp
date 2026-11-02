@@ -2244,6 +2244,17 @@ int main(int argc, char** argv)
                   "pins: a pinned branch's tip, joined to the rest without its own history");
             const auto pins_only = walk({.refs = tortilla::walk_refs::tips});
             check(pins_only.empty(), "pins: a tips walk with nothing to walk is empty");
+
+            // Show log of a..b and a...b: theirs and buried each have two
+            // commits on m2.
+            const auto range = walk({.rev = "main..theirs"});
+            check(range.size() == 2 && has(range, rev("theirs")) && has(range, rev("theirs~1")),
+                  "range: a..b is b's history less a's");
+            const auto symmetric = walk({.rev = "theirs...buried"});
+            check(symmetric.size() == 4 && has(symmetric, rev("buried~1")) &&
+                      has(symmetric, rev("theirs")) && !has(symmetric, rev("main~1")),
+                  "range: a...b is both less their merge base");
+            check(walk({.rev = "theirs..theirs"}).empty(), "range: a..a is empty");
         }
     }
 

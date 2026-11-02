@@ -683,10 +683,15 @@ void log_window::reload()
     pulse_timer_ = ui_.timer(100, true, [this] { progress_->pulse(); });
     status_->set_text(show_summary() + " — " + _("Loading…"));
 
-    // A ref picked to start from that has since gone: back to HEAD.
-    if (!walk_options_.rev.empty() &&
+    // A ref picked to start from that has since gone: back to HEAD. (A
+    // range, a..b, is no one rev to --verify.)
+    const std::string& rev = walk_options_.rev;
+    if (!rev.empty() &&
         !run_git(repo_.workdir().empty() ? repo_.git_dir() : repo_.workdir(),
-                 {"rev-parse", "--verify", "-q", walk_options_.rev + "^{commit}"}, git_output::stdout_only)
+                 rev.find("..") != std::string::npos
+                     ? std::vector<std::string>{"rev-parse", "-q", rev}
+                     : std::vector<std::string>{"rev-parse", "--verify", "-q", rev + "^{commit}"},
+                 git_output::stdout_only)
              .ok())
         set_walk(walk_refs::head);
 
