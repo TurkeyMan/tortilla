@@ -33,6 +33,7 @@
 //                                     or Sync, for the working tree at path
 //   tortilla svndcommit|svnrebase|svnfetch|svnignore [path]  git-svn: SVN DCommit,
 //                                     SVN Rebase, SVN Fetch or Import SVN Ignore
+//   tortilla formatpatch [path]       Create Patch Serial: git format-patch into a folder
 //   tortilla repocreate [folder]       git init there, bare or not
 //   tortilla rename path               git mv it to a new name
 //   tortilla cleanup [path...]         Clean up: untracked files removed
@@ -88,6 +89,7 @@
 #include "ui/create_repo_dialog.h"
 #include "ui/diff_window.h"
 #include "ui/export_dialog.h"
+#include "ui/patch_serial_dialogs.h"
 #include "ui/progress_dialog.h"
 #include "ui/pull_request_dialog.h"
 #include "ui/repo_browser.h"
@@ -283,6 +285,7 @@ int main(int argc, char** argv)
                   std::strcmp(argv[i], "svndcommit") == 0 ||
                   std::strcmp(argv[i], "svnrebase") == 0 || std::strcmp(argv[i], "svnfetch") == 0 ||
                   std::strcmp(argv[i], "svnignore") == 0 ||
+                  std::strcmp(argv[i], "formatpatch") == 0 ||
                   std::strcmp(argv[i], "repocreate") == 0 || std::strcmp(argv[i], "rename") == 0 ||
                   std::strcmp(argv[i], "cleanup") == 0 || std::strcmp(argv[i], "compare") == 0 ||
                   std::strcmp(argv[i], "blame") == 0 || std::strcmp(argv[i], "showcompare") == 0 ||
@@ -533,10 +536,10 @@ int main(int argc, char** argv)
         return (*ui)->run();
     }
 
-    // Explorer's git-svn commands [spec 4.2, rows 8-11], for the working tree
-    // at path.
+    // Explorer's git-svn commands [spec 4.2, rows 8-11] and patch serials
+    // [rows 56-57], for the working tree at path.
     if (command == "svndcommit" || command == "svnrebase" || command == "svnfetch" ||
-        command == "svnignore")
+        command == "svnignore" || command == "formatpatch")
     {
         auto repo = tortilla::repo::open(path);
         if (!repo || repo->bare())
@@ -559,7 +562,16 @@ int main(int argc, char** argv)
             code = ok ? 0 : 1;
             tortilla::windows::release(running);
         };
-        if (command == "svndcommit")
+        if (command == "formatpatch")
+        {
+            // Explorer's Create Patch Serial [spec 4.2, row 56]: into the
+            // folder clicked, by default.
+            std::error_code ec;
+            const auto at = std::filesystem::absolute(rap::sys::path_from_utf8(path), ec);
+            tortilla::create_patch_serial(**ui, nullptr, repo->workdir(),
+                                          ec ? path : rap::sys::path_to_utf8(at), done);
+        }
+        else if (command == "svndcommit")
             tortilla::svn_dcommit(**ui, nullptr, repo->workdir(), done);
         else if (command == "svnrebase")
             tortilla::svn_rebase(**ui, nullptr, repo->workdir(), done);
