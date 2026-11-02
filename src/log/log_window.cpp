@@ -1378,9 +1378,9 @@ rap::menu log_window::start_menu()
 std::string log_window::filter_cue() const
 {
     static const std::pair<unsigned, const char*> fields[] = {
-        {filter_subject, T_("Subject")}, {filter_messages, T_("Messages")}, {filter_paths, T_("Paths")},
-        {filter_authors, T_("Authors")}, {filter_emails, T_("Emails")},     {filter_revs, T_("SHA-1")},
-        {filter_refname, T_("Refname")}};
+        {filter_subject, T_("Subject")}, {filter_messages, T_("Messages")},
+        {filter_authors, T_("Authors")}, {filter_emails, T_("Emails")},
+        {filter_revs, T_("SHA-1")},      {filter_refname, T_("Refname")}};
     std::string cue;
     for (auto [bit, name] : fields)
         if (filter_.fields & bit) cue += std::string(cue.empty() ? "" : ", ") + _(name);
@@ -1389,22 +1389,19 @@ std::string log_window::filter_cue() const
 
 rap::menu log_window::filter_menu()
 {
-    auto field = [this](const char* label, unsigned bit, bool enabled = true)
+    auto field = [this](const char* label, unsigned bit)
     {
-        return toggle(
-            label, filter_.fields & bit,
-            [this, bit]
-            {
-                filter_.fields ^= bit;
-                search_->set_placeholder(filter_cue());
-                apply_filter();
-            },
-            enabled);
+        return toggle(label, filter_.fields & bit,
+                      [this, bit]
+                      {
+                          filter_.fields ^= bit;
+                          search_->set_placeholder(filter_cue());
+                          apply_filter();
+                      });
     };
     return {
         field(_("Subject"), filter_subject),
         field(_("Messages"), filter_messages),
-        field(_("Paths"), filter_paths, false),
         field(_("Authors"), filter_authors),
         field(_("Emails"), filter_emails),
         field(_("SHA-1"), filter_revs),
