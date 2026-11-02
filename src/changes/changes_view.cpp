@@ -149,9 +149,10 @@ void changes_view::fit_path(float width)
     float others = 0;
     for (size_t i = 0; i < widths.size(); ++i)
         if (i != file_model::path && list_->column_visible(i)) others += widths[i];
-    // Room for the frame and a vertical scroll bar; never narrower than a
-    // short path (the list scrolls sideways then).
-    const float path = std::max(160.f, width - others - 24);
+    // Room for the frame and a vertical scroll bar (Qt's, with its frame,
+    // takes more than 24: the last header was clipped); never narrower than
+    // a short path (the list scrolls sideways then).
+    const float path = std::max(160.f, width - others - 32);
     if (std::abs(path - widths[file_model::path]) < 1) return;
     std::vector<float> only(widths.size(), 0);
     only[file_model::path] = path;
