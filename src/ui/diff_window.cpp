@@ -183,15 +183,37 @@ public:
                 return true;
             });
 
-        git_result r = run_git(dir, git_args, git_output::stdout_only);
-        content_ = r.output;
-        // git diff --no-index (two files) exits 1 when they differ.
-        const bool diff = r.ok() || r.exit_code == 1;
+        if (git_args.empty())
+            set(title_, {}, false);
+        else
+        {
+            git_result r = run_git(dir, git_args, git_output::stdout_only);
+            // git diff --no-index (two files) exits 1 when they differ.
+            set(title_, r.output, r.ok() || r.exit_code == 1);
+        }
+        self_ = self;  // alive until closed
+        settings::get().restore_window(key_, *window_);
+        window_->show();
+    }
+
+    // What's shown, and the title over it; `diff` colours it as one.
+    void set(const std::string& title, std::string text, bool diff)
+    {
+        if (title != title_) window_->set_title(rap::i18n::format(_("{0} - Tortilla"), title));
+        title_ = title;
+        content_ = std::move(text);
         text_->set_text(content_,
                         diff ? diff_spans(content_) : std::vector<rap::text_view::span>{});
-        self_ = self;  // alive until closed
-        settings::get().restore_window("diff.window", *window_);
-        window_->show();
+        if (find_shown_) search();
+    }
+
+    // Where the window's place is kept: View Patch's apart from the rest.
+    std::string key_ = "diff.window";
+
+    void close()
+    {
+        window_->close();
+        closed();
     }
 
 private:
@@ -309,16 +331,10 @@ private:
                                         .text = rap::i18n::format(_("Could not save {0}."), path)});
     }
 
-    void close()
-    {
-        window_->close();
-        closed();
-    }
-
     // Destroyed after the callback that closed it returns.
     void closed()
     {
-        settings::get().save_window("diff.window", *window_);
+        settings::get().save_window(key_, *window_);
         if (on_closed_) on_closed_();
         auto keep = std::move(self_);
         ui_.post([keep] {});
@@ -348,6 +364,24 @@ void show_unified_diff(rap::ui& ui, const std::string& title, const std::string&
 {
     std::make_shared<diff_window>(ui, title, std::move(closed), std::move(save))
         ->open(dir, git_args);
+}
+
+patch_viewer open_patch_viewer(rap::ui& ui, const std::string& title, std::function<void()> closed)
+{
+    auto w = std::make_shared<diff_window>(ui, title, std::move(closed), nullptr);
+    w->key_ = "log.patch.window";
+    w->open({}, {});
+    std::weak_ptr<diff_window> weak = w;
+    return {.show =
+                [weak](const std::string& title, std::string text)
+            {
+                if (auto s = weak.lock()) s->set(title, std::move(text), true);
+            },
+            .close =
+                [weak]
+            {
+                if (auto s = weak.lock()) s->close();
+            }};
 }
 
 }  // namespace tortilla
