@@ -4,14 +4,24 @@
 // keychain, not to Tortilla's settings, so there's nothing for OK to save.
 #pragma once
 
+#include "forge/forge.h"
+
 #include <rapport/rapport.h>
 
 #include <functional>
+#include <string>
 
 namespace tortilla
 {
 
-// `parent` gives the window for its messages.
-rap::node accounts_page(rap::ui&, std::function<rap::window*()> parent);
+// Signing in to a forge's server: the Sign in group set for it, and the
+// keyboard on the way to sign in there (the browser where Tortilla can, else
+// the token). For another page's Sign in...; nothing once the page is gone.
+using sign_in_to = std::function<void(forge_kind, const std::string& host)>;
+
+// `parent` gives the window for its messages. `prefill`, if given, gets the
+// page's sign_in_to once the page is made.
+rap::node accounts_page(rap::ui&, std::function<rap::window*()> parent,
+                        sign_in_to* prefill = nullptr);
 
 }  // namespace tortilla

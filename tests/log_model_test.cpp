@@ -9,6 +9,7 @@
 #include "changes/working_tree.h"
 #include "forge/forge.h"
 #include "forge/pr_watch.h"
+#include "forge/remote_sign_in.h"
 #include "git/archive.h"
 #include "git/badges.h"
 #include "git/blame.h"
@@ -167,6 +168,46 @@ int main(int argc, char** argv)
                       !tortilla::repo_of_url("/srv/git/engine") &&
                       !tortilla::repo_of_url("https://github.com/engine"),
                   "forge: a remote's repository, owner and name");
+        }
+        // What the Remotes page says of a remote, and whether it offers Sign
+        // in... (a button for a private repository, a link for a public one).
+        {
+            using namespace tortilla;
+            using offer = remote_sign_in::offer;
+            check(known_forge("github.com") == forge_kind::github &&
+                      known_forge("GitLab.com") == forge_kind::gitlab &&
+                      known_forge("codeberg.org") == forge_kind::gitea &&
+                      !known_forge("git.example.org"),
+                  "remote sign-in: the forges known by their host's name");
+            const forge_account ada{.kind = forge_kind::github, .host = "github.com", .login = "ada"};
+            const auto off = describe_remote(false, nullptr, repo_seen::unknown, false);
+            check(off.summary.empty() && off.text.empty() && off.sign_in == offer::none &&
+                      off.mark == check_state::none,
+                  "remote sign-in: nothing said of a remote that isn't on a forge");
+            const auto in = describe_remote(true, &ada, repo_seen::shown, false);
+            const auto in_unknown = describe_remote(true, &ada, repo_seen::unknown, true);
+            check(in.summary == "ada" && in.mark == check_state::success &&
+                      in.sign_in == offer::none && in.text.find("ada") != std::string::npos &&
+                      in_unknown.mark == check_state::success &&
+                      in_unknown.sign_in == offer::none,
+                  "remote sign-in: signed in is a tick and the account, nothing offered");
+            const auto blind = describe_remote(true, &ada, repo_seen::hidden, false);
+            check(blind.mark == check_state::failure && blind.sign_in == offer::link &&
+                      blind.text.find("can't see") != std::string::npos,
+                  "remote sign-in: an account that gets a 404 can't see it");
+            const auto hidden = describe_remote(true, nullptr, repo_seen::hidden, false);
+            const auto shown = describe_remote(true, nullptr, repo_seen::shown, false);
+            const auto asking = describe_remote(true, nullptr, repo_seen::unknown, true);
+            const auto unknown = describe_remote(true, nullptr, repo_seen::unknown, false);
+            check(hidden.summary == "Private" && hidden.sign_in == offer::button &&
+                      hidden.text.starts_with("Private:") && hidden.mark == check_state::none,
+                  "remote sign-in: private (a 404 as anyone) is the button");
+            check(shown.summary == "Public" && shown.sign_in == offer::link &&
+                      shown.text.starts_with("Public:"),
+                  "remote sign-in: public is a link");
+            check(asking.sign_in == offer::button && unknown.sign_in == offer::button &&
+                      asking.summary == "Not signed in" && asking.text != unknown.text,
+                  "remote sign-in: not known yet, or no answer, is the button");
         }
         // Which branches are pull requests' heads: the head repository's
         // remote branch (a fork's through the fork's remote); never a local one.
