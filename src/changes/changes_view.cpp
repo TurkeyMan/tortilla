@@ -7,6 +7,7 @@
 #include "blame/blame_window.h"
 #include "changes/commit_window.h"
 #include "changes/conflict_editor.h"
+#include "changes/revert.h"
 #include "git/merge_tool.h"
 #include "git/remotes.h"
 #include "git/repo_operation.h"
@@ -231,6 +232,31 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
                              if (r == rap::dialog_role::yes) local(title, commands);
                          });
     };
+    // As confirm_local, for commands that overwrite or remove working
+    // files: once confirmed, what `keep` names goes to the trash first, so
+    // it can be undone (as the Revert dialog does).
+    using keep_fn = std::function<std::vector<std::filesystem::path>()>;
+    auto confirm_overwrite = [this, local](const std::string& question, const std::string& title,
+                                           keep_fn keep, std::vector<arg_list> commands)
+    {
+        host_.ui.message(
+            host_.window(),
+            {.icon = rap::message_spec::icon::question,
+             .title = title,
+             .text = question,
+             .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
+            [this, local, title, keep, commands](rap::dialog_role r)
+            {
+                if (r != rap::dialog_role::yes) return;
+                trash_first(host_.ui, host_.window(), title,
+                            _("The files couldn't be moved to the Recycle Bin first, so this can't "
+                              "be undone. Go on anyway?"),
+                            keep(), [local, title, commands] { local(title, commands); });
+            });
+    };
+    // The selected files' local changes: what replacing them would lose.
+    auto changed_of = [dir = host_.workdir](arg_list paths)
+    { return keep_fn([dir, paths] { return with_local_changes(dir, paths); }); };
     const std::string count =
         one ? rap::i18n::format(_("“{0}”"), files.front().path)
             : rap::i18n::format(N_("{0} file", "{0} files", files.size()), files.size());
@@ -266,7 +292,9 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
             // branch being rebased onto and "theirs" the commit being
             // replayed: mine is then theirs. The merge tool asks the same.
             const operation_state op = operation_in_progress(dir);
-            auto take = [confirm_local, question, conflicts, dir](int stage)
+            // The files as they are (markers and any hand-merging) go to the
+            // trash before a side replaces them.
+            auto take = [confirm_overwrite, changed_of, question, conflicts, dir](int stage)
             {
                 return [=]
                 {
@@ -299,7 +327,7 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
                                  present));
                         commands.push_back(plus({"add", "-f", "--"}, present));
                     }
-                    confirm_local(question, _("Resolve"), commands);
+                    confirm_overwrite(question, _("Resolve"), changed_of(conflicts), commands);
                 };
             };
             m.push_back(item(_("Resolve conflict using “theirs”"), take(op.theirs_stage())));
@@ -328,27 +356,24 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
             separator(m);
             compare_two();
             m.push_back(item(_("Commit..."), "commit", [this, files] { commit(files); }));
-            // New files leave the index (the file stays); the rest go
-            // back to HEAD, in the index and the working tree.
+            // As the Revert dialog: new files leave the index (the file
+            // stays); the rest go back to HEAD, in the index and the working
+            // tree, what they held moved to the trash first.
             m.push_back(item(
                 _("Re_vert..."), "revert",
-                [confirm_local, files, count]
+                [this, confirm_overwrite, files, count, dir]
                 {
-                    arg_list added, changed;
-                    for (const file_change& f : files)
-                    {
-                        (f.status == 'A' ? added : changed).push_back(f.path);
-                        if (!f.old_path.empty()) changed.push_back(f.old_path);
-                    }
-                    std::vector<arg_list> commands;
-                    if (!added.empty())
-                        commands.push_back(plus({"restore", "--staged", "--"}, added));
-                    if (!changed.empty())
-                        commands.push_back(plus(
-                            {"restore", "--source=HEAD", "--staged", "--worktree", "--"}, changed));
-                    confirm_local(
-                        rap::i18n::format(_("Revert {0}? Their local changes will be lost."), count),
-                        _("Revert"), commands);
+                    revert_plan plan = plan_revert(dir, files);
+                    if (!plan.error.empty())
+                        return host_.ui.message(host_.window(),
+                                                {.icon = rap::message_spec::icon::error,
+                                                 .title = _("Revert"),
+                                                 .text = plan.error});
+                    confirm_overwrite(
+                        rap::i18n::format(_("Revert {0}? Their local changes go to the Recycle "
+                                            "Bin."),
+                                          count),
+                        _("Revert"), [trash = plan.trash] { return trash; }, revert_commands(plan));
                 }));
             if (host_.more_items) host_.more_items(m, files);
             m.push_back(item(_("Skip worktree"),
@@ -400,18 +425,20 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
         separator(m);
         compare_two();
         // The working tree's files replaced with this commit's (or its
-        // parent's) versions, as TortoiseGit's Revert to revision.
+        // parent's) versions, as TortoiseGit's Revert to revision. Their
+        // local changes go to the trash first.
         if (!deleted)
-            m.push_back(item(
-                _("R_evert to this revision"), "revert",
-                [confirm_local, hash = vs_wc ? parent : hash, files, count]
-                {
-                    confirm_local(rap::i18n::format(_("Replace {0} in the working tree with the "
-                                                      "version in {1}?"),
-                                                    count, hash.substr(0, 8)),
-                                  _("Revert to this revision"),
-                                  {plus({"checkout", hash, "--"}, paths_of(files, false))});
-                }));
+            m.push_back(
+                item(_("R_evert to this revision"), "revert",
+                     [confirm_overwrite, changed_of, hash = vs_wc ? parent : hash, files, count]
+                     {
+                         confirm_overwrite(
+                             rap::i18n::format(_("Replace {0} in the working tree with the "
+                                                 "version in {1}?"),
+                                               count, hash.substr(0, 8)),
+                             _("Revert to this revision"), changed_of(paths_of(files, false)),
+                             {plus({"checkout", hash, "--"}, paths_of(files, false))});
+                     }));
         if (!parent_title.empty())
         {
             // A file the commit added has no parent version, and a renamed
@@ -421,13 +448,14 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
             m.push_back(item(
                 rap::i18n::format(_("Revert to parent revision: {0}"), menu_text(parent_title)),
                 "revert",
-                [confirm_local, parent, files, count]
+                [confirm_overwrite, changed_of, parent, files, count]
                 {
-                    confirm_local(rap::i18n::format(_("Replace {0} in the working tree with the "
-                                                      "version in {1}?"),
-                                                    count, parent.substr(0, 8)),
-                                  _("Revert to parent revision"),
-                                  {plus({"checkout", parent, "--"}, paths_of(files, false))});
+                    confirm_overwrite(
+                        rap::i18n::format(_("Replace {0} in the working tree with the "
+                                            "version in {1}?"),
+                                          count, parent.substr(0, 8)),
+                        _("Revert to parent revision"), changed_of(paths_of(files, false)),
+                        {plus({"checkout", parent, "--"}, paths_of(files, false))});
                 },
                 in_parent));
         }
@@ -499,15 +527,29 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
     }
     if (wc && unversioned)
     {
-        m.push_back(item(
-            _("_Delete"), "remove",
-            [confirm_local, paths, count]
-            {
-                confirm_local(rap::i18n::format(_("Delete {0}? They aren't in git, so this can't "
-                                                  "be undone."),
-                                                count),
-                              _("Delete"), {plus({"clean", "-f", "-d", "-q", "--"}, paths)});
-            }));
+        m.push_back(
+            item(_("_Delete"), "remove",
+                 [confirm_overwrite, paths, count, dir]
+                 {
+                     // To the Recycle Bin; git clean then has nothing left, or
+                     // deletes them for good if they couldn't go and Yes says so.
+                     keep_fn keep = [paths, dir]
+                     {
+                         std::vector<std::filesystem::path> out;
+                         std::error_code ec;
+                         for (std::string p : paths)
+                         {
+                             while (p.size() > 1 && p.back() == '/') p.pop_back();
+                             auto abs = rap::sys::path_from_utf8(dir) / rap::sys::path_from_utf8(p);
+                             if (std::filesystem::exists(std::filesystem::symlink_status(abs, ec)))
+                                 out.push_back(std::move(abs));
+                         }
+                         return out;
+                     };
+                     confirm_overwrite(
+                         rap::i18n::format(_("Delete {0}? They go to the Recycle Bin."), count),
+                         _("Delete"), keep, {plus({"clean", "-f", "-d", "-q", "--"}, paths)});
+                 }));
         // Patterns appended to the repository's top-level .gitignore.
         auto ignore = [this](std::vector<std::string> patterns)
         {
