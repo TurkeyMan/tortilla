@@ -267,7 +267,8 @@ struct badge_cache::impl
     {
         std::error_code ec;
         fs::create_directories(summaries_file.parent_path(), ec);
-        const fs::path temp = summaries_file.string() + ".new";
+        fs::path temp = summaries_file;
+        temp += ".new";
         {
             std::ofstream out(temp, std::ios::binary | std::ios::trunc);
             for (const auto& [root, s] : summaries)
