@@ -143,7 +143,6 @@ public:
 
     // Returns an error message for an invalid regex, else empty.
     std::string set_filter(const log_filter&);
-    bool filtering() const { return filtered_; }
 
     void set_action_icon_style(action_icon_style s)
     {
