@@ -234,7 +234,7 @@ void rebase_engine::picked(int code, const std::string& output, bool in_group)
     }
 
     run(
-        {"diff", "--name-only", "--diff-filter=U"},
+        {"diff", "--name-only", "-z", "--diff-filter=U"},
         [this, output, in_group](int, const std::string& u)
         {
             if (!u.empty())
@@ -329,17 +329,12 @@ void rebase_engine::resume(const std::string& message)
         // [spec 2.7.3]; the rest count as resolved and are added.
         // TODO: per-file "Resolved" in the conflict list, as TortoiseGit has.
         run(
-            {"diff", "--name-only", "--diff-filter=U"},
+            {"diff", "--name-only", "-z", "--diff-filter=U"},
             [this, message, in_group](int, const std::string& unmerged)
             {
+                // NUL-separated: the names as they are, not C-quoted.
                 std::vector<std::string> files, marked;
-                for (size_t at = 0; at < unmerged.size();)
-                {
-                    size_t nl = unmerged.find('\n', at);
-                    if (nl == std::string::npos) nl = unmerged.size();
-                    if (nl > at) files.push_back(unmerged.substr(at, nl - at));
-                    at = nl + 1;
-                }
+                for_each_nul(unmerged, [&](std::string_view f) { files.emplace_back(f); });
                 for (auto& f : files)
                     if (has_conflict_markers(workdir_ + "/" + f)) marked.push_back(f);
                 if (!marked.empty())

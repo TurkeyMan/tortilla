@@ -36,7 +36,8 @@ std::string git(const std::string& repo, std::vector<std::string> args)
 
 // base - m1 - m2 (main);  m1 - f1 - f2 - f3 (feature). Each commit adds its
 // own file; `conflict` makes f2 and m2 edit the same line of shared.txt.
-std::string make_repo(const std::string& root, const std::string& name, bool conflict = false)
+std::string make_repo(const std::string& root, const std::string& name, bool conflict = false,
+                      const std::string& shared = "shared.txt")
 {
     std::string r = root + "/" + name;
     std::filesystem::create_directories(r);
@@ -50,17 +51,17 @@ std::string make_repo(const std::string& root, const std::string& name, bool con
     // The engine's own commits need an identity; this machine may have none.
     sh("git -C '" + r + "' config user.name Ada && git -C '" + r + "' config user.email ada@x");
     commit("base.txt", "base", "Base");
-    commit("shared.txt", "original", "Main one");
+    commit(shared, "original", "Main one");
     sh(g + "checkout -qb feature");
     commit("f1.txt", "f1", "F1");
     if (conflict)
-        commit("shared.txt", "feature edit", "F2");
+        commit(shared, "feature edit", "F2");
     else
         commit("f2.txt", "f2", "F2");
     commit("f3.txt", "f3", "F3");
     sh(g + "checkout -q main");
     if (conflict)
-        commit("shared.txt", "main edit", "Main two");
+        commit(shared, "main edit", "Main two");
     else
         commit("m2.txt", "m2", "Main two");
     sh(g + "checkout -q feature");
@@ -254,6 +255,25 @@ int main(int argc, char** argv)
         check(git(h.repo, {"status", "--porcelain"}).empty(), "abort: clean working tree");
     }
 
+    // A conflicted file with a space and an accent: git would quote its
+    // name in a plain listing; the engine reads it as it is.
+    {
+        const std::string name = "caf\xc3\xa9 file.txt";
+        harness h(**ui, make_repo(root, "conflict-name", true, name));
+        h.start();
+        check(h.engine->stage() == rebase_stage::conflict, "quoted name: stops at F2");
+        h.engine->resume("F2\n");
+        h.settle();
+        check(h.engine->stage() == rebase_stage::conflict &&
+                  h.log.find("WARN") != std::string::npos && h.log.find(name) != std::string::npos,
+              "quoted name: Commit refused while it has markers, named as it is");
+        sh("printf 'resolved\\n' > '" + h.repo + "/" + name + "'");
+        h.engine->resume("F2 (resolved)\n");
+        h.settle();
+        check(h.engine->stage() == rebase_stage::done &&
+                  git(h.repo, {"show", "HEAD~1:" + name}) == "resolved\n",
+              "quoted name: resolved and committed");
+    }
     // Fast-forward: the branch moves to main, and no rebase is left marked
     // as going on (a later merge's conflicts would take the sides swapped).
     {
