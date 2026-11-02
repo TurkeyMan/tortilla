@@ -130,10 +130,11 @@ void make_conflict(const std::string& dir, const std::vector<std::string>& files
     write_all("ours");
     sh(g + how + " side >/dev/null 2>&1 || true");
 }
+// The bytes of the file at `path`, a UTF-8 name: on Windows a std::string
+// path would be read in the ANSI code page.
 std::string read_bytes(const std::string& path)
 {
-    std::ifstream in(path, std::ios::binary);
-    return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+    return slurp(rap::sys::path_from_utf8(path));
 }
 
 // History editing (git/history_edit.h) on throwaway repositories: each
