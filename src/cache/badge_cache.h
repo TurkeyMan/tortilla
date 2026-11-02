@@ -2,7 +2,10 @@
 // extensions. It answers at once from what it knows, and works out the rest
 // in the background: a repository is loaded when something inside it is
 // asked about (its files have no badge until then), then watched and loaded
-// again when it changes. A repository's own folder, seen from outside it,
+// again when it changes: its working tree, and the admin folders outside it
+// a linked worktree or submodule keeps its index and HEAD in. One that
+// can't be watched, or whose load fails, is tried again when asked about a
+// while later, its answers not current meanwhile. A repository's own folder, seen from outside it,
 // shows a summary instead: remembered for every repository met, across
 // runs, and refreshed with a plain git status when it's a while old, so a
 // folder of repositories shows each one's state without loading them all.
@@ -37,7 +40,8 @@ public:
     badge ask(const std::filesystem::path&);
 
     // The badge, and whether it can be relied on: `current` when the
-    // repository is loaded, watched and not waiting to load a change;
+    // repository is loaded (the last load worked), watched and not waiting
+    // to load a change;
     // `untracked` (then) when the path is untracked or holds untracked files.
     struct state
     {

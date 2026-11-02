@@ -45,13 +45,24 @@ constexpr size_t k_max_asked = 100000;
 // A repository's summary older than this is refreshed when its folder is
 // shown (the stale one shown meanwhile).
 constexpr auto k_summary_stale = std::chrono::minutes(2);
+// A repository whose load failed, or that couldn't be watched, is loaded
+// (and watched) again when asked about this long after: meanwhile its
+// answers aren't current.
+constexpr auto k_retry = std::chrono::seconds(10);
+
+using watches = std::vector<std::unique_ptr<rap::sys::directory_watch>>;
 
 struct repo_entry
 {
     fs::path root;
     std::shared_ptr<const repo_badges> badges;  // null until first loaded
     string_set asked;                           // repository-relative
-    std::unique_ptr<rap::sys::directory_watch> watch;
+    // The working tree, and its admin folders outside it: started by the
+    // worker, and only all of them (`watched`), or none.
+    watches watched_by;
+    bool watched = false;
+    bool fresh = false;         // the last load worked
+    clock::time_point tried{};  // the last load, or attempt
     clock::time_point used;
 };
 
@@ -116,15 +127,62 @@ std::string_view git_relative(std::string_view path, std::string_view root)
     return rel;
 }
 
-// Under .git, what changes without changing any file's status: objects,
-// logs, locks, fetch bookkeeping.
+// In an admin folder (`in` relative to it), what changes without changing
+// any file's status: objects, logs, locks, fetch bookkeeping, and the
+// linked worktrees' own folders (each watched by its worktree).
+bool ignorable_admin(std::string_view in)
+{
+    return in.starts_with("objects/") || in.starts_with("logs/") || in.ends_with(".lock") ||
+           in == "FETCH_HEAD" || in == "ORIG_HEAD" || in == "gitk.cache" ||
+           in.starts_with("worktrees/");
+}
+
+// The same for a change under `root`, the working tree: only its .git.
 bool ignorable(const fs::path& root, const fs::path& changed)
 {
     const std::string rel = repo_relative(changed, root);
-    if (!rel.starts_with(".git/")) return false;
-    const std::string_view in = std::string_view(rel).substr(5);
-    return in.starts_with("objects/") || in.starts_with("logs/") || in.ends_with(".lock") ||
-           in == "FETCH_HEAD" || in == "ORIG_HEAD" || in == "gitk.cache";
+    return rel.starts_with(".git/") && ignorable_admin(std::string_view(rel).substr(5));
+}
+
+std::string first_line(const fs::path& file)
+{
+    std::ifstream in(file, std::ios::binary);
+    std::string line;
+    std::getline(in, line);
+    while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+    return line;
+}
+
+// The working tree's admin folders outside it, as git finds them: where its
+// .git file points (a linked worktree's, or a submodule's in its
+// superproject's .git/modules), and the common folder that names (the
+// repository's refs and the rest). A commit, a staged file or a checkout
+// changes them and not the tree, so they're watched too.
+std::vector<fs::path> outside_admin_dirs(const fs::path& root)
+{
+    std::vector<fs::path> out;
+    std::error_code ec;
+    if (!fs::is_regular_file(root / ".git", ec)) return out;  // a folder: in the tree
+    const std::string line = first_line(root / ".git");
+    if (!line.starts_with("gitdir: ")) return out;
+    fs::path git = rap::sys::path_from_utf8(std::string_view(line).substr(8));
+    if (git.is_relative()) git = root / git;
+    git = git.lexically_normal();
+    out.push_back(git);
+    if (const std::string common = first_line(git / "commondir"); !common.empty())
+    {
+        fs::path c = rap::sys::path_from_utf8(common);
+        c = (c.is_relative() ? git / c : c).lexically_normal();
+        if (c != git) out.push_back(c);
+    }
+    // One inside the tree is its watch's already.
+    std::erase_if(out,
+                  [&](const fs::path& d)
+                  {
+                      const fs::path rel = d.lexically_relative(root);
+                      return !rel.empty() && *rel.begin() != "..";
+                  });
+    return out;
 }
 
 }  // namespace
@@ -236,22 +294,44 @@ struct badge_cache::impl
         wake.notify_one();
     }
 
-    void watch(repo_entry& e)
+    // Watches the working tree at `at` and its admin folders outside it,
+    // each change that matters loading it again: all of them, or none if any
+    // can't be watched. Without the lock: starting a large tree's watch takes
+    // a while.
+    watches watch(const fs::path& at)
     {
-        const std::string root = key(e.root);
-        auto w = rap::sys::directory_watch::start(
-            e.root, {.recursive = true, .settle = std::chrono::milliseconds(300)},
-            [this, root, at = e.root](rap::sys::watch_batch batch)
-            {
-                bool matters = batch.overflow;
-                for (const auto& ev : batch.events)
-                    matters = matters || !ignorable(at, ev.path) ||
-                              (!ev.old_path.empty() && !ignorable(at, ev.old_path));
-                if (!matters) return;
-                std::lock_guard lock(m);
-                if (repos.contains(root)) schedule(root, clock::now() + k_quiet);
-            });
-        if (w) e.watch = std::move(*w);
+        const std::string root = key(at);
+        auto start = [&](const fs::path& folder, bool tree)
+        {
+            return rap::sys::directory_watch::start(
+                folder, {.recursive = true, .settle = std::chrono::milliseconds(300)},
+                [this, root, folder, tree](rap::sys::watch_batch batch)
+                {
+                    auto skip = [&](const fs::path& p)
+                    {
+                        return p.empty() || (tree ? ignorable(folder, p)
+                                                  : ignorable_admin(repo_relative(p, folder)));
+                    };
+                    bool matters = batch.overflow;
+                    for (const auto& ev : batch.events)
+                        matters = matters || !skip(ev.path) ||
+                                  (!ev.old_path.empty() && !skip(ev.old_path));
+                    if (!matters) return;
+                    std::lock_guard lock(m);
+                    if (repos.contains(root)) schedule(root, clock::now() + k_quiet);
+                });
+        };
+        watches out;
+        auto w = start(at, true);
+        if (!w) return {};
+        out.push_back(std::move(*w));
+        for (const fs::path& admin : outside_admin_dirs(at))
+        {
+            auto a = start(admin, false);
+            if (!a) return {};
+            out.push_back(std::move(*a));
+        }
+        return out;
     }
 
     // `path` in UTF-8, as the file manager's extension sends it. Allocates
@@ -293,15 +373,17 @@ struct badge_cache::impl
         {
             auto e = std::make_shared<repo_entry>();
             e->root = rap::sys::path_from_utf8(k);
-            watch(*e);
-            schedule(k, clock::now());
+            schedule(k, clock::now());  // watched, then loaded, by the worker
             loaded = repos.emplace(k, std::move(e)).first;
         }
         repo_entry& e = *loaded->second;
         e.used = clock::now();
         if (e.asked.size() < k_max_asked && !e.asked.contains(rel)) e.asked.emplace(rel);
+        const bool waiting = due.contains(k);
+        if (!waiting && (!e.watched || !e.fresh) && e.used - e.tried >= k_retry)
+            schedule(k, e.used);
         if (!e.badges) return {};
-        return {e.badges->of(rel), !due.contains(k), e.badges->untracked(rel)};
+        return {e.badges->of(rel), e.watched && e.fresh && !waiting, e.badges->untracked(rel)};
     }
 
     void run()
@@ -361,9 +443,19 @@ struct badge_cache::impl
             auto entry = repos.contains(root) ? repos[root] : nullptr;
             if (!entry) continue;
 
+            // Watched before it's loaded, so a change meanwhile isn't missed.
+            const bool watched = entry->watched;
             lock.unlock();
+            watches started = watched ? watches() : watch(entry->root);
             auto loaded = load_badges(rap::sys::path_to_utf8(entry->root));
             lock.lock();
+            if (!watched && !started.empty())
+            {
+                entry->watched_by = std::move(started);
+                entry->watched = true;
+            }
+            entry->tried = clock::now();
+            entry->fresh = loaded.has_value();
             if (!loaded) continue;  // not a working tree after all, or git failed
             auto fresh = std::make_shared<const repo_badges>(std::move(*loaded));
             std::vector<fs::path> differ;
