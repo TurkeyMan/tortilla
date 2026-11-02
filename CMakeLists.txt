@@ -77,6 +77,7 @@ add_library(tortilla_git STATIC
     src/git/tool_discovery.cpp
     src/util/programs.cpp
     src/util/repo_path.cpp
+    src/util/search_query.cpp
     src/util/sha256.cpp
     src/util/json.cpp
     src/forge/forge.cpp

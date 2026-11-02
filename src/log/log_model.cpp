@@ -4,6 +4,8 @@
 #include "i18n.h"
 #include "log/ref_labels.h"
 #include "util/calendar.h"
+#include "util/search_query.h"
+#include "util/strings.h"
 
 #include <rapport/sys.h>
 
@@ -41,69 +43,6 @@ rap::paint lane_colour(uint16_t lane)
     return colours[lane % 8];
 }
 
-std::string lower(std::string s)
-{
-    std::ranges::transform(s, s.begin(), [](unsigned char c) { return std::tolower(c); });
-    return s;
-}
-
-// TortoiseGit's simple search syntax [MAN-LOG:715-764]: space-separated
-// terms that must all match, -term excludes, +term re-includes, "quoted
-// phrases" literal ("" is a quote), a leading ! inverts everything.
-struct parsed
-{
-    bool invert = false;
-    std::vector<std::pair<std::string, bool>> terms;  // text, exclude
-};
-
-parsed parse_search(std::string_view s)
-{
-    parsed out;
-    size_t i = 0;
-    while (i < s.size() && s[i] == ' ') ++i;
-    if (i < s.size() && s[i] == '!')
-    {
-        out.invert = true;
-        ++i;
-    }
-    while (i < s.size())
-    {
-        while (i < s.size() && s[i] == ' ') ++i;
-        if (i >= s.size()) break;
-        bool exclude = false;
-        if (s[i] == '-' || s[i] == '+')
-        {
-            exclude = s[i] == '-';
-            ++i;
-        }
-        std::string term;
-        if (i < s.size() && s[i] == '"')
-        {
-            ++i;
-            while (i < s.size())
-            {
-                if (s[i] == '"')
-                {
-                    if (i + 1 < s.size() && s[i + 1] == '"')
-                    {
-                        term += '"';
-                        i += 2;
-                        continue;
-                    }
-                    ++i;
-                    break;
-                }
-                term += s[i++];
-            }
-        }
-        else
-        {
-            while (i < s.size() && s[i] != ' ') term += s[i++];
-        }
-        if (!term.empty()) out.terms.push_back({term, exclude});
-    }
-    return out;
-}
 
 std::string format_date(int64_t time, int offset_minutes)
 {
@@ -755,10 +694,10 @@ std::string log_model::set_filter(const log_filter& f)
     }
     else
     {
-        parsed p = parse_search(f.text);
+        search_query p = parse_search_query(f.text);
         invert_ = p.invert;
         for (auto& [text, exclude] : p.terms)
-            terms_.push_back({f.case_sensitive ? text : lower(text), exclude});
+            terms_.push_back({f.case_sensitive ? text : ascii_lower(text), exclude});
     }
     refilter();
     return {};
@@ -795,7 +734,7 @@ bool log_model::matches(const tortilla::commit& c) const
     }
     else
     {
-        if (!filter_.case_sensitive) hay = lower(hay);
+        if (!filter_.case_sensitive) hay = ascii_lower(hay);
         hit = true;
         for (auto& t : terms_)
             if ((hay.find(t.text) != std::string::npos) == t.exclude)

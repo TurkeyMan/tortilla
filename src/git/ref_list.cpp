@@ -2,6 +2,8 @@
 
 #include "git/command.h"
 #include "git/repo.h"
+#include "util/search_query.h"
+#include "util/strings.h"
 
 #include <algorithm>
 #include <cctype>
@@ -39,11 +41,6 @@ int64_t number(std::string_view s)
     return v;
 }
 
-std::string lower(std::string s)
-{
-    std::ranges::transform(s, s.begin(), [](unsigned char c) { return char(std::tolower(c)); });
-    return s;
-}
 
 }  // namespace
 
@@ -140,54 +137,13 @@ std::vector<std::string> ref_folders(const std::vector<ref_entry>& refs)
 
 bool ref_filter_matches(const std::string& filter, const std::string& text)
 {
-    std::string_view s = filter;
-    size_t i = 0;
-    while (i < s.size() && s[i] == ' ') ++i;
-    bool invert = false;
-    if (i < s.size() && s[i] == '!')
-    {
-        invert = true;
-        ++i;
-    }
-    const std::string hay = lower(text);
-    bool hit = true;
-    while (i < s.size() && hit)
-    {
-        while (i < s.size() && s[i] == ' ') ++i;
-        if (i >= s.size()) break;
-        bool exclude = false;
-        if (s[i] == '-' || s[i] == '+')
-        {
-            exclude = s[i] == '-';
-            ++i;
-        }
-        std::string term;
-        if (i < s.size() && s[i] == '"')
-        {
-            for (++i; i < s.size(); ++i)
-            {
-                if (s[i] != '"')
-                {
-                    term += s[i];
-                    continue;
-                }
-                if (i + 1 < s.size() && s[i + 1] == '"')
-                {
-                    term += '"';
-                    ++i;
-                    continue;
-                }
-                ++i;
-                break;
-            }
-        }
-        else
-        {
-            while (i < s.size() && s[i] != ' ') term += s[i++];
-        }
-        if (!term.empty() && (hay.find(lower(term)) != std::string::npos) == exclude) hit = false;
-    }
-    return hit != invert;
+    // Case-insensitive, each term a substring.
+    const search_query q = parse_search_query(filter);
+    const std::string hay = ascii_lower(text);
+    const bool hit = std::ranges::all_of(
+        q.terms, [&](const search_term& t)
+        { return (hay.find(ascii_lower(t.text)) != std::string::npos) != t.exclude; });
+    return hit != q.invert;
 }
 
 }  // namespace tortilla
