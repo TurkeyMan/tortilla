@@ -1928,6 +1928,38 @@ int main(int argc, char** argv)
         for (const auto& e : fs::directory_iterator(out, ec))
             files += e.path().extension() == ".patch";
         check(made && files == 2, "patch serial: a numbered file per commit");
+
+        // Apply Patch Serial: those two applied onto the first commit, in
+        // order, a commit each.
+        check(tortilla::am_args({}, {"a.patch"}) ==
+                      std::vector<std::string>{"am", "--", "a.patch"} &&
+                  tortilla::am_args(
+                      {.three_way = true, .ignore_space = true, .keep_cr = true, .signoff = true},
+                      {"a", "b"}) == std::vector<std::string>{"am", "--3way",
+                                                              "--ignore-space-change", "--keep-cr",
+                                                              "--signoff", "--", "a", "b"},
+              "patch serial: git am's options");
+        const std::string dst = base + "/dst";
+        sh("git clone -q '" + src + "' '" + dst + "' && " + in(dst) + "reset -q --hard HEAD~2");
+        std::vector<std::string> list;
+        for (const auto& e : fs::directory_iterator(out, ec)) list.push_back(e.path().string());
+        std::ranges::sort(list);
+        sh("cd '" + dst + "' && git config user.name Ada && git config user.email ada@example.com");
+        const bool applied = tortilla::run_git(dst, tortilla::am_args({}, list)).ok();
+        check(applied &&
+                  tortilla::run_git(dst, {"log", "--format=%s", "-3"},
+                                    tortilla::git_output::stdout_only)
+                          .output == "three\ntwo\none\n" &&
+                  !tortilla::am_in_progress(dst + "/.git"),
+              "patch serial: applied in order, a commit each");
+        sh("echo other > '" + dst + "/two.txt' && " + in(dst) + "commit -qam other && " + in(dst) +
+           "reset -q --hard HEAD~3 && echo clash > '" + dst + "/two.txt' && " + in(dst) +
+           "add . && " + in(dst) + "commit -qm clash");
+        const bool stopped = !tortilla::run_git(dst, tortilla::am_args({}, list)).ok();
+        check(stopped && tortilla::am_in_progress(dst + "/.git"),
+              "patch serial: a patch that doesn't apply leaves git am stopped");
+        tortilla::run_git(dst, {"am", "--abort"});
+        check(!tortilla::am_in_progress(dst + "/.git"), "patch serial: aborted");
     }
 
     // Submodules: Add, Update and Sync's arguments, and the list Update
