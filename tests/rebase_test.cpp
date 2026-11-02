@@ -322,11 +322,12 @@ int main(int argc, char** argv)
     // and the file is as it was.
     {
         harness h(**ui, make_repo(root, "untracked"));
-        // main gains a folder, sub/, for a file in its place below.
+        // main gains a folder, sub/, for a file in its place below, and
+        // ign.txt, for an ignored one.
         const std::string g = "git -C '" + h.repo + "' ";
         sh(g + "checkout -q main && mkdir -p '" + h.repo + "/sub' && printf 's\\n' > '" + h.repo +
-           "/sub/in.txt' && " + g + "add sub && " + g + "commit -qm Sub && " + g +
-           "checkout -q feature");
+           "/sub/in.txt' && printf 'i\\n' > '" + h.repo + "/ign.txt' && " + g +
+           "add sub ign.txt && " + g + "commit -qm Sub && " + g + "checkout -q feature");
         sh("printf 'mine\\n' > '" + h.repo + "/m2.txt'");
         std::string before = git(h.repo, {"rev-parse", "feature"});
         h.start();
@@ -339,18 +340,20 @@ int main(int argc, char** argv)
         if (f) std::fclose((std::fgets(text, sizeof text, f), f));
         check(std::string(text) == "mine\n", "untracked: the file kept");
         // The window's preflight names it first, and folder clashes both
-        // ways; an ignored file and an unrelated one aren't named.
+        // ways; an ignored file and an unrelated one aren't named. (The
+        // ignored one isn't m2.txt in other case: on Windows' and macOS'
+        // file systems, that's m2.txt itself.)
         sh("printf 'x\\n' > '" + h.repo + "/f1.txt.bak' && printf 'ign\\n' > '" + h.repo +
-           "/m2.TXT' && printf 'm2.TXT\\n' > '" + h.repo + "/.git/info/exclude'");
+           "/ign.txt' && printf 'ign.txt\\n' > '" + h.repo + "/.git/info/exclude'");
         sh("printf 'file\\n' > '" + h.repo + "/sub'");  // a file where main has a folder
         auto opened = repo::open(h.repo);
         auto names = untracked_in_the_way(h.repo, *opened->resolve("main"));
         std::string listed;
         for (auto& n : names) listed += n + ";";
         check(listed == "m2.txt;sub;", "untracked: the preflight names them (" + listed + ")");
-        sh(g + "config core.ignorecase true && mv '" + h.repo + "/m2.txt' '" + h.repo +
-           "/M2.txt' && printf '' > '" + h.repo + "/.git/info/exclude' && rm '" + h.repo +
-           "/m2.TXT'");
+        sh(g + "config core.ignorecase true && rm '" + h.repo + "/m2.txt' && printf 'mine\\n' > '" +
+           h.repo + "/M2.txt' && printf '' > '" + h.repo + "/.git/info/exclude' && rm '" + h.repo +
+           "/ign.txt'");
         names = untracked_in_the_way(h.repo, *opened->resolve("main"));
         listed.clear();
         for (auto& n : names) listed += n + ";";
