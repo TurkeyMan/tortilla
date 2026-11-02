@@ -66,8 +66,14 @@ std::vector<forge_account> accounts();
 // Whether Tortilla is told not to use gh's sign-in to that account; signing
 // in through gh again lifts it.
 void set_gh_account_off(const forge_account&, bool off);
-// The account for a remote's URL (https or ssh, scp-style too), by host;
-// the first, if several share it.
+// A web host, "host" or "host:port", as its origin: https://host:port, the
+// host in lower case and the port spelt out (443 when none is given), so
+// forge.example and forge.example:443 are one, forge.example:8443 another.
+std::string web_origin(std::string_view host);
+// The account for a remote's URL (https or ssh, scp-style too), by the web
+// origin its repository is asked at (repo_of_url's host): an https URL's
+// port is the web's, an ssh one's isn't (ssh://host:2222 is https://host).
+// The first, if several share it.
 std::optional<forge_account> account_for_url(std::string_view url,
                                              const std::vector<forge_account>&);
 

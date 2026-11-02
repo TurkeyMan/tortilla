@@ -25,13 +25,14 @@ std::expected<pull_request, std::string> github_rest_details(const forge_repo& r
     const std::string root =
         repo_api(forge_kind::github, r) + "/pulls/" + std::to_string(pr.number);
     const auto headers = api_headers(forge_kind::github, {});
-    const auto one = rap::sys::http_get(root, {.headers = headers});
+    const auto one = forge_detail::http_get(root, {.headers = headers});
     note_budget(one);
     const auto j = json::parse(one.body);
     if (one.status != 200 || !j) return std::unexpected(failure(one, j));
     pr.body = (*j)["body"].str();
     pr.body_known = true;
-    const auto reviews = rap::sys::http_get(root + "/reviews?per_page=50", {.headers = headers});
+    const auto reviews =
+        forge_detail::http_get(root + "/reviews?per_page=50", {.headers = headers});
     note_budget(reviews);
     pr.reviews.clear();
     // Oldest first: the summary keeps each reviewer's latest say.
@@ -69,7 +70,7 @@ std::expected<pull_request, std::string> github_details(const forge_repo& r, pul
     auto headers = api_headers(forge_kind::github, token);
     headers.push_back({"Content-Type", "application/json"});
     const auto reply =
-        rap::sys::http_request("POST", graphql_url(r.host), body, {.headers = headers});
+        forge_detail::http_request("POST", graphql_url(r.host), body, {.headers = headers});
     const auto j = json::parse(reply.body);
     if (reply.status != 200 || !j) return std::unexpected(failure(reply, j));
     if (const json::value errors = (*j)["errors"]; errors.kind() == json::value::type::array)
@@ -104,9 +105,9 @@ std::expected<pull_request, std::string> github_details(const forge_repo& r, pul
 std::expected<pull_request, std::string> gitlab_details(const forge_repo& r, pull_request pr,
                                                         std::string_view token)
 {
-    const auto reply = rap::sys::http_get(repo_api(forge_kind::gitlab, r) + "/merge_requests/" +
-                                              std::to_string(pr.number) + "/approvals",
-                                          {.headers = api_headers(forge_kind::gitlab, token)});
+    const auto reply = forge_detail::http_get(repo_api(forge_kind::gitlab, r) + "/merge_requests/" +
+                                                  std::to_string(pr.number) + "/approvals",
+                                              {.headers = api_headers(forge_kind::gitlab, token)});
     const auto j = json::parse(reply.body);
     if (reply.status != 200 || !j) return std::unexpected(failure(reply, j));
     // Approvals come after the reviewers asked: the summary lets them win.
@@ -120,9 +121,9 @@ std::expected<pull_request, std::string> gitlab_details(const forge_repo& r, pul
 std::expected<pull_request, std::string> gitea_details(const forge_repo& r, pull_request pr,
                                                        std::string_view token)
 {
-    const auto reply = rap::sys::http_get(repo_api(forge_kind::gitea, r) + "/pulls/" +
-                                              std::to_string(pr.number) + "/reviews?limit=50",
-                                          {.headers = api_headers(forge_kind::gitea, token)});
+    const auto reply = forge_detail::http_get(repo_api(forge_kind::gitea, r) + "/pulls/" +
+                                                  std::to_string(pr.number) + "/reviews?limit=50",
+                                              {.headers = api_headers(forge_kind::gitea, token)});
     const auto j = json::parse(reply.body);
     if (reply.status != 200 || !j) return std::unexpected(failure(reply, j));
     // Oldest first: the summary keeps each reviewer's latest say. The ones

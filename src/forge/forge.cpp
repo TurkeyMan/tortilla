@@ -115,7 +115,7 @@ std::string web_root(std::string_view host)
 // (The reply's JSON is parsed where the reply is kept: a value views it.)
 rap::sys::http_response oauth_post(const std::string& url, const std::string& body)
 {
-    return rap::sys::http_request(
+    return forge_detail::http_request(
         "POST", url, body,
         {.headers = {{"Accept", "application/json"},
                      {"Content-Type", "application/x-www-form-urlencoded"},
@@ -136,6 +136,73 @@ std::string failure(const rap::sys::http_response& r, const std::optional<json::
     if (message.empty())
         return rap::i18n::format(_("The server answered {0}."), std::to_string(r.status));
     return rap::i18n::format(_("The server answered {0}: {1}"), std::to_string(r.status), message);
+}
+
+// Whether a URL's scheme is http or https, in any case.
+bool web_scheme(std::string_view scheme)
+{
+    auto lower = [](char c)
+    { return static_cast<char>(std::tolower(static_cast<unsigned char>(c))); };
+    std::string s;
+    for (char c : scheme) s += lower(c);
+    return s == "http" || s == "https";
+}
+
+// A remote's URL split into the web host its forge is asked at and the
+// path: scheme://[user@]host[:port]/path, or scp-style [user@]host:path. An
+// http(s) URL's port is the web's; any other's (ssh://git@host:2222/) is
+// the transport's, not the web's: https://host. False for a local path.
+bool split_remote(std::string_view url, std::string_view& host, std::string_view& path)
+{
+    if (const size_t scheme = url.find("://"); scheme != std::string_view::npos)
+    {
+        const std::string_view rest = url.substr(scheme + 3);
+        const size_t slash = rest.find('/');
+        host = rest.substr(0, slash);
+        path = slash == std::string_view::npos ? std::string_view() : rest.substr(slash + 1);
+        if (const size_t at = host.rfind('@'); at != std::string_view::npos)
+            host.remove_prefix(at + 1);
+        if (!web_scheme(url.substr(0, scheme)))
+        {
+            const size_t close = host.find(']');  // [IPv6]
+            if (const size_t c = host.rfind(':');
+                c != std::string_view::npos && (close == std::string_view::npos || c > close))
+                host = host.substr(0, c);
+        }
+    }
+    else
+    {
+        const size_t colon = url.find(':');
+        if (colon == std::string_view::npos) return false;
+        host = url.substr(0, colon);
+        path = url.substr(colon + 1);
+        if (const size_t at = host.rfind('@'); at != std::string_view::npos)
+            host.remove_prefix(at + 1);
+    }
+    return !host.empty();
+}
+
+// The origin a request's URL goes to: scheme://host:port, in lower case,
+// the port spelt out; "" for what isn't an absolute URL.
+std::string url_origin(std::string_view url)
+{
+    const size_t colon = url.find("://");
+    if (colon == std::string_view::npos || colon == 0) return {};
+    std::string scheme;
+    for (char c : url.substr(0, colon))
+        scheme += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    std::string_view authority = url.substr(colon + 3);
+    authority = authority.substr(0, authority.find_first_of("/?#"));
+    if (const size_t at = authority.rfind('@'); at != std::string_view::npos)
+        authority.remove_prefix(at + 1);
+    std::string host(authority), port;
+    const size_t close = host.find(']');  // [IPv6]
+    if (const size_t c = host.rfind(':');
+        c != std::string::npos && (close == std::string::npos || c > close))
+        port = host.substr(c + 1), host.resize(c);
+    for (char& c : host) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (port.empty()) port = scheme == "https" ? "443" : "80";
+    return scheme + "://" + host + ":" + port;
 }
 
 std::expected<forge_token, std::string> token_from(const json::value& j)
@@ -247,28 +314,19 @@ void set_gh_account_off(const forge_account& a, bool off)
         settings::get().set(k_gh_off_setting, kept);
 }
 
+std::string web_origin(std::string_view host)
+{
+    return url_origin("https://" + std::string(host));
+}
+
 std::optional<forge_account> account_for_url(std::string_view url,
                                              const std::vector<forge_account>& accounts)
 {
-    // scheme://[user@]host[:port]/..., or scp-style [user@]host:path.
-    std::string_view host = url;
-    if (const size_t scheme = host.find("://"); scheme != std::string_view::npos)
-    {
-        host.remove_prefix(scheme + 3);
-        host = host.substr(0, host.find('/'));
-    }
-    else
-        host = host.substr(0, host.find(':'));
-    if (const size_t at = host.rfind('@'); at != std::string_view::npos) host.remove_prefix(at + 1);
-    host = host.substr(0, host.find(':'));
+    std::string_view host, path;
+    if (!split_remote(url, host, path)) return std::nullopt;
+    const std::string origin = web_origin(host);
     for (const forge_account& a : accounts)
-    {
-        const std::string_view own = std::string_view(a.host).substr(0, a.host.find(':'));
-        if (host.size() == own.size() &&
-            std::equal(host.begin(), host.end(), own.begin(),
-                       [](char x, char y) { return std::tolower(x) == std::tolower(y); }))
-            return a;
-    }
+        if (web_origin(a.host) == origin) return a;
     return std::nullopt;
 }
 
@@ -290,6 +348,7 @@ std::optional<forge_token> load_token(const forge_account& a, std::string* why)
         auto token = gh_token(a.host);
         if (why) *why = token ? std::string() : token.error();
         if (!token) return std::nullopt;
+        forge_detail::bind_token(*token, a.host);
         return forge_token{.access = std::move(*token)};
     }
     const auto blob = rap::sys::load_secret(secret_name(a));
@@ -300,6 +359,7 @@ std::optional<forge_token> load_token(const forge_account& a, std::string* why)
     forge_token t{.access = (*j)["access"].str(), .refresh = (*j)["refresh"].str()};
     t.expires_at = (*j)["expires_at"].integer().value_or(0);
     if (t.access.empty()) return std::nullopt;
+    forge_detail::bind_token(t.access, a.host);
     return t;
 }
 
@@ -472,8 +532,9 @@ bool budget_allows(const rate_budget& b, int want, int reserve, std::int64_t now
 std::expected<forge_account, std::string> who_am_i(forge_kind k, std::string_view host,
                                                    std::string_view token)
 {
+    forge_detail::bind_token(token, host);  // the host it's tried on
     const auto r =
-        rap::sys::http_get(api_root(k, host) + "/user", {.headers = api_headers(k, token)});
+        forge_detail::http_get(api_root(k, host) + "/user", {.headers = api_headers(k, token)});
     const auto j = json::parse(r.body);
     if (r.status == 401)
         return std::unexpected(std::string(
@@ -494,29 +555,8 @@ std::expected<forge_account, std::string> who_am_i(forge_kind k, std::string_vie
 
 std::optional<forge_repo> repo_of_url(std::string_view url)
 {
-    // scheme://[user@]host[:port]/path, or scp-style [user@]host:path.
     std::string_view host, path;
-    if (const size_t scheme = url.find("://"); scheme != std::string_view::npos)
-    {
-        std::string_view rest = url.substr(scheme + 3);
-        const size_t slash = rest.find('/');
-        if (slash == std::string_view::npos) return std::nullopt;
-        host = rest.substr(0, slash);
-        path = rest.substr(slash + 1);
-        if (const size_t at = host.rfind('@'); at != std::string_view::npos)
-            host.remove_prefix(at + 1);
-        // An ssh port isn't the web's: ssh://git@host:2222/... is https://host/...
-        if (url.starts_with("ssh://")) host = host.substr(0, host.find(':'));
-    }
-    else
-    {
-        const size_t colon = url.find(':');
-        if (colon == std::string_view::npos) return std::nullopt;
-        host = url.substr(0, colon);
-        path = url.substr(colon + 1);
-        if (const size_t at = host.rfind('@'); at != std::string_view::npos)
-            host.remove_prefix(at + 1);
-    }
+    if (!split_remote(url, host, path)) return std::nullopt;
     while (!path.empty() && path.back() == '/') path.remove_suffix(1);
     if (path.ends_with(".git")) path.remove_suffix(4);
     while (!path.empty() && path.front() == '/') path.remove_prefix(1);
@@ -671,7 +711,7 @@ std::expected<pull_requests_reply, std::string> github_pulls(const forge_repo& r
                                  ",\"variables\":{\"owner\":" + json::quoted(r.owner) +
                                  ",\"name\":" + json::quoted(r.name) +
                                  ",\"first\":" + std::to_string(first) + "}}";
-        return rap::sys::http_request("POST", graphql_url(r.host), body, {.headers = headers});
+        return forge_detail::http_request("POST", graphql_url(r.host), body, {.headers = headers});
     };
     // A hundred PRs with dozens of checks each can take GitHub past its time
     // limit (a 502): then the newest thirty.
@@ -752,8 +792,8 @@ std::expected<pull_requests_reply, std::string> github_pulls(const forge_repo& r
 repo_access gitlab_access(const forge_repo& r, std::string_view token)
 {
     if (token.empty()) return repo_access::read;
-    const auto reply =
-        rap::sys::http_get(gitlab_project(r), {.headers = api_headers(forge_kind::gitlab, token)});
+    const auto reply = forge_detail::http_get(gitlab_project(r),
+                                              {.headers = api_headers(forge_kind::gitlab, token)});
     const auto j = json::parse(reply.body);
     if (reply.status != 200 || !j) return repo_access::unknown;
     const json::value p = (*j)["permissions"];
@@ -766,22 +806,22 @@ std::expected<pull_requests_reply, std::string>
 gitlab_pulls(const forge_repo& r, std::string_view token, bool ask_access, bool ask_tips)
 {
     const auto headers = api_headers(forge_kind::gitlab, token);
-    const auto reply = rap::sys::http_get(
+    const auto reply = forge_detail::http_get(
         gitlab_project(r) + "/merge_requests?state=opened&per_page=100", {.headers = headers});
     const auto j = json::parse(reply.body);
     if (hidden_reply(reply)) return pull_requests_reply{.access = repo_access::hidden};
     if (reply.status != 200 || !j) return std::unexpected(failure(reply, j));
     // The list leaves pipelines out: the project's latest, matched by commit.
     const auto pipes_reply =
-        rap::sys::http_get(gitlab_project(r) + "/pipelines?per_page=100", {.headers = headers});
+        forge_detail::http_get(gitlab_project(r) + "/pipelines?per_page=100", {.headers = headers});
     const auto pipes = json::parse(pipes_reply.body);
     pull_requests_reply answer{.access =
                                    ask_access ? gitlab_access(r, token) : repo_access::unknown};
     if (ask_tips)
-        answer.tips =
-            branch_list(rap::sys::http_get(gitlab_project(r) + "/repository/branches?per_page=100",
-                                           {.headers = headers}),
-                        100);
+        answer.tips = branch_list(
+            forge_detail::http_get(gitlab_project(r) + "/repository/branches?per_page=100",
+                                   {.headers = headers}),
+            100);
     std::vector<pull_request>& out = answer.prs;
     for (const json::value& m : j->elements())
     {
@@ -836,10 +876,10 @@ gitlab_pulls(const forge_repo& r, std::string_view token, bool ask_access, bool 
                     if (pr.checks != check_state::failure && pr.checks != check_state::pending)
                         break;
                     pr.runs.clear();
-                    const auto jobs_reply =
-                        rap::sys::http_get(gitlab_project(r) + "/pipelines/" +
-                                               std::string(p["id"].text()) + "/jobs?per_page=100",
-                                           {.headers = headers});
+                    const auto jobs_reply = forge_detail::http_get(
+                        gitlab_project(r) + "/pipelines/" + std::string(p["id"].text()) +
+                            "/jobs?per_page=100",
+                        {.headers = headers});
                     const auto jobs = json::parse(jobs_reply.body);
                     if (!jobs || jobs_reply.status != 200) break;
                     for (const json::value& job : jobs->elements())
@@ -859,8 +899,8 @@ gitlab_pulls(const forge_repo& r, std::string_view token, bool ask_access, bool 
 repo_access gitea_access(const forge_repo& r, std::string_view token)
 {
     if (token.empty()) return repo_access::read;
-    const auto reply = rap::sys::http_get(repo_api(forge_kind::gitea, r),
-                                          {.headers = api_headers(forge_kind::gitea, token)});
+    const auto reply = forge_detail::http_get(repo_api(forge_kind::gitea, r),
+                                              {.headers = api_headers(forge_kind::gitea, token)});
     const auto j = json::parse(reply.body);
     if (reply.status != 200 || !j) return repo_access::unknown;
     return (*j)["permissions"]["push"].boolean() ? repo_access::write : repo_access::read;
@@ -872,7 +912,7 @@ gitea_pulls(const forge_repo& r, std::string_view token, bool ask_access, bool a
     const auto headers = api_headers(forge_kind::gitea, token);
     const std::string root = repo_api(forge_kind::gitea, r);
     const auto reply =
-        rap::sys::http_get(root + "/pulls?state=open&limit=50", {.headers = headers});
+        forge_detail::http_get(root + "/pulls?state=open&limit=50", {.headers = headers});
     const auto j = json::parse(reply.body);
     if (hidden_reply(reply)) return pull_requests_reply{.access = repo_access::hidden};
     if (reply.status != 200 || !j) return std::unexpected(failure(reply, j));
@@ -880,8 +920,8 @@ gitea_pulls(const forge_repo& r, std::string_view token, bool ask_access, bool a
                                    ask_access ? gitea_access(r, token) : repo_access::unknown};
     // (Gitea's pages are 50 at most, unless the server says otherwise.)
     if (ask_tips)
-        answer.tips =
-            branch_list(rap::sys::http_get(root + "/branches?limit=50", {.headers = headers}), 50);
+        answer.tips = branch_list(
+            forge_detail::http_get(root + "/branches?limit=50", {.headers = headers}), 50);
     std::vector<pull_request>& out = answer.prs;
     for (const json::value& p : j->elements())
     {
@@ -908,8 +948,8 @@ gitea_pulls(const forge_repo& r, std::string_view token, bool ask_access, bool a
         // Each one's checks: the head commit's combined status, and the
         // latest of each context. A status says only when it was set: a
         // pending one's is when it started, a finished one's when it ended.
-        const auto status =
-            rap::sys::http_get(root + "/commits/" + pr.head_sha + "/status", {.headers = headers});
+        const auto status = forge_detail::http_get(root + "/commits/" + pr.head_sha + "/status",
+                                                   {.headers = headers});
         if (const auto s = json::parse(status.body);
             s && status.status == 200 && (*s)["total_count"].integer().value_or(0) > 0)
         {
@@ -988,7 +1028,7 @@ std::expected<pull_requests_reply, std::string> github_rest_pulls(const forge_re
     const auto headers = api_headers(forge_kind::github, "");
     const std::string root = repo_api(forge_kind::github, r);
     const auto reply =
-        rap::sys::http_get(root + "/pulls?state=open&per_page=100", {.headers = headers});
+        forge_detail::http_get(root + "/pulls?state=open&per_page=100", {.headers = headers});
     note_budget(reply);
     // Its 403s are limits (a secondary one has some left), not a repository
     // it can't see: that's a 404.
@@ -1013,8 +1053,8 @@ std::expected<pull_requests_reply, std::string> github_rest_pulls(const forge_re
     if (std::ranges::all_of(answer.prs, &pull_request::checks_known)) return answer;
     if (budget_allows(anonymous_budget(), 1, 2, now))
     {
-        const auto runs = rap::sys::http_get(root + "/actions/runs?event=pull_request&per_page=100",
-                                             {.headers = headers});
+        const auto runs = forge_detail::http_get(
+            root + "/actions/runs?event=pull_request&per_page=100", {.headers = headers});
         note_budget(runs);
         if (runs.status == 200) apply_github_workflow_runs(runs.body, answer.prs);
     }
@@ -1025,7 +1065,7 @@ std::expected<pull_requests_reply, std::string> github_rest_pulls(const forge_re
         if (pr.checks_known || pr.head_sha.empty()) continue;
         if (asked == k_per_poll || !budget_allows(anonymous_budget(), 1, k_reserve, now)) break;
         ++asked;
-        const auto checks = rap::sys::http_get(
+        const auto checks = forge_detail::http_get(
             root + "/commits/" + pr.head_sha + "/check-runs?per_page=100", {.headers = headers});
         note_budget(checks);
         if (checks.status == 200) apply_github_check_runs(checks.body, pr);
@@ -1180,7 +1220,7 @@ std::expected<pull_requests_reply, std::string> open_pull_requests(forge_kind k,
 std::expected<std::string, std::string> default_branch(forge_kind k, const forge_repo& r,
                                                        std::string_view token)
 {
-    const auto reply = rap::sys::http_get(repo_api(k, r), {.headers = api_headers(k, token)});
+    const auto reply = forge_detail::http_get(repo_api(k, r), {.headers = api_headers(k, token)});
     const auto j = json::parse(reply.body);
     if (reply.status != 200 || !j) return std::unexpected(failure(reply, j));
     std::string branch = (*j)["default_branch"].str();
@@ -1191,7 +1231,8 @@ std::expected<std::string, std::string> default_branch(forge_kind k, const forge
 std::expected<std::vector<forge_repo>, std::string>
 pull_request_targets(forge_kind k, const forge_repo& head, std::string_view token)
 {
-    const auto reply = rap::sys::http_get(repo_api(k, head), {.headers = api_headers(k, token)});
+    const auto reply =
+        forge_detail::http_get(repo_api(k, head), {.headers = api_headers(k, token)});
     const auto j = json::parse(reply.body);
     if (reply.status != 200 || !j) return std::unexpected(failure(reply, j));
     std::vector<forge_repo> out{head};
@@ -1247,7 +1288,7 @@ std::expected<pull_request, std::string> create_pull_request(forge_kind k, const
                                         : std::string()) +
                "}";
     }
-    const auto reply = rap::sys::http_request("POST", url, body, {.headers = headers});
+    const auto reply = forge_detail::http_request("POST", url, body, {.headers = headers});
     const auto j = json::parse(reply.body);
     if (reply.status != 201 || !j)
     {
@@ -1288,7 +1329,7 @@ std::string send_json(forge_kind k, std::string_view method, const std::string& 
 {
     auto headers = api_headers(k, token);
     if (!body.empty()) headers.push_back({"Content-Type", "application/json"});
-    const auto reply = rap::sys::http_request(method, url, body, {.headers = headers});
+    const auto reply = forge_detail::http_request(method, url, body, {.headers = headers});
     if (reply.status >= 200 && reply.status < 300) return {};
     const auto j = json::parse(reply.body);
     return failure(reply, j);
@@ -1311,7 +1352,7 @@ std::expected<merge_state, std::string> github_merge_state(const forge_repo& r, 
     auto headers = api_headers(forge_kind::github, token);
     headers.push_back({"Content-Type", "application/json"});
     const auto reply =
-        rap::sys::http_request("POST", graphql_url(r.host), body, {.headers = headers});
+        forge_detail::http_request("POST", graphql_url(r.host), body, {.headers = headers});
     const auto j = json::parse(reply.body);
     if (reply.status != 200 || !j) return std::unexpected(failure(reply, j));
     for (const json::value& e : (*j)["errors"].elements())
@@ -1381,11 +1422,11 @@ std::expected<merge_state, std::string> gitlab_merge_state(const forge_repo& r, 
                                                            std::string_view token)
 {
     const auto headers = api_headers(forge_kind::gitlab, token);
-    const auto project_reply = rap::sys::http_get(gitlab_project(r), {.headers = headers});
+    const auto project_reply = forge_detail::http_get(gitlab_project(r), {.headers = headers});
     const auto project = json::parse(project_reply.body);
     if (project_reply.status != 200 || !project)
         return std::unexpected(failure(project_reply, project));
-    const auto reply = rap::sys::http_get(
+    const auto reply = forge_detail::http_get(
         gitlab_project(r) + "/merge_requests/" + std::to_string(number), {.headers = headers});
     const auto mr = json::parse(reply.body);
     if (reply.status != 200 || !mr) return std::unexpected(failure(reply, mr));
@@ -1436,10 +1477,10 @@ std::expected<merge_state, std::string> gitea_merge_state(const forge_repo& r, i
 {
     const auto headers = api_headers(forge_kind::gitea, token);
     const auto repo_reply =
-        rap::sys::http_get(repo_api(forge_kind::gitea, r), {.headers = headers});
+        forge_detail::http_get(repo_api(forge_kind::gitea, r), {.headers = headers});
     const auto repo = json::parse(repo_reply.body);
     if (repo_reply.status != 200 || !repo) return std::unexpected(failure(repo_reply, repo));
-    const auto reply = rap::sys::http_get(
+    const auto reply = forge_detail::http_get(
         repo_api(forge_kind::gitea, r) + "/pulls/" + std::to_string(number), {.headers = headers});
     const auto pr = json::parse(reply.body);
     if (reply.status != 200 || !pr) return std::unexpected(failure(reply, pr));
@@ -1508,7 +1549,7 @@ std::string merge_pull_request(forge_kind k, const forge_repo& r, int number,
             auto headers = api_headers(k, token);
             headers.push_back({"Content-Type", "application/json"});
             const auto reply =
-                rap::sys::http_request("POST", graphql_url(r.host), body, {.headers = headers});
+                forge_detail::http_request("POST", graphql_url(r.host), body, {.headers = headers});
             const auto j = json::parse(reply.body);
             if (reply.status != 200 || !j) return failure(reply, j);
             for (const json::value& e : (*j)["errors"].elements()) return e["message"].str();
@@ -1641,10 +1682,10 @@ std::expected<std::string, std::string> fetch_avatar(forge_kind k, const forge_r
                                    .timeout = std::chrono::seconds(10),
                                    .max_bytes = size_t(1) << 20,
                                    .cancelled = cancelled};
-    if (!token.empty() && same_letters(host_of(url), r.host))
+    if (!token.empty() && url_origin(url) == web_origin(r.host))
         options.headers.emplace_back(
             "Authorization", (k == forge_kind::gitea ? "token " : "Bearer ") + std::string(token));
-    auto reply = rap::sys::http_get(url, options);
+    auto reply = forge_detail::http_get(url, options);
     if (reply.status != 200 || reply.body.empty())
         return std::unexpected(failure(reply, std::nullopt));
     return std::move(reply.body);
@@ -1659,10 +1700,10 @@ std::expected<std::string, std::string> github_rest_avatar(const forge_repo& r,
     if (!budget_allows(anonymous_budget(), 1, 10, now_seconds()))
         return std::unexpected(std::string(_("GitHub's hourly allowance is used up.")));
     const auto reply =
-        rap::sys::http_get(repo_api(forge_kind::github, r) + "/commits/" + std::string(commit),
-                           {.headers = api_headers(forge_kind::github, ""),
-                            .timeout = std::chrono::seconds(10),
-                            .cancelled = cancelled});
+        forge_detail::http_get(repo_api(forge_kind::github, r) + "/commits/" + std::string(commit),
+                               {.headers = api_headers(forge_kind::github, ""),
+                                .timeout = std::chrono::seconds(10),
+                                .cancelled = cancelled});
     note_budget(reply);
     if (reply.status == 404 || reply.status == 422)
         return std::unexpected(std::string(_("The commit isn't on the forge.")));
@@ -1689,7 +1730,7 @@ std::expected<std::string, std::string> github_avatar(const forge_repo& r, std::
         ",\"px\":" + std::to_string(px) + "}}";
     auto headers = api_headers(forge_kind::github, token);
     headers.push_back({"Content-Type", "application/json"});
-    const auto reply = rap::sys::http_request(
+    const auto reply = forge_detail::http_request(
         "POST", graphql_url(r.host), body,
         {.headers = headers, .timeout = std::chrono::seconds(10), .cancelled = cancelled});
     const auto j = json::parse(reply.body);
@@ -1713,11 +1754,11 @@ std::expected<std::string, std::string> gitlab_avatar(const forge_repo& r, std::
                                                       const std::atomic<bool>* cancelled)
 {
     const auto reply =
-        rap::sys::http_get(api_root(forge_kind::gitlab, r.host) + "/avatar?" +
-                               form({{"email", email}, {"size", std::to_string(px)}}),
-                           {.headers = api_headers(forge_kind::gitlab, token),
-                            .timeout = std::chrono::seconds(10),
-                            .cancelled = cancelled});
+        forge_detail::http_get(api_root(forge_kind::gitlab, r.host) + "/avatar?" +
+                                   form({{"email", email}, {"size", std::to_string(px)}}),
+                               {.headers = api_headers(forge_kind::gitlab, token),
+                                .timeout = std::chrono::seconds(10),
+                                .cancelled = cancelled});
     const auto j = json::parse(reply.body);
     if (reply.status != 200 || !j) return std::unexpected(failure(reply, j));
     const std::string url = (*j)["avatar_url"].str();
@@ -1731,12 +1772,12 @@ std::expected<std::string, std::string> gitea_avatar(const forge_repo& r, std::s
                                                      std::string_view token,
                                                      const std::atomic<bool>* cancelled)
 {
-    const auto reply =
-        rap::sys::http_get(repo_api(forge_kind::gitea, r) + "/git/commits/" + std::string(commit) +
-                               "?stat=false&verification=false&files=false",
-                           {.headers = api_headers(forge_kind::gitea, token),
-                            .timeout = std::chrono::seconds(10),
-                            .cancelled = cancelled});
+    const auto reply = forge_detail::http_get(repo_api(forge_kind::gitea, r) + "/git/commits/" +
+                                                  std::string(commit) +
+                                                  "?stat=false&verification=false&files=false",
+                                              {.headers = api_headers(forge_kind::gitea, token),
+                                               .timeout = std::chrono::seconds(10),
+                                               .cancelled = cancelled});
     if (reply.status == 404)
         return std::unexpected(std::string(_("The commit isn't on the forge.")));
     const auto j = json::parse(reply.body);
@@ -1956,6 +1997,108 @@ void note_budget(const rap::sys::http_response& r)
 std::string url_escape(std::string_view s)
 {
     return tortilla::form_escape(s);
+}
+
+// -- the requests' gate -------------------------------------------------------
+
+namespace
+{
+
+std::mutex gate_mutex;
+// Each token handed out, and the origins it was given for: usually one.
+std::map<std::string, std::vector<std::string>, std::less<>> bound;
+transport fake;  // the tests'
+
+// The token an Authorization header carries ("Bearer x", "token x"), or ""
+// when there's none.
+std::string_view token_in(const rap::sys::http_headers& headers)
+{
+    for (const auto& [name, value] : headers)
+        if (std::ranges::equal(name, std::string_view("authorization"), [](char x, char y)
+                               { return std::tolower(static_cast<unsigned char>(x)) == y; }))
+        {
+            const std::string_view v = value;
+            const size_t space = v.find(' ');
+            return space == std::string_view::npos ? v : v.substr(space + 1);
+        }
+    return {};
+}
+
+// A request refused before it's sent: no answer, and why.
+rap::sys::http_response refused(const std::string& url)
+{
+    rap::sys::http_response r;
+    r.error = rap::i18n::format(_("A sign-in for another server wasn't sent to {0}."),
+                                tortilla::url_origin(url));
+    return r;
+}
+
+transport faked()
+{
+    std::lock_guard lock(gate_mutex);
+    return fake;
+}
+
+}  // namespace
+
+void bind_token(std::string_view token, std::string_view host)
+{
+    if (token.empty()) return;
+    const std::string origin = web_origin(host);
+    std::lock_guard lock(gate_mutex);
+    auto it = bound.find(token);
+    if (it == bound.end()) it = bound.emplace(std::string(token), std::vector<std::string>{}).first;
+    if (std::ranges::find(it->second, origin) == it->second.end()) it->second.push_back(origin);
+}
+
+bool token_allowed(std::string_view token, std::string_view url)
+{
+    if (token.empty()) return true;
+    const std::string to = tortilla::url_origin(url);
+    std::lock_guard lock(gate_mutex);
+    const auto it = bound.find(token);
+    if (it == bound.end()) return false;  // given for nowhere: sent nowhere
+    return std::ranges::any_of(it->second,
+                               [&](const std::string& origin)
+                               {
+                                   return to == origin || (origin == "https://github.com:443" &&
+                                                           to == "https://api.github.com:443");
+                               });
+}
+
+rap::sys::http_response http_request(std::string_view method, const std::string& url,
+                                     std::string_view body, const rap::sys::http_options& options)
+{
+    if (!token_allowed(token_in(options.headers), url)) return refused(url);
+    if (const transport f = faked()) return f(method, url, body, options);
+    return rap::sys::http_request(method, url, body, options);
+}
+
+rap::sys::http_response http_get(const std::string& url, const rap::sys::http_options& options)
+{
+    if (!token_allowed(token_in(options.headers), url)) return refused(url);
+    if (const transport f = faked()) return f("GET", url, {}, options);
+    return rap::sys::http_get(url, options);
+}
+
+rap::sys::http_response http_download(const std::string& url, const std::filesystem::path& to,
+                                      const rap::sys::http_options& options)
+{
+    if (!token_allowed(token_in(options.headers), url)) return refused(url);
+    if (const transport f = faked())
+    {
+        auto r = f("GET", url, {}, options);
+        std::ofstream(to, std::ios::binary) << r.body;
+        r.body.clear();
+        return r;
+    }
+    return rap::sys::http_download(url, to, options);
+}
+
+void set_transport(transport t)
+{
+    std::lock_guard lock(gate_mutex);
+    fake = std::move(t);
 }
 
 }  // namespace tortilla::forge_detail

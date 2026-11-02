@@ -5,6 +5,8 @@
 #include "forge/forge.h"
 #include "util/json.h"
 
+#include <filesystem>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -30,5 +32,31 @@ check_run github_run(const json::value&);
 void note_budget(const rap::sys::http_response&);
 // `s` escaped for a URL's query or path segment.
 std::string url_escape(std::string_view s);
+
+// -- every request to a forge goes through these ------------------------------
+
+// A token is tied to the web origin it was given for (load_token: its
+// account's host; who_am_i: the host it's tried on). A request carrying an
+// Authorization header is refused, unsent, unless its URL is that origin
+// (or github.com's API host, api.github.com): a token for forge.example
+// (port 443) never reaches forge.example:8443.
+void bind_token(std::string_view token, std::string_view host);
+// Whether `token` may go to `url`.
+bool token_allowed(std::string_view token, std::string_view url);
+
+// rap::sys's requests, behind that check.
+rap::sys::http_response http_request(std::string_view method, const std::string& url,
+                                     std::string_view body = {},
+                                     const rap::sys::http_options& = {});
+rap::sys::http_response http_get(const std::string& url, const rap::sys::http_options& = {});
+rap::sys::http_response http_download(const std::string& url, const std::filesystem::path& to,
+                                      const rap::sys::http_options& = {});
+
+// For the tests: what answers in place of the network (a download's body is
+// what's written), or none to put the network back.
+using transport =
+    std::function<rap::sys::http_response(std::string_view method, const std::string& url,
+                                          std::string_view body, const rap::sys::http_options&)>;
+void set_transport(transport);
 
 }  // namespace tortilla::forge_detail

@@ -25,7 +25,7 @@ std::string id_text(std::int64_t id)
 rap::sys::http_response get(forge_kind k, const std::string& url, std::string_view token,
                             std::size_t max_bytes = std::size_t(4) << 20)
 {
-    return rap::sys::http_get(url, {.headers = api_headers(k, token), .max_bytes = max_bytes});
+    return forge_detail::http_get(url, {.headers = api_headers(k, token), .max_bytes = max_bytes});
 }
 
 // -- GitHub -------------------------------------------------------------------
@@ -49,7 +49,7 @@ std::expected<commit_ci, std::string> github_checks(const forge_repo& r, std::st
     auto headers = api_headers(forge_kind::github, token);
     headers.push_back({"Content-Type", "application/json"});
     const auto reply =
-        rap::sys::http_request("POST", graphql_url(r.host), body, {.headers = headers});
+        forge_detail::http_request("POST", graphql_url(r.host), body, {.headers = headers});
     const auto j = json::parse(reply.body);
     if (reply.status != 200 || !j) return std::unexpected(failure(reply, j));
     if (const json::value errors = (*j)["errors"]; errors.kind() == json::value::type::array)
@@ -463,12 +463,12 @@ std::string download_artifact(forge_kind k, const ci_artifact& a, const std::fil
 {
     // GitHub's redirects to a signed address on another host; rapport sends
     // the token only to the host it was asked of.
-    const auto reply = rap::sys::http_download(a.download_url, to,
-                                               {.headers = api_headers(k, token),
-                                                .timeout = std::chrono::seconds(30),
-                                                .stall = std::chrono::seconds(60),
-                                                .cancelled = cancelled,
-                                                .progress = std::move(progress)});
+    const auto reply = forge_detail::http_download(a.download_url, to,
+                                                   {.headers = api_headers(k, token),
+                                                    .timeout = std::chrono::seconds(30),
+                                                    .stall = std::chrono::seconds(60),
+                                                    .cancelled = cancelled,
+                                                    .progress = std::move(progress)});
     if (reply.status < 200 || reply.status >= 300) return failure(reply, std::nullopt);
     return reply.error;  // "" when whole
 }
