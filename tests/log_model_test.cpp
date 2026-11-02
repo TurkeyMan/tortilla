@@ -633,6 +633,23 @@ int main(int argc, char** argv)
         check(tortilla::unique_temp_path("x", ".txt") != tortilla::unique_temp_path("x", ".txt"),
               "unique temp paths differ");
 
+        // A scratch folder of its own, made new, and gone with its owner
+        // (Review Patch's previews): whatever was written in it too.
+        {
+            fs::path kept;
+            {
+                tortilla::temp_dir one("scratch-test"), two("scratch-test");
+                kept = one.path();
+                check(!one.path().empty() && one.path() != two.path() &&
+                          fs::is_directory(one.path()) && fs::is_empty(one.path()) &&
+                          one.path().parent_path() == root,
+                      "temp dir: a new, empty folder of its own in the temporary folder");
+                fs::create_directories(one.path() / "sub");
+                tortilla::write_temp_file(one.path() / "sub" / "f.txt", "x");
+            }
+            check(!kept.empty() && !fs::exists(kept), "temp dir: removed with its owner");
+        }
+
         // A pathspec file holds the paths NUL-separated, git reads them back
         // (names with spaces and outside ASCII too), and it goes with the
         // last copy.
