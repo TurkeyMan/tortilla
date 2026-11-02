@@ -111,14 +111,31 @@ rap::layout::list changes_view::list(std::string settings_key, bool checkboxes)
                               { return context_menu(row, column); });
 }
 
-// Column widths and order, as the user left them; not Path's, which is what
-// the others leave of the list's width.
+namespace
+{
+
+// Narrower than this a column can't be read or grabbed: a width that small
+// (a list that reported 0) is saved and restored as 0, which leaves the
+// column as it is. Path's is always 0: it takes what the others leave of the
+// list's width.
+constexpr float min_column_width = 16;
+
+void sane_widths(std::vector<float>& widths)
+{
+    for (float& w : widths)
+        if (!(w >= min_column_width)) w = 0;
+    if (file_model::path < widths.size()) widths[file_model::path] = 0;
+}
+
+}  // namespace
+
+// Column widths and order, as the user left them.
 void changes_view::save_layout() const
 {
     if (!list_ || settings_key_.empty()) return;
     settings& st = settings::get();
     std::vector<float> widths = list_->column_widths();
-    if (file_model::path < widths.size()) widths[file_model::path] = 0;
+    sane_widths(widths);
     st.set_numbers(settings_key_ + ".columns", widths);
     std::vector<float> order;
     for (size_t i : list_->column_order()) order.push_back(float(i));
@@ -131,8 +148,8 @@ void changes_view::restore_layout()
     settings& st = settings::get();
     if (auto v = st.numbers(settings_key_ + ".columns"); !v.empty())
     {
-        // A Path width saved before it stretched would fight the stretch.
-        if (file_model::path < v.size()) v[file_model::path] = 0;
+        // (A Path width saved before it stretched would fight the stretch.)
+        sane_widths(v);
         list_->set_column_widths(v);
     }
     // The list ignores an order that doesn't fit its columns.
