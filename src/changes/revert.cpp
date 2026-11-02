@@ -77,7 +77,7 @@ std::vector<std::vector<std::string>> revert_commands(const revert_plan& plan)
         args.insert(args.end(), after.begin(), after.end());
         args.push_back("--");
         args.insert(args.end(), paths.begin(), paths.end());
-        out.push_back(std::move(args));
+        out.push_back(literal_paths(std::move(args)));
     };
     command({"rm", "-f", "-q", "--cached"}, plan.unstage);
     command({"rm", "-f", "-q", "--ignore-unmatch"}, plan.remove);
@@ -92,10 +92,10 @@ std::vector<fs::path> with_local_changes(const std::string& workdir,
     std::set<std::string, std::less<>> changed;
     std::vector<std::string> diff{"diff", "HEAD", "--name-only", "--no-renames", "-z", "--"};
     diff.insert(diff.end(), paths.begin(), paths.end());
-    add_nul_list(run_git(workdir, diff, git_output::stdout_only).output, changed);
+    add_nul_list(run_git(workdir, literal_paths(diff), git_output::stdout_only).output, changed);
     std::vector<std::string> others{"ls-files", "--others", "-z", "--"};
     others.insert(others.end(), paths.begin(), paths.end());
-    add_nul_list(run_git(workdir, others, git_output::stdout_only).output, changed);
+    add_nul_list(run_git(workdir, literal_paths(others), git_output::stdout_only).output, changed);
     std::vector<fs::path> out;
     for (const std::string& p : changed)
         if (fs::path abs = rap::sys::path_from_utf8(workdir) / rap::sys::path_from_utf8(p);

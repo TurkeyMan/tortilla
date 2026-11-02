@@ -217,8 +217,12 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
     const arg_list paths = paths_of(files);
     const std::string dir = host_.workdir;
     // Working-tree changes: git runs quietly, and the log reloads after.
+    // Every one is on the selected files, so their names are literal.
     auto local = [this](const std::string& title, std::vector<arg_list> commands)
-    { host_.run(title, std::move(commands)); };
+    {
+        for (arg_list& c : commands) c = literal_paths(std::move(c));
+        host_.run(title, std::move(commands));
+    };
     auto confirm_local = [this, local](const std::string& question, const std::string& title,
                                        std::vector<arg_list> commands)
     {
@@ -302,7 +306,7 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
                     // side deleted it.
                     arg_list present, absent;
                     const git_result r =
-                        run_git(dir, plus({"ls-files", "-u", "-z", "--"}, conflicts),
+                        run_git(dir, literal_paths(plus({"ls-files", "-u", "-z", "--"}, conflicts)),
                                 git_output::stdout_only);
                     std::set<std::string> has;
                     for (size_t at = 0; r.ok() && at < r.output.size();)
@@ -349,9 +353,10 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
             m.push_back(item(_("Show changes as _unified diff"), "patch",
                              [this, paths, dir, count]
                              {
-                                 show_unified_diff(host_.ui,
-                                                   rap::i18n::format(_("{0} HEAD..working tree"), count), dir,
-                                                   plus({"diff", "HEAD", "--"}, paths));
+                                 show_unified_diff(
+                                     host_.ui,
+                                     rap::i18n::format(_("{0} HEAD..working tree"), count), dir,
+                                     literal_paths(plus({"diff", "HEAD", "--"}, paths)));
                              }));
             separator(m);
             compare_two();
@@ -412,8 +417,9 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
         m.push_back(item(_("Show changes as _unified diff"), "patch",
                          [this, sides, paths, dir, count, title = vs_wc ? parent : hash]
                          {
-                             show_unified_diff(host_.ui, count + " " + title.substr(0, 8), dir,
-                                               plus(plus({"diff"}, sides), plus({"--"}, paths)));
+                             show_unified_diff(
+                                 host_.ui, count + " " + title.substr(0, 8), dir,
+                                 literal_paths(plus(plus({"diff"}, sides), plus({"--"}, paths))));
                          }));
         if (!vs_wc)
             m.push_back(item(_("Compare with _working tree"), "diff",

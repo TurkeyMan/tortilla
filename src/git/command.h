@@ -90,4 +90,14 @@ private:
 // "git reset --hard abc123", for showing what is about to run.
 std::string command_line(const std::vector<std::string>& args);
 
+// A command on paths the user picked, taken as names and not as patterns:
+// git's --literal-pathspecs, so "[ab].txt" isn't also a.txt and b.txt, "*"
+// isn't every file and ":x" isn't magic (after "--", and in a
+// --pathspec-from-file list alike). Not for patterns the user typed.
+inline std::vector<std::string> literal_paths(std::vector<std::string> args)
+{
+    args.insert(args.begin(), "--literal-pathspecs");
+    return args;
+}
+
 }  // namespace tortilla
