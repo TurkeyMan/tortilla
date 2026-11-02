@@ -428,13 +428,40 @@ std::expected<void, std::string> repo::walk(const walk_options& opts,
     }
     if (!many && !opts.rev.empty())
     {
-        owned_object target;
-        if (git_revparse_single(&target.p, repo_, opts.rev.c_str()) != 0)
+        // One rev, or a range: a..b is b's history less a's, a...b both
+        // less what they share (their merge bases and before).
+        git_revspec spec{};
+        if (git_revparse(&spec, repo_, opts.rev.c_str()) != 0)
             return std::unexpected(last_git_error());
-        owned_object commit;
-        if (git_object_peel(&commit.p, target.p, GIT_OBJECT_COMMIT) != 0)
-            return std::unexpected(last_git_error());
-        push(git_object_id(commit.p));
+        owned_object from{spec.from}, to{spec.to};
+        auto peeled = [&](git_object* o, owned_object& out) -> const git_oid*
+        {
+            return o && git_object_peel(&out.p, o, GIT_OBJECT_COMMIT) == 0 ? git_object_id(out.p)
+                                                                           : nullptr;
+        };
+        owned_object a, b;
+        const git_oid* left = peeled(from.p, a);
+        if (!left) return std::unexpected(last_git_error());
+        if (spec.flags & GIT_REVSPEC_SINGLE)
+            push(left);
+        else
+        {
+            const git_oid* right = peeled(to.p, b);
+            if (!right) return std::unexpected(last_git_error());
+            push(right);
+            if (spec.flags & GIT_REVSPEC_MERGE_BASE)
+            {
+                push(left);
+                git_oidarray bases{};
+                if (git_merge_bases(&bases, repo_, left, right) == 0)
+                {
+                    for (size_t i = 0; i < bases.count; ++i) git_revwalk_hide(w.p, &bases.ids[i]);
+                    git_oidarray_dispose(&bases);
+                }
+            }
+            else
+                git_revwalk_hide(w.p, left);
+        }
     }
     else if (!only_tips)
     {

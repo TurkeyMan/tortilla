@@ -511,9 +511,17 @@ menu log_window::context_menu(std::optional<size_t> clicked)
                                                            a.substr(0, 8) + ".." + b.substr(0, 8),
                                                            repo_.workdir(), {"diff", a, b});
                                      }));
-                m.push_back(todo(rap::i18n::format(_("Show log of {0}"), a.substr(0, 8) + ".." + b.substr(0, 8))));
-                m.push_back(todo(rap::i18n::format(_("Show log of {0}"), b.substr(0, 8) + ".." + a.substr(0, 8))));
-                m.push_back(todo(rap::i18n::format(_("Show log of {0}"), a.substr(0, 8) + "..." + b.substr(0, 8))));
+                // A the older, B the newer: what B has that A hasn't, the
+                // other way round, and what either has that the other hasn't.
+                auto range = [&](const std::string& x, const char* dots, const std::string& y)
+                {
+                    m.push_back(item(rap::i18n::format(_("Show log of {0}"),
+                                                       x.substr(0, 8) + dots + y.substr(0, 8)),
+                                     [this, r = x + dots + y] { show_log_at(r); }));
+                };
+                range(a, "..", b);
+                range(b, "..", a);
+                range(a, "...", b);
                 m.push_back(todo(_("Comp_are change sets")));
             }
             separator(m);

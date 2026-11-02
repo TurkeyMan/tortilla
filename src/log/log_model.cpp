@@ -431,7 +431,9 @@ void log_model::load(const std::string& path, const walk_options& opts,
                 }
                 deliver_refs(std::move(refs));
             }
-            if (filter.preset == show_preset::current && !following)
+            // A range (a..b, a...b) is shown alone, as git log has it.
+            const bool range = opts.rev.find("..") != std::string::npos;
+            if (filter.preset == show_preset::current && !following && !range)
             {
                 // The pins that aren't what's checked out, shown sparsely.
                 // (The walk's start, a ref picked, is counted as HEAD.)

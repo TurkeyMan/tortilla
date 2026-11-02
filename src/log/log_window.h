@@ -262,7 +262,7 @@ private:
     // Format Patch's Save As for several commits: a folder, then git
     // format-patch writing a numbered file per commit into it.
     void save_patch_series(rap::window* viewer, const patch_range&);
-    // Show log...: another log window walking from `rev`.
+    // Show log...: another log window walking from `rev`, or a range.
     void show_log_at(const std::string& rev);
     // Edit Notes: the commit's note in a dialog, saved with git notes.
     void edit_notes(const commit&);
