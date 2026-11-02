@@ -60,10 +60,10 @@ void edit_conflict(rap::ui& ui, rap::window* parent, const std::string& workdir,
             [&ui, parent, workdir, path, finish](rap::dialog_role r)
             {
                 if (r == rap::dialog_role::cancel) return finish(false);
-                const git_result g =
-                    run_git(workdir, r == rap::dialog_role::yes
-                                         ? std::vector<std::string>{"add", "-f", "--", path}
-                                         : std::vector<std::string>{"rm", "-f", "--", path});
+                const git_result g = run_git(
+                    workdir, literal_paths(r == rap::dialog_role::yes
+                                               ? std::vector<std::string>{"add", "-f", "--", path}
+                                               : std::vector<std::string>{"rm", "-f", "--", path}));
                 if (!g.ok())
                     ui.message(parent, {.icon = rap::message_spec::icon::error,
                                         .title = _("Conflict"),
@@ -128,7 +128,8 @@ void edit_conflict(rap::ui& ui, rap::window* parent, const std::string& workdir,
                                [&ui, workdir, path, finish](rap::dialog_role r)
                                {
                                    if (r != rap::dialog_role::yes) return finish(false);
-                                   const git_result g = run_git(workdir, {"add", "-f", "--", path});
+                                   const git_result g =
+                                       run_git(workdir, literal_paths({"add", "-f", "--", path}));
                                    if (!g.ok())
                                        ui.message(nullptr, {.icon = rap::message_spec::icon::error,
                                                             .title = _("Resolve"),

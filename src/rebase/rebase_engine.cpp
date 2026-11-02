@@ -352,7 +352,7 @@ void rebase_engine::resume(const std::string& message)
                 }
                 std::vector<std::string> add{"add", "-u", "--"};
                 add.insert(add.end(), files.begin(), files.end());
-                run(add,
+                run(literal_paths(add),
                     [this, message, in_group](int code, auto&)
                     {
                         if (code != 0) return stop(rebase_stage::error);

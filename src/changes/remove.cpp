@@ -85,7 +85,7 @@ void remove_files(rap::ui& ui, const std::vector<std::string>& paths, bool keep_
                        return fail(_("Could not write the list of files to the temporary folder."));
                    std::vector<std::string> args{"rm", "-r", "-q", "--cached", "--ignore-unmatch"};
                    for (std::string& a : list->arguments()) args.push_back(std::move(a));
-                   const git_result rm = run_git(workdir, args);
+                   const git_result rm = run_git(workdir, literal_paths(args));
                    if (!rm.ok())
                        return fail(N_("git couldn't stop tracking it.", "git couldn't stop tracking them.", n),
                                    rm.output);
