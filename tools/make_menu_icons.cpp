@@ -12,6 +12,11 @@
 //   QT_QPA_PLATFORM=offscreen ./make_menu_icons --badges data/windows/badges
 // <dir>/<kind>.ico, the badge in the bottom-left corner of a transparent
 // icon at every size Explorer draws, and <dir>/sheet.png.
+// With --emblems, the Linux file managers' badges, which they draw as
+// emblems beside or over a file's icon:
+//   QT_QPA_PLATFORM=offscreen ./make_menu_icons --emblems data/linux/icons
+// <dir>/hicolor/<n>x<n>/emblems/tortilla-badge-<kind>.png, the badge
+// filling the square.
 #include "shell/badge_icons.h"
 #include "shell/menu_icons.h"
 
@@ -241,12 +246,39 @@ int make_badges(const QString& dir)
     return sheet.save(dir + "/sheet.png") ? 0 : 1;
 }
 
+// The badges as icon theme emblems, each drawn at every size rather than
+// scaled.
+int make_emblems(const QString& dir)
+{
+    for (int n : {16, 22, 24, 32, 48, 256})
+    {
+        const QString emblems = QString("%1/hicolor/%2x%2/emblems").arg(dir).arg(n);
+        QDir().mkpath(emblems);
+        for (std::string_view k : tortilla::badge_kinds())
+        {
+            QImage out(n, n, QImage::Format_ARGB32_Premultiplied);
+            out.fill(Qt::transparent);
+            {
+                QPainter p(&out);
+                qt_painter painter(p);
+                tortilla::paint_badge(painter, k, 0, 0, float(n));
+            }
+            const QString name =
+                "tortilla-badge-" + QString::fromUtf8(k.data(), qsizetype(k.size()));
+            if (!out.convertToFormat(QImage::Format_ARGB32).save(emblems + "/" + name + ".png"))
+                return 1;
+        }
+    }
+    return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv)
 {
     QGuiApplication app(argc, argv);
     if (argc == 3 && std::string_view(argv[1]) == "--badges") return make_badges(argv[2]);
+    if (argc == 3 && std::string_view(argv[1]) == "--emblems") return make_emblems(argv[2]);
     if (argc != 2 && argc != 3)
     {
         std::fprintf(stderr, "usage: make_menu_icons outdir [linux-icons-dir]\n");
