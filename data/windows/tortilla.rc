@@ -1,6 +1,34 @@
 // Windows resources: the icon (Explorer, the taskbar and every window
-// use the first one) and the application manifest (comctl32 v6,
-// per-monitor DPI v2, UTF-8 code page).
+// use the first one), the application manifest (comctl32 v6, per-monitor
+// DPI v2, UTF-8 code page), and the version Explorer's Details tab shows
+// (TORTILLA_VERSION and its numbers, from CMakeLists.txt's project version).
 #include <winuser.h>
+#include <winver.h>
 1 ICON "tortilla.ico"
 CREATEPROCESS_MANIFEST_RESOURCE_ID RT_MANIFEST "tortilla.manifest"
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION TORTILLA_VERSION_NUMBERS
+PRODUCTVERSION TORTILLA_VERSION_NUMBERS
+FILEOS VOS_NT_WINDOWS32
+FILETYPE VFT_APP
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName", "Manu Evans"
+            VALUE "FileDescription", "Tortilla"
+            VALUE "FileVersion", TORTILLA_VERSION
+            VALUE "InternalName", "tortilla"
+            VALUE "LegalCopyright", "Manu Evans, GPL-3.0"
+            VALUE "OriginalFilename", "tortilla.exe"
+            VALUE "ProductName", "Tortilla"
+            VALUE "ProductVersion", TORTILLA_VERSION
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

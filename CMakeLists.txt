@@ -5,7 +5,7 @@
 #   tortilla-qt   -> tortilla-core + librapport-qt6  -> librapport
 #   tortilla-gtk3 -> tortilla-core + librapport-gtk3 -> librapport
 cmake_minimum_required(VERSION 3.25)
-project(tortilla VERSION 0.1 LANGUAGES CXX)
+project(tortilla VERSION 0.1.0 LANGUAGES CXX)
 
 # Executables and backend plugins land side by side so the loader finds
 # them next to the executable without installing.
@@ -229,7 +229,14 @@ endforeach()
 file(GENERATE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/icon_layers.cpp CONTENT
      "#include \"ui/repo_icon.h\"\nnamespace tortilla\n{\nnamespace\n{\n${TORTILLA_ICON_LAYERS}}\nextern const std::vector<icon_layers> k_icon_layers = {\n${TORTILLA_ICON_TABLE}};\n}\n")
 target_sources(tortilla PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/icon_layers.cpp)
+# The one version: the About box's, the packages' and the installer's
+# (.github/ci reads it from the project() line above), and tortilla.exe's
+# version resource, which wants it as four numbers.
 target_compile_definitions(tortilla PRIVATE TORTILLA_VERSION="${PROJECT_VERSION}")
+if(WIN32)
+    target_compile_definitions(tortilla PRIVATE
+        TORTILLA_VERSION_NUMBERS=${PROJECT_VERSION_MAJOR},${PROJECT_VERSION_MINOR},${PROJECT_VERSION_PATCH},0)
+endif()
 
 # Translations: Tortilla's and rapport's .po files, read as they are
 # (data/translations; rapport/i18n). Copied beside the build's programs on

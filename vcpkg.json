@@ -2,7 +2,7 @@
     "$comment":
         "Windows builds only (the vcpkg toolchain); Linux uses the distribution's libgit2. WinHTTP for HTTPS: nothing extra to ship. The port insists on a regex library: pcre2.",
     "name": "tortilla",
-    "version-string": "0.1",
+    "version-string": "0.1.0",
     "dependencies": [
         {
             "name": "libgit2",
