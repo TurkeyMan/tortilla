@@ -3062,12 +3062,20 @@ int main(int argc, char** argv)
         // Review/apply single patch: its files, whether each applies, and
         // applying some of them.
         using namespace std::string_literals;
-        check(tortilla::numstat_paths("1\t0\ta.txt\0"s
-                                      "2\t1\t\0old.txt\0new.txt\0"s
-                                      "-\t-\tbin\0"s) ==
-                      std::vector<std::string>{"a.txt", "new.txt", "bin"} &&
-                  tortilla::numstat_paths("").empty(),
-              "single patch: a patch's files, a rename's new name");
+        auto paths_of = [](const std::vector<tortilla::patch_entry>& entries)
+        {
+            std::vector<std::string> out;
+            for (const auto& e : entries) out.push_back(e.path);
+            return out;
+        };
+        const auto listed = tortilla::patch_entries("1\t0\ta.txt\0"s
+                                                    "2\t1\t\0old.txt\0new.txt\0"s
+                                                    "-\t-\tbin\0"s,
+                                                    "");
+        check(paths_of(listed) == std::vector<std::string>{"a.txt", "new.txt", "bin"} &&
+                  listed[1].old_path == "old.txt" && listed[2].binary && !listed[0].binary &&
+                  tortilla::patch_entries("", "").empty(),
+              "single patch: a patch's files, a rename's old and new names");
         check(tortilla::apply_args("p.diff", {"a", "b"}, true) ==
                   std::vector<std::string>{"apply", "--check", "--include=a", "--include=b", "--",
                                            "p.diff"},
@@ -3079,10 +3087,11 @@ int main(int argc, char** argv)
            "/y.txt' && echo z > '" + one + "/z.txt' && " + in(one) + "add . && " + in(one) +
            "diff --cached > '" + base + "/one.diff' && " + in(one) + "reset -q --hard");
         const std::string diff = base + "/one.diff";
-        const auto touched =
-            tortilla::numstat_paths(tortilla::run_git(one, {"apply", "-z", "--numstat", "--", diff},
+        const auto touched = paths_of(
+            tortilla::patch_entries(tortilla::run_git(one, {"apply", "-z", "--numstat", "--", diff},
                                                       tortilla::git_output::stdout_only)
-                                        .output);
+                                        .output,
+                                    read_bytes(diff)));
         check(touched == std::vector<std::string>{"x.txt", "y.txt", "z.txt"} &&
                   tortilla::run_git(one, tortilla::apply_args(diff, {"x.txt"}, true)).ok(),
               "single patch: the files of a diff, which apply");
@@ -3120,6 +3129,78 @@ int main(int argc, char** argv)
                   read_bytes(wild + "/a.txt") == "other\n" &&
                   read_bytes(wild + "/[ab].txt") == "old\n",
               "single patch: [ab].txt's check isn't a.txt's, and checking writes nothing");
+
+        // Review's preview of each kind of change: a rename starts from its
+        // old file, an addition from nothing, a deletion ends in nothing,
+        // a binary file patched; the working tree untouched throughout.
+        const std::string kinds = base + "/kinds";
+        sh("git init -q -b main '" + kinds + "' && " + in(kinds) + "config core.autocrlf false");
+        sh("printf 'one\\ntwo\\nthree\\nfour\\n' > '" + kinds + "/old.txt' && echo gone > '" +
+           kinds + "/del.txt' && printf '\\000\\001\\002' > '" + kinds + "/bin.dat' && " +
+           in(kinds) + "add . && " + in(kinds) + "commit -qm base");
+        sh(in(kinds) + "mv old.txt new.txt && printf 'one\\ntwo\\nthree\\nFOUR\\n' > '" + kinds +
+           "/new.txt' && " + in(kinds) + "rm -q del.txt && echo added > '" + kinds +
+           "/add.txt' && printf '\\000\\003\\002' > '" + kinds + "/bin.dat' && " + in(kinds) +
+           "add -A && " + in(kinds) + "diff --cached -M --binary > '" + base + "/kinds.diff' && " +
+           in(kinds) + "reset -q --hard");
+        const std::string kinds_diff = base + "/kinds.diff";
+        const auto entries = tortilla::patch_entries(
+            tortilla::run_git(kinds, {"apply", "-z", "--numstat", "--", kinds_diff},
+                              tortilla::git_output::stdout_only)
+                .output,
+            read_bytes(kinds_diff));
+        using change = tortilla::patch_entry::change;
+        auto entry = [&](const std::string& path) -> const tortilla::patch_entry*
+        {
+            for (const auto& e : entries)
+                if (e.path == path) return &e;
+            return nullptr;
+        };
+        const auto *renamed = entry("new.txt"), *added = entry("add.txt"),
+                   *deleted = entry("del.txt"), *binary = entry("bin.dat");
+        check(entries.size() == 4 && renamed && renamed->old_path == "old.txt" &&
+                  renamed->kind == change::renamed && added && added->kind == change::added &&
+                  deleted && deleted->kind == change::deleted && binary && binary->binary &&
+                  binary->kind == change::modified,
+              "single patch: entries keep a rename's old name and each change");
+        const std::string tree_before = read_bytes(kinds + "/old.txt") + "|" +
+                                        read_bytes(kinds + "/del.txt") + "|" +
+                                        read_bytes(kinds + "/bin.dat");
+        auto preview = [&](const tortilla::patch_entry* e)
+        {
+            const fs::path folder = tortilla::unique_temp_path("review-test", "");
+            fs::create_directories(folder);
+            auto p = tortilla::preview_patch_entry(kinds, kinds_diff, *e, folder);
+            return std::pair{p, folder};
+        };
+        if (renamed && added && deleted && binary)
+        {
+            const auto [r, rf] = preview(renamed);
+            check(r.applied.ok() && fs::path(r.base) == fs::path(kinds) / "old.txt" &&
+                      read_bytes(r.mine) == "one\ntwo\nthree\nFOUR\n",
+                  "single patch: a rename previewed, its old file against its new");
+            const auto [a, af] = preview(added);
+            check(a.applied.ok() && a.base == tortilla::empty_file() &&
+                      read_bytes(a.mine) == "added\n",
+                  "single patch: an added file previewed against nothing");
+            const auto [d, df] = preview(deleted);
+            check(d.applied.ok() && read_bytes(d.base) == "gone\n" &&
+                      d.mine == tortilla::empty_file(),
+                  "single patch: a deleted file previewed as nothing");
+            const auto [b, bf] = preview(binary);
+            check(b.applied.ok() && read_bytes(b.mine) == std::string("\0\3\2", 3),
+                  "single patch: a binary file previewed");
+            check(read_bytes(kinds + "/old.txt") + "|" + read_bytes(kinds + "/del.txt") + "|" +
+                              read_bytes(kinds + "/bin.dat") ==
+                          tree_before &&
+                      !fs::exists(kinds + "/new.txt") && !fs::exists(kinds + "/add.txt") &&
+                      tortilla::run_git(kinds, {"status", "--porcelain"},
+                                        tortilla::git_output::stdout_only)
+                          .output.empty(),
+                  "single patch: previews leave the working tree as it was");
+            std::error_code ec;
+            for (const fs::path& f : {rf, af, df, bf}) fs::remove_all(f, ec);
+        }
     }
 
     // Submodules: Add, Update and Sync's arguments, and the list Update

@@ -1,10 +1,15 @@
 #include "patch_serial.h"
 
+#include "git/diff_tool.h"
 #include "git/ignore_patterns.h"
+#include "util/entry_path.h"
 
+#include <git2.h>
 #include <rapport/sys.h>
 
+#include <algorithm>
 #include <filesystem>
+#include <memory>
 
 namespace tortilla
 {
@@ -44,10 +49,49 @@ bool am_in_progress(const std::string& git_dir)
                                    ec);
 }
 
-std::vector<std::string> numstat_paths(std::string_view numstat)
+namespace
 {
-    // "added\tdeleted\tpath\0", or for a rename "added\tdeleted\t\0old\0new\0".
-    std::vector<std::string> out;
+
+// The patch as libgit2 reads it: each file's old and new name and change,
+// which git apply's --numstat leaves out (a rename shows its new name
+// only). Nothing if it can't read it (a plain diff without git's headers).
+std::vector<patch_entry> parsed_entries(std::string_view patch)
+{
+    static const int init = git_libgit2_init();
+    (void)init;
+    std::vector<patch_entry> out;
+    git_diff* raw = nullptr;
+    if (patch.empty() || git_diff_from_buffer(&raw, patch.data(), patch.size()) != 0) return out;
+    std::unique_ptr<git_diff, decltype(&git_diff_free)> diff(raw, git_diff_free);
+    for (size_t i = 0, n = git_diff_num_deltas(diff.get()); i < n; ++i)
+    {
+        const git_diff_delta* d = git_diff_get_delta(diff.get(), i);
+        patch_entry e;
+        e.old_path = d->old_file.path ? d->old_file.path : "";
+        e.path = d->new_file.path ? d->new_file.path : e.old_path;
+        if (e.old_path.empty()) e.old_path = e.path;
+        switch (d->status)
+        {
+        case GIT_DELTA_ADDED: e.kind = patch_entry::change::added; break;
+        case GIT_DELTA_DELETED: e.kind = patch_entry::change::deleted; break;
+        case GIT_DELTA_RENAMED: e.kind = patch_entry::change::renamed; break;
+        case GIT_DELTA_COPIED: e.kind = patch_entry::change::copied; break;
+        default: e.kind = patch_entry::change::modified; break;
+        }
+        e.binary = (d->flags & GIT_DIFF_FLAG_BINARY) != 0;
+        out.push_back(std::move(e));
+    }
+    return out;
+}
+
+}  // namespace
+
+std::vector<patch_entry> patch_entries(std::string_view numstat, std::string_view patch)
+{
+    // "added\tdeleted\tpath\0" ("-\t-\t" for a binary file), or as git diff
+    // writes a rename, "added\tdeleted\t\0old\0new\0".
+    std::vector<patch_entry> out;
+    std::vector<patch_entry> parsed = parsed_entries(patch);
     auto field = [&](std::string_view& s)
     {
         const size_t end = s.find('\0');
@@ -61,14 +105,63 @@ std::vector<std::string> numstat_paths(std::string_view numstat)
         const size_t tab = record.find('\t');
         const size_t tab2 = tab == std::string_view::npos ? tab : record.find('\t', tab + 1);
         if (tab2 == std::string_view::npos) continue;
-        std::string_view path = record.substr(tab2 + 1);
+        std::string_view path = record.substr(tab2 + 1), old;
         if (path.empty())
         {
-            field(numstat);  // the old name
+            old = field(numstat);
             path = field(numstat);
         }
-        if (!path.empty()) out.emplace_back(path);
+        if (path.empty()) continue;
+        patch_entry e{.old_path = std::string(old.empty() ? path : old), .path = std::string(path)};
+        e.binary = record.starts_with("-\t-\t");
+        if (!old.empty() && old != path) e.kind = patch_entry::change::renamed;
+        // git apply's list, git apply's names (--include matches the new
+        // one); the rest from the patch read through, in the same order.
+        if (auto it =
+                std::ranges::find_if(parsed, [&](const patch_entry& p) { return p.path == path; });
+            it != parsed.end())
+        {
+            e.old_path = it->old_path;
+            e.kind = it->kind;
+            e.binary = e.binary || it->binary;
+            parsed.erase(it);
+        }
+        out.push_back(std::move(e));
     }
+    return out;
+}
+
+patch_preview preview_patch_entry(const std::string& workdir, const std::string& patch,
+                                  const patch_entry& e, const std::filesystem::path& folder)
+{
+    namespace fs = std::filesystem;
+    patch_preview out;
+    // The patch's names are anyone's: each must land in the folder as itself.
+    const auto old_rel = entry_path(e.old_path);
+    const auto new_rel = entry_path(e.path);
+    if (!old_rel || !new_rel)
+    {
+        out.applied.output = e.path + ": not a name this system can hold";
+        return out;
+    }
+    const fs::path original = rap::sys::path_from_utf8(workdir) / *old_rel;
+    const fs::path base = folder / *old_rel, patched = folder / *new_rel;
+    std::error_code ec;
+    // What the patch starts from: the old file (a rename's, a copy's
+    // source), as it is in the working tree; nothing for an added one.
+    const bool existed = e.kind != patch_entry::change::added &&
+                         fs::is_regular_file(fs::symlink_status(original, ec));
+    if (existed)
+    {
+        fs::create_directories(base.parent_path(), ec);
+        fs::copy_file(original, base, ec);
+    }
+    // git apply outside a repository works as patch does.
+    out.applied = run_git(rap::sys::path_to_utf8(folder), apply_args(patch, {e.path}));
+    out.base = existed ? rap::sys::path_to_utf8(original) : empty_file();
+    out.mine = fs::is_regular_file(fs::symlink_status(patched, ec))
+                   ? rap::sys::path_to_utf8(patched)
+                   : empty_file();
     return out;
 }
 
