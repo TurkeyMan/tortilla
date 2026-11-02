@@ -670,10 +670,16 @@ menu log_window::context_menu(std::optional<size_t> clicked)
         if (deletable.size() == 1)
         {
             const ref r = *deletable.front();  // a copy: `refs` may be this call's own
-            m.push_back(item(rap::i18n::format(_("_Delete {0}"), menu_text(r.full_name)), [this, r, delete_args]
+            // The stash label is the newest stash only: git stash drop takes that one.
+            const bool stash = r.kind == ref_kind::stash;
+            m.push_back(item(stash ? std::string(_("_Drop newest stash"))
+                                   : rap::i18n::format(_("_Delete {0}"), menu_text(r.full_name)),
+                             [this, r, delete_args, stash]
                              {
-                                 confirm_then_run(rap::i18n::format(_("Delete {0}?"), r.full_name), _("Delete"),
-                                                  {delete_args(r)});
+                                 confirm_then_run(
+                                     stash ? std::string(_("Drop the newest stash (stash@{0})?"))
+                                           : rap::i18n::format(_("Delete {0}?"), r.full_name),
+                                     stash ? _("Drop stash") : _("Delete"), {delete_args(r)});
                              }));
         }
         else if (deletable.size() > 1)

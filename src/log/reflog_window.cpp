@@ -423,23 +423,56 @@ void reflog_window::delete_entries(std::vector<size_t> sel)
                 });
 }
 
+// Every stash at once: `git stash clear` writes nothing to any reflog, so
+// they can't be had back. Said plainly, with the stashes listed and their
+// count on the button, and no default button for Enter to press by habit.
 void reflog_window::clear_stash()
 {
-    ui_.message(
-        window_.get(),
-        {.icon = rap::message_spec::icon::warning,
-         .title = "Tortilla",
-         .text = _("Do you really want to clear all stashed changes? They can NOT be recovered!"),
-         .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
-        [this, alive = std::weak_ptr<bool>(alive_)](rap::dialog_role role)
-        {
-            if (!alive.lock() || role != rap::dialog_role::yes) return;
-            if (const git_result r = run_git(workdir_, {"stash", "clear"}); !r.ok())
-                ui_.message(window_.get(), {.icon = rap::message_spec::icon::error,
-                                            .title = "Tortilla",
-                                            .text = r.output});
-            reload();
-        });
+    const git_result listed =
+        run_git(workdir_, {"stash", "list", "--format=%gd  %s"}, git_output::stdout_only);
+    std::string stashes = listed.output;
+    while (!stashes.empty() && stashes.back() == '\n') stashes.pop_back();
+    const size_t n = stashes.empty() ? 0 : size_t(std::ranges::count(stashes, '\n')) + 1;
+    if (n == 0) return;
+    using namespace rap::layout;
+    using namespace rap::literals;
+    confirm_ = create_window(
+        ui_,
+        dialog{_("Clear stash"),
+               {vbox{
+                   label{rap::i18n::format(N_("Delete {0} stash? It isn't kept in any reflog: once "
+                                              "cleared, it can NOT be recovered.",
+                                              "Delete all {0} stashes? They aren't kept in any "
+                                              "reflog: once cleared, they can NOT be recovered.",
+                                              n),
+                                           std::to_string(n))}
+                       .wrap(),
+                   text_view{stashes}.read_only().height(8_lines).stretch(),
+                   label{_("To remove just some, select them and choose Drop stash.")}.wrap(),
+                   buttons{dialog_button{rap::dialog_role::none,
+                                         rap::i18n::format(
+                                             N_("_Delete {0} stash", "_Delete all {0} stashes", n),
+                                             std::to_string(n))}
+                               .on_click(
+                                   [this, alive = std::weak_ptr<bool>(alive_)]
+                                   {
+                                       if (!alive.lock()) return;
+                                       confirm_->close();
+                                       if (const git_result r =
+                                               run_git(workdir_, {"stash", "clear"});
+                                           !r.ok())
+                                           ui_.message(window_.get(),
+                                                       {.icon = rap::message_spec::icon::error,
+                                                        .title = "Tortilla",
+                                                        .text = r.output});
+                                       reload();
+                                   }),
+                           dialog_button{rap::dialog_role::cancel, ""}.on_click(
+                               [this] { confirm_->close(); })},
+               }}}
+            .size(70_ch, 18_lines),
+        window_.get());
+    confirm_->show();
 }
 
 // In the progress dialog (stash apply and pop touch the working tree), then

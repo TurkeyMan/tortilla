@@ -62,6 +62,7 @@ private:
     std::vector<std::string> refs_;
     std::unique_ptr<rows> rows_;  // before the window: its list goes first
     std::unique_ptr<rap::window> window_;
+    std::unique_ptr<rap::window> confirm_;  // Clear stash's
     std::shared_ptr<git_process> difftool_;
     std::function<void()> closed_;
     // Callbacks that outlive the window (a child dialog, a confirmation)
