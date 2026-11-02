@@ -18,6 +18,17 @@ void show_unified_diff(rap::ui&, const std::string& title, const std::string& di
                        const std::vector<std::string>& git_args, std::function<void()> closed = {},
                        std::function<void(rap::window*)> save = {});
 
+// TortoiseGit's View Patch: the same window, kept open beside the log and
+// handed each selection's patch as text (the caller runs git, off the UI
+// thread). Owns itself until closed, by the user or close(), then calls
+// `closed`; after that the handle does nothing.
+struct patch_viewer
+{
+    std::function<void(const std::string& title, std::string text)> show;
+    std::function<void()> close;
+};
+patch_viewer open_patch_viewer(rap::ui&, const std::string& title, std::function<void()> closed);
+
 // Colour spans for unified diff text: headers bold, hunks in the accent
 // colour, additions and removals in the theme's positive/negative colours.
 std::vector<rap::text_view::span> diff_spans(const std::string& text);

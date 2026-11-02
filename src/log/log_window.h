@@ -11,6 +11,7 @@
 #include "log/log_model.h"
 #include "rebase/rebase_window.h"
 
+#include "ui/diff_window.h"
 #include "ui/settings_dialog.h"
 
 #include <rapport/rapport.h>
@@ -91,6 +92,9 @@ private:
     void jump(bool up);
     void dates_changed();
     void save_layout();
+    // The window closing: its layout kept, and View Patch's window closed
+    // with it (on for next time).
+    void closing();
     void restore_layout();
 
     // Commit-list context menu and its actions (log_actions.cpp).
@@ -274,6 +278,14 @@ private:
 
     rap::menu walk_menu();
     rap::menu view_menu();
+    // View Patch [spec 1.9.5]: the selection's patch in a window of its
+    // own, following the selection; whether it's open is kept across runs.
+    std::optional<patch_viewer> patch_;
+    unsigned patch_generation_ = 0;  // drops a patch the selection has left
+    rap::subscription patch_timer_;
+    bool patch_restored_ = false;
+    void show_patch(bool);
+    void update_patch();
     // The Show menu: presets, toggles, pins and hidden, labels, and the
     // revision to start from (start_menu).
     rap::menu show_menu();

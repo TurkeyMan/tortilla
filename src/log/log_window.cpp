@@ -417,14 +417,14 @@ void log_window::build()
                                         chosen.push_back(*c);
                                 picked_(std::move(chosen));
                             }
-                            save_layout();
+                            closing();
                             window_->close();
                             if (closed_) closed_();
                         }),
                     button{_("Cancel")}.bind(cancel_).on_click(
                         [this]
                         {
-                            save_layout();
+                            closing();
                             window_->close();
                             if (closed_) closed_();
                         }),
@@ -435,7 +435,7 @@ void log_window::build()
     window_->on_close_request(
         [this]
         {
-            save_layout();
+            closing();
             if (closed_) closed_();
             return true;
         });
@@ -473,6 +473,15 @@ void log_window::build()
     if (auto saved = settings::get().value("log.actionIcons"); !saved.empty())
         log_.set_action_icon_style(action_icon_style(std::clamp(std::atoi(saved.c_str()), 0, 3)));
     restore_layout();
+}
+
+void log_window::closing()
+{
+    save_layout();
+    if (!patch_) return;
+    patch_viewer p = std::move(*patch_);
+    patch_.reset();  // first, so its closing leaves the setting on
+    p.close();
 }
 
 // Window size and position, splitter panes, column widths and visibility
@@ -718,6 +727,13 @@ void log_window::loaded(const std::string& error)
         status_->set_text(rap::i18n::format(_("Error: {0}"), error));
         return;
     }
+    // View Patch as it was left, once the log is there to follow; not
+    // while picking commits for another window.
+    if (!patch_restored_)
+    {
+        patch_restored_ = true;
+        if (!picked_ && settings::get().value("log.viewPatch") == "1") show_patch(true);
+    }
 
     // Without explicit limits the pickers show the range actually loaded.
     size_t first = log_.row_count() - log_.commit_rows();
@@ -816,6 +832,7 @@ void log_window::selection_changed()
     }
     update_status();
     update_pick_button();
+    update_patch();
 }
 
 void log_window::update_pick_button()
@@ -1564,10 +1581,76 @@ rap::menu log_window::view_menu()
                    selection_changed();
                }),
         rap::menu_item::separator(),
-        toggle(_("View Patch"), false, {}, false),
+        toggle(_("View _Patch"), patch_.has_value(), [this] { show_patch(!patch_); }),
         rap::menu_item::separator(),
         {.label = _("_Settings..."), .action = [this] { open_settings(settings_page::general); }},
     };
+}
+
+void log_window::show_patch(bool on)
+{
+    settings::get().set("log.viewPatch", on ? "1" : "0");
+    if (on == patch_.has_value()) return;
+    if (!on)
+    {
+        patch_viewer p = std::move(*patch_);
+        patch_.reset();
+        return p.close();
+    }
+    // Closed by the user: off, and so next time. (Closed with the log, or
+    // from the menu, patch_ has gone already.)
+    patch_ = open_patch_viewer(ui_, _("View Patch"),
+                               [this, alive = std::weak_ptr<bool>(alive_)]
+                               {
+                                   if (!alive.lock() || !patch_) return;
+                                   patch_.reset();
+                                   settings::get().set("log.viewPatch", "0");
+                               });
+    update_patch();
+}
+
+// One commit's patch as git show has it, or the working tree's changes; a
+// log of a path, that path's part. Nothing for several. git runs off the
+// UI thread, a moment after the selection settles.
+void log_window::update_patch()
+{
+    if (!patch_) return;
+    patch_timer_ = ui_.timer(
+        100, false,
+        [this]
+        {
+            if (!patch_) return;
+            const auto sel = commit_list_->selection();
+            std::string title = _("View Patch");
+            std::vector<std::string> args;
+            if (sel.size() == 1 && log_.is_working_tree(sel.front()))
+            {
+                title = _("Working tree changes");
+                args = {"diff", "HEAD"};
+            }
+            else if (const commit* c = sel.size() == 1 ? log_.commit(sel.front()) : nullptr)
+            {
+                title = c->id.hex(8) + " " + c->summary;
+                args = {"show", "--format=fuller", c->id.hex()};
+            }
+            if (!args.empty() && path_limited()) args.insert(args.end(), {"--", rel_path_});
+            const unsigned gen = ++patch_generation_;
+            if (args.empty()) return patch_->show(title, {});
+            std::thread(
+                [this, &ui = ui_, gen, title, args, alive = std::weak_ptr<bool>(alive_),
+                 dir = repo_.workdir().empty() ? repo_.git_dir() : repo_.workdir()]
+                {
+                    auto r =
+                        std::make_shared<git_result>(run_git(dir, args, git_output::stdout_only));
+                    ui.post(
+                        [this, gen, title, r, alive]
+                        {
+                            if (!alive.lock() || !patch_ || gen != patch_generation_) return;
+                            patch_->show(title, r->ok() ? std::move(r->output) : std::string());
+                        });
+                })
+                .detach();
+        });
 }
 
 void log_window::open_settings(settings_page page)
