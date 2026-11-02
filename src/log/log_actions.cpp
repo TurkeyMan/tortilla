@@ -1505,6 +1505,12 @@ void log_window::set_pinned(const ref& r, bool pinned)
                       });
     pins_custom_ = true;
     save_branches();
+    // Shown anyway: only its label's pin changes, not what the log walks.
+    if (log_.walked_without_pin(r))
+    {
+        log_.set_pins(show_.pins, r.full_name);
+        return;
+    }
     reload();
 }
 

@@ -165,6 +165,12 @@ public:
     // Which branches the next load walks (the Show menu), and what the last
     // made of it. Pins and hide patterns apply to the labels at once.
     void set_branches(branch_request);
+    // Whether the walk takes `r` whatever its pins: the preset's, or every
+    // ref's, and not hidden. Pinning it then only changes its label.
+    bool walked_without_pin(const ref& r) const;
+    // The pins changed with the walk the same: only the rows wearing
+    // `full_name`'s label are drawn again.
+    void set_pins(std::vector<std::string> pins, const std::string& full_name);
     const branch_request& branches() const { return branches_; }
     const branch_outcome& outcome() const { return outcome_; }
     bool pinned(const ref& r) const { return is_pinned(r, branches_.filter.pins); }

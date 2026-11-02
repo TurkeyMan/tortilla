@@ -621,6 +621,21 @@ bool log_model::walks(const ref& r) const
             !hidden_by(r, branches_.filter.hidden));
 }
 
+bool log_model::walked_without_pin(const ref& r) const
+{
+    // The pins alone are the walk; or only a pin shows a hidden one.
+    if (outcome_.none || hidden_by(r, branches_.filter.hidden)) return false;
+    return walks(r);
+}
+
+void log_model::set_pins(std::vector<std::string> pins, const std::string& full_name)
+{
+    branches_.filter.pins = std::move(pins);
+    for (const auto& [id, here] : refs_)
+        if (std::ranges::any_of(here, [&](const ref& r) { return r.full_name == full_name; }))
+            if (auto row = row_of(id)) notify_changed(*row, 1);
+}
+
 void log_model::set_branches(branch_request request)
 {
     branches_ = std::move(request);
