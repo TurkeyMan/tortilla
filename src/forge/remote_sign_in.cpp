@@ -1,5 +1,6 @@
 #include "remote_sign_in.h"
 
+#include "forge/forge_detail.h"
 #include "i18n.h"
 #include "util/json.h"
 
@@ -19,9 +20,10 @@ namespace
 // not answer at all.
 rap::sys::http_response version_of(forge_kind k, std::string_view host)
 {
-    return rap::sys::http_get(api_root(k, host) + "/version", {.headers = api_headers(k, {}),
-                                                               .timeout = std::chrono::seconds(4),
-                                                               .max_bytes = std::size_t(64) << 10});
+    return forge_detail::http_get(api_root(k, host) + "/version",
+                                  {.headers = api_headers(k, {}),
+                                   .timeout = std::chrono::seconds(4),
+                                   .max_bytes = std::size_t(64) << 10});
 }
 
 // A path as one URL segment: GitLab's group/project as group%2Fproject.
@@ -92,7 +94,7 @@ repo_seen look_for_repo(forge_kind k, const forge_repo& r, std::string_view toke
     if (token.empty() && k == forge_kind::github && !budget_allows(anonymous_budget(), 1, 10, now))
         return repo_seen::unknown;
     // Only whether there's an answer matters, not what it says.
-    const auto reply = rap::sys::http_get(
+    const auto reply = forge_detail::http_get(
         url, {.headers = api_headers(k, token), .max_bytes = std::size_t(256) << 10});
     if (reply.status == 200) return repo_seen::shown;
     if (reply.status == 404) return repo_seen::hidden;

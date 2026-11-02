@@ -12,6 +12,7 @@
 #include "forge/ci.h"
 #include "forge/ci_poll.h"
 #include "forge/forge.h"
+#include "forge/forge_detail.h"
 #include "forge/pr_details.h"
 #include "forge/pr_watch.h"
 #include "forge/remote_sign_in.h"
@@ -782,10 +783,74 @@ int main(int argc, char** argv)
                   login("https://ada:tok@github.com:443/x") == "ada",
               "forge: https, scp-style and ssh URLs find the account");
         check(login("https://git.example.org:3000/x/y") == "bob" &&
-                  login("ssh://git@git.example.org:2222/x/y") == "bob",
-              "forge: a host with a port, by its name");
+                  login("https://GIT.example.org:3000/x/y") == "bob",
+              "forge: a host with a port, by its name and port");
+        // An ssh remote's port is ssh's: its forge is the web's default port,
+        // so not the account at :3000.
+        check(login("ssh://git@git.example.org:2222/x/y") == "-" &&
+                  tortilla::repo_of_url("ssh://git@git.example.org:2222/x/y")->host ==
+                      "git.example.org",
+              "forge: an ssh port isn't the web's");
         check(login("https://gitlab.com/x/y") == "-" && login("/srv/repo.git") == "-",
               "forge: no account for another host or a path");
+        // A sign-in is for its web origin: forge.example (port 443) isn't
+        // forge.example:8443, a different server; its token never goes there.
+        {
+            const std::vector<forge_account> on_443{
+                {.kind = forge_kind::gitea, .host = "forge.example", .login = "ada"}};
+            const std::vector<forge_account> said_443{
+                {.kind = forge_kind::gitea, .host = "Forge.Example:443", .login = "ada"}};
+            check(!tortilla::account_for_url("https://forge.example:8443/o/r.git", on_443) &&
+                      !tortilla::account_for_url("https://forge.example:8443/o/r.git", said_443),
+                  "forge: an account on :443 isn't one on :8443");
+            check(tortilla::account_for_url("https://forge.example:443/o/r.git", on_443) &&
+                      tortilla::account_for_url("https://forge.example/o/r.git", said_443) &&
+                      tortilla::account_for_url("git@forge.example:o/r.git", said_443) &&
+                      tortilla::web_origin("forge.example") ==
+                          tortilla::web_origin("FORGE.example:443") &&
+                      tortilla::web_origin("forge.example") !=
+                          tortilla::web_origin("forge.example:8443"),
+                  "forge: the default port and :443 are one origin");
+            // The request gate, with the network faked: the sentinel token,
+            // given for forge.example, goes there and nowhere else.
+            namespace fd = tortilla::forge_detail;
+            std::vector<std::pair<std::string, bool>> asked;  // url, with the token
+            fd::set_transport(
+                [&](std::string_view, const std::string& url, std::string_view,
+                    const rap::sys::http_options& o)
+                {
+                    bool token = false;
+                    for (const auto& [name, value] : o.headers)
+                        token |= value.find("AUDIT-SENTINEL") != std::string::npos;
+                    asked.emplace_back(url, token);
+                    return rap::sys::http_response{.status = 200, .body = "[]"};
+                });
+            fd::bind_token("AUDIT-SENTINEL", "forge.example");
+            const auto there = tortilla::repo_of_url("https://forge.example:8443/o/r.git");
+            const auto reply = tortilla::open_pull_requests(forge_kind::gitea, *there,
+                                                            "AUDIT-SENTINEL", true, true);
+            check(asked.empty() && !reply, "forge: a token isn't sent to another port");
+            asked.clear();
+            const auto home = tortilla::repo_of_url("https://forge.example:443/o/r.git");
+            tortilla::open_pull_requests(forge_kind::gitea, *home, "AUDIT-SENTINEL", false, false);
+            check(!asked.empty() &&
+                      asked.front().first.starts_with("https://forge.example:443/api/v1/") &&
+                      std::ranges::all_of(asked, [](const auto& a) { return a.second; }),
+                  "forge: a token is sent to its own origin");
+            asked.clear();
+            tortilla::open_pull_requests(forge_kind::gitea, *home, "UNBOUND-TOKEN", false, false);
+            check(asked.empty(), "forge: a token given for nowhere is sent nowhere");
+            asked.clear();
+            check(fd::token_allowed("AUDIT-SENTINEL", "https://forge.example/api/v1/x") &&
+                      !fd::token_allowed("AUDIT-SENTINEL", "http://forge.example/api/v1/x") &&
+                      !fd::token_allowed("AUDIT-SENTINEL", "https://forge.example.evil/x"),
+                  "forge: the gate compares scheme, host and port");
+            fd::bind_token("GH-SENTINEL", "github.com");
+            check(fd::token_allowed("GH-SENTINEL", "https://api.github.com/graphql") &&
+                      !fd::token_allowed("GH-SENTINEL", "https://uploads.github.com/x"),
+                  "forge: github.com's token goes to its API host");
+            fd::set_transport({});
+        }
         check(tortilla::api_root(forge_kind::github, "github.com") == "https://api.github.com" &&
                   tortilla::api_root(forge_kind::github, "ghe.corp") == "https://ghe.corp/api/v3" &&
                   tortilla::api_root(forge_kind::gitlab, "gitlab.com") ==

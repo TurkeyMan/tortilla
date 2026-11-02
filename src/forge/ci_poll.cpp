@@ -52,7 +52,7 @@ conditional_get(forge_kind k, const std::string& url, std::string_view token, et
     auto kept = cache.by_url.find(url);
     if (kept != cache.by_url.end() && !kept->second.etag.empty())
         headers.emplace_back("If-None-Match", kept->second.etag);
-    const auto reply = rap::sys::http_get(url, {.headers = std::move(headers)});
+    const auto reply = forge_detail::http_get(url, {.headers = std::move(headers)});
     if (token.empty()) note_budget(reply);  // a 304 costs nothing; a 200, one
     conditional_reply out;
     // Asked to slow down: a secondary rate limit, or the hour's spent.
@@ -136,7 +136,7 @@ std::int64_t expected_duration(const forge_repo& r, std::string_view sha, std::s
 {
     const std::string root = repo_api(forge_kind::github, r) + "/actions";
     const auto headers = api_headers(forge_kind::github, token);
-    const auto runs = rap::sys::http_get(
+    const auto runs = forge_detail::http_get(
         root + "/runs?head_sha=" + std::string(sha) + "&per_page=50", {.headers = headers});
     const auto j = json::parse(runs.body);
     if (runs.status != 200 || !j) return 0;
@@ -148,9 +148,9 @@ std::int64_t expected_duration(const forge_repo& r, std::string_view sha, std::s
         if (!known.contains(workflow))
         {
             // Its last successful run's length; kept for the window's life.
-            const auto last = rap::sys::http_get(root + "/workflows/" + std::to_string(workflow) +
-                                                     "/runs?status=success&per_page=1",
-                                                 {.headers = headers});
+            const auto last = forge_detail::http_get(
+                root + "/workflows/" + std::to_string(workflow) + "/runs?status=success&per_page=1",
+                {.headers = headers});
             std::int64_t took = 0;
             if (const auto l = json::parse(last.body); l && last.status == 200)
             {
