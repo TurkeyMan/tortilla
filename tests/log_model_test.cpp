@@ -59,6 +59,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -2836,10 +2837,13 @@ int main(int argc, char** argv)
     // hears, from where it last heard, and when it must draw everything.
     {
         tortilla::badge_changes changes(3);
+        // The answers kept: what's heard views them (a deque's elements stay
+        // where they are as more come).
+        std::deque<std::string> answers;
         auto ask = [&](std::string_view run, uint64_t next)
         {
-            return tortilla::read_changes(
-                changes.answer(tortilla::changes_request(run, next).substr(8)));
+            answers.push_back(changes.answer(tortilla::changes_request(run, next).substr(8)));
+            return tortilla::read_changes(answers.back());
         };
         auto start = ask("", 0);
         check(start && !start->all && start->paths.empty() && start->next == 1,
