@@ -4,6 +4,7 @@
 #include "branch/browse_refs.h"
 #include "git/command.h"
 #include "git/repo.h"
+#include "git/temp_files.h"
 #include "i18n.h"
 #include "log/log_window.h"
 #include "settings.h"
@@ -125,16 +126,6 @@ std::string last_part(const std::string& path)
 std::string tree_id(const std::string& folder)
 {
     return "/" + folder;
-}
-
-bool write_file(const fs::path& path, const std::string& content)
-{
-    std::error_code ec;
-    fs::create_directories(path.parent_path(), ec);
-    std::FILE* f = rap::sys::fopen(path, "wb");
-    bool ok = f && std::fwrite(content.data(), 1, content.size(), f) == content.size();
-    if (f) ok = std::fclose(f) == 0 && ok;
-    return ok;
 }
 
 }  // namespace
@@ -560,9 +551,7 @@ void repo_browser::open_file(const std::string& path, bool choose)
 {
     const std::string rev = revision_id();
     const git_result r = revision_file(workdir_, rev, path);
-    std::error_code ec;
-    const fs::path file = fs::temp_directory_path(ec) / "tortilla" / rev.substr(0, 8) /
-                          rap::sys::path_from_utf8(last_part(path));
+    const fs::path file = revision_temp_path(rev, path);
     if (!r.ok() || !write_file(file, r.output))
         return error(_("Open"),
                      rap::i18n::format(_("Could not get {0} at {1}."), path, rev.substr(0, 8)),
