@@ -149,7 +149,9 @@ struct log_model::actions_work
     std::mutex mutex;
     std::condition_variable wake;
     std::vector<std::pair<size_t, oid>> queue;  // tortilla::commit index, id
-    bool stop = false;
+    // Set under the mutex (for the wait), but read without it between
+    // commits too: atomic.
+    std::atomic<bool> stop = false;
     std::thread thread;
 };
 
