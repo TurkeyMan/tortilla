@@ -2238,6 +2238,31 @@ int main(int argc, char** argv)
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     check(code != 0, "GitProcess reports failure");
+    // git that can't start: its error posted, and, like any other
+    // callback, not run once the handle is gone.
+    {
+        const std::string path = rap::sys::env("PATH").value_or("");
+        const std::string nowhere = std::string(argv[1]) + "/no-git-here";
+        set_env("PATH", nowhere);
+        std::string said;
+        code = -2;
+        auto kept = tortilla::git_process::start(
+            **ui, repo, {"status"}, [&](const std::string& s) { said += s; },
+            [&](int c) { code = c; });
+        bool dropped_ran = false;
+        tortilla::git_process::start(
+            **ui, repo, {"status"}, [&](const std::string&) { dropped_ran = true; },
+            [&](int) { dropped_ran = true; });  // the handle dropped at once
+        set_env("PATH", path);
+        for (int i = 0; i < 200 && code == -2; ++i)
+        {
+            (*ui)->run();
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        for (int i = 0; i < 5; ++i) (*ui)->run();
+        check(code == -1 && !said.empty(), "GitProcess: a git that can't start says so");
+        check(!dropped_ran, "GitProcess: nothing runs for a dropped handle that couldn't start");
+    }
     check(tortilla::command_line({"commit", "-m", "two words"}) == "git commit -m \"two words\"",
           "commandLine quoting");
 
