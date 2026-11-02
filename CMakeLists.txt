@@ -78,6 +78,7 @@ add_library(tortilla_git STATIC
     src/git/repo_operation.cpp
     src/util/programs.cpp
     src/util/repo_path.cpp
+    src/util/entry_path.cpp
     src/util/search_query.cpp
     src/util/sha256.cpp
     src/util/json.cpp

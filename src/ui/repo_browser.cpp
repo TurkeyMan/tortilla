@@ -13,6 +13,7 @@
 #include "ui/repo_icon.h"
 #include "ui/settings_dialog.h"
 #include "ui/windows.h"
+#include "util/entry_path.h"
 #include "util/repo_path.h"
 
 #include <rapport/sys.h>
@@ -549,7 +550,7 @@ void repo_browser::open_file(const std::string& path, bool choose)
     const std::string rev = revision_id();
     const git_result r = revision_file(workdir_, rev, path);
     const fs::path file = revision_temp_path(rev, path);
-    if (!r.ok() || !write_file(file, r.output))
+    if (!r.ok() || file.empty() || !write_temp_file(file, r.output))
         return error(_("Open"),
                      rap::i18n::format(_("Could not get {0} at {1}."), path, rev.substr(0, 8)),
                      r.ok() ? "" : r.output);
@@ -599,8 +600,9 @@ void repo_browser::save_to_folder(std::vector<std::string> paths)
             for (const std::string& p : paths)
             {
                 const git_result r = revision_file(workdir_, rev, p);
-                if (!r.ok() || !write_file(to / rap::sys::path_from_utf8(last_part(p)), r.output))
-                    failed += p + "\n";
+                // By its name alone, which must be one here (not C:\x, NUL).
+                const auto name = entry_path(last_part(p));
+                if (!r.ok() || !name || !write_file(to / *name, r.output)) failed += p + "\n";
             }
             if (!failed.empty())
                 error(_("Export selection to"), _("Some files could not be exported."), failed);
