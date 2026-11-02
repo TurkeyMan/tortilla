@@ -34,6 +34,7 @@
 #include "ui/reset_dialog.h"
 #include "ui/stash_dialog.h"
 #include "ui/submodule_dialogs.h"
+#include "ui/svn_dialogs.h"
 #include "util/calendar.h"
 
 #include <cstdio>
@@ -646,6 +647,17 @@ menu log_window::context_menu(std::optional<size_t> clicked)
                 if (r.kind == ref_kind::local_branch && local.empty()) local = r.name;
             m.push_back(item(_("Pus_h..."), [this, local]
                              { keep_dialog(push_dialog::open(ui_, repo_.workdir(), local)); }));
+            // A git-svn repository's: HEAD's commits to SVN.
+            if (has_wc && git_svn_ok_)
+                m.push_back(item(
+                    *git_svn_ok_ ? std::string(_("SVN DCommit..."))
+                                 : std::string(_("SVN DCommit... (git svn isn't installed)")),
+                    [this]
+                    {
+                        svn_dcommit(ui_, window_.get(), repo_.workdir(),
+                                    [this](bool) { reload(); });
+                    },
+                    *git_svn_ok_));
             // The branch's pull request, or making one: the label clicked,
             // else the row's first branch.
             const ref* branch = nullptr;

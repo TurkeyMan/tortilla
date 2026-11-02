@@ -96,6 +96,7 @@ add_library(tortilla_git STATIC
     src/cache/cache_main.cpp
     src/cache/channel.cpp
     src/git/submodule.cpp
+    src/git/svn.cpp
     src/changes/working_tree.cpp)
 target_include_directories(tortilla_git PUBLIC src)
 target_link_libraries(tortilla_git PUBLIC ${TORTILLA_LIBGIT2} rapport::rapport)
@@ -119,6 +120,7 @@ add_executable(tortilla
     src/changes/conflict_editor.cpp
     src/ui/stash_dialog.cpp
     src/ui/submodule_dialogs.cpp
+    src/ui/svn_dialogs.cpp
     src/ui/reset_dialog.cpp
     src/ui/remotes_page.cpp
     src/ui/accounts_page.cpp

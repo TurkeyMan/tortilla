@@ -108,6 +108,10 @@ enum class run
     sub_add,         // tortilla subadd <folder>
     sub_update,      // tortilla subupdate <folder>
     sub_sync,        // tortilla subsync <folder>
+    svn_dcommit,     // tortilla svndcommit <folder>
+    svn_rebase,      // tortilla svnrebase <folder>
+    svn_fetch,       // tortilla svnfetch <folder>
+    svn_ignore,      // tortilla svnignore <folder>
 };
 
 struct row
@@ -144,11 +148,11 @@ inline constexpr row k_rows[] = {
     {"SVN DCommit...",
      {{{GIT | SVN, BISECT | MERGE}, {FIG | SVN, BISECT | MERGE}}},
      place::sub,
-     run::none,
+     run::svn_dcommit,
      "svndcommit"},
-    {"SVN Rebase", {{{FIG | SVN | ONE, BISECT | MERGE}}}, place::sub, run::none, "svnrebase"},
-    {"SVN Fetch", {{{FIG | SVN | ONE, 0}}}, place::sub, run::none, "svnfetch"},
-    {"Import SVN Ignore ...", {{{FIG | SVN | ONE, 0}}}, place::shift, run::none, "svnignore"},
+    {"SVN Rebase", {{{FIG | SVN | ONE, BISECT | MERGE}}}, place::sub, run::svn_rebase, "svnrebase"},
+    {"SVN Fetch", {{{FIG | SVN | ONE, 0}}}, place::sub, run::svn_fetch, "svnfetch"},
+    {"Import SVN Ignore ...", {{{FIG | SVN | ONE, 0}}}, place::shift, run::svn_ignore, "svnignore"},
     separator,
     {"&Diff", {{{GIT | ONE, 0}, {TWO, FOLD}}}, place::top, run::diff, "diff"},
     {"Diff later", {{{ONE, FOLD}}}, place::sub, run::diff_later, "difflater"},

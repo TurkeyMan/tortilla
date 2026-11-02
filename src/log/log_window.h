@@ -298,6 +298,9 @@ private:
     rap::ui& ui_;
     // Expires with the log, for dialogs that outlive it (their reload).
     std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
+    // A git-svn repository's: whether git svn is installed, for SVN DCommit
+    // (unset: not known yet, or not a git-svn repository).
+    std::optional<bool> git_svn_ok_;
     repo repo_;  // UI-thread repository for details and file lists
     std::string path_;
     // The path the log was opened for, repository-relative, which the
