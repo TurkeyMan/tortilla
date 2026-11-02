@@ -1,6 +1,5 @@
-// Building context menus in TortoiseGit's shape: items, placeholders for
-// what tortilla doesn't do yet, and separators only between groups that
-// produced items [spec 1.11].
+// Building context menus in TortoiseGit's shape: items, and separators
+// only between groups that produced items [spec 1.11].
 #pragma once
 
 #include "shell/menu_icons.h"
@@ -37,12 +36,6 @@ inline rap::menu_item item(std::string label, std::string_view group, std::funct
     rap::menu_item m = item(std::move(label), std::move(action), enabled);
     m.icon = menu_icon(group);
     return m;
-}
-
-// Shown so the menu has TortoiseGit's shape, until the feature exists.
-inline rap::menu_item todo(std::string label)
-{
-    return {.label = std::move(label), .enabled = false};
 }
 
 inline void separator(rap::menu& m)
