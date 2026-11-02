@@ -3,6 +3,7 @@
 // Builds a repo with branches and merges via the git CLI, then loads it
 // through log_model on the null UI backend.
 #include "cache/badge_cache.h"
+#include "cache/badge_changes.h"
 #include "cache/cache_main.h"
 #include "cache/channel.h"
 #include "changes/file_model.h"
@@ -2828,6 +2829,45 @@ int main(int argc, char** argv)
         }
     }
 
+    // The badges' change stream (cache/badge_changes.h): what an asker
+    // hears, from where it last heard, and when it must draw everything.
+    {
+        tortilla::badge_changes changes(3);
+        auto ask = [&](std::string_view run, uint64_t next)
+        {
+            return tortilla::read_changes(
+                changes.answer(tortilla::changes_request(run, next).substr(8)));
+        };
+        auto start = ask("", 0);
+        check(start && !start->all && start->paths.empty() && start->next == 1,
+              "badge changes: nothing yet");
+        changes.add({"/r/a", "/r/b"});
+        auto first = ask(start->run, start->next);
+        check(first && !first->all &&
+                  first->paths == std::vector<std::string_view>{"/r/a", "/r/b"} && first->next == 3,
+              "badge changes: the paths since");
+        changes.add({"/r/c"});
+        auto second = ask(first->run, first->next);
+        check(second && !second->all && second->paths == std::vector<std::string_view>{"/r/c"},
+              "badge changes: only what's new");
+        changes.add({"/r/d", "/r/e"});
+        auto behind = ask(start->run, start->next);
+        check(behind && behind->all && behind->next == 6,
+              "badge changes: further behind than kept, everything again");
+        auto other = ask("another-run", 1);
+        check(other && other->all, "badge changes: another run's asker draws everything again");
+        auto future = ask(first->run, 99);
+        check(future && future->all, "badge changes: a number this run never gave");
+        changes.add({"/r/tab\there"});
+        auto odd = ask(second->run, 6);
+        check(odd && odd->all, "badge changes: a path the line can't carry, everything again");
+        auto v2 = tortilla::read_changes(changes.answer("2 - 0"));
+        check(v2 && v2->all, "badge changes: a later protocol's asker draws everything");
+        check(!tortilla::read_changes("") && !tortilla::read_changes("x y") &&
+                  !tortilla::read_changes("r 1 2"),
+              "badge changes: an answer that isn't one");
+    }
+
     // The badges' cache: the channel it answers on, and a repository it
     // loads in the background and watches for changes.
     {
@@ -2951,6 +2991,25 @@ int main(int argc, char** argv)
         check(tortilla::answer_cache_request(cache, "badge " + rap::sys::path_to_utf8(file)) ==
                   std::to_string(int(badge::modified)),
               "badge cache: the request's answer");
+        // The change stream the Linux extensions ask: the edited file, told
+        // to an asker new to the cache, then nothing more until it changes.
+        {
+            tortilla::badge_changes changes;
+            changes.add({rap::sys::path_to_utf8(file)});
+            const std::string a =
+                tortilla::answer_cache_request(cache, tortilla::changes_request("", 0), &changes);
+            const auto heard = tortilla::read_changes(a);
+            check(heard && heard->run == changes.run() && !heard->all &&
+                      heard->paths == std::vector<std::string_view>{rap::sys::path_to_utf8(file)},
+                  "badge changes: a new asker hears this run's changes");
+            const auto again = tortilla::read_changes(tortilla::answer_cache_request(
+                cache, tortilla::changes_request(heard->run, heard->next), &changes));
+            check(again && !again->all && again->paths.empty() && again->next == heard->next,
+                  "badge changes: nothing new, nothing told");
+            check(tortilla::answer_cache_request(cache, "changes 1 - 0") == "?" &&
+                      !tortilla::read_changes("?"),
+                  "badge changes: a cache without them says it doesn't know");
+        }
         check(tortilla::answer_cache_request(cache, "states\t" + rap::sys::path_to_utf8(file) +
                                                         "\t" + std::string(argv[1])) ==
                   std::to_string(int(badge::modified)) + " 1 0;0 0 0",

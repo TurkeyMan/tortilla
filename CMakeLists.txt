@@ -100,6 +100,7 @@ add_library(tortilla_git STATIC
     src/git/sync.cpp
     src/git/history_edit.cpp
     src/cache/badge_cache.cpp
+    src/cache/badge_changes.cpp
     src/cache/cache_main.cpp
     src/cache/channel.cpp
     src/git/submodule.cpp
@@ -202,7 +203,7 @@ endif()
 rapport_add_shell_extension(tortilla-shell
     NAME "Tortilla" ID org.tortilla.Tortilla
     WINDOWS_CLSID {D73E7C0C-F88B-4DD5-AC56-9AABAB52E4EB}
-    SOURCES src/shell/shell_provider.cpp src/cache/channel.cpp)
+    SOURCES src/shell/shell_provider.cpp src/cache/channel.cpp src/cache/badge_changes.cpp)
 target_include_directories(tortilla-shell_provider PRIVATE src)
 if(UNIX AND NOT APPLE)
     include(GNUInstallDirs)
