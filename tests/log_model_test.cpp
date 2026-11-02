@@ -79,6 +79,20 @@ void check(bool ok, const char* what)
 
 using tortilla::test::sh;
 
+// An environment variable set, or unset when `value` is empty, the same on
+// Windows (which has no setenv).
+void set_env(const char* name, const std::string& value)
+{
+#ifdef _WIN32
+    _putenv_s(name, value.c_str());  // "" unsets it
+#else
+    if (value.empty())
+        unsetenv(name);
+    else
+        setenv(name, value.c_str(), 1);
+#endif
+}
+
 std::string slurp(const std::filesystem::path& p)
 {
     std::string out;
@@ -123,6 +137,25 @@ std::string read_bytes(const std::string& path)
 void history_edit_tests(const std::string& root)
 {
     using namespace tortilla;
+    // The repository's own identity (Tester), not one CI exports for every
+    // git, which outranks user.name: the variables away while these run.
+    struct identity_unset
+    {
+        std::vector<std::pair<const char*, std::string>> saved;
+        identity_unset()
+        {
+            for (const char* name : {"GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME",
+                                     "GIT_COMMITTER_EMAIL"})
+            {
+                saved.push_back({name, rap::sys::env(name).value_or("")});
+                set_env(name, "");
+            }
+        }
+        ~identity_unset()
+        {
+            for (const auto& [name, value] : saved) set_env(name, value);
+        }
+    } identity;
     const std::string origin = root + "/history-origin.git", dir = root + "/history";
     const std::string g = "git -C '" + dir + "' ";
     sh("git init -q --bare -b main '" + origin + "' && git init -q -b main '" + dir + "' && " + g +
@@ -184,6 +217,9 @@ void history_edit_tests(const std::string& root)
               "history: the combined message, oldest first, with git's separators");
         check(strip_squash_separators(text, 2).find('#') == std::string::npos,
               "history: the separators go again");
+        check(tidy_message("Edit a.txt\n\n\nAdd notes\n\n\n\nMore\n") ==
+                  "Edit a.txt\n\nAdd notes\n\nMore\n",
+              "history: blank lines in a run made one, as git's stripspace");
         auto plan = plan_combine(*h, {h->line[0], h->line[1]}, tidy_message("two and three  \n\n"));
         auto tip = plan ? replay(*r, *plan) : std::unexpected(replay_failure{});
         check(plan && tip.has_value(), "history: combine replays");
@@ -3268,7 +3304,10 @@ int main(int argc, char** argv)
     }
 
     // Revert, from the file list's menu or the Revert dialog: what it
-    // overwrites or removes goes to the trash first.
+    // overwrites or removes goes to the trash first. Where the trash is can
+    // be moved only on Linux (XDG_DATA_HOME); Windows' is the user's own
+    // Recycle Bin, so not there.
+#ifndef _WIN32
     {
         namespace fs = std::filesystem;
         const std::string dir = std::string(argv[1]) + "/revert";
@@ -3280,17 +3319,14 @@ int main(int argc, char** argv)
            "mv b.txt c.txt && printf 'new\\n' > '" + dir + "/new.txt' && " + g + "add new.txt");
         const std::string trash = std::string(argv[1]) + "/revert-trash";
         const std::string xdg = rap::sys::env("XDG_DATA_HOME").value_or("");
-        setenv("XDG_DATA_HOME", trash.c_str(), 1);
+        set_env("XDG_DATA_HOME", trash);
         auto changes = tortilla::load_working_tree(dir, {});
         const tortilla::revert_plan plan = tortilla::plan_revert(dir, changes.files);
         bool trashed = !!rap::sys::move_to_trash(plan.trash);
         bool ran = true;
         for (const auto& c : tortilla::revert_commands(plan))
             ran = tortilla::run_git(dir, c).ok() && ran;
-        if (xdg.empty())
-            unsetenv("XDG_DATA_HOME");
-        else
-            setenv("XDG_DATA_HOME", xdg.c_str(), 1);
+        set_env("XDG_DATA_HOME", xdg);
         const fs::path d(dir), t = fs::path(trash) / "Trash" / "files";
         check(trashed && ran && slurp(d / "a.txt") == "a\n" && slurp(d / "b.txt") == "b\n" &&
                   !fs::exists(d / "c.txt") && slurp(d / "new.txt") == "new\n",
@@ -3300,6 +3336,7 @@ int main(int argc, char** argv)
         check(tortilla::run_git(dir, {"status", "--porcelain"}).output == "?? new.txt\n",
               "revert: nothing else changed");
     }
+#endif
 
     // Selected names are names, not patterns: reverting "[ab].txt" leaves
     // a.txt and b.txt alone, "*.txt" only itself, ":x" is no magic.
@@ -3314,17 +3351,14 @@ int main(int argc, char** argv)
         for (const std::string& n : names) sh("printf 'work\\n' > '" + dir + "/" + n + "'");
         const std::string trash = std::string(argv[1]) + "/literal-trash";
         const std::string xdg = rap::sys::env("XDG_DATA_HOME").value_or("");
-        setenv("XDG_DATA_HOME", trash.c_str(), 1);
+        set_env("XDG_DATA_HOME", trash);
         std::vector<tortilla::file_change> picked;
         for (const char* n : {"[ab].txt", "*.txt", ":x"})
             picked.push_back({.path = n, .status = 'M'});
         const auto plan = tortilla::plan_revert(dir, picked);
         const auto changed = tortilla::with_local_changes(dir, {"[ab].txt"});
         for (const auto& c : tortilla::revert_commands(plan)) tortilla::run_git(dir, c);
-        if (xdg.empty())
-            unsetenv("XDG_DATA_HOME");
-        else
-            setenv("XDG_DATA_HOME", xdg.c_str(), 1);
+        set_env("XDG_DATA_HOME", xdg);
         const fs::path d(dir);
         check(slurp(d / "[ab].txt") == "one\n" && slurp(d / "*.txt") == "one\n" &&
                   slurp(d / ":x") == "one\n",

@@ -629,7 +629,10 @@ std::string tidy_message(const std::string& message)
         std::string_view line = std::string_view(message).substr(start, end - start);
         while (!line.empty() && (line.back() == ' ' || line.back() == '\t' || line.back() == '\r'))
             line.remove_suffix(1);
-        if (!out.empty() || !line.empty()) out.append(line).push_back('\n');
+        // As git's stripspace: no leading blank lines, and a run of blank
+        // lines (where the squash separators were, say) only one.
+        if (!line.empty() || (!out.empty() && !out.ends_with("\n\n")))
+            out.append(line).push_back('\n');
         start = end + 1;
     }
     while (out.size() > 1 && out.ends_with("\n\n")) out.pop_back();
