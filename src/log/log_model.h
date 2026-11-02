@@ -190,6 +190,11 @@ public:
     std::string text(size_t row, size_t column) const override;
     rap::text_style style(size_t row, size_t column) const override;
     void paint(size_t row, size_t column, rap::painter&, const rap::cell_info&) const override;
+    // Over a label's pull request part: what its mark means.
+    std::string tooltip(size_t row, size_t column, rap::point_f at) const override
+    {
+        return column == message ? pr_tooltip_at(row, at.x) : std::string();
+    }
 
 private:
     struct batch
