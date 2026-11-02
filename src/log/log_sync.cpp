@@ -5,6 +5,7 @@
 // git_prompts::never, and a remote that wants a password fails, shown on
 // the button.
 #include "log_window.h"
+#include "ref_labels.h"
 
 #include "git/remotes.h"
 #include "i18n.h"
@@ -21,8 +22,8 @@ namespace
 using rap::color;
 using rap::paint;
 
-// The same red as a failed check's mark (ref_labels.cpp).
-constexpr color k_failure_red{207, 34, 46};
+// The desktop's error colour, as a failed check's mark (ref_labels.cpp).
+const paint k_failure_red{rap::theme_color::negative};
 constexpr color k_white{255, 255, 255};
 
 // A circle `d` across at `c` with `text` in it, in bold, sized to fit.
@@ -69,7 +70,9 @@ rap::icon log_window::fetch_icon(fetch_badge badge, size_t count)
                            count > 9 ? "9+" : std::to_string(count),
                            paint{rap::theme_color::highlight_text});
                 break;
-            case fetch_badge::failure: paint_disc(p, at, d, paint{k_failure_red}, "!"); break;
+            case fetch_badge::failure:
+                paint_disc(p, at, d, k_failure_red, "!", paint{ink_on(p.resolve(k_failure_red))});
+                break;
             case fetch_badge::offline:
                 // A grey disc, struck through.
                 p.circle(at, d / 2, ink, std::nullopt);
@@ -89,7 +92,8 @@ void log_window::paint_failure_mark(rap::painter& p, rap::size_f s)
     // (A canvas has no background of its own on every toolkit.)
     p.rect({0, 0, s.w, s.h}, 0, paint{rap::theme_color::window}, std::nullopt);
     const float d = std::min({s.w, s.h, 16.0f});
-    paint_disc(p, {s.w / 2, s.h / 2}, d, paint{k_failure_red}, "!");
+    paint_disc(p, {s.w / 2, s.h / 2}, d, k_failure_red, "!",
+               paint{ink_on(p.resolve(k_failure_red))});
 }
 
 // What git said, the failures' first: the status bar's "!" clicked.

@@ -276,50 +276,66 @@ std::string check_duration(std::int64_t seconds, bool to_the_minute)
     return duration_text(seconds, to_the_minute);
 }
 
+// White or black on a status colour, whichever reads: the desktop's
+// success and warning colours may be light (GNOME's dark ones are).
+color ink_on(color fill)
+{
+    auto lin = [](uint8_t v)
+    {
+        const float s = v / 255.f;
+        return s <= 0.04045f ? s / 12.92f : std::pow((s + 0.055f) / 1.055f, 2.4f);
+    };
+    const float l = 0.2126f * lin(fill.r) + 0.7152f * lin(fill.g) + 0.0722f * lin(fill.b);
+    // White wherever it reaches 3:1, as desktops put white on their mid
+    // colours.
+    return 1.05f / (l + 0.05f) >= 3 ? color{255, 255, 255} : color{0, 0, 0};
+}
+
 void paint_check_mark(rap::painter& p, rap::point_f c, float d, check_state s, mergeable m)
 {
     const float r = d / 2;
     const color white{255, 255, 255};
-    const color grey{110, 119, 129}, yellow{232, 178, 0};
+    // The desktop's status colours: success, the warning (pending, or held
+    // by the forge's rules) and error; neutral for conflicts.
+    const paint grey{rap::theme_color::neutral}, yellow{rap::theme_color::warning};
+    auto disc = [&](const paint& fill)
+    {
+        p.circle(c, r, fill, paint{white});
+        return paint{ink_on(p.resolve(fill))};
+    };
     // No checks, but it can't be merged: a "!", grey for conflicts, yellow
     // for the forge's rules.
     if (s == check_state::none && m != mergeable::yes)
     {
-        p.circle(c, r, paint{m == mergeable::conflicts ? grey : yellow}, paint{white});
+        const paint ink = disc(m == mergeable::conflicts ? grey : yellow);
         const float w = std::max(1.5f, d / 7);
-        p.line({c.x, c.y - r * 0.5f}, {c.x, c.y + r * 0.12f}, paint{white}, w,
-               rap::line_cap::round);
-        p.circle({c.x, c.y + r * 0.45f}, w * 0.6f, paint{white}, std::nullopt);
+        p.line({c.x, c.y - r * 0.5f}, {c.x, c.y + r * 0.12f}, ink, w, rap::line_cap::round);
+        p.circle({c.x, c.y + r * 0.45f}, w * 0.6f, ink, std::nullopt);
         return;
     }
     switch (s)
     {
     case check_state::success:
-        p.circle(c, r,
-                 paint{m == mergeable::conflicts ? grey
-                       : m == mergeable::not_yet ? yellow
-                                                 : color{26, 127, 55}},
-                 paint{white});
-        {
-            const float w = std::max(1.5f, d / 8);
-            const rap::point_f a{c.x - r * 0.45f, c.y + r * 0.02f},
-                b{c.x - r * 0.12f, c.y + r * 0.36f}, e{c.x + r * 0.48f, c.y - r * 0.33f};
-            p.line(a, b, paint{white}, w, rap::line_cap::round);
-            p.line(b, e, paint{white}, w, rap::line_cap::round);
-            break;
-        }
-    case check_state::failure:
     {
-        p.circle(c, r, paint{color{207, 34, 46}}, paint{white});
-        const float a = r * 0.36f, w = std::max(1.5f, d / 8);
-        p.line({c.x - a, c.y - a}, {c.x + a, c.y + a}, paint{white}, w);
-        p.line({c.x - a, c.y + a}, {c.x + a, c.y - a}, paint{white}, w);
+        const paint ink = disc(m == mergeable::conflicts ? grey
+                               : m == mergeable::not_yet ? yellow
+                                                         : paint{rap::theme_color::positive});
+        const float w = std::max(1.5f, d / 8);
+        const rap::point_f a{c.x - r * 0.45f, c.y + r * 0.02f}, b{c.x - r * 0.12f, c.y + r * 0.36f},
+            e{c.x + r * 0.48f, c.y - r * 0.33f};
+        p.line(a, b, ink, w, rap::line_cap::round);
+        p.line(b, e, ink, w, rap::line_cap::round);
         break;
     }
-    case check_state::pending:
-        p.circle(c, r, paint{color{191, 135, 0}}, paint{white});
-        p.circle(c, r * 0.3f, paint{white}, std::nullopt);
+    case check_state::failure:
+    {
+        const paint ink = disc(paint{rap::theme_color::negative});
+        const float a = r * 0.36f, w = std::max(1.5f, d / 8);
+        p.line({c.x - a, c.y - a}, {c.x + a, c.y + a}, ink, w);
+        p.line({c.x - a, c.y + a}, {c.x + a, c.y - a}, ink, w);
         break;
+    }
+    case check_state::pending: p.circle(c, r * 0.3f, disc(yellow), std::nullopt); break;
     case check_state::none: break;
     }
 }
