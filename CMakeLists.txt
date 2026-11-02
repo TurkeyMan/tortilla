@@ -98,6 +98,7 @@ add_library(tortilla_git STATIC
     src/git/archive.cpp
     src/git/badges.cpp
     src/git/sync.cpp
+    src/git/history_edit.cpp
     src/cache/badge_cache.cpp
     src/cache/cache_main.cpp
     src/cache/channel.cpp

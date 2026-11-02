@@ -20,6 +20,7 @@
 #include "git/clean.h"
 #include "git/command.h"
 #include "git/diff_tool.h"
+#include "git/history_edit.h"
 #include "git/ignore_patterns.h"
 #include "git/lfs.h"
 #include "git/merge_tool.h"
@@ -37,6 +38,7 @@
 #include "git/temp_files.h"
 #include "git/tree_list.h"
 #include "git/worktrees.h"
+#include "i18n.h"
 #include "log/log_model.h"
 #include "raw_client.h"
 #include "settings.h"
@@ -108,6 +110,356 @@ void make_conflict(const std::string& dir, const std::vector<std::string>& files
     sh(g + "checkout -q main");
     write_all("ours");
     sh(g + how + " side >/dev/null 2>&1 || true");
+}
+std::string read_bytes(const std::string& path)
+{
+    std::ifstream in(path, std::ios::binary);
+    return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+}
+
+// History editing (git/history_edit.h) on throwaway repositories: each
+// action's commits and trees, the refusals, the working tree kept or
+// stashed, conflicts, undo and names beyond ASCII.
+void history_edit_tests(const std::string& root)
+{
+    using namespace tortilla;
+    const std::string origin = root + "/history-origin.git", dir = root + "/history";
+    const std::string g = "git -C '" + dir + "' ";
+    sh("git init -q --bare -b main '" + origin + "' && git init -q -b main '" + dir + "' && " + g +
+       "config user.name Tester && " + g + "config user.email t@example.com && " + g +
+       "config core.autocrlf false && " + g + "remote add origin '" + origin + "'");
+    // A commit writing `text` to `file`.
+    auto commit = [&](const std::string& file, const std::string& text, const std::string& subject)
+    {
+        sh("cd '" + dir + "' && printf '%s' '" + text + "' > '" + file + "' && git add -- '" +
+           file + "' && git commit -q -m '" + subject + "' -- '" + file + "'");
+    };
+    auto git = [&](std::vector<std::string> args)
+    {
+        auto r = run_git(dir, args, git_output::stdout_only);
+        while (!r.output.empty() && r.output.back() == '\n') r.output.pop_back();
+        return r.output;
+    };
+    commit("base.txt", "base\n", "init");
+    sh(g + "push -q origin main");
+    const std::string mainline = "refs/remotes/origin/main";
+    sh(g + "checkout -q -b feature");
+    commit("one.txt", "one\n", "one");
+    commit("two.txt", "two\n", "two");
+    commit("three.txt", "three\n", "three");
+    auto r = repo::open(dir);
+    check(r.has_value(), "history: the repository opens");
+    if (!r) return;
+    auto tree = [&](const std::string& rev) { return git({"rev-parse", rev + "^{tree}"}); };
+    auto count = [&](const std::string& range) { return git({"rev-list", "--count", range}); };
+    auto subject = [&](const std::string& rev) { return git({"log", "-1", "--format=%s", rev}); };
+    auto by_subject = [&](const branch_history& h, const std::string& s)
+    {
+        for (size_t i = 0; i < h.line.size(); ++i)
+            if (subject(h.line[i].hex()) == s) return i;
+        return h.line.size();
+    };
+
+    // Local changes, staged and not, and an untracked file: kept byte for
+    // byte by edits that leave the tip's tree as it is.
+    sh("cd '" + dir +
+       "' && printf 'staged\\r\\n' >> base.txt && git add base.txt && printf "
+       "'unstaged \\303\\251\\n' >> base.txt && printf 'loose' > untracked.bin");
+    auto snapshot = [&]
+    {
+        return read_bytes(dir + "/base.txt") + "|" + read_bytes(dir + "/untracked.bin") + "|" +
+               git({"diff", "--cached"}) + "|" + git({"diff"});
+    };
+    const std::string dirty = snapshot();
+
+    {
+        auto h = branch_holding(*r, {*r->resolve("HEAD"), *r->resolve("HEAD~1")}, mainline);
+        check(h && h->branch == "refs/heads/feature" && h->line.size() == 3 && h->checked_out &&
+                  h->below == r->resolve("main"),
+              "history: the checked-out branch's own line");
+        const std::string old_tree = tree("HEAD");
+        const std::string text = combined_message(*r, {h->line[1], h->line[0]});
+        check(text.find("two") < text.find("three") &&
+                  text.find("# This is the commit message #2:") != std::string::npos,
+              "history: the combined message, oldest first, with git's separators");
+        check(strip_squash_separators(text, 2).find('#') == std::string::npos,
+              "history: the separators go again");
+        auto plan = plan_combine(*h, {h->line[0], h->line[1]}, tidy_message("two and three  \n\n"));
+        auto tip = plan ? replay(*r, *plan) : std::unexpected(replay_failure{});
+        check(plan && tip.has_value(), "history: combine replays");
+        if (plan && tip)
+        {
+            history_edit e = edit_from(*r, *h, *plan, *tip, "tortilla: combine 2 commits");
+            check(effect_of(*r, e) == tree_effect::none && !e.pushed,
+                  "history: combine leaves the working tree alone");
+            auto applied = apply_edit(*r, e);
+            check(applied && count("main..feature") == "2" && tree("HEAD") == old_tree &&
+                      git({"log", "-1", "--format=%B", "HEAD"}) == "two and three" &&
+                      git({"log", "-1", "--format=%an", "HEAD"}) == "Tester" &&
+                      subject("HEAD~1") == "one",
+                  "history: combine makes one commit with the same tree");
+            check(snapshot() == dirty, "history: combine keeps local changes byte for byte");
+            check(git({"reflog", "-1", "--format=%gs", "feature"}) == "tortilla: combine 2 commits",
+                  "history: the reflog says what was done");
+            // Applying it again: the branch isn't where it was.
+            check(!apply_edit(*r, e), "history: a moved branch isn't overwritten");
+            // Undo, then redo.
+            auto undone = apply_edit(*r, e.undo());
+            check(undone && git({"rev-parse", "HEAD"}) == h->tip.hex() && snapshot() == dirty,
+                  "history: undo puts the branch back");
+            check(apply_edit(*r, e) && git({"rev-parse", "HEAD"}) == tip->hex(),
+                  "history: and again");
+        }
+    }
+    {
+        auto h = branch_holding(*r, {*r->resolve("HEAD~1")}, mainline);
+        const std::string old_tree = tree("HEAD");
+        auto plan =
+            h ? plan_reword(*h, h->line[1], "uno\n\nbody\n") : std::unexpected(std::string());
+        auto tip = plan ? replay(*r, *plan) : std::unexpected(replay_failure{});
+        check(tip && apply_edit(*r, edit_from(*r, *h, *plan, *tip, "tortilla: reword")) &&
+                  subject("HEAD~1") == "uno" && tree("HEAD") == old_tree &&
+                  subject("HEAD") == "two and three" && snapshot() == dirty,
+              "history: reword changes the message, nothing else");
+    }
+
+    // Refusals.
+    {
+        auto merged = branch_holding(*r, {*r->resolve("main")}, mainline);
+        check(!merged && merged.error() == _("merged"), "history: refused: merged into main");
+        sh(g + "branch side main && " + g + "worktree add -q '" + root + "/history-wt' side");
+        auto other = load_branch_history(*r, "refs/heads/side", mainline);
+        sh("cd '" + root +
+           "/history-wt' && printf x > wt.txt && git add wt.txt && git commit -q -m wt");
+        other = load_branch_history(*r, "refs/heads/side", mainline);
+        check(other && !other->worktree.empty() && other->line.size() == 1 &&
+                  why_not_editable(*other, {other->line[0]}, false) == _("in another worktree"),
+              "history: refused: checked out in another worktree");
+        // A merge inside, and one after.
+        sh(g + "branch merged-in feature && " + g + "branch -q withmerge feature");
+        sh("cd '" + dir +
+           "' && git stash push -q -m history-test && git checkout -q merged-in && "
+           "printf m > m.txt && git add m.txt && git commit -q -m m && git checkout -q withmerge "
+           "&& "
+           "git merge -q --no-ff -m merge merged-in && printf after > after.txt && git add "
+           "after.txt && "
+           "git commit -q -m after");
+        auto wm = load_branch_history(*r, "refs/heads/withmerge", mainline);
+        check(wm && wm->line.size() == 4 && wm->merges == std::vector<size_t>{1},
+              "history: the line follows first parents");
+        if (wm)
+        {
+            check(!plan_combine(*wm, {wm->line[0], wm->line[1]}, "x") &&
+                      plan_combine(*wm, {wm->line[0], wm->line[1]}, "x").error() == _("a merge"),
+                  "history: refused: a merge inside");
+            check(plan_drop(*wm, {wm->line[2]}).error() == _("a merge follows"),
+                  "history: refused: a merge after a replayed commit");
+            // Rewording below a merge keeps the merge (same trees, no replay).
+            auto plan = plan_reword(*wm, wm->line[3], "first\n");
+            auto tip = plan ? replay(*r, *plan) : std::unexpected(replay_failure{});
+            check(tip && tree(tip->hex()) == tree(wm->tip.hex()) && r->lookup(*tip) &&
+                      r->lookup(r->lookup(*tip)->parents[0])->parents.size() == 2,
+                  "history: a reword below a merge keeps it a merge");
+        }
+        sh("cd '" + dir + "' && git checkout -q feature && git stash pop -q --index");
+        check(snapshot() == dirty, "history: (fixture) local changes back");
+    }
+
+    // Drop: the files change, so the local changes are stashed first, or
+    // nothing happens.
+    {
+        commit("four.txt", "four\n", "four");
+        sh("cd '" + dir + "' && printf 'more\\n' >> one.txt");  // not in four
+        const std::string before = snapshot() + read_bytes(dir + "/one.txt");
+        auto h = branch_holding(*r, {*r->resolve("HEAD")}, mainline);
+        auto plan = h ? plan_drop(*h, {h->line[0]}) : std::unexpected(std::string());
+        auto tip = plan ? replay(*r, *plan) : std::unexpected(replay_failure{});
+        check(tip.has_value(), "history: drop replays");
+        if (tip)
+        {
+            history_edit e = edit_from(*r, *h, *plan, *tip, "tortilla: drop");
+            check(effect_of(*r, e) == tree_effect::stash, "history: drop asks to stash");
+            check(!apply_edit(*r, e, false) && git({"rev-parse", "HEAD"}) == h->tip.hex(),
+                  "history: without the stash, nothing changes");
+            auto done = apply_edit(*r, e, true);
+            check(done && done->empty() && git({"rev-parse", "HEAD"}) == tip->hex() &&
+                      !std::filesystem::exists(dir + "/four.txt") &&
+                      snapshot() + read_bytes(dir + "/one.txt") == before &&
+                      git({"stash", "list"}).empty(),
+                  "history: drop with the stash: the file goes, the local changes come back");
+            check(apply_edit(*r, e.undo(), true) && std::filesystem::exists(dir + "/four.txt") &&
+                      snapshot() + read_bytes(dir + "/one.txt") == before,
+                  "history: undoing a drop brings the file back");
+        }
+        sh("cd '" + dir + "' && git checkout -q -- one.txt");
+    }
+
+    // Reorder: commits on different files swap; on the same lines, a
+    // conflict leaves everything as it was, with the rebase list to go on.
+    {
+        auto h = branch_holding(*r, {*r->resolve("HEAD")}, mainline);
+        const std::string old_tree = tree("HEAD");
+        // four, two and three, uno: four to the bottom.
+        auto plan =
+            h ? plan_reorder(*h, {h->line[0]}, h->line.size()) : std::unexpected(std::string());
+        auto tip = plan ? replay(*r, *plan) : std::unexpected(replay_failure{});
+        check(tip && apply_edit(*r, edit_from(*r, *h, *plan, *tip, "tortilla: reorder")) &&
+                  subject("HEAD") == "two and three" && subject("HEAD~2") == "four" &&
+                  tree("HEAD") == old_tree,
+              "history: reorder");
+        commit("same.txt", "a\n", "same a");
+        commit("same.txt", "b\n", "same b");
+        h = branch_holding(*r, {*r->resolve("HEAD")}, mainline);
+        const std::string tip_before = git({"rev-parse", "HEAD"});
+        const std::string state = snapshot();
+        plan = plan_reorder(*h, {h->line[0]}, 2);
+        auto conflict = plan ? replay(*r, *plan) : std::unexpected(replay_failure{});
+        check(!conflict && conflict.error().conflict && git({"rev-parse", "HEAD"}) == tip_before &&
+                  snapshot() == state && read_bytes(dir + "/same.txt") == "b\n",
+              "history: a conflicting reorder changes nothing");
+        const rebase_todo todo = todo_for(*plan);
+        check(todo.branch == "feature" && todo.onto == h->line[2] && todo.rows.size() == 2 &&
+                  todo.rows[0].first == h->line[1] && todo.rows[1].first == h->line[0],
+              "history: the rebase list it falls back to");
+    }
+
+    // Squash into the commit below, and fixup into an earlier one.
+    {
+        auto h = branch_holding(*r, {*r->resolve("HEAD")}, mainline);
+        const std::string old_tree = tree("HEAD");
+        const std::string n = count("main..feature");
+        auto plan = plan_fold(*h, h->line[0], h->line[1], "same\n");
+        auto tip = plan ? replay(*r, *plan) : std::unexpected(replay_failure{});
+        check(tip && apply_edit(*r, edit_from(*r, *h, *plan, *tip, "tortilla: squash")) &&
+                  std::stoi(count("main..feature")) == std::stoi(n) - 1 &&
+                  tree("HEAD") == old_tree && subject("HEAD") == "same",
+              "history: squash into the commit below");
+        sh("cd '" + dir + "' && git stash push -q -m history-test2");
+        commit("one.txt", "one fixed\n", "fix one");
+        sh("cd '" + dir + "' && git stash pop -q --index");
+        h = branch_holding(*r, {*r->resolve("HEAD")}, mainline);
+        const size_t into = by_subject(*h, "uno");
+        const std::string message = git({"log", "-1", "--format=%B", h->line[into].hex()});
+        plan = plan_fold(*h, h->line[0], h->line[into]);
+        tip = plan ? replay(*r, *plan) : std::unexpected(replay_failure{});
+        const std::string tree_before = tree("HEAD");
+        check(tip && apply_edit(*r, edit_from(*r, *h, *plan, *tip, "tortilla: fixup")) &&
+                  git({"show", "HEAD~" + std::to_string(into - 1) + ":one.txt"}) == "one fixed" &&
+                  git({"log", "-1", "--format=%B", "HEAD~" + std::to_string(into - 1)}) ==
+                      message &&
+                  tree("HEAD") == tree_before && subject("HEAD") == "same",
+              "history: fixup into an earlier commit");
+        check(snapshot() == dirty, "history: fold keeps local changes");
+    }
+
+    // Amend with staged changes: the index folded into an older commit,
+    // the working tree untouched.
+    {
+        sh("cd '" + dir +
+           "' && git stash push -q -m history-test3 && printf 'two amended\\n' > "
+           "two.txt && git add two.txt && printf 'unstaged\\n' >> base.txt");
+        const std::string unstaged = read_bytes(dir + "/base.txt");
+        auto h = branch_holding(*r, {*r->resolve("HEAD")}, mainline);
+        auto staged = staged_commit(*r);
+        const size_t at = by_subject(*h, "two and three");
+        auto plan = staged ? plan_amend(*h, *staged, h->line[at]) : std::unexpected(std::string());
+        auto tip = plan ? replay(*r, *plan) : std::unexpected(replay_failure{});
+        check(tip && tree(tip->hex()) == tree(staged->hex()), "history: amend replays");
+        if (tip)
+        {
+            history_edit e = edit_from(*r, *h, *plan, *tip, "tortilla: amend");
+            e.keep_index = true;
+            check(effect_of(*r, e) == tree_effect::none && apply_edit(*r, e) &&
+                      git({"diff", "--cached"}).empty() &&
+                      read_bytes(dir + "/base.txt") == unstaged &&
+                      git({"show", "HEAD~" + std::to_string(at) + ":two.txt"}) == "two amended",
+                  "history: amend folds the staged changes into an older commit");
+        }
+        check(!staged_commit(*r) && staged_commit(*r).error() == _("nothing staged"),
+              "history: amend needs staged changes");
+        sh("cd '" + dir + "' && git checkout -q -- base.txt && git stash pop -q --index");
+    }
+
+    // Undo last commit: reset --soft, the commit's changes staged.
+    {
+        auto h = branch_holding(*r, {*r->resolve("HEAD")}, mainline);
+        const std::string files = read_bytes(dir + "/same.txt");
+        auto e = undo_last_commit(*r, *h);
+        check(e && apply_edit(*r, *e) && git({"rev-parse", "HEAD"}) == h->line[1].hex() &&
+                  git({"diff", "--cached", "--name-only"}).find("same.txt") != std::string::npos &&
+                  read_bytes(dir + "/same.txt") == files,
+              "history: undo last commit leaves its changes staged");
+        check(e && apply_edit(*r, e->undo()) && git({"rev-parse", "HEAD"}) == h->tip.hex() &&
+                  snapshot() == dirty,
+              "history: and its undo");
+    }
+
+    // Move commits to another branch: committed on main by mistake.
+    {
+        sh("cd '" + dir + "' && git stash push -q -m history-test4 && git checkout -q main");
+        commit("oops1.txt", "1\n", "oops one");
+        commit("oops2.txt", "2\n", "oops two");
+        auto h = branch_holding(*r, {*r->resolve("HEAD"), *r->resolve("HEAD~1")}, mainline);
+        check(h && h->branch == "refs/heads/main" && h->line.size() == 2,
+              "history: main's own commits, not yet pushed");
+        auto moved = h ? move_commits(*r, *h, {h->line[0], h->line[1]}, "refs/heads/topic", true,
+                                      "tortilla: move 2 commits to topic")
+                       : std::unexpected(replay_failure{});
+        check(moved && effect_of(*r, *moved) == tree_effect::follow && apply_edit(*r, *moved) &&
+                  git({"rev-parse", "main"}) == git({"rev-parse", "origin/main"}) &&
+                  git({"rev-parse", "topic"}) == h->tip.hex() &&
+                  !std::filesystem::exists(dir + "/oops1.txt"),
+              "history: move to a new branch");
+        // And from topic onto feature, replayed there.
+        auto t = load_branch_history(*r, "refs/heads/topic", mainline);
+        auto onto = t ? move_commits(*r, *t, {t->line[0]}, "refs/heads/feature", false,
+                                     "tortilla: move 1 commit to feature")
+                      : std::unexpected(replay_failure{});
+        const std::string feature_tip = git({"rev-parse", "feature"});
+        check(onto && apply_edit(*r, *onto) && subject("feature") == "oops two" &&
+                  git({"rev-parse", "feature~1"}) == feature_tip && subject("topic") == "oops one",
+              "history: move onto another branch");
+        sh("cd '" + dir + "' && git checkout -q feature && git stash pop -q --index");
+    }
+
+    // Pushed commits: allowed, with a warning.
+    {
+        sh(g + "push -q -u origin feature");
+        commit("five.txt", "five\n", "five");
+        auto h = branch_holding(*r, {*r->resolve("HEAD")}, mainline);
+        check(h && rewrites_pushed(*r, *h, h->line[1]) && !rewrites_pushed(*r, *h, h->line[0]),
+              "history: pushed commits are known");
+        auto plan = plan_reword(*h, h->line[1], "pushed\n");
+        auto tip = plan ? replay(*r, *plan) : std::unexpected(replay_failure{});
+        check(tip && edit_from(*r, *h, *plan, *tip, "x").pushed, "history: rewriting them says so");
+    }
+
+    // Names beyond ASCII.
+    {
+        const std::string a = "\xc3\xbcn\xc3\xaf c\xc3\xb8"
+                              "d\xc3\xa9 \xe2\x9c\x93.txt";
+        const std::string b = "\xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e.txt";
+        commit(a, "u\n", "unicode a");
+        commit(b, "j\n", "unicode b");
+        auto h = branch_holding(*r, {*r->resolve("HEAD")}, mainline);
+        const std::string old_tree = tree("HEAD");
+        auto plan = plan_combine(*h, {h->line[0], h->line[1]}, "unicode\n");
+        auto tip = plan ? replay(*r, *plan) : std::unexpected(replay_failure{});
+        check(tip && apply_edit(*r, edit_from(*r, *h, *plan, *tip, "x")) &&
+                  tree("HEAD") == old_tree && read_bytes(dir + "/" + a) == "u\n",
+              "history: combine with non-ASCII names");
+        h = branch_holding(*r, {*r->resolve("HEAD")}, mainline);
+        auto drop = plan_drop(*h, {h->line[0]});
+        sh("cd '" + dir + "' && git stash push -q -m history-test5");
+        auto dropped = drop ? replay(*r, *drop) : std::unexpected(replay_failure{});
+        auto e = dropped ? std::optional(edit_from(*r, *h, *drop, *dropped, "x")) : std::nullopt;
+        check(e && effect_of(*r, *e) == tree_effect::follow && apply_edit(*r, *e) &&
+                  !std::filesystem::exists(dir + "/" + a) &&
+                  !std::filesystem::exists(dir + "/" + b) &&
+                  git({"status", "--porcelain"}) == "?? untracked.bin",
+              "history: drop with non-ASCII names");
+        sh("cd '" + dir + "' && git stash pop -q --index");
+    }
 }
 
 }  // namespace
@@ -3007,6 +3359,7 @@ int main(int argc, char** argv)
         }
         check(!called, "refresh: a model gone before its labels came isn't called back");
     }
+    history_edit_tests(argv[1]);
 
     std::printf("%s\n", failures ? "FAILED" : "all passed");
     return failures ? 1 : 0;
