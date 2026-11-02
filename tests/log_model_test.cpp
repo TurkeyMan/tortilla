@@ -360,6 +360,7 @@ void history_edit_tests(const std::string& root)
            "two.txt && git add two.txt && printf 'unstaged\\n' >> base.txt");
         const std::string unstaged = read_bytes(dir + "/base.txt");
         auto h = branch_holding(*r, {*r->resolve("HEAD")}, mainline);
+        check(!why_nothing_staged(*r), "history: staged changes to amend with");
         auto staged = staged_commit(*r);
         const size_t at = by_subject(*h, "two and three");
         auto plan = staged ? plan_amend(*h, *staged, h->line[at]) : std::unexpected(std::string());
@@ -375,7 +376,8 @@ void history_edit_tests(const std::string& root)
                       git({"show", "HEAD~" + std::to_string(at) + ":two.txt"}) == "two amended",
                   "history: amend folds the staged changes into an older commit");
         }
-        check(!staged_commit(*r) && staged_commit(*r).error() == _("nothing staged"),
+        check(!staged_commit(*r) && staged_commit(*r).error() == _("nothing staged") &&
+                  why_nothing_staged(*r) == _("nothing staged"),
               "history: amend needs staged changes");
         sh("cd '" + dir + "' && git checkout -q -- base.txt && git stash pop -q --index");
     }
@@ -432,6 +434,11 @@ void history_edit_tests(const std::string& root)
         auto plan = plan_reword(*h, h->line[1], "pushed\n");
         auto tip = plan ? replay(*r, *plan) : std::unexpected(replay_failure{});
         check(tip && edit_from(*r, *h, *plan, *tip, "x").pushed, "history: rewriting them says so");
+        check(force_push_args(*r, "refs/heads/feature") ==
+                      std::vector<std::string>{"push", "--force-with-lease", "origin",
+                                               "refs/heads/feature:refs/heads/feature"} &&
+                  force_push_args(*r, "refs/heads/main").empty(),
+              "history: the force push, with a lease, to the upstream only");
     }
 
     // Names beyond ASCII.

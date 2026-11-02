@@ -374,6 +374,34 @@ void rebase_window::reload_list()
     update_controls();
 }
 
+void rebase_window::prepare(const rebase_todo& todo)
+{
+    if (engine_ && engine_->started()) return;
+    if (auto it = std::ranges::find(branches_, todo.branch); it != branches_.end())
+        branch_->set_current(int(it - branches_.begin()));
+    // The onto is the branch's own ancestor: not "up to date".
+    force_->set_checked(true);
+    reload_list();
+    std::vector<rebase_row> rows;
+    std::vector<bool> used(model_.size());
+    for (const auto& [id, squash] : todo.rows)
+        for (size_t i = 0; i < model_.size(); ++i)
+            if (!used[i] && model_.rows()[i].commit.id == id)
+            {
+                used[i] = true;
+                rows.push_back({.commit = model_.rows()[i].commit,
+                                .action = squash ? rebase_action::squash : rebase_action::pick});
+                break;
+            }
+    for (size_t i = 0; i < model_.size(); ++i)
+        if (!used[i])
+            rows.push_back({.commit = model_.rows()[i].commit, .action = rebase_action::skip});
+    if (rows.empty()) return;
+    model_.set(std::move(rows), {});
+    list_->set_current(0);
+    update_controls();
+}
+
 namespace
 {
 

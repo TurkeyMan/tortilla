@@ -3,6 +3,7 @@
 
 #include "changes/changes_view.h"
 #include "changes/file_model.h"
+#include "git/history_edit.h"
 #include "git/repo_worker.h"
 #include "rebase/rebase_engine.h"
 #include "rebase/rebase_model.h"
@@ -26,6 +27,11 @@ public:
     void on_closed(std::function<void()> f) { closed_ = std::move(f); }
     // "Show log" from the post-action menu when the rebase is done.
     void on_show_log(std::function<void()> f) { show_log_ = std::move(f); }
+    // Going on from the log's history edit after a conflict: the window
+    // opened with the todo's onto as the upstream, its branch picked, and
+    // the list as the todo has it (a squash folds into the row below); the
+    // branch's other commits skipped.
+    void prepare(const rebase_todo&);
 
 private:
     rebase_window(rap::ui&, repo);
