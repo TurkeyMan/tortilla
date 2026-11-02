@@ -1,6 +1,7 @@
 #include "file_action_window.h"
 
 #include "changes/commit_window.h"
+#include "git/pathspec_file.h"
 #include "i18n.h"
 #include "settings.h"
 #include "ui/progress_dialog.h"
@@ -11,7 +12,6 @@
 
 #include <algorithm>
 #include <cctype>
-#include <chrono>
 #include <cstdio>
 #include <filesystem>
 
@@ -21,48 +21,6 @@ namespace
 {
 
 namespace fs = std::filesystem;
-
-// The paths of a git command, in a file it reads them from
-// (--pathspec-from-file): no command-line limits. Removed when the last
-// copy goes, after the commands have run.
-class pathspec_file
-{
-public:
-    static std::shared_ptr<pathspec_file> write(const std::vector<std::string>& paths)
-    {
-        std::error_code ec;
-        const fs::path dir = fs::temp_directory_path(ec) / "tortilla";
-        fs::create_directories(dir, ec);
-        static int serial = 0;
-        const auto stamp =
-            std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
-        auto out = std::shared_ptr<pathspec_file>(
-            new pathspec_file(dir / ("paths-" + stamp + "-" + std::to_string(++serial) + ".txt")));
-        std::string data;
-        for (const std::string& p : paths) data += p + '\0';
-        std::FILE* f = rap::sys::fopen(out->path_, "wb");
-        bool ok = f && std::fwrite(data.data(), 1, data.size(), f) == data.size();
-        if (f) ok = std::fclose(f) == 0 && ok;
-        return ok ? out : nullptr;
-    }
-    ~pathspec_file()
-    {
-        std::error_code ec;
-        fs::remove(path_, ec);
-    }
-    // The arguments that read it, NUL-separated.
-    std::vector<std::string> arguments() const
-    {
-        return {"--pathspec-from-file=" + rap::sys::path_to_utf8(path_), "--pathspec-file-nul"};
-    }
-
-private:
-    explicit pathspec_file(fs::path p)
-        : path_(std::move(p))
-    {
-    }
-    fs::path path_;
-};
 
 bool is_versioned_change(char status)
 {

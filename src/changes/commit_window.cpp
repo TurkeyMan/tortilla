@@ -1,6 +1,8 @@
 #include "commit_window.h"
 
+#include "git/pathspec_file.h"
 #include "git/remotes.h"
+#include "git/temp_files.h"
 #include "i18n.h"
 #include "settings.h"
 #include "ui/menu_items.h"
@@ -11,7 +13,6 @@
 #include <rapport/sys.h>
 
 #include <algorithm>
-#include <chrono>
 #include <cstdio>
 #include <ctime>
 #include <filesystem>
@@ -440,43 +441,36 @@ void commit_window::commit()
         }
     }
 
-    // The message and the paths go through files: no command-line limits.
-    std::error_code ec;
-    const fs::path dir = fs::temp_directory_path(ec) / "tortilla";
-    fs::create_directories(dir, ec);
-    const auto stamp = std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
-    const fs::path message_file = dir / ("commit-" + stamp + ".txt");
-    const fs::path paths_file = dir / ("paths-" + stamp + ".txt");
-    auto write = [](const fs::path& p, const std::string& s)
-    {
-        std::FILE* f = rap::sys::fopen(p, "wb");
-        bool ok = f && std::fwrite(s.data(), 1, s.size(), f) == s.size();
-        if (f) ok = std::fclose(f) == 0 && ok;
-        return ok;
-    };
-    std::string paths, added;
-    std::vector<std::string> unversioned;
+    // The message and the paths go through files: no command-line limits
+    // (a first commit's thousands of new files would pass Windows' 32K).
+    const fs::path message_file = unique_temp_path("commit", ".txt");
+    std::vector<std::string> paths, unversioned;
     for (const file_change& f : files)
     {
-        paths += f.path + '\0';
-        if (!f.old_path.empty()) paths += f.old_path + '\0';
+        paths.push_back(f.path);
+        if (!f.old_path.empty()) paths.push_back(f.old_path);
         if (f.status == '?') unversioned.push_back(f.path);
     }
-    if (!write(message_file, message_->text()) || !write(paths_file, paths))
+    const std::shared_ptr<pathspec_file> paths_file = pathspec_file::write(paths);
+    const std::shared_ptr<pathspec_file> add_file =
+        unversioned.empty() ? nullptr : pathspec_file::write(unversioned);
+    if (message_file.empty() || !write_file(message_file, message_->text()) || !paths_file ||
+        (!unversioned.empty() && !add_file))
     {
-        ui_.message(window_.get(), {.icon = rap::message_spec::icon::error,
-                                    .title = _("Commit"),
-                                    .text = rap::i18n::format(_("Could not write the commit message to {0}."),
-                                                              rap::sys::path_to_utf8(dir))});
+        ui_.message(window_.get(),
+                    {.icon = rap::message_spec::icon::error,
+                     .title = _("Commit"),
+                     .text = rap::i18n::format(_("Could not write the commit message to {0}."),
+                                               rap::sys::path_to_utf8(tortilla_temp_dir()))});
         return;
     }
 
     std::vector<std::vector<std::string>> commands;
     if (!branch.empty()) commands.push_back({"switch", "-c", branch});
-    if (!unversioned.empty())
+    if (add_file)
     {
-        std::vector<std::string> add{"add", "-f", "--"};
-        add.insert(add.end(), unversioned.begin(), unversioned.end());
+        std::vector<std::string> add{"add", "-f"};
+        for (std::string& a : add_file->arguments()) add.push_back(std::move(a));
         commands.push_back(add);
     }
     std::vector<std::string> c{"commit", "-F", rap::sys::path_to_utf8(message_file)};
@@ -493,19 +487,20 @@ void commit_window::commit()
         c.insert(c.end(),
                  {"--only", "--allow-empty"});  // message only (or an amend of the message)
     else
-        c.insert(c.end(), {"--only", "--pathspec-from-file=" + rap::sys::path_to_utf8(paths_file),
-                           "--pathspec-file-nul"});
+    {
+        c.push_back("--only");
+        for (std::string& a : paths_file->arguments()) c.push_back(std::move(a));
+    }
     commands.push_back(c);
 
     committing_ = true;
     update_state();
     if (load_) load_->cancel();
     run_progress_dialog(ui_, window_.get(), _("Commit"), workdir_, std::move(commands),
-                        [this, message_file, paths_file](bool ok)
+                        [this, message_file, paths_file, add_file](bool ok)
                         {
                             std::error_code ec;
-                            fs::remove(message_file, ec);
-                            fs::remove(paths_file, ec);
+                            fs::remove(message_file, ec);  // the path lists go with the lambda
                             committing_ = false;
                             if (ok)
                             {
