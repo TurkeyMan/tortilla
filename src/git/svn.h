@@ -50,6 +50,11 @@ bool git_svn_installed(const std::string& dir);
 // Said where an entry is greyed for it.
 inline constexpr std::string_view k_no_git_svn = "git svn isn't installed";
 
+// Whether a commit's message says it's in SVN: git svn adds a "git-svn-id:"
+// line to every commit it sends there or fetches from there. SVN's history
+// can't be rewritten, so the log doesn't offer to.
+bool in_svn(std::string_view message);
+
 // The branch git svn fetches into, from svn-remote.svn.fetch's value
 // ("trunk:refs/remotes/origin/trunk" gives "remotes/origin/trunk"), as
 // TortoiseGit's SVN Rebase reads it; "" if it has none.

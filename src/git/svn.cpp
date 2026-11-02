@@ -23,6 +23,18 @@ bool git_svn_installed(const std::string& dir)
     return ok;
 }
 
+bool in_svn(std::string_view message)
+{
+    // A line of its own at the message's end, as git svn writes it.
+    size_t at = 0;
+    while ((at = message.find("git-svn-id: ", at)) != std::string_view::npos)
+    {
+        if (at == 0 || message[at - 1] == '\n') return true;
+        ++at;
+    }
+    return false;
+}
+
 std::string svn_upstream(std::string_view fetch)
 {
     // The first line, if several.

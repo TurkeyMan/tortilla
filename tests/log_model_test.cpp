@@ -2833,6 +2833,13 @@ int main(int argc, char** argv)
         }
     }
 
+    // git svn's commits: a "git-svn-id:" line of their own marks them.
+    check(tortilla::in_svn("Fix it\n\ngit-svn-id: https://svn.example/repo/trunk@42 "
+                           "1a2b3c4d-0000-0000-0000-000000000000\n") &&
+              !tortilla::in_svn("Fix it\n\nMentions git-svn-id: in passing\n") &&
+              !tortilla::in_svn("Plain commit\n"),
+          "svn: a commit in SVN by its git-svn-id line");
+
     // The badges' change stream (cache/badge_changes.h): what an asker
     // hears, from where it last heard, and when it must draw everything.
     {
