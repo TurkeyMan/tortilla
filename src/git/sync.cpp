@@ -4,6 +4,8 @@
 #include "i18n.h"
 #include "settings.h"
 
+#include <rapport/sys.h>
+
 #include <algorithm>
 #include <cctype>
 #include <charconv>
@@ -119,16 +121,14 @@ void set_fast_forward_current_setting(bool on)
 
 bool on_metered_network()
 {
-    // TODO: rap::sys::network_metered(), once rapport has it (another
-    // session is adding it). Until then, never metered.
-    return false;
+    return rap::sys::network_metered();
 }
 
+// The system's word (false only when it says there's no internet): a
+// remote's failure then isn't the remote's.
 bool network_online()
 {
-    // TODO: rap::sys::network_online(), once rapport has it. Until then,
-    // always online: a failure is the remote's.
-    return true;
+    return rap::sys::network_online();
 }
 
 bool allowed_now(sync_when w)
