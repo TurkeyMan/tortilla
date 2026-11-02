@@ -183,17 +183,29 @@ public:
                 return true;
             });
 
-        if (git_args.empty())
-            set(title_, {}, false);
-        else
-        {
-            git_result r = run_git(dir, git_args, git_output::stdout_only);
-            // git diff --no-index (two files) exits 1 when they differ.
-            set(title_, r.output, r.ok() || r.exit_code == 1);
-        }
         self_ = self;  // alive until closed
         settings::get().restore_window(key_, *window_);
+        if (git_args.empty())
+        {
+            set(title_, {}, false);
+            window_->show();
+            return;
+        }
+        // The window comes up at once and git fills it in: a big commit's
+        // diff can take a while. The process dies with the window.
+        text_->set_text(_("Loading…"), {});
         window_->show();
+        git_ = git_process::start(
+            ui_, dir, git_args,
+            [weak](const std::string& chunk)
+            {
+                if (auto s = weak.lock()) s->loading_ += chunk;
+            },
+            [weak](int code)
+            {
+                if (auto s = weak.lock()) s->loaded(code);
+            },
+            git_output::stdout_only);
     }
 
     // What's shown, and the title over it; `diff` colours it as one.
@@ -217,6 +229,15 @@ public:
     }
 
 private:
+    void loaded(int code)
+    {
+        git_.reset();
+        std::string text = std::move(loading_);
+        loading_.clear();
+        // git diff --no-index (two files) exits 1 when they differ.
+        set(title_, std::move(text), code == 0 || code == 1);
+    }
+
     bool key(const rap::key_event& e)
     {
         if (!e.press) return false;
@@ -334,6 +355,7 @@ private:
     // Destroyed after the callback that closed it returns.
     void closed()
     {
+        git_.reset();  // stops a diff still loading
         settings::get().save_window(key_, *window_);
         if (on_closed_) on_closed_();
         auto keep = std::move(self_);
@@ -342,6 +364,8 @@ private:
 
     rap::ui& ui_;
     std::string title_, content_;
+    std::string loading_;  // git's output so far
+    std::shared_ptr<git_process> git_;
     std::function<void()> on_closed_;
     std::function<void(rap::window*)> save_;
     std::unique_ptr<rap::window> window_;
