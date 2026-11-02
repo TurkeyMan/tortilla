@@ -728,13 +728,15 @@ int main(int argc, char** argv)
                                           ec ? path : rap::sys::path_to_utf8(at), done);
         }
         else if (command == "svndcommit")
-            tortilla::svn_dcommit(**ui, nullptr, repo->workdir(), done);
+            tortilla::svn_dcommit(
+                **ui, [] { return (rap::window*)nullptr; }, repo->workdir(), done);
         else if (command == "svnrebase")
-            tortilla::svn_rebase(**ui, nullptr, repo->workdir(), done);
+            tortilla::svn_rebase(**ui, [] { return (rap::window*)nullptr; }, repo->workdir(), done);
         else if (command == "svnfetch")
-            tortilla::svn_fetch(**ui, nullptr, repo->workdir(), done);
+            tortilla::svn_fetch(**ui, [] { return (rap::window*)nullptr; }, repo->workdir(), done);
         else
-            tortilla::svn_import_ignore(**ui, nullptr, repo->workdir(), done);
+            tortilla::svn_import_ignore(
+                **ui, [] { return (rap::window*)nullptr; }, repo->workdir(), done);
         (*ui)->run();
         return code;
     }

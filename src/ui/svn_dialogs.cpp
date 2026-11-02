@@ -80,11 +80,11 @@ void check_first(rap::ui& ui, const std::string& workdir, unsigned asked,
         .detach();
 }
 
-void fail(rap::ui& ui, rap::window* parent, const std::string& title, const std::string& text,
-          const std::string& detail, const std::function<void(bool)>& done)
+void fail(rap::ui& ui, const parent_window& parent, const std::string& title,
+          const std::string& text, const std::string& detail, const std::function<void(bool)>& done)
 {
     ui.message(
-        parent,
+        parent(),
         {.icon = rap::message_spec::icon::error, .title = title, .text = text, .detail = detail},
         [done](rap::dialog_role)
         {
@@ -92,7 +92,7 @@ void fail(rap::ui& ui, rap::window* parent, const std::string& title, const std:
         });
 }
 
-void not_installed(rap::ui& ui, rap::window* parent, const std::string& title,
+void not_installed(rap::ui& ui, const parent_window& parent, const std::string& title,
                    const std::function<void(bool)>& done)
 {
     fail(ui, parent, title, _("git svn isn't installed."),
@@ -104,12 +104,12 @@ void not_installed(rap::ui& ui, rap::window* parent, const std::string& title,
 // Local changes in the way: stashed first, as TortoiseGit offers; no means
 // it doesn't start. `then` gets whether they were stashed. Stashed before
 // the progress dialog, so a failure after it knows there's a stash to pop.
-void offer_stash(rap::ui& ui, rap::window* parent, const std::string& workdir,
+void offer_stash(rap::ui& ui, const parent_window& parent, const std::string& workdir,
                  const std::string& title, const std::string& changes,
                  std::function<void(bool stashed)> then, const std::function<void(bool)>& done)
 {
     if (changes.empty()) return then(false);
-    ui.message(parent,
+    ui.message(parent(),
                {.icon = rap::message_spec::icon::question,
                 .title = title,
                 .text = _("The working tree has local changes. Stash them first?"),
@@ -141,7 +141,7 @@ void offer_stash(rap::ui& ui, rap::window* parent, const std::string& workdir,
 }
 
 // After it ran: the changes stashed first back, if the user wants them.
-void offer_pop(rap::ui& ui, rap::window* parent, const std::string& title,
+void offer_pop(rap::ui& ui, const parent_window& parent, const std::string& title,
                const std::string& workdir, bool stashed, bool ok, std::function<void(bool)> done)
 {
     if (!stashed)
@@ -149,7 +149,7 @@ void offer_pop(rap::ui& ui, rap::window* parent, const std::string& title,
         if (done) done(ok);
         return;
     }
-    ui.message(parent,
+    ui.message(parent(),
                {.icon = rap::message_spec::icon::question,
                 .title = title,
                 .text = _("Your changes were stashed first. Pop the stash now?"),
@@ -161,7 +161,7 @@ void offer_pop(rap::ui& ui, rap::window* parent, const std::string& title,
                        if (done) done(ok);
                        return;
                    }
-                   run_progress_dialog(ui, parent, title, workdir, {{"stash", "pop"}},
+                   run_progress_dialog(ui, parent(), title, workdir, {{"stash", "pop"}},
                                        [ok, done](bool popped)
                                        {
                                            if (done) done(ok && popped);
@@ -169,7 +169,7 @@ void offer_pop(rap::ui& ui, rap::window* parent, const std::string& title,
                });
 }
 
-void run_dcommit(rap::ui& ui, rap::window* parent, const std::string& workdir,
+void run_dcommit(rap::ui& ui, const parent_window& parent, const std::string& workdir,
                  const std::string& title, bool rmdir, bool remember, const std::string& changes,
                  std::function<void(bool)> done)
 {
@@ -180,7 +180,7 @@ void run_dcommit(rap::ui& ui, rap::window* parent, const std::string& workdir,
             std::vector<git_command> commands;
             if (remember) commands.push_back({"config", "svn.rmdir", rmdir ? "true" : "false"});
             commands.push_back(svn_dcommit_args(rmdir));
-            run_progress_dialog(ui, parent, title, workdir, std::move(commands),
+            run_progress_dialog(ui, parent(), title, workdir, std::move(commands),
                                 [&ui, parent, workdir, title, stashed, done](bool ok)
                                 { offer_pop(ui, parent, title, workdir, stashed, ok, done); });
         },
@@ -189,7 +189,7 @@ void run_dcommit(rap::ui& ui, rap::window* parent, const std::string& workdir,
 
 }  // namespace
 
-void svn_dcommit(rap::ui& ui, rap::window* parent, const std::string& workdir,
+void svn_dcommit(rap::ui& ui, const parent_window& parent, const std::string& workdir,
                  std::function<void(bool ok)> done)
 {
     const std::string title = title_for(_("SVN DCommit"), workdir);
@@ -221,7 +221,7 @@ void svn_dcommit(rap::ui& ui, rap::window* parent, const std::string& workdir,
                         buttons{ok, cancel},
                     }}}
                     .resizable(false),
-                parent);
+                parent());
             st->window->on_finished(
                 [st, &ui, parent, workdir, title, done,
                  changes = c.changes](rap::dialog_role role) mutable
@@ -238,7 +238,7 @@ void svn_dcommit(rap::ui& ui, rap::window* parent, const std::string& workdir,
         });
 }
 
-void svn_rebase(rap::ui& ui, rap::window* parent, const std::string& workdir,
+void svn_rebase(rap::ui& ui, const parent_window& parent, const std::string& workdir,
                 std::function<void(bool ok)> done)
 {
     const std::string title = title_for(_("SVN Rebase"), workdir);
@@ -287,13 +287,13 @@ void svn_rebase(rap::ui& ui, rap::window* parent, const std::string& workdir,
                                                 {}, pop);
                                         if (same)
                                             return ui.message(
-                                                parent,
+                                                parent(),
                                                 {.title = title,
                                                  .text = _("Everything is up to date.")},
                                                 [pop](rap::dialog_role) { pop(true); });
                                         if (forward)
                                             return run_progress_dialog(
-                                                ui, parent, title, workdir,
+                                                ui, parent(), title, workdir,
                                                 {{"merge", "--ff-only", upstream}}, pop);
                                         auto w = rebase_window::open(ui, workdir, upstream);
                                         if (!w) return fail(ui, parent, title, w.error(), {}, pop);
@@ -302,14 +302,14 @@ void svn_rebase(rap::ui& ui, rap::window* parent, const std::string& workdir,
                             })
                             .detach();
                     };
-                    run_progress_dialog(ui, parent, title, workdir, {svn_fetch_args()},
+                    run_progress_dialog(ui, parent(), title, workdir, {svn_fetch_args()},
                                         std::move(fetched));
                 },
                 done);
         });
 }
 
-void svn_fetch(rap::ui& ui, rap::window* parent, const std::string& workdir,
+void svn_fetch(rap::ui& ui, const parent_window& parent, const std::string& workdir,
                std::function<void(bool ok)> done)
 {
     const std::string title = title_for(_("SVN Fetch"), workdir);
@@ -317,11 +317,11 @@ void svn_fetch(rap::ui& ui, rap::window* parent, const std::string& workdir,
                 [&ui, parent, workdir, title, done](checks c)
                 {
                     if (!c.installed) return not_installed(ui, parent, title, done);
-                    run_progress_dialog(ui, parent, title, workdir, {svn_fetch_args()}, done);
+                    run_progress_dialog(ui, parent(), title, workdir, {svn_fetch_args()}, done);
                 });
 }
 
-void svn_import_ignore(rap::ui& ui, rap::window* parent, const std::string& workdir,
+void svn_import_ignore(rap::ui& ui, const parent_window& parent, const std::string& workdir,
                        std::function<void(bool ok)> done)
 {
     const std::string title = title_for(_("Import SVN Ignore"), workdir);
@@ -352,7 +352,7 @@ void svn_import_ignore(rap::ui& ui, rap::window* parent, const std::string& work
                            buttons{ok, cancel},
                        }}}
                     .resizable(false),
-                parent);
+                parent());
             st->window->on_finished(
                 [st, &ui, parent, workdir, title, done](rap::dialog_role role) mutable
                 {
@@ -364,7 +364,7 @@ void svn_import_ignore(rap::ui& ui, rap::window* parent, const std::string& work
                         return;
                     }
                     if (keep->into->current() == 1)
-                        return run_progress_dialog(ui, parent, title, workdir,
+                        return run_progress_dialog(ui, parent(), title, workdir,
                                                    {svn_ignore_args(svn_ignore_into::gitignore)},
                                                    done);
                     // show-ignore's output goes into the file, so it isn't
@@ -410,7 +410,7 @@ void svn_import_ignore(rap::ui& ui, rap::window* parent, const std::string& work
                                 {
                                     if (!error.empty())
                                         return fail(ui, parent, title, error, detail, done);
-                                    ui.message(parent,
+                                    ui.message(parent(),
                                                {.title = title,
                                                 .text = _("svn:ignore is imported into "
                                                           ".git/info/exclude.")},

@@ -15,15 +15,19 @@
 namespace tortilla
 {
 
+// The window the dialogs belong to, asked each time one opens: a log closed
+// meanwhile says nullptr, and they stand alone.
+using parent_window = std::function<rap::window*()>;
+
 // `workdir` is a git-svn repository's working tree. `done` gets whether it
 // all succeeded, also when it was cancelled or git svn isn't installed (false).
-void svn_dcommit(rap::ui&, rap::window* parent, const std::string& workdir,
+void svn_dcommit(rap::ui&, const parent_window& parent, const std::string& workdir,
                  std::function<void(bool ok)> done);
-void svn_rebase(rap::ui&, rap::window* parent, const std::string& workdir,
+void svn_rebase(rap::ui&, const parent_window& parent, const std::string& workdir,
                 std::function<void(bool ok)> done);
-void svn_fetch(rap::ui&, rap::window* parent, const std::string& workdir,
+void svn_fetch(rap::ui&, const parent_window& parent, const std::string& workdir,
                std::function<void(bool ok)> done);
-void svn_import_ignore(rap::ui&, rap::window* parent, const std::string& workdir,
+void svn_import_ignore(rap::ui&, const parent_window& parent, const std::string& workdir,
                        std::function<void(bool ok)> done);
 
 }  // namespace tortilla

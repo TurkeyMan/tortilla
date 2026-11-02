@@ -659,8 +659,15 @@ menu log_window::context_menu(std::optional<size_t> clicked)
                                  : std::string(_("SVN DCommit... (git svn isn't installed)")),
                     [this]
                     {
-                        svn_dcommit(ui_, window_.get(), repo_.workdir(),
-                                    [this](bool) { reload(); });
+                        // The log may close while it runs: asked for, not kept.
+                        auto alive = std::weak_ptr<bool>(alive_);
+                        svn_dcommit(
+                            ui_, [this, alive] { return alive.lock() ? window_.get() : nullptr; },
+                            repo_.workdir(),
+                            [this, alive](bool)
+                            {
+                                if (alive.lock()) reload();
+                            });
                     },
                     *git_svn_ok_));
             // The branch's pull request, or making one: the label clicked,
