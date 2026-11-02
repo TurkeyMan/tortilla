@@ -2128,11 +2128,17 @@ int main(int argc, char** argv)
     //   fresh: made by me at M, no commits; wt: checked out in a worktree
     {
         const std::string dir = std::string(argv[1]) + "/branch-filter";
-        const std::string me = "git -C '" + dir + "' -c user.name=Me -c user.email=me@example.com ";
-        const std::string other =
-            "git -C '" + dir + "' -c user.name=Other -c user.email=other@example.com ";
-        const std::string old_me =
-            "git -C '" + dir + "' -c user.name=Me -c user.email=me@old.example ";
+        // Each identity in the environment too: CI exports GIT_AUTHOR_EMAIL
+        // and GIT_COMMITTER_EMAIL, which outrank user.email.
+        auto as = [&](const char* name, const char* email)
+        {
+            return std::string("GIT_AUTHOR_NAME=") + name + " GIT_AUTHOR_EMAIL=" + email +
+                   " GIT_COMMITTER_NAME=" + name + " GIT_COMMITTER_EMAIL=" + email + " git -C '" +
+                   dir + "' -c user.name=" + name + " -c user.email=" + email + " ";
+        };
+        const std::string me = as("Me", "me@example.com");
+        const std::string other = as("Other", "other@example.com");
+        const std::string old_me = as("Me", "me@old.example");
         sh("git init -q -b main '" + dir + "'");
         sh("git -C '" + dir + "' config user.email me@example.com");
         sh("printf 'Me <me@example.com> <me@old.example>\\n' > '" + dir + "/.mailmap'");
