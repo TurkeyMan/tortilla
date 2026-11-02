@@ -2,6 +2,7 @@
 
 #include "git/command.h"
 #include "git/ignore_patterns.h"
+#include "git/pathspec_file.h"
 #include "git/repo.h"
 #include "i18n.h"
 #include "settings.h"
@@ -199,8 +200,13 @@ void show_ignore_dialog(rap::ui& ui, std::vector<std::string> paths, bool by_ext
                 return s->fail(_("Couldn't add to the ignore list."), error);
             if (s->stop_tracking && s->stop_tracking->checked())
             {
-                std::vector<std::string> args{"rm", "-r", "-q", "--cached", "--ignore-unmatch", "--"};
-                args.insert(args.end(), s->relative.begin(), s->relative.end());
+                // The paths through a file: no command-line limit.
+                const auto list = pathspec_file::write(s->relative);
+                if (!list)
+                    return s->fail(_("git couldn't stop tracking them."),
+                                   _("Could not write the list of files to the temporary folder."));
+                std::vector<std::string> args{"rm", "-r", "-q", "--cached", "--ignore-unmatch"};
+                for (std::string& a : list->arguments()) args.push_back(std::move(a));
                 if (const git_result rm = run_git(s->workdir, args); !rm.ok())
                     return s->fail(N_("git couldn't stop tracking it.", "git couldn't stop tracking them.",
                                       s->relative.size()),
