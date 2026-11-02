@@ -42,4 +42,42 @@ bool am_in_progress(const std::string& git_dir)
                                    ec);
 }
 
+std::vector<std::string> numstat_paths(std::string_view numstat)
+{
+    // "added\tdeleted\tpath\0", or for a rename "added\tdeleted\t\0old\0new\0".
+    std::vector<std::string> out;
+    auto field = [&](std::string_view& s)
+    {
+        const size_t end = s.find('\0');
+        std::string_view f = s.substr(0, end);
+        s = end == std::string_view::npos ? std::string_view() : s.substr(end + 1);
+        return f;
+    };
+    while (!numstat.empty())
+    {
+        std::string_view record = field(numstat);
+        const size_t tab = record.find('\t');
+        const size_t tab2 = tab == std::string_view::npos ? tab : record.find('\t', tab + 1);
+        if (tab2 == std::string_view::npos) continue;
+        std::string_view path = record.substr(tab2 + 1);
+        if (path.empty())
+        {
+            field(numstat);  // the old name
+            path = field(numstat);
+        }
+        if (!path.empty()) out.emplace_back(path);
+    }
+    return out;
+}
+
+std::vector<std::string> apply_args(const std::string& patch, const std::vector<std::string>& only,
+                                    bool check)
+{
+    std::vector<std::string> args{"apply"};
+    if (check) args.push_back("--check");
+    for (const std::string& p : only) args.push_back("--include=" + p);
+    args.insert(args.end(), {"--", patch});
+    return args;
+}
+
 }  // namespace tortilla

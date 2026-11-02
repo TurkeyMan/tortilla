@@ -4,6 +4,7 @@
 #pragma once
 
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace tortilla
@@ -40,5 +41,14 @@ std::vector<std::string> am_args(const am_options&, const std::vector<std::strin
 // Whether git am stopped part way (`git_dir`/rebase-apply/applying): what's
 // left is to go on, skip the patch, or abort.
 bool am_in_progress(const std::string& git_dir);
+
+// Review/apply single patch: the files a patch changes, from git apply
+// -z --numstat (a rename's new name).
+std::vector<std::string> numstat_paths(std::string_view numstat);
+
+// git apply [--check] [--include=<path>...] -- <patch>: the whole patch, or
+// only those files of it.
+std::vector<std::string> apply_args(const std::string& patch,
+                                    const std::vector<std::string>& only = {}, bool check = false);
 
 }  // namespace tortilla

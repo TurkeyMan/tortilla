@@ -114,6 +114,7 @@ enum class run
     svn_ignore,      // tortilla svnignore <folder>
     format_patch,    // tortilla formatpatch <folder>
     import_patch,    // tortilla importpatch <the patches selected, or the folder>
+    review_patch,    // tortilla reviewpatch <first>
 };
 
 struct row
@@ -269,7 +270,7 @@ inline constexpr row k_rows[] = {
     {"Review/apply single &patch...",
      {{{PATCH | ONE, 0}, {EXT | ONE, FOLD}}},
      place::sub,
-     run::none,
+     run::review_patch,
      "patch"},
     {"Send Mail...", {{{PATCH, 0}, {EXT, FOLD}}}, place::sub, run::none, "sendmail"},
     separator,
