@@ -13,20 +13,6 @@ using rap::color;
 using rap::paint;
 using rap::rect_f;
 
-// Ref label colours [COL:23-54].
-color label_colour(const ref& r)
-{
-    switch (r.kind)
-    {
-    case ref_kind::local_branch: return r.current ? color{200, 0, 0} : color{0, 195, 0};
-    case ref_kind::remote_branch: return {255, 221, 170};
-    case ref_kind::tag: return {255, 255, 0};
-    case ref_kind::stash: return {128, 128, 128};
-    case ref_kind::head:
-    case ref_kind::other: break;
-    }
-    return {224, 224, 224};
-}
 
 // Mix toward white / black by amount/255 [COL:85-109].
 color lighten(color c, int amount)
@@ -98,7 +84,37 @@ std::string block_text(merge_block b, const pull_request& pr)
     return {};
 }
 
+// A small pushpin, `size` tall, from `x` across the middle of a label `h`
+// tall: a round head and its needle, in the label's own dark shade.
+void paint_pin(rap::painter& p, float x, float h, float size, color fill)
+{
+    const color ink = is_dark(fill) ? color{255, 255, 255, 200} : darken(fill, 150);
+    const float r = size * 0.24f, top = (h - size) / 2;
+    const rap::point_f head{x + size * 0.62f, top + r + 0.5f};
+    p.line(head, {x + size * 0.2f, top + size}, paint{ink}, std::max(1.f, size / 9),
+           rap::line_cap::round);
+    p.line({head.x - r * 1.3f, head.y + r * 1.1f}, {head.x + r * 1.1f, head.y - r * 1.3f},
+           paint{ink}, std::max(1.2f, size / 7), rap::line_cap::round);
+    p.circle(head, r, paint{ink}, std::nullopt);
+}
+
 }  // namespace
+
+color label_colour(const ref& r)
+{
+    const label_palette& c = label_colours;
+    switch (r.kind)
+    {
+    case ref_kind::local_branch:
+        return r.current ? c.current : !r.worktree.empty() ? c.worktree : c.local;
+    case ref_kind::remote_branch: return r.remote_default ? c.remote_default : c.remote;
+    case ref_kind::tag: return c.tag;
+    case ref_kind::stash: return c.stash;
+    case ref_kind::head:
+    case ref_kind::other: break;
+    }
+    return c.other;
+}
 
 pr_mark mark_of(const pull_request& pr)
 {
@@ -255,7 +271,8 @@ void paint_check_mark(rap::painter& p, rap::point_f c, float d, check_state s, m
 // everything else is bevelled.
 float paint_ref_labels(rap::painter& p, const std::vector<ref>& refs, float x, float h,
                        const std::function<bool(const ref&)>& show, std::vector<label_box>* boxes,
-                       const std::function<std::optional<pr_mark>(const ref&)>& pr)
+                       const std::function<std::optional<pr_mark>(const ref&)>& pr,
+                       const std::function<bool(const ref&)>& pinned)
 {
     if (boxes) boxes->clear();
     auto visible = [&](const ref& r) { return !show || show(r); };
@@ -285,7 +302,11 @@ float paint_ref_labels(rap::painter& p, const std::vector<ref>& refs, float x, f
         rap::text_style ts;
         ts.fg = is_dark(fill) ? color{255, 255, 255} : color{0, 0, 0};
         rap::size_f t = p.measure(ref->name, ts);
-        float w = t.w + 8;
+        // A pinned one's pin after its name, inside the label.
+        const bool pin = pinned && pinned(*ref);
+        const float pin_size = std::clamp(h - 8, 7.0f, 11.0f);
+        const float name_w = t.w + (pin ? pin_size + 2 : 0);
+        float w = name_w + 8;
         // A pull request's "#12" and its checks, after the name.
         const std::optional<pr_mark> mark = pr ? pr(*ref) : std::nullopt;
         const std::string number = mark ? "#" + std::to_string(mark->number) : "";
@@ -329,9 +350,10 @@ float paint_ref_labels(rap::painter& p, const std::vector<ref>& refs, float x, f
         }
         const float ty = (h - t.h) / 2 - (rounded ? 1 : 0);
         p.text({box.x + 4, ty}, ref->name, ts);
+        if (pin) paint_pin(p, box.x + 4 + t.w + 2, h - (rounded ? 2 : 0), pin_size, fill);
         if (mark)
         {
-            const float nx = box.x + 4 + t.w + 5;
+            const float nx = box.x + 4 + name_w + 5;
             // A hairline before the number: the label's two parts.
             p.line({nx - 2.5f, 3}, {nx - 2.5f, h - (rounded ? 5 : 3)}, paint{darken(fill, 60)}, 1);
             p.text({nx, ty}, number, number_style);
@@ -343,8 +365,10 @@ float paint_ref_labels(rap::painter& p, const std::vector<ref>& refs, float x, f
                                                  : mergeable::yes);
         }
         if (boxes)
-            boxes->push_back(
-                {.left = x, .right = x + w, .ref = *ref, .pr_left = mark ? x + 4 + t.w + 2.5f : 0});
+            boxes->push_back({.left = x,
+                              .right = x + w,
+                              .ref = *ref,
+                              .pr_left = mark ? x + 4 + name_w + 2.5f : 0});
         x += w + 1;
     }
     return order.empty() ? start : x;

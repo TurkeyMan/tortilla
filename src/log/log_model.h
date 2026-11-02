@@ -8,6 +8,7 @@
 #include "git/repo.h"
 #include "graph/lanes.h"
 #include "log/action_icons.h"
+#include "log/branch_filter.h"
 #include "log/ref_labels.h"
 
 #include <rapport/rapport.h>
@@ -162,6 +163,13 @@ public:
     void set_labels(unsigned mask);
     unsigned labels() const { return labels_; }
 
+    // Which branches the next load walks (the Show menu), and what the last
+    // made of it. Pins and hide patterns apply to the labels at once.
+    void set_branches(branch_request);
+    const branch_request& branches() const { return branches_; }
+    const branch_outcome& outcome() const { return outcome_; }
+    bool pinned(const ref& r) const { return is_pinned(r, branches_.filter.pins); }
+
     // Row 0 is the "Working tree changes" pseudo-row in non-bare repos.
     bool is_working_tree(size_t row) const { return working_tree_ && row == 0; }
     const tortilla::commit* commit(size_t row) const;
@@ -190,11 +198,9 @@ public:
     std::string text(size_t row, size_t column) const override;
     rap::text_style style(size_t row, size_t column) const override;
     void paint(size_t row, size_t column, rap::painter&, const rap::cell_info&) const override;
-    // Over a label's pull request part: what its mark means.
-    std::string tooltip(size_t row, size_t column, rap::point_f at) const override
-    {
-        return column == message ? pr_tooltip_at(row, at.x) : std::string();
-    }
+    // Over a label's pull request part: what its mark means; over a branch
+    // checked out in another worktree, where.
+    std::string tooltip(size_t row, size_t column, rap::point_f at) const override;
 
 private:
     struct batch
@@ -249,6 +255,18 @@ private:
     walk_refs walk_refs_ = walk_refs::head;  // the loaded walk's
     std::string walk_rev_;
     std::vector<std::string> walk_paths_;  // the history's paths; the working tree row's too
+    branch_request branches_;
+    branch_outcome outcome_;
+    // My branches: whether each branch is the user's, by name, tip and base.
+    struct mine_cache
+    {
+        std::mutex mutex;
+        std::unordered_map<std::string, bool> known;
+    };
+    std::shared_ptr<mine_cache> mine_cache_ = std::make_shared<mine_cache>();
+    // The loaded walk's preset's branches, for whether a new ref changes it.
+    std::unordered_set<std::string> walked_names_;
+    bool walks(const ref&) const;
 
     // Filtering: the matching commit indices, in order.
     struct term

@@ -11,6 +11,7 @@
 #include "changes/commit_window.h"
 #include "log/bisect_dialog.h"
 #include "log/reflog_window.h"
+#include "log/show_dialogs.h"
 #include "remote/pull_fetch_dialog.h"
 #include "remote/push_dialog.h"
 #include "ui/merge_pr_dialog.h"
@@ -425,7 +426,8 @@ menu log_window::context_menu(std::optional<size_t> clicked)
             std::vector<std::string> branches;
             if (refs)
                 for (auto& r : *refs)
-                    if (r.kind == ref_kind::local_branch && !r.current) branches.push_back(r.name);
+                    if (r.kind == ref_kind::local_branch && !r.current && r.worktree.empty())
+                        branches.push_back(r.name);
             if (!branches.empty() && has_wc && !is_stash)
             {
                 auto checkout = [this](const std::string& b)
@@ -651,7 +653,7 @@ menu log_window::context_menu(std::optional<size_t> clicked)
         std::vector<const ref*> deletable;
         if (refs)
             for (auto& r : *refs)
-                if (!r.current) deletable.push_back(&r);
+                if (!r.current && r.worktree.empty()) deletable.push_back(&r);
         auto delete_args = [](const ref& r) -> arg_list
         {
             switch (r.kind)
@@ -697,6 +699,36 @@ menu log_window::context_menu(std::optional<size_t> clicked)
                                                 _("Delete"), all);
                                         }));
             m.push_back(std::move(sub));
+        }
+
+        // The label clicked (or the row's one branch): pinned, hidden, and
+        // another worktree's to open.
+        const ref* branch = nullptr;
+        if (refs)
+            for (const ref& r : *refs)
+                if (r.kind == ref_kind::local_branch || r.kind == ref_kind::remote_branch)
+                {
+                    if (branch)
+                    {
+                        branch = nullptr;
+                        break;
+                    }
+                    branch = &r;
+                }
+        if (branch)
+        {
+            const ref r = *branch;  // a copy: `refs` may be this call's own
+            if (!r.worktree.empty())
+            {
+                const std::string folder =
+                    rap::sys::path_to_utf8(rap::sys::path_from_utf8(r.worktree).filename());
+                m.push_back(item(rap::i18n::format(_("Open _worktree “{0}”"), menu_text(folder)),
+                                 [this, path = r.worktree] { open_worktree(path); }));
+            }
+            const bool pinned = log_.pinned(r);
+            m.push_back(item(pinned ? _("U_npin") : _("_Pin: always show"),
+                             [this, r, pinned] { set_pinned(r, !pinned); }));
+            m.push_back(item(_("_Hide branch"), [this, r] { hide_branch(r); }));
         }
         separator(m);
         if (!log_.filtering() && !log_.is_working_tree(row))
@@ -935,6 +967,9 @@ void log_window::row_activated(size_t row)
     for (const ref& r : *refs)
     {
         if (r.full_name != press->full_name) continue;
+        // Checked out in another worktree: can't be here too; that
+        // worktree's log instead.
+        if (!r.worktree.empty()) return open_worktree(r.worktree);
         if (r.kind == ref_kind::local_branch && !r.current) switch_to(r.name, false);
         if (r.kind == ref_kind::tag)
         {
@@ -1131,8 +1166,10 @@ rap::list::cell_drag log_window::label_drag()
             if (ref)
                 last_label_press_ =
                     label_press{row, ref->full_name, std::chrono::steady_clock::now()};
-            // Remote branches would need a force push: not by dragging.
-            if (!ref || (ref->kind != ref_kind::local_branch && ref->kind != ref_kind::tag))
+            // Remote branches would need a force push: not by dragging; nor a
+            // branch another worktree has checked out (its files would change).
+            if (!ref || (ref->kind != ref_kind::local_branch && ref->kind != ref_kind::tag) ||
+                !ref->worktree.empty())
                 return std::nullopt;
             return rap::list::cell_drag_start{ref->name, ref->full_name};
         },
@@ -1355,6 +1392,76 @@ void log_window::open_pull_request_menu(rap::menu& m, const ref& r)
     }
     if (pr_watch_ && !pr_watch_->remotes().empty())
         m.push_back(item(_("Create pull _request..."), [this, r] { create_pull_request(r); }));
+}
+
+// Pinning by the label's name; the current branch pinned as HEAD (the
+// default) is unpinned as both, so it doesn't stay pinned the other way.
+void log_window::set_pinned(const ref& r, bool pinned)
+{
+    if (pinned)
+    {
+        if (!log_.pinned(r)) show_.pins.push_back(r.full_name);
+    }
+    else
+        std::erase_if(show_.pins,
+                      [&](const std::string& p)
+                      {
+                          return p == r.full_name ||
+                                 (p == "HEAD" && (r.current || r.kind == ref_kind::head));
+                      });
+    pins_custom_ = true;
+    save_branches();
+    reload();
+}
+
+// Hidden by its own name (a pattern that matches only it); a pin goes too.
+void log_window::hide_branch(const ref& r)
+{
+    if (std::ranges::find(show_.hidden, r.name) == show_.hidden.end())
+        show_.hidden.push_back(r.name);
+    if (log_.pinned(r)) return set_pinned(r, false);
+    save_branches();
+    reload();
+}
+
+void log_window::open_worktree(const std::string& path)
+{
+    auto log = log_window::open(ui_, path);
+    if (!log)
+        return ui_.message(window_.get(), {.icon = rap::message_spec::icon::error,
+                                           .title = _("Open worktree"),
+                                           .text = log.error()});
+    windows::keep(std::move(*log));
+}
+
+void log_window::pick_branches()
+{
+    const ref_map loaded = log_.refs().empty() ? repo_.refs() : ref_map{};
+    pick_branches_dialog(
+        ui_, window_.get(), log_.refs().empty() ? loaded : log_.refs(), show_.picked,
+        [this, alive = std::weak_ptr<bool>(alive_)](std::vector<std::string> picked)
+        {
+            if (!alive.lock()) return;
+            show_.picked = std::move(picked);
+            set_show(show_preset::picked);
+            reload();
+        });
+}
+
+void log_window::edit_pins_and_hidden()
+{
+    const ref_map loaded = log_.refs().empty() ? repo_.refs() : ref_map{};
+    pins_hidden_dialog(ui_, window_.get(), log_.refs().empty() ? loaded : log_.refs(),
+                       {.pins = show_.pins, .hidden = show_.hidden}, default_pins(repo_),
+                       [this, alive = std::weak_ptr<bool>(alive_)](pins_and_hidden chosen)
+                       {
+                           if (!alive.lock()) return;
+                           if (chosen.pins != show_.pins) pins_custom_ = true;
+                           show_.pins = std::move(chosen.pins);
+                           show_.hidden = std::move(chosen.hidden);
+                           save_branches();
+                           reload();
+                       });
 }
 
 }  // namespace tortilla

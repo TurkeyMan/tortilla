@@ -56,6 +56,12 @@ struct ref
     bool current = false;    // the branch HEAD points at
     bool annotated = false;  // annotated tag
     std::string upstream;    // local branch: full name of its upstream, if any
+    // Local branch: the other working tree it's checked out in, if any (not
+    // this one); changing it here would change that tree's files.
+    std::string worktree;
+    // Remote branch: its remote's default (<remote>/HEAD's target, else
+    // main, else master).
+    bool remote_default = false;
 };
 
 using ref_map = std::unordered_map<oid, std::vector<ref>, oid_hash>;
@@ -112,6 +118,7 @@ enum class walk_refs
     all,    // every ref and worktree HEAD, like git log --all
     basic,  // local and remote branches and tags, and HEAD ("All basic refs")
     local,  // local branches and HEAD ("All local branches")
+    tips,   // walk_options::tips alone, not HEAD
 };
 
 // Whether a walk over `refs` starts at the ref named `full_name`.
@@ -133,6 +140,19 @@ struct walk_options
     std::vector<std::string> paths;
     bool follow = false;        // with one file in paths: across its renames (git log --follow)
     bool full_history = false;  // with paths: --full-history, no history simplification
+
+    // Tips shown sparsely (pinned branches): of their history, only what
+    // the rest needs to join them, as tips_only keeps it.
+    std::vector<oid> sparse_tips;
+    // Branch tips only, git log --simplify-by-decoration: the tips, the
+    // `decorated` commits (those wearing a label on show), and the merges
+    // and forks between them, each one's parents the nearest of those.
+    bool tips_only = false;
+    std::vector<oid> decorated;
+    // Only what isn't merged into this commit: each branch stops at its
+    // merge base with it, which is shown without its parents (as git log
+    // --boundary does), and so is a tip already merged.
+    std::optional<oid> unmerged_into;
 };
 
 class repo
@@ -147,6 +167,9 @@ public:
 
     std::string workdir() const;
     std::string git_dir() const;    // the .git directory
+    // Where the repository's worktrees share refs and config: the main
+    // .git, from a linked worktree too.
+    std::string common_dir() const;
     std::string head_name() const;  // branch short name, or "HEAD" when detached
     ref_map refs() const;           // labels sorted by full ref name, as TortoiseGit shows them
     std::optional<oid> head_id() const;
