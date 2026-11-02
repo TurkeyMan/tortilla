@@ -254,6 +254,66 @@ int main(int argc, char** argv)
         check(git(h.repo, {"status", "--porcelain"}).empty(), "abort: clean working tree");
     }
 
+    // An untracked file where the upstream has one: git refuses to start,
+    // and the file is as it was.
+    {
+        harness h(**ui, make_repo(root, "untracked"));
+        // main gains a folder, sub/, for a file in its place below.
+        const std::string g = "git -C '" + h.repo + "' ";
+        sh(g + "checkout -q main && mkdir -p '" + h.repo + "/sub' && printf 's\\n' > '" + h.repo +
+           "/sub/in.txt' && " + g + "add sub && " + g + "commit -qm Sub && " + g +
+           "checkout -q feature");
+        sh("printf 'mine\\n' > '" + h.repo + "/m2.txt'");
+        std::string before = git(h.repo, {"rev-parse", "feature"});
+        h.start();
+        check(h.engine->stage() == rebase_stage::error, "untracked: the start refused");
+        check(git(h.repo, {"rev-parse", "--abbrev-ref", "HEAD"}) == "feature\n" &&
+                  git(h.repo, {"rev-parse", "feature"}) == before,
+              "untracked: still on the branch, unmoved");
+        std::FILE* f = std::fopen((h.repo + "/m2.txt").c_str(), "r");
+        char text[16] = {};
+        if (f) std::fclose((std::fgets(text, sizeof text, f), f));
+        check(std::string(text) == "mine\n", "untracked: the file kept");
+        // The window's preflight names it first, and folder clashes both
+        // ways; an ignored file and an unrelated one aren't named.
+        sh("printf 'x\\n' > '" + h.repo + "/f1.txt.bak' && printf 'ign\\n' > '" + h.repo +
+           "/m2.TXT' && printf 'm2.TXT\\n' > '" + h.repo + "/.git/info/exclude'");
+        sh("printf 'file\\n' > '" + h.repo + "/sub'");  // a file where main has a folder
+        auto opened = repo::open(h.repo);
+        auto names = untracked_in_the_way(h.repo, *opened->resolve("main"));
+        std::string listed;
+        for (auto& n : names) listed += n + ";";
+        check(listed == "m2.txt;sub;", "untracked: the preflight names them (" + listed + ")");
+        sh(g + "config core.ignorecase true && mv '" + h.repo + "/m2.txt' '" + h.repo +
+           "/M2.txt' && printf '' > '" + h.repo + "/.git/info/exclude' && rm '" + h.repo +
+           "/m2.TXT'");
+        names = untracked_in_the_way(h.repo, *opened->resolve("main"));
+        listed.clear();
+        for (auto& n : names) listed += n + ";";
+        check(listed == "M2.txt;sub;", "untracked: without case when git says so (" + listed + ")");
+    }
+    // Aborting goes back to the branch without overwriting an untracked
+    // file made meanwhile where the branch has one (f3.txt, not yet picked).
+    {
+        harness h(**ui, make_repo(root, "abort-untracked", true));
+        h.start();
+        check(h.engine->stage() == rebase_stage::conflict, "abort, untracked: stops at F2");
+        sh("printf 'new work\\n' > '" + h.repo + "/f3.txt'");
+        bool aborted = false;
+        h.engine->abort([&] { aborted = true; });
+        for (int i = 0; i < 400 && !aborted && h.engine->stage() != rebase_stage::error; ++i)
+        {
+            (*ui)->run();
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        std::FILE* f = std::fopen((h.repo + "/f3.txt").c_str(), "r");
+        char text[16] = {};
+        if (f) std::fclose((std::fgets(text, sizeof text, f), f));
+        check(std::string(text) == "new work\n", "abort, untracked: the file kept");
+        check(!aborted && h.engine->stage() == rebase_stage::error,
+              "abort, untracked: stops with an error instead");
+    }
+
     std::printf("%s\n", failures ? "FAILED" : "all passed");
     return failures ? 1 : 0;
 }

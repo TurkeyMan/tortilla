@@ -597,20 +597,47 @@ void rebase_window::start_rebase()
                                  "git config --global user.email you@example.com")});
         return;
     }
+    // --onto: the upstream's commits replayed onto another [spec 2.8].
+    const oid onto =
+        onto_.empty() ? *upstream_head_ : repo_.resolve(onto_).value_or(*upstream_head_);
+    // Untracked files aren't stashed, and git won't check out over them:
+    // say which, rather than stop with git's error after the start.
+    if (std::vector<std::string> in_the_way = untracked_in_the_way(repo_.workdir(), onto);
+        !in_the_way.empty())
+    {
+        std::string list;
+        for (size_t i = 0; i < in_the_way.size() && i < 50; ++i) list += in_the_way[i] + "\n";
+        if (in_the_way.size() > 50)
+            list +=
+                rap::i18n::format(N_("...and {0} more", "...and {0} more", in_the_way.size() - 50),
+                                  in_the_way.size() - 50);
+        ui_.message(window_.get(),
+                    {.icon = rap::message_spec::icon::error,
+                     .title = _("Rebase"),
+                     .text = rap::i18n::format(
+                         N_("An untracked file is where the rebase would put one of its own. "
+                            "Move it away, or add it, first:",
+                            "{0} untracked files are where the rebase would put its own. Move "
+                            "them away, or add them, first:",
+                            in_the_way.size()),
+                         in_the_way.size()),
+                     .detail = list});
+        return;
+    }
     git_result dirty = run_git(repo_.workdir(), {"status", "--porcelain", "--untracked-files=no"},
                                git_output::stdout_only);
-    auto go = [this]
+    auto go = [this, onto]
     {
         std::string branch = branches_[size_t(std::max(0, branch_->current()))];
         std::string head = repo_.head_name();
         rebase_engine::start_args s{
             .branch = branch,
             .branch_head = *branch_head_,
-            // --onto: the upstream's commits replayed onto another [spec 2.8].
-            .onto = onto_.empty() ? *upstream_head_ : repo_.resolve(onto_).value_or(*upstream_head_),
-            .onto_name = !onto_.empty()      ? onto_
-                         : upstreams_.empty() ? ""
-                                              : upstreams_[size_t(std::max(0, upstream_->current()))],
+            .onto = onto,
+            .onto_name = !onto_.empty() ? onto_
+                         : upstreams_.empty()
+                             ? ""
+                             : upstreams_[size_t(std::max(0, upstream_->current()))],
             .checked_out = head == "HEAD" ? repo_.head_id().value_or(oid{}).hex() : head,
             .fast_forward = fast_forward_,
         };
