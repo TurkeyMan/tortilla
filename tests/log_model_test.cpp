@@ -6,6 +6,7 @@
 #include "cache/cache_main.h"
 #include "cache/channel.h"
 #include "changes/file_model.h"
+#include "changes/revert.h"
 #include "changes/working_tree.h"
 #include "forge/ci.h"
 #include "forge/ci_poll.h"
@@ -2712,6 +2713,40 @@ int main(int argc, char** argv)
             check(op.operation == tortilla::repo_operation::merge && op.mine_stage() == 2,
                   "mine: a stale rebase marker doesn't swap a merge's sides");
         }
+    }
+
+    // Revert, from the file list's menu or the Revert dialog: what it
+    // overwrites or removes goes to the trash first.
+    {
+        namespace fs = std::filesystem;
+        const std::string dir = std::string(argv[1]) + "/revert";
+        const std::string g = "git -C '" + dir + "' -c user.name=Ada -c user.email=ada@x ";
+        sh("git init -q -b main '" + dir + "' && printf 'a\\n' > '" + dir +
+           "/a.txt' && printf 'b\\n' > '" + dir + "/b.txt' && " + g + "add -A && " + g +
+           "commit -qm one");
+        sh("printf 'work\\n' > '" + dir + "/a.txt' && " + g +
+           "mv b.txt c.txt && printf 'new\\n' > '" + dir + "/new.txt' && " + g + "add new.txt");
+        const std::string trash = std::string(argv[1]) + "/revert-trash";
+        const std::string xdg = rap::sys::env("XDG_DATA_HOME").value_or("");
+        setenv("XDG_DATA_HOME", trash.c_str(), 1);
+        auto changes = tortilla::load_working_tree(dir, {});
+        const tortilla::revert_plan plan = tortilla::plan_revert(dir, changes.files);
+        bool trashed = !!rap::sys::move_to_trash(plan.trash);
+        bool ran = true;
+        for (const auto& c : tortilla::revert_commands(plan))
+            ran = tortilla::run_git(dir, c).ok() && ran;
+        if (xdg.empty())
+            unsetenv("XDG_DATA_HOME");
+        else
+            setenv("XDG_DATA_HOME", xdg.c_str(), 1);
+        const fs::path d(dir), t = fs::path(trash) / "Trash" / "files";
+        check(trashed && ran && slurp(d / "a.txt") == "a\n" && slurp(d / "b.txt") == "b\n" &&
+                  !fs::exists(d / "c.txt") && slurp(d / "new.txt") == "new\n",
+              "revert: modified and renamed files back, an added one left on disk");
+        check(slurp(t / "a.txt") == "work\n" && slurp(t / "c.txt") == "b\n",
+              "revert: what it overwrote and removed is in the trash");
+        check(tortilla::run_git(dir, {"status", "--porcelain"}).output == "?? new.txt\n",
+              "revert: nothing else changed");
     }
 
     std::printf("%s\n", failures ? "FAILED" : "all passed");

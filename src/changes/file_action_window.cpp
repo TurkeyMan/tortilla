@@ -1,6 +1,7 @@
 #include "file_action_window.h"
 
 #include "changes/commit_window.h"
+#include "changes/revert.h"
 #include "i18n.h"
 #include "settings.h"
 #include "ui/progress_dialog.h"
@@ -355,42 +356,21 @@ void file_action_window::run(const std::vector<file_change>& files)
     for (const file_change& f : files) all.push_back(f.path);
 
     bool written = true;
+    revert_plan plan;
     if (action_ == file_action::revert)
     {
-        // By kind: additions are unstaged (the file stays); a rename's new
-        // file goes and its old one comes back from HEAD; the rest come
-        // back from HEAD, index and working tree.
-        std::vector<std::string> unstage, remove, restore;
-        std::error_code ec;
-        for (const file_change& f : files)
+        // The file list's Revert's plan, with the paths in files.
+        plan = plan_revert(workdir_, files);
+        if (!plan.error.empty())
         {
-            if (f.status == 'R' && !f.old_path.empty())
-            {
-                const fs::path old_path =
-                    rap::sys::path_from_utf8(workdir_) / rap::sys::path_from_utf8(f.old_path);
-                if (fs::is_directory(old_path, ec))
-                {
-                    ui_.message(window_.get(), {.icon = rap::message_spec::icon::error,
-                                                .title = _("Revert"),
-                                                .text = rap::i18n::format(
-                                                    _("Cannot revert renaming of “{0}”. A directory "
-                                                      "with the old name “{1}” exists."),
-                                                    f.path, f.old_path)});
-                    return;
-                }
-                const bool there = fs::exists(
-                    rap::sys::path_from_utf8(workdir_) / rap::sys::path_from_utf8(f.path), ec);
-                (there ? remove : unstage).push_back(f.path);
-                restore.push_back(f.old_path);
-            }
-            else if (f.status == 'A')
-                unstage.push_back(f.path);
-            else
-                restore.push_back(f.path);
+            ui_.message(
+                window_.get(),
+                {.icon = rap::message_spec::icon::error, .title = _("Revert"), .text = plan.error});
+            return;
         }
-        written = command({"rm", "-f", "--cached"}, unstage) &&
-                  command({"rm", "-f", "--ignore-unmatch"}, remove) &&
-                  command({"checkout", "-f"}, restore, {"--end-of-options", "HEAD"});
+        written = command({"rm", "-f", "-q", "--cached"}, plan.unstage) &&
+                  command({"rm", "-f", "-q", "--ignore-unmatch"}, plan.remove) &&
+                  command({"checkout", "-f"}, plan.restore, {"--end-of-options", "HEAD"});
     }
     else
         // Add, and Resolve (marking a conflict resolved is adding it).
@@ -480,31 +460,11 @@ void file_action_window::run(const std::vector<file_change>& files)
         return;
     }
     // Revert first moves what it overwrites to the Recycle Bin (the trash),
-    // so it can be undone: every file but the added ones, which it leaves on
-    // disk anyway [spec 6.3.4].
-    std::vector<fs::path> keep;
-    std::error_code ec;
-    for (const file_change& f : files)
-    {
-        const fs::path p = rap::sys::path_from_utf8(workdir_) / rap::sys::path_from_utf8(f.path);
-        if (f.status != 'A' && (fs::is_regular_file(fs::symlink_status(p, ec)) ||
-                                fs::is_symlink(fs::symlink_status(p, ec))))
-            keep.push_back(p);
-    }
-    if (auto kept = rap::sys::move_to_trash(keep); !kept)
-        ui_.message(window_.get(),
-                    {.icon = rap::message_spec::icon::warning,
-                     .title = _("Revert"),
-                     .text = _("The files couldn't be moved to the Recycle Bin first, so reverting "
-                               "can't be undone. Revert anyway?"),
-                     .detail = kept.error(),
-                     .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
-                    [start](rap::dialog_role r) mutable
-                    {
-                        if (r == rap::dialog_role::yes) start();
-                    });
-    else
-        start();
+    // so it can be undone [spec 6.3.4].
+    trash_first(ui_, window_.get(), _("Revert"),
+                _("The files couldn't be moved to the Recycle Bin first, so reverting can't be "
+                  "undone. Revert anyway?"),
+                plan.trash, std::move(start));
 }
 
 // The follow-up Commit: the Commit dialog on the whole repository, which

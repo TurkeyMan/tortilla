@@ -97,7 +97,8 @@ add_library(tortilla_git STATIC
     src/cache/cache_main.cpp
     src/cache/channel.cpp
     src/git/submodule.cpp
-    src/changes/working_tree.cpp)
+    src/changes/working_tree.cpp
+    src/changes/revert.cpp)
 target_include_directories(tortilla_git PUBLIC src)
 target_link_libraries(tortilla_git PUBLIC ${TORTILLA_LIBGIT2} rapport::rapport)
 target_compile_features(tortilla_git PUBLIC cxx_std_23)
