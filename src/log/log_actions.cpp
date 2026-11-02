@@ -570,7 +570,6 @@ menu log_window::context_menu(std::optional<size_t> clicked)
             }
         if (!picks.empty() && picks.size() == sel.size())
         {
-            if (sel.size() > 1) m.push_back(todo(_("Com_bine to one commit")));
             if (!any_head && has_wc && !merging)
             {
                 arg_list args{"cherry-pick"};
