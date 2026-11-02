@@ -12,6 +12,7 @@
 #include "cache/cache_main.h"
 #include "cache/channel.h"
 #include "git/badges.h"
+#include "git/svn.h"
 #include "menu_table.h"
 
 #include <rapport/shell.h>
@@ -154,7 +155,7 @@ uint32_t admin_dir_mask(const fs::path& path)
     if (present(wt->common_dir / "refs/stash") ||
         read_file(wt->common_dir / "packed-refs").find(" refs/stash\n") != std::string::npos)
         m |= STASH;
-    if (present(wt->git_dir / "svn/.metadata")) m |= SVN;
+    if (tortilla::is_git_svn(wt->git_dir, wt->common_dir)) m |= SVN;
     if (present(wt->git_dir / "BISECT_START")) m |= BISECT;
     if (present(wt->git_dir / "MERGE_HEAD")) m |= MERGE;
     if (present(wt->top / ".gitmodules")) m |= SUBC;
@@ -171,6 +172,51 @@ bool is_patch(const fs::path& p)
 
 std::string utf8(const fs::path& p);
 fs::path tortilla_exe();
+
+// Whether git svn is installed, from the files, as the extension runs no
+// git: git-svn in the exec path of the git on PATH, where Linux
+// distributions, Homebrew and Git for Windows put it. Unsure (no git on
+// PATH) counts as there: the command itself says when it isn't. Looked up
+// again after a while, in case it's been installed since.
+bool git_svn_present()
+{
+    using clock = std::chrono::steady_clock;
+    static std::mutex mutex;
+    static std::optional<bool> known;
+    static clock::time_point when;
+    std::lock_guard lock(mutex);
+    if (known && clock::now() - when < std::chrono::minutes(1)) return *known;
+    when = clock::now();
+    known = true;
+    const char* path = std::getenv("PATH");
+    if (!path) return true;
+#ifdef _WIN32
+    constexpr char k_sep = ';';
+    constexpr const char* k_git = "git.exe";
+#else
+    constexpr char k_sep = ':';
+    constexpr const char* k_git = "git";
+#endif
+    std::string_view rest = path;
+    while (!rest.empty())
+    {
+        const size_t sep = rest.find(k_sep);
+        const std::string_view dir = rest.substr(0, sep);
+        rest = sep == std::string_view::npos ? std::string_view() : rest.substr(sep + 1);
+        if (dir.empty()) continue;
+        std::error_code ec;
+        fs::path git = fs::path(dir) / k_git;
+        if (!fs::is_regular_file(git, ec)) continue;
+        git = fs::canonical(git, ec);
+        if (ec) continue;
+        const fs::path bin = git.parent_path(), prefix = bin.parent_path();
+        for (const fs::path& at : {prefix / "libexec/git-core", prefix / "lib/git-core",
+                                   prefix / "mingw64/libexec/git-core", bin})
+            if (present(at / "git-svn")) return *known = true;
+        return *known = false;  // the git that runs has none
+    }
+    return true;
+}
 
 // -- badges ---------------------------------------------------------------------
 //
@@ -704,7 +750,16 @@ public:
             if (r.command == run::diff_later)
                 if (const fs::path saved = read_diff_later(); !saved.empty())
                     label = diff_with_label(saved);
-            const bool runs = r.command != run::none;
+            bool runs = r.command != run::none;
+            // The git-svn entries, greyed with why when git svn isn't there.
+            if (runs &&
+                (r.command == run::svn_dcommit || r.command == run::svn_rebase ||
+                 r.command == run::svn_fetch || r.command == run::svn_ignore) &&
+                !git_svn_present())
+            {
+                runs = false;
+                label += " (" + std::string(tortilla::k_no_git_svn) + ")";
+            }
             // Drawn by src/shell/menu_icons.cpp, one per Settings entry.
             menu_item item{.id = r.id, .label = label, .icon = icon(group_of(r.id)), .enabled = runs};
             if (r.command == run::ignore)
@@ -837,6 +892,10 @@ public:
         case run::sub_add: rap::shell::launch(tortilla_exe(), {"subadd", folder}); return;
         case run::sub_update: rap::shell::launch(tortilla_exe(), {"subupdate", folder}); return;
         case run::sub_sync: rap::shell::launch(tortilla_exe(), {"subsync", folder}); return;
+        case run::svn_dcommit: rap::shell::launch(tortilla_exe(), {"svndcommit", folder}); return;
+        case run::svn_rebase: rap::shell::launch(tortilla_exe(), {"svnrebase", folder}); return;
+        case run::svn_fetch: rap::shell::launch(tortilla_exe(), {"svnfetch", folder}); return;
+        case run::svn_ignore: rap::shell::launch(tortilla_exe(), {"svnignore", folder}); return;
         case run::commit:
         case run::repostatus:
         case run::add:
