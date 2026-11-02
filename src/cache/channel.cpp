@@ -1,6 +1,9 @@
 #include "channel.h"
 
 #ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
 #else
 #include <cerrno>
@@ -14,9 +17,13 @@
 #include <unistd.h>
 #endif
 
+#include <algorithm>
 #include <cstring>
 #include <filesystem>
+#include <memory>
 #include <optional>
+#include <semaphore>
+#include <system_error>
 #include <thread>
 
 namespace tortilla::channel
@@ -59,6 +66,51 @@ struct line_reader
     }
 };
 
+using clock = std::chrono::steady_clock;
+using answer_fn = std::function<std::string(std::string_view)>;
+
+// What's left until `deadline`, rounded up: a fraction of a millisecond
+// still waits one.
+std::chrono::milliseconds left_until(clock::time_point deadline)
+{
+    return std::max(std::chrono::ceil<std::chrono::milliseconds>(deadline - clock::now()),
+                    std::chrono::milliseconds(0));
+}
+
+// The connections being served: a slot taken before each is accepted, given
+// back by its thread when it's done. Shared with those threads, which may
+// still be giving theirs back as serve() returns.
+using slots = std::counting_semaphore<k_serve_clients>;
+
+// Runs `serve` on a thread of its own, which gives back its slot in `free`
+// when it's done; inline if no thread can be had.
+template <class Serve>
+void serve_aside(const std::shared_ptr<slots>& free, Serve serve)
+{
+    try
+    {
+        std::thread(
+            [free, serve]
+            {
+                serve();
+                free->release();
+            })
+            .detach();
+    }
+    catch (const std::system_error&)
+    {
+        serve();
+        free->release();
+    }
+}
+
+// Before serve() returns with an error: the threads serving use `answer`,
+// which is the caller's, so they finish first.
+void drain(slots& free)
+{
+    for (int i = 0; i < k_serve_clients; ++i) free.acquire();
+}
+
 #ifdef _WIN32
 
 std::wstring wide(std::string_view s)
@@ -84,22 +136,63 @@ std::wstring pipe_name(std::string_view name)
     return L"\\\\.\\pipe\\tortilla-" + wide(name) + L"-" + user_tag();
 }
 
-// Waits for an overlapped call to finish, at most until `deadline`.
-bool finish(HANDLE h, OVERLAPPED& ov, BOOL started, DWORD& done,
-            std::chrono::steady_clock::time_point deadline)
+// Waits for an overlapped call to finish, at most until `deadline`: past
+// it, the call is cancelled (and waited out, as `ov` and its buffer are the
+// caller's) and this is false.
+bool finish(HANDLE h, OVERLAPPED& ov, BOOL started, DWORD& done, clock::time_point deadline)
 {
+    done = 0;
     if (started) return GetOverlappedResult(h, &ov, &done, FALSE);
     if (GetLastError() != ERROR_IO_PENDING) return false;
-    const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
-        deadline - std::chrono::steady_clock::now());
-    if (WaitForSingleObject(ov.hEvent, DWORD(std::max<long long>(left.count(), 0))) !=
-        WAIT_OBJECT_0)
+    if (WaitForSingleObject(ov.hEvent, DWORD(left_until(deadline).count())) != WAIT_OBJECT_0)
     {
-        CancelIo(h);
+        CancelIoEx(h, &ov);
         GetOverlappedResult(h, &ov, &done, TRUE);
         return false;
     }
     return GetOverlappedResult(h, &ov, &done, FALSE);
+}
+
+// One connection to a pipe instance (made overlapped), from its line to
+// its answer, each within k_serve_wait; then the instance is closed.
+void serve_one(HANDLE h, const answer_fn& answer)
+{
+    OVERLAPPED ov{};
+    ov.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    if (ov.hEvent)
+    {
+        auto deadline = clock::now() + k_serve_wait;
+        line_reader in;
+        DWORD done = 0;
+        bool ok = true;
+        while (ok && !in.done())
+        {
+            char* room = in.room();
+            ok = finish(h, ov, ReadFile(h, room, DWORD(k_chunk), nullptr, &ov), done, deadline) &&
+                 done > 0;
+            in.got(ok ? done : 0);
+        }
+        if (auto line = in.take())
+        {
+            std::string reply = answer(*line);
+            reply += '\n';
+            deadline = clock::now() + k_serve_wait;
+            ok = finish(h, ov, WriteFile(h, reply.data(), DWORD(reply.size()), nullptr, &ov), done,
+                        deadline) &&
+                 done == reply.size();
+            // Disconnecting throws away what the asker hasn't read yet, so
+            // wait for it to hang up, which it does once it has the line
+            // (FlushFileBuffers would wait for that too, but without a limit).
+            char rest[256];
+            while (ok)
+                ok = finish(h, ov, ReadFile(h, rest, DWORD(sizeof rest), nullptr, &ov), done,
+                            deadline) &&
+                     done > 0;
+        }
+        CloseHandle(ov.hEvent);
+    }
+    DisconnectNamedPipe(h);
+    CloseHandle(h);
 }
 
 #else
@@ -121,6 +214,51 @@ std::filesystem::path socket_path(std::string_view name)
     return runtime_dir() / (std::string(name) + ".sock");
 }
 
+// Waits until `fd` is ready for `events`, or has hung up or failed (which
+// the read or write then finds), at most until `deadline`.
+bool wait_for(int fd, short events, clock::time_point deadline)
+{
+    for (;;)
+    {
+        const auto left = left_until(deadline);
+        if (left.count() <= 0) return false;
+        pollfd p{fd, events, 0};
+        const int r = poll(&p, 1, int(left.count()));
+        if (r < 0 && errno == EINTR) continue;
+        return r == 1 && (p.revents & (events | POLLHUP | POLLERR));
+    }
+}
+
+// One connection (non-blocking), from its line to its answer, each within
+// k_serve_wait; then it's closed.
+void serve_one(int c, const answer_fn& answer)
+{
+    auto deadline = clock::now() + k_serve_wait;
+    line_reader in;
+    while (!in.done() && wait_for(c, POLLIN, deadline))
+    {
+        const ssize_t got = read(c, in.room(), k_chunk);
+        in.got(got > 0 ? size_t(got) : 0);
+        if (got == 0 || (got < 0 && errno != EAGAIN && errno != EINTR)) break;
+    }
+    if (auto line = in.take())
+    {
+        std::string reply = answer(*line);
+        reply += '\n';
+        deadline = clock::now() + k_serve_wait;
+        for (size_t sent = 0; sent < reply.size() && wait_for(c, POLLOUT, deadline);)
+        {
+            // MSG_NOSIGNAL: an asker gone mustn't end the server with SIGPIPE.
+            const ssize_t n = send(c, reply.data() + sent, reply.size() - sent, MSG_NOSIGNAL);
+            if (n > 0)
+                sent += size_t(n);
+            else if (n == 0 || (errno != EAGAIN && errno != EINTR))
+                break;
+        }
+    }
+    close(c);
+}
+
 #endif
 
 }  // namespace
@@ -140,51 +278,71 @@ bool hold_single(std::string_view name)
     return true;  // kept until the process ends
 }
 
-std::expected<void, std::string> serve(std::string_view name,
-                                       const std::function<std::string(std::string_view)>& answer)
+std::string address(std::string_view name)
+{
+    const std::wstring w = pipe_name(name);
+    std::string s(size_t(WideCharToMultiByte(CP_UTF8, 0, w.data(), int(w.size()), nullptr, 0,
+                                             nullptr, nullptr)),
+                  '\0');
+    WideCharToMultiByte(CP_UTF8, 0, w.data(), int(w.size()), s.data(), int(s.size()), nullptr,
+                        nullptr);
+    return s;
+}
+
+std::expected<void, std::string> serve(std::string_view name, const answer_fn& answer)
 {
     const std::wstring pipe = pipe_name(name);
     auto make = [&]
     {
-        return CreateNamedPipeW(pipe.c_str(), PIPE_ACCESS_DUPLEX,
+        return CreateNamedPipeW(pipe.c_str(), PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
                                 PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT |
                                     PIPE_REJECT_REMOTE_CLIENTS,
                                 PIPE_UNLIMITED_INSTANCES, 4096, 4096, 0, nullptr);
     };
     // One instance always waiting, so an asker never finds the name gone
-    // (and starts another server) while one is being answered.
+    // (and starts another server) while one is being answered. An asker can
+    // connect to it before it's waited on: so while every slot is taken one
+    // asker queues there, and the rest wait for the pipe (ask() does).
     HANDLE waiting = make();
     if (waiting == INVALID_HANDLE_VALUE)
         return std::unexpected("CreateNamedPipe failed: " + std::to_string(GetLastError()));
+    OVERLAPPED ov{};
+    ov.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    if (!ov.hEvent)
+    {
+        CloseHandle(waiting);
+        return std::unexpected("CreateEvent failed: " + std::to_string(GetLastError()));
+    }
+    auto free = std::make_shared<slots>(k_serve_clients);
     for (;;)
     {
-        const bool connected =
-            ConnectNamedPipe(waiting, nullptr) || GetLastError() == ERROR_PIPE_CONNECTED;
+        free->acquire();
+        bool connected = ConnectNamedPipe(waiting, &ov);
+        if (!connected)
+        {
+            const DWORD e = GetLastError();
+            DWORD unused = 0;
+            connected = e == ERROR_PIPE_CONNECTED ||
+                        (e == ERROR_IO_PENDING && GetOverlappedResult(waiting, &ov, &unused, TRUE));
+        }
         HANDLE h = waiting;
         waiting = make();
         if (waiting == INVALID_HANDLE_VALUE)
-            return std::unexpected("CreateNamedPipe failed: " + std::to_string(GetLastError()));
-        if (connected)
         {
-            line_reader in;
-            DWORD got = 0;
-            while (!in.done())
-            {
-                const bool ok = ReadFile(h, in.room(), DWORD(k_chunk), &got, nullptr) && got > 0;
-                in.got(ok ? got : 0);
-                if (!ok) break;
-            }
-            if (auto line = in.take())
-            {
-                std::string reply = answer(*line);
-                reply += '\n';
-                DWORD wrote = 0;
-                WriteFile(h, reply.data(), DWORD(reply.size()), &wrote, nullptr);
-                FlushFileBuffers(h);
-            }
-            DisconnectNamedPipe(h);
+            const DWORD e = GetLastError();
+            CloseHandle(h);
+            CloseHandle(ov.hEvent);
+            free->release();
+            drain(*free);
+            return std::unexpected("CreateNamedPipe failed: " + std::to_string(e));
         }
-        CloseHandle(h);
+        if (!connected)
+        {
+            CloseHandle(h);
+            free->release();
+            continue;
+        }
+        serve_aside(free, [h, &answer] { serve_one(h, answer); });
     }
 }
 
@@ -238,8 +396,12 @@ bool hold_single(std::string_view name)
     return true;  // kept until the process ends
 }
 
-std::expected<void, std::string> serve(std::string_view name,
-                                       const std::function<std::string(std::string_view)>& answer)
+std::string address(std::string_view name)
+{
+    return socket_path(name).string();
+}
+
+std::expected<void, std::string> serve(std::string_view name, const answer_fn& answer)
 {
     const std::string path = socket_path(name).string();
     sockaddr_un addr{};
@@ -253,32 +415,21 @@ std::expected<void, std::string> serve(std::string_view name,
     if (bind(listener, reinterpret_cast<sockaddr*>(&addr), sizeof addr) != 0 ||
         listen(listener, 64) != 0)
         return std::unexpected(std::string("bind ") + path + ": " + std::strerror(errno));
+    auto free = std::make_shared<slots>(k_serve_clients);
     for (;;)
     {
-        const int c = accept4(listener, nullptr, nullptr, SOCK_CLOEXEC);
+        free->acquire();
+        const int c = accept4(listener, nullptr, nullptr, SOCK_CLOEXEC | SOCK_NONBLOCK);
         if (c < 0)
         {
-            if (errno == EINTR) continue;
-            return std::unexpected(std::string("accept: ") + std::strerror(errno));
+            const int e = errno;
+            free->release();
+            if (e == EINTR || e == ECONNABORTED) continue;
+            close(listener);
+            drain(*free);
+            return std::unexpected(std::string("accept: ") + std::strerror(e));
         }
-        // A stuck asker mustn't hold up the rest.
-        timeval tv{0, 500 * 1000};
-        setsockopt(c, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
-        setsockopt(c, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);
-        line_reader in;
-        while (!in.done())
-        {
-            const ssize_t got = read(c, in.room(), k_chunk);
-            in.got(got > 0 ? size_t(got) : 0);
-            if (got <= 0) break;
-        }
-        if (auto line = in.take())
-        {
-            std::string reply = answer(*line);
-            reply += '\n';
-            (void)!write(c, reply.data(), reply.size());
-        }
-        close(c);
+        serve_aside(free, [c, &answer] { serve_one(c, answer); });
     }
 }
 
@@ -302,13 +453,7 @@ std::expected<std::string, ask_error> ask(std::string_view name, std::string_vie
         errno != EAGAIN)
         return std::unexpected(errno == ENOENT || errno == ECONNREFUSED ? ask_error::no_server
                                                                         : ask_error::failed);
-    auto wait = [&](short events)
-    {
-        const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
-            deadline - std::chrono::steady_clock::now());
-        pollfd p{s, events, 0};
-        return left.count() > 0 && poll(&p, 1, int(left.count())) == 1 && (p.revents & events);
-    };
+    auto wait = [&](short events) { return wait_for(s, events, deadline); };
     const std::string out = std::string(request) + "\n";
     for (size_t sent = 0; sent < out.size();)
     {
