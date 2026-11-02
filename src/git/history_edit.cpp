@@ -261,6 +261,26 @@ std::optional<std::string> why_not_editable(const branch_history& h,
     return std::nullopt;
 }
 
+std::optional<std::string> why_nothing_staged(const repo& repository)
+{
+    git_repository* r = repository.raw();
+    owned_index index;
+    if (git_repository_index(&index.p, r) != 0 || git_index_read(index.p, false) != 0)
+        return last_git_error();
+    if (git_index_has_conflicts(index.p)) return std::string(_("conflicts"));
+    const auto head = repository.head_id();
+    if (!head) return std::string(_("no commits"));
+    git_oid head_id = to_git(*head);
+    owned_commit c;
+    owned_tree tree;
+    if (git_commit_lookup(&c.p, r, &head_id) != 0 || git_commit_tree(&tree.p, c.p) != 0)
+        return last_git_error();
+    owned_diff diff;
+    if (git_diff_tree_to_index(&diff.p, r, tree.p, index.p, nullptr) != 0) return last_git_error();
+    if (git_diff_num_deltas(diff.p) == 0) return std::string(_("nothing staged"));
+    return std::nullopt;
+}
+
 bool same_tree(const repo& repository, const oid& a, const oid& b)
 {
     const auto ta = tree_of(repository.raw(), a);
@@ -849,6 +869,21 @@ move_commits(const repo& repository, const branch_history& from, const std::vect
     history_edit e = edit_from(repository, from, *left, *source, std::move(reflog));
     e.moves.push_back(target_move);
     return e;
+}
+
+std::vector<std::string> force_push_args(const repo& repository, const std::string& branch)
+{
+    git_repository* r = repository.raw();
+    git_buf remote{}, merge{};
+    std::vector<std::string> out;
+    if (git_branch_upstream_remote(&remote, r, branch.c_str()) == 0 &&
+        git_branch_upstream_merge(&merge, r, branch.c_str()) == 0 && remote.size &&
+        std::string_view(remote.ptr, remote.size) != ".")
+        out = {"push", "--force-with-lease", std::string(remote.ptr, remote.size),
+               branch + ":" + std::string(merge.ptr, merge.size)};
+    git_buf_dispose(&remote);
+    git_buf_dispose(&merge);
+    return out;
 }
 
 std::expected<history_edit, std::string> undo_last_commit(const repo& repository,

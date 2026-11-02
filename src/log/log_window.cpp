@@ -307,6 +307,10 @@ void log_window::build()
                                          { return context_menu(row); })
                         .on_header_menu([this](size_t) { return header_menu(); })
                         .on_cell_drag(label_drag())
+                        // Commits dragged within the log: reordered on their
+                        // branch (history_actions.cpp).
+                        .on_reorder([this](const std::vector<size_t>& rows, size_t destination)
+                                    { return reorder_rows(rows, destination); })
                         // Commits dragged out, into a rebase's list or anywhere
                         // taking text: their hashes, newest first as the rows run.
                         .on_drag_out({.begin = [this](std::vector<size_t> rows)
@@ -390,6 +394,19 @@ void log_window::build()
                                 return true;
                             }),
                     label{}.selectable().ellipsize().bind(status_).stretch(),
+                    // After a history edit, for a while: put the branch back.
+                    button{_("_Undo")}.bind(undo_).visible(false).on_click(
+                        [this]
+                        {
+                            if (!last_edit_) return;
+                            undo_timer_ = {};
+                            start_history_edit(
+                                _("Undo"),
+                                [e = last_edit_->undo()](
+                                    const repo&) -> std::expected<history_edit, replay_failure>
+                                { return e; },
+                                {}, true);
+                        }),
                 },
                 hbox{
                     vbox{

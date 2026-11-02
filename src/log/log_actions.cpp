@@ -614,6 +614,10 @@ menu log_window::context_menu(std::optional<size_t> clicked)
             separator(m);
         }
 
+        // Editing the branch's history in place (history_actions.cpp).
+        history_items(m, sel);
+        separator(m);
+
         // Bisect start: the older of the two worked, the newer doesn't.
         if (sel.size() == 2 && picks.size() == 2 && !any_stash && has_wc && !merging && !bisecting)
         {
@@ -1355,9 +1359,10 @@ void log_window::edit_notes(const commit& c)
     st->text->focus();
 }
 
-void log_window::open_rebase(const std::string& upstream)
+void log_window::open_rebase(const std::string& upstream, const rebase_todo* todo)
 {
     auto w = rebase_window::open(ui_, repo_.workdir(), upstream);
+    if (w && todo) (*w)->prepare(*todo);
     if (!w)
     {
         ui_.message(window_.get(),

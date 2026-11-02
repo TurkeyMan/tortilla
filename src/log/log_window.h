@@ -6,6 +6,7 @@
 #include "forge/avatars.h"
 #include "forge/pr_watch.h"
 #include "git/command.h"
+#include "git/history_edit.h"
 #include "git/repo_worker.h"
 #include "git/sync.h"
 #include "log/forge_panel.h"
@@ -364,7 +365,35 @@ private:
     std::shared_ptr<git_process> difftool_;
     std::shared_ptr<git_process> ref_command_;
     std::vector<std::unique_ptr<rebase_window>> rebases_;
-    void open_rebase(const std::string& upstream);
+    // `todo`: going on from a history edit's conflict, with its list.
+    void open_rebase(const std::string& upstream, const rebase_todo* todo = nullptr);
+
+    // -- History editing (history_actions.cpp) --------------------------------
+    // The commit menu's Combine, Reword, Drop, Squash, Fixup, Amend, Move and
+    // Undo last commit, greyed with why when they don't apply.
+    void history_items(rap::menu&, const std::vector<size_t>& sel);
+    // The leading remote's default branch, which edits never rewrite.
+    std::string mainline_ref() const;
+    // Dragging commits within the log: reordered on their branch.
+    bool reorder_rows(const std::vector<size_t>& rows, size_t destination);
+    using edit_maker = std::function<std::expected<history_edit, replay_failure>(const repo&)>;
+    // The edit made on a worker, then the working tree asked about, then
+    // applied there too; a conflict offers the rebase window with `fallback`.
+    void start_history_edit(const std::string& title, edit_maker,
+                            std::optional<rebase_todo> fallback = {}, bool undoing = false);
+    void history_replayed(const std::string& title, std::expected<history_edit, replay_failure>,
+                          tree_effect, std::optional<rebase_todo> fallback, bool undoing);
+    void apply_history_edit(const std::string& title, history_edit, bool stash, bool undoing);
+    // A question first when the commits are on the upstream already.
+    void confirm_history_edit(const std::string& title, const std::string& question, bool pushed,
+                              const branch_history&, std::function<void()> go);
+    std::string pushed_warning(const branch_history&) const;
+    void offer_force_push(const history_edit&);
+    std::unique_ptr<repo_worker> edit_worker_;
+    // The last edit, for the status bar's Undo while it shows.
+    std::optional<history_edit> last_edit_;
+    rap::button* undo_ = nullptr;
+    rap::subscription undo_timer_;
     std::vector<oid> history_;  // selection history, for the "Selection History" jump
     // The selected commit's author, top right of the details [spec 1.2].
     void show_avatar(const commit*);

@@ -165,6 +165,10 @@ std::expected<edit_plan, std::string> plan_amend(const branch_history&, const oi
 // a conflict.
 std::expected<oid, std::string> staged_commit(const repo&);
 
+// Why there are no staged changes to amend with ("nothing staged",
+// "conflicts"), without writing anything; nullopt when there are.
+std::optional<std::string> why_nothing_staged(const repo&);
+
 // Whether two commits have the same tree (an amend's result has the
 // index's, or the index wouldn't match it).
 bool same_tree(const repo&, const oid&, const oid&);
@@ -200,6 +204,11 @@ std::expected<history_edit, replay_failure> move_commits(const repo&, const bran
                                                          const std::vector<oid>& commits,
                                                          const std::string& onto, bool new_branch,
                                                          std::string reflog);
+
+// After rewriting pushed commits: git push --force-with-lease of `branch`
+// (full name) to its upstream, the lease being the remote-tracking ref as
+// last fetched; empty when it has no upstream on a remote.
+std::vector<std::string> force_push_args(const repo&, const std::string& branch);
 
 // Undo last commit: the checked-out branch back to its tip's parent, the
 // index and files as they are (git reset --soft HEAD~1).
