@@ -74,6 +74,39 @@ void check(bool ok, const char* what)
 
 using tortilla::test::sh;
 
+std::string slurp(const std::filesystem::path& p)
+{
+    std::string out;
+    if (std::FILE* f = rap::sys::fopen(p, "rb"))
+    {
+        char buf[4096];
+        while (size_t n = std::fread(buf, 1, sizeof buf, f)) out.append(buf, n);
+        std::fclose(f);
+    }
+    return out;
+}
+
+// A repository at `dir` where `file` conflicts: main's "ours" against
+// side's "theirs", from "base". `how` is "merge" or "cherry-pick" (side's
+// commit picked onto main, as Tortilla's rebase does).
+void make_conflict(const std::string& dir, const std::vector<std::string>& files,
+                   const std::string& how = "merge")
+{
+    const std::string g = "git -C '" + dir + "' -c user.name=Ada -c user.email=ada@x ";
+    sh("git init -q -b main '" + dir + "'");
+    auto write_all = [&](const std::string& text)
+    {
+        for (const std::string& f : files) sh("printf '" + text + "\\n' > '" + dir + "/" + f + "'");
+        sh(g + "add -A && " + g + "commit -qm '" + text + "'");
+    };
+    write_all("base");
+    sh(g + "checkout -qb side");
+    write_all("theirs");
+    sh(g + "checkout -q main");
+    write_all("ours");
+    sh(g + how + " side >/dev/null 2>&1 || true");
+}
+
 }  // namespace
 
 int main(int argc, char** argv)
@@ -2787,6 +2820,26 @@ int main(int argc, char** argv)
         check(yes.enabled && !none.enabled && !deleted.enabled && none.label != yes.label &&
                   deleted.label == yes.label,
               "open with: greyed, with the reason, without a chooser");
+    }
+    // Edit conflicts' sides beside the file never take the place of a file
+    // that was there, and only what was written goes afterwards.
+    {
+        namespace fs = std::filesystem;
+        const std::string dir = std::string(argv[1]) + "/sides";
+        make_conflict(dir, {"a.cpp"});
+        const fs::path d(dir);
+        sh("printf 'my notes\\n' > '" + dir + "/a.cpp.LOCAL.cpp'");
+        auto sides = tortilla::write_conflict_sides(dir, "a.cpp");
+        check(sides && slurp(d / "a.cpp.LOCAL.cpp") == "my notes\n",
+              "conflict sides: a file with a side's name is left as it was");
+        check(sides && sides->mine != (d / "a.cpp.LOCAL.cpp").string() &&
+                  slurp(sides->mine) == "ours\n" && slurp(sides->theirs) == "theirs\n" &&
+                  slurp(sides->base) == "base\n",
+              "conflict sides: mine goes to a free name instead");
+        if (sides) tortilla::remove_conflict_sides(*sides);
+        check(slurp(d / "a.cpp.LOCAL.cpp") == "my notes\n" && sides && !fs::exists(sides->mine) &&
+                  !fs::exists(sides->theirs) && !fs::exists(sides->base),
+              "conflict sides: removed, but only the ones written");
     }
 
     std::printf("%s\n", failures ? "FAILED" : "all passed");

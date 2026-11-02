@@ -186,22 +186,43 @@ std::expected<conflict_sides, std::string> write_conflict_sides(const std::strin
         (rap::sys::path_from_utf8(workdir) / rap::sys::path_from_utf8(path)).make_preferred();
     const std::string ext = rap::sys::path_to_utf8(file.extension());
     s.merged = rap::sys::path_to_utf8(file);
-    auto side = [&](const char* kind) { return rap::sys::path_to_utf8(file) + "." + kind + ext; };
+    // A name already taken (the user's own file, or another run's) isn't
+    // touched: the side goes to <file>.LOCAL.2<ext> and so on. The file is
+    // made here first ("x": only if it doesn't exist), so it's ours to
+    // replace and, afterwards, to remove.
+    auto side = [&](const char* kind) -> std::string
+    {
+        for (int n = 1; n < 100; ++n)
+        {
+            const std::string name = rap::sys::path_to_utf8(file) + "." + kind +
+                                     (n == 1 ? "" : "." + std::to_string(n)) + ext;
+            const fs::path p = rap::sys::path_from_utf8(name);
+            if (fs::exists(fs::symlink_status(p, ec))) continue;
+            if (std::FILE* f = rap::sys::fopen(p, "wbx"))
+            {
+                std::fclose(f);
+                s.written.push_back(name);
+                return name;
+            }
+        }
+        return {};
+    };
     s.base = side("BASE");
     s.mine = side("LOCAL");
     s.theirs = side("REMOTE");
+    if (s.base.empty() || s.mine.empty() || s.theirs.empty())
+    {
+        remove_conflict_sides(s);
+        return std::unexpected(rap::i18n::format(_("Could not write the sides of {0} beside it."),
+                                                 rap::sys::path_to_utf8(file)));
+    }
     const std::pair<int, std::string*> wanted[] = {
         {1, &s.base}, {mine, &s.mine}, {theirs, &s.theirs}};
     for (auto [n, target] : wanted)
     {
         const fs::path to = rap::sys::path_from_utf8(*target);
-        fs::remove(to, ec);
-        if (!stage[n])
-        {
-            // Added on both sides: no base, an empty one.
-            if (std::FILE* f = rap::sys::fopen(to, "wb")) std::fclose(f);
-            continue;
-        }
+        // Added on both sides: no base, the empty file made above.
+        if (!stage[n]) continue;
         // "<temp name>\t<path>": the temp file is relative to the root.
         const git_result t = run_git(
             workdir, {"checkout-index", "--temp", "--stage=" + std::to_string(n), "--", path},
@@ -228,9 +249,9 @@ std::expected<conflict_sides, std::string> write_conflict_sides(const std::strin
 
 void remove_conflict_sides(const conflict_sides& s)
 {
+    // Only the files this run made: never one with the same name.
     std::error_code ec;
-    for (const std::string* p : {&s.base, &s.mine, &s.theirs})
-        if (!p->empty()) fs::remove(rap::sys::path_from_utf8(*p), ec);
+    for (const std::string& p : s.written) fs::remove(rap::sys::path_from_utf8(p), ec);
 }
 
 std::vector<std::string> command_words(const std::string& c)
