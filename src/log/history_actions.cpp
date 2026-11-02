@@ -567,15 +567,16 @@ void log_window::apply_history_edit(const std::string& title, history_edit e, bo
 void log_window::offer_force_push(const history_edit& e)
 {
     const std::string branch = e.moves.front().ref;
-    auto args = force_push_args(repo_, branch);
+    if (!e.lease || !e.moves.front().to) return;
+    auto args = force_push_args(repo_, branch, *e.lease, *e.moves.front().to);
     if (args.empty()) return;
     ui_.message(window_.get(),
                 {.icon = rap::message_spec::icon::question,
                  .title = _("Force Push"),
                  .text = rap::i18n::format(
                      _("{0} has been rewritten. Force-push it to {1}, if no one else has pushed "
-                       "there since?"),
-                     short_branch(branch), args[2]),
+                       "there since it was at {2}?"),
+                     short_branch(branch), args[2], e.lease->hex(8)),
                  .detail = command_line(args),
                  .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
                 [this, args](rap::dialog_role r)

@@ -100,6 +100,10 @@ struct history_edit
     // and Amend with staged changes (the index is what the new tip has).
     bool keep_index = false;
     bool pushed = false;  // rewritten commits were on the upstream already
+    // The upstream's remote-tracking tip the edit was made from (the
+    // branch_history's): what a force push afterwards leases on, so a push
+    // by someone else, fetched since, is never overwritten.
+    std::optional<oid> lease;
 
     history_edit undo() const;
 };
@@ -213,10 +217,13 @@ std::expected<history_edit, replay_failure> move_commits(const repo&, const bran
                                                          const std::string& onto, bool new_branch,
                                                          std::string reflog);
 
-// After rewriting pushed commits: git push --force-with-lease of `branch`
-// (full name) to its upstream, the lease being the remote-tracking ref as
-// last fetched; empty when it has no upstream on a remote.
-std::vector<std::string> force_push_args(const repo&, const std::string& branch);
+// After rewriting pushed commits: git push of `tip` to `branch`'s (full
+// name) upstream branch, only if that is still at `expected` there
+// (--force-with-lease=<its ref>:<expected>, the edit's lease, not the
+// remote-tracking ref as it is when the push runs, which a fetch since may
+// have moved); empty when it has no upstream on a remote.
+std::vector<std::string> force_push_args(const repo&, const std::string& branch,
+                                         const oid& expected, const oid& tip);
 
 // Undo last commit: the checked-out branch back to its tip's parent, the
 // index and files as they are (git reset --soft HEAD~1).
