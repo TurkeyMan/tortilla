@@ -21,6 +21,7 @@
 #include "git/command.h"
 #include "git/diff_tool.h"
 #include "git/submodule.h"
+#include "git/temp_files.h"
 #include "i18n.h"
 #include "settings.h"
 #include "ui/compare.h"
@@ -1334,15 +1335,9 @@ void log_window::edit_notes(const commit& c)
             ui_.post([st] {});  // the window goes after this returns
             if (role != rap::dialog_role::ok || !alive.lock()) return;
             // From a file, so the note keeps its lines exactly as typed.
-            std::error_code ec;
-            const fs::path dir = fs::temp_directory_path(ec) / "tortilla";
-            fs::create_directories(dir, ec);
-            const fs::path file = dir / ("notes-" + hash.substr(0, 8) + ".txt");
-            if (std::FILE* f = rap::sys::fopen(file, "wb"))
-            {
-                std::fwrite(text.data(), 1, text.size(), f);
-                std::fclose(f);
-            }
+            // Its own name: two notes edited at once don't share a file.
+            const fs::path file = unique_temp_path("notes-" + hash.substr(0, 8), ".txt");
+            write_file(file, text);  // if not, git says it can't read it
             run_quietly(_("Edit Notes"), {note_args(hash, text, rap::sys::path_to_utf8(file))},
                         [this, file](bool, const std::string&)
                         {

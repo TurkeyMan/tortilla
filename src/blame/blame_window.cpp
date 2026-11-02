@@ -73,11 +73,6 @@ rap::color mix(rap::color a, rap::color b, float f)
     return {m(a.r, b.r), m(a.g, b.g), m(a.b, b.b), 255};
 }
 
-std::string lower(std::string s)
-{
-    std::ranges::transform(s, s.begin(), [](unsigned char c) { return char(std::tolower(c)); });
-    return s;
-}
 
 }  // namespace
 
@@ -471,14 +466,14 @@ std::string blame_window::message(const std::string& hash)
 
 void blame_window::find_next()
 {
-    const std::string what = lower(find_->text());
+    const std::string what = ascii_lower(find_->text());
     const size_t n = rows_->lines.size();
     if (what.empty() || !n) return;
     const size_t from = selected_line().value_or(n - 1);
     for (size_t i = 1; i <= n; ++i)
     {
         const size_t row = (from + i) % n;
-        if (lower(rows_->shown[row]).find(what) != std::string::npos)
+        if (ascii_lower(rows_->shown[row]).find(what) != std::string::npos)
         {
             list_->select({row});
             list_->set_current(row);

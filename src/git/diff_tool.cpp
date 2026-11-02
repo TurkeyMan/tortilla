@@ -6,6 +6,7 @@
 #include "git/tool_discovery.h"
 #include "settings.h"
 #include "util/programs.h"
+#include "util/strings.h"
 
 #include <rapport/sys.h>
 
@@ -165,12 +166,6 @@ std::string quoted(const std::string& s)
     return out + "\"";
 }
 
-void replace_all(std::string& s, const std::string& from, const std::string& to)
-{
-    for (size_t at = s.find(from); at != std::string::npos; at = s.find(from, at + to.size()))
-        s.replace(at, from.size(), to);
-}
-
 }  // namespace
 
 std::string expand_placeholders(const std::string& command, const std::string& base_name,
@@ -197,9 +192,8 @@ std::string expand_placeholders(const std::string& command, const std::string& b
 std::string empty_file()
 {
     std::error_code ec;
-    const std::filesystem::path dir = std::filesystem::temp_directory_path(ec) / "tortilla";
-    if (ec) return {};
-    std::filesystem::create_directories(dir, ec);
+    const std::filesystem::path dir = tortilla_temp_dir();
+    if (dir.empty()) return {};
     const std::filesystem::path file = dir / "empty";
     if (!std::filesystem::exists(file, ec) || std::filesystem::file_size(file, ec) != 0)
         std::ofstream(file, std::ios::binary | std::ios::trunc);
