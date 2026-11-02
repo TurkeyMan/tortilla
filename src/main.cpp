@@ -321,6 +321,11 @@ int main(int argc, char** argv)
 
     // Light or dark as Settings says, from the first window.
     opts.look.color_scheme = tortilla::appearance();
+    // Under libadwaita (GNOME): its message boxes, and settings groups that
+    // map cleanly as boxed lists. Header bars in dialogs wait until each
+    // dialog's buttons have been looked at in one.
+    opts.look.alert_dialogs = true;
+    opts.look.boxed_lists = true;
     auto ui = rap::ui::load(argc, argv, opts);
     if (!ui)
     {
