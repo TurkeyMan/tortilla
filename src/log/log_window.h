@@ -57,8 +57,34 @@ private:
     void show_commit(size_t row);
     void update_status();
     void update_ref_button();
-    // Where the walk starts; the All Branches box follows [spec 1.9.1].
+    // Where the walk starts [spec 1.9.1]: head (with `rev`, from there) is
+    // the current branch preset, all the All branches one, local the Local.
     void set_walk(walk_refs refs, std::string rev = {});
+
+    // What the log shows: the Show menu (the drop-down top left). Its
+    // preset, pins, hide patterns and toggles (branch_filter.h), per
+    // repository: the preset and toggles by working tree, the pins and
+    // hide patterns by the repository's common directory, shared by its
+    // worktrees.
+    branch_filter show_;
+    // The preset before Pick... chose a set for once: what's saved.
+    std::optional<show_preset> before_pick_;
+    bool prs_known_ = false;    // the pull request watch has answered
+    bool pins_custom_ = false;  // the user changed the pins: saved, not the defaults
+    void set_show(show_preset);
+    // The filter, and what the forge knows, to the model for the next load.
+    void apply_branches();
+    void save_branches();
+    void restore_branches();
+    std::string branches_key(const char* what, bool shared) const;
+    // "Pull requests + 2 pinned · tips only", for the status bar.
+    std::string show_summary() const;
+    void set_pinned(const ref&, bool pinned);
+    void hide_branch(const ref&);
+    void pick_branches();
+    void edit_pins_and_hidden();
+    // A branch checked out in another worktree: a log of that worktree.
+    void open_worktree(const std::string& path);
     void schedule_filter();
     void apply_filter();
     void jump(bool up);
@@ -101,6 +127,7 @@ private:
     void open_settings(settings_page);
     std::string title_text() const;
     bool path_limited() const;
+    std::string path_text(size_t limit) const;
     std::string repo_location() const;
     void update_walk_button();
     bool one_file() const;
@@ -165,7 +192,10 @@ private:
 
     rap::menu walk_menu();
     rap::menu view_menu();
-    rap::menu ref_menu();
+    // The Show menu: presets, toggles, pins and hidden, labels, and the
+    // revision to start from (start_menu).
+    rap::menu show_menu();
+    rap::menu start_menu();
     rap::menu filter_menu();
     rap::menu header_menu();
     std::string filter_cue() const;
@@ -199,12 +229,11 @@ private:
     rap::text_view* details_ = nullptr;
     rap::canvas* avatar_canvas_ = nullptr;
     rap::label* status_ = nullptr;
-    rap::check* all_branches_ = nullptr;
-    rap::check* whole_project_ = nullptr;
+    rap::check* only_path_ = nullptr;
     rap::entry* path_filter_ = nullptr;
-    // All Branches (or basic/local refs) as chosen, while following a file's
-    // renames walks from HEAD instead: restored after, and what's saved.
-    std::optional<walk_refs> refs_before_follow_;
+    // The preset chosen, while following a file's renames walks from HEAD
+    // instead: restored after, and what's saved.
+    std::optional<show_preset> refs_before_follow_;
     rap::button* statistics_ = nullptr;
     rap::menu_button* walk_ = nullptr;
     rap::menu_button* view_ = nullptr;

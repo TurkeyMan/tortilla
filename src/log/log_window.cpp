@@ -121,10 +121,16 @@ log_window::open(rap::ui& ui, const std::string& path, bool all_branches, bool o
     std::unique_ptr<log_window> w(new log_window(ui, std::move(*repo), path));
     w->build();
     if (all_branches) w->set_walk(walk_refs::all);
+    // Before the first load: it knows the forge remotes, and so whether
+    // there are pull requests to wait for.
+    w->pr_watch_ = std::make_unique<pr_watch>(ui, w->repo_location(),
+                                              [p = w.get()]
+                                              {
+                                                  p->prs_known_ = true;
+                                                  p->update_pull_requests();
+                                              });
     w->reload();
     w->watch_repository();
-    w->pr_watch_ = std::make_unique<pr_watch>(ui, w->repo_location(),
-                                              [p = w.get()] { p->update_pull_requests(); });
     warn_if_lfs_missing(ui, w->window_.get(), w->repo_.workdir());
     return w;
 }
@@ -180,7 +186,27 @@ std::string log_window::repo_location() const
 
 bool log_window::path_limited() const
 {
-    return !rel_path_.empty() && !(whole_project_ && whole_project_->checked());
+    return !rel_path_.empty() && (!only_path_ || only_path_->checked());
+}
+
+// The log's path, a folder's with a "/" after it; elided in the middle past
+// `limit` characters (0: never).
+std::string log_window::path_text(size_t limit) const
+{
+    std::string text = rel_path_;
+    std::error_code ec;
+    if (std::filesystem::is_directory(
+            rap::sys::path_from_utf8(repo_.workdir()) / rap::sys::path_from_utf8(rel_path_), ec))
+        text += '/';
+    if (limit && text.size() > limit)
+    {
+        // Whole UTF-8 characters either side of the ellipsis.
+        size_t head = limit / 2 - 1, tail = text.size() - (limit - head - 1);
+        while (head && (text[head] & 0xC0) == 0x80) --head;
+        while (tail < text.size() && (text[tail] & 0xC0) == 0x80) ++tail;
+        text = text.substr(0, head) + "…" + text.substr(tail);
+    }
+    return text;
 }
 
 void log_window::build()
@@ -197,7 +223,7 @@ void log_window::build()
                 hbox{
                     menu_button{"HEAD"}
                         .bind(ref_button_)
-                        .on_menu([this] { return ref_menu(); })
+                        .on_menu([this] { return show_menu(); })
                         .width(22_ch),
                     label{_("From:")},
                     date_picker{}.bind(from_).on_changed([this](a::date) { dates_changed(); }),
@@ -293,28 +319,22 @@ void log_window::build()
                 label{}.selectable().ellipsize().bind(status_),
                 hbox{
                     vbox{
-                        // Per repository, as in TortoiseGit [spec 1.9.7]; only
-                        // with a path to leave out.
-                        check{_("Show _Whole Project"),
-                              settings::get().value("log.wholeProject." + repo_.workdir()) == "1"}
-                            .bind(whole_project_)
-                            .enabled(!rel_path_.empty())
+                        // TortoiseGit's Show Whole Project the other way up, to
+                        // say what's in effect: ticked, the history of the
+                        // path only. Per repository, saved as TortoiseGit's
+                        // [spec 1.9.7]; only with a path to leave out.
+                        check{rap::i18n::format(_("_Only changes to {0}"), path_text(40)),
+                              settings::get().value("log.wholeProject." + repo_.workdir()) != "1"}
+                            .bind(only_path_)
+                            .visible(!rel_path_.empty())
+                            .tooltip(path_text(0))
                             .on_toggled(
-                                [this](bool on)
+                                [this](bool only)
                                 {
                                     settings::get().set("log.wholeProject." + repo_.workdir(),
-                                                        on ? "1" : "0");
+                                                        only ? "0" : "1");
                                     window_->set_title(title_text());
                                     update_file_view();  // nothing is unrelated without a path
-                                    reload();
-                                }),
-                        check{_("_All Branches")}
-                            .bind(all_branches_)
-                            .on_toggled(
-                                [this](bool)
-                                {
-                                    set_walk(all_branches_->checked() ? walk_refs::all
-                                                                      : walk_refs::head);
                                     reload();
                                 }),
                     },
@@ -436,15 +456,10 @@ void log_window::save_layout()
         visible += commit_list_->column_visible(i) ? '1' : '0';
     st.set("log.columns.visible", visible);
 
-    // Options. All Branches is per repository, as in TortoiseGit [spec
-    // 1.9.7]; the rest apply everywhere.
+    // Options. What's shown is per repository, as All Branches is in
+    // TortoiseGit [spec 1.9.7]; the rest apply everywhere.
     auto flag = [](bool b) { return std::string(b ? "1" : "0"); };
-    // "1" for all; basic and local refs (the box indeterminate) by name.
-    const walk_refs refs = refs_before_follow_.value_or(walk_options_.refs);
-    st.set("log.allBranches." + repo_.workdir(), refs == walk_refs::all     ? "1"
-                                                 : refs == walk_refs::basic ? "basic"
-                                                 : refs == walk_refs::local ? "local"
-                                                                            : "0");
+    save_branches();
     std::string history;
     for (const std::string& r : ref_history_) history += (history.empty() ? "" : " ") + r;
     st.set("log.refHistory." + repo_.workdir(), history);
@@ -502,11 +517,7 @@ void log_window::restore_layout()
         if (space > at) ref_history_.push_back(history.substr(at, space - at));
         at = space + 1;
     }
-    const std::string refs = st.value("log.allBranches." + repo_.workdir());
-    set_walk(refs == "1" ? walk_refs::all
-             : refs == "basic" ? walk_refs::basic
-             : refs == "local" ? walk_refs::local
-                               : walk_refs::head);
+    restore_branches();
     walk_options_.first_parent = flag("log.walk.firstParent", false);
     walk_options_.no_merges = flag("log.walk.noMerges", false);
     walk_options_.full_history = flag("log.walk.fullHistory", false);
@@ -618,7 +629,7 @@ void log_window::reload()
     view_->set_visible(false);
     progress_->set_visible(true);
     pulse_timer_ = ui_.timer(100, true, [this] { progress_->pulse(); });
-    status_->set_text(_("Loading…"));
+    status_->set_text(show_summary() + " — " + _("Loading…"));
 
     // A ref picked to start from that has since gone: back to HEAD.
     if (!walk_options_.rev.empty() &&
@@ -633,6 +644,7 @@ void log_window::reload()
     opts.until = until_;
     if (path_limited()) opts.paths = {rel_path_};
     opts.follow = walk_options_.follow && one_file();
+    apply_branches();
     log_.load(repo_location(), opts, [this](const std::string& e) { loaded(e); });
     if (!filter_.text.empty()) log_.set_filter(filter_);
 }
@@ -681,6 +693,16 @@ void log_window::update_pull_requests()
     std::unordered_map<std::string, pull_request> prs;
     for (const auto& [name, p] : pr_heads_) prs.emplace(name, p.pr);
     log_.set_pull_requests(std::move(prs));
+
+    // The pull requests' branches changed: walked again if they're on show.
+    const pr_branches& before = log_.branches().prs;
+    const pr_branches now = pull_request_branches(pr_heads_, pr_watch_->pull_requests(),
+                                                  prs_known_ || pr_watch_->remotes().empty());
+    const bool uses =
+        show_.preset == show_preset::pull_requests || show_.preset == show_preset::mine;
+    if (uses && !log_.loading() &&
+        (now.known != before.known || now.all != before.all || now.mine != before.mine))
+        reload();
 }
 
 const open_pr* log_window::pull_request_of(const ref& r) const
@@ -910,7 +932,8 @@ void log_window::update_status()
             _("{0}; line: {1}(+) {2}(-) files: modified = {3} added = {4} deleted = {5} replaced = {6}"), s,
             added, removed, mod, add, del, ren);
     }
-    status_->set_text(s);
+    // What's applied first, so a filtered log isn't taken for the whole.
+    status_->set_text(show_summary() + " — " + s);
 }
 
 // The ref selector shows the current ref, or a mode [spec 1.9.1].
@@ -941,30 +964,172 @@ void log_window::select_commit(const std::string& rev)
 
 void log_window::set_walk(walk_refs refs, std::string rev)
 {
-    walk_options_.refs = refs;
     if (!rev.empty())
     {
         std::erase(ref_history_, rev);
         ref_history_.insert(ref_history_.begin(), rev);
         if (ref_history_.size() > 5) ref_history_.resize(5);
     }
+    set_show(refs == walk_refs::head    ? show_preset::current
+             : refs == walk_refs::local ? show_preset::local
+                                        : show_preset::all);
     walk_options_.rev = std::move(rev);
-    // All checks the box; basic or local refs make it indeterminate.
-    all_branches_->set_state(refs == walk_refs::all    ? rap::check_state::checked
-                             : refs == walk_refs::head ? rap::check_state::unchecked
-                                                       : rap::check_state::indeterminate);
     update_ref_button();
+}
+
+void log_window::set_show(show_preset preset)
+{
+    if (preset == show_preset::picked)
+    {
+        if (show_.preset != show_preset::picked) before_pick_ = show_.preset;
+    }
+    else
+        before_pick_.reset();
+    show_.preset = preset;
+    // The model walks the preset's refs; the window's own walk is HEAD's,
+    // or the ref picked to start from.
+    walk_options_.refs = walk_refs::head;
+    walk_options_.rev.clear();
+    update_ref_button();
+}
+
+std::string log_window::branches_key(const char* what, bool shared) const
+{
+    return std::string("log.") + what + "." + (shared ? repo_.common_dir() : repo_.workdir());
+}
+
+namespace
+{
+
+// Ref names and hide patterns have no spaces.
+std::vector<std::string> split_words(std::string_view text)
+{
+    std::vector<std::string> out;
+    for (size_t at = 0; at < text.size();)
+    {
+        size_t space = text.find(' ', at);
+        if (space == std::string_view::npos) space = text.size();
+        if (space > at) out.emplace_back(text.substr(at, space - at));
+        at = space + 1;
+    }
+    return out;
+}
+
+std::string join_words(const std::vector<std::string>& words)
+{
+    std::string out;
+    for (const std::string& w : words) out += (out.empty() ? "" : " ") + w;
+    return out;
+}
+
+// Saved for "no pins": a ref's full name starts with refs/ (or is HEAD).
+constexpr std::string_view k_no_pins = "none";
+
+}  // namespace
+
+void log_window::save_branches()
+{
+    settings& st = settings::get();
+    const show_preset preset = refs_before_follow_.value_or(before_pick_.value_or(show_.preset));
+    st.set(branches_key("show", false), std::string(preset_key(preset)));
+    st.set(branches_key("tipsOnly", false), show_.tips_only ? "1" : "0");
+    st.set(branches_key("unmerged", false), show_.unmerged ? "1" : "0");
+    if (pins_custom_)
+        st.set(branches_key("pins", true),
+               show_.pins.empty() ? std::string(k_no_pins) : join_words(show_.pins));
+    st.set(branches_key("hidden", true), join_words(show_.hidden));
+}
+
+void log_window::restore_branches()
+{
+    settings& st = settings::get();
+    std::string preset = st.value(branches_key("show", false));
+    if (preset.empty())
+    {
+        // Before the Show menu: the All Branches box, "1" checked, "basic"
+        // or "local" for the ref selector's modes.
+        const std::string all = st.value("log.allBranches." + repo_.workdir());
+        preset = all == "1" || all == "basic" ? "all" : all == "local" ? "local" : "current";
+    }
+    show_preset p = preset_from_key(preset);
+    if (p == show_preset::picked) p = show_preset::current;  // a set picked is for once
+    set_show(p);
+    show_.tips_only = st.value(branches_key("tipsOnly", false)) == "1";
+    show_.unmerged = st.value(branches_key("unmerged", false)) == "1";
+    const std::string pins = st.value(branches_key("pins", true));
+    pins_custom_ = !pins.empty();
+    show_.pins = pins == k_no_pins ? std::vector<std::string>{} : split_words(pins);
+    show_.hidden = split_words(st.value(branches_key("hidden", true)));
+}
+
+void log_window::apply_branches()
+{
+    branch_request r;
+    r.filter = show_;
+    // Until the user changes them: HEAD and each remote's default branch,
+    // as they are now.
+    if (!pins_custom_) r.filter.pins = show_.pins = default_pins(repo_);
+    if (pr_watch_)
+    {
+        r.prs = pull_request_branches(pr_heads_, pr_watch_->pull_requests(),
+                                      prs_known_ || pr_watch_->remotes().empty());
+        r.remotes = pr_watch_->remotes();
+    }
+    log_.set_branches(std::move(r));
+}
+
+std::string log_window::show_summary() const
+{
+    const branch_outcome& o = log_.outcome();
+    std::string s;
+    switch (show_.preset)
+    {
+    case show_preset::current:
+        s = walk_options_.rev.empty() ? std::string(_("Current branch"))
+                                      : rap::i18n::format(_("From {0}"), walk_options_.rev);
+        break;
+    case show_preset::all: s = _("All branches"); break;
+    case show_preset::local: s = _("Local branches"); break;
+    case show_preset::pull_requests:
+        s = o.waiting ? _("Pull requests (waiting for the forge: the pins only)")
+            : o.none  ? _("Pull requests (none open: the pins only)")
+                      : _("Pull requests");
+        break;
+    case show_preset::mine:
+        s = o.none ? _("My branches (none found: the pins only)") : _("My branches");
+        break;
+    case show_preset::picked:
+        s = rap::i18n::format(N_("{0} branch picked", "{0} branches picked", show_.picked.size()),
+                              show_.picked.size());
+        break;
+    }
+    if (o.pins_added)
+        s += rap::i18n::format(N_(" + {0} pinned", " + {0} pinned", o.pins_added), o.pins_added);
+    if (show_.tips_only) s += std::string(" · ") + _("tips only");
+    if (show_.unmerged)
+        s += " · " + (o.base.empty() ? std::string(_("nothing to call merged"))
+                                     : rap::i18n::format(_("not merged into {0}"), o.base));
+    if (o.hidden)
+        s += " · " + rap::i18n::format(N_("{0} hidden", "{0} hidden", o.hidden), o.hidden);
+    if (path_limited()) s = rap::i18n::format(_("Only {0}"), path_text(40)) + " · " + s;
+    return s;
 }
 
 void log_window::update_ref_button()
 {
     std::string text, full;
-    switch (walk_options_.refs)
+    switch (show_.preset)
     {
-    case walk_refs::all: text = _("<All Branches>"); break;
-    case walk_refs::basic: text = _("<Basic Refs>"); break;
-    case walk_refs::local: text = _("<Local Branches>"); break;
-    case walk_refs::head:
+    case show_preset::all: text = _("All branches"); break;
+    case show_preset::local: text = _("Local branches"); break;
+    case show_preset::pull_requests: text = _("Pull requests"); break;
+    case show_preset::mine: text = _("My branches"); break;
+    case show_preset::picked:
+        text = rap::i18n::format(N_("{0} branch", "{0} branches", show_.picked.size()),
+                                 show_.picked.size());
+        for (const std::string& p : show_.picked) full += (full.empty() ? "" : "\n") + p;
+        break;
+    case show_preset::current:
         if (!walk_options_.rev.empty())
         {
             full = walk_options_.rev;
@@ -988,28 +1153,84 @@ void log_window::update_ref_button()
     ref_button_->set_tooltip(full.empty() ? text : full);
 }
 
-// TortoiseGit's right-click menu [spec 1.9.1], with the branches and tags
-// to start from in submenus as well.
-// TODO: TortoiseGit's left click opens Browse References straight away.
-rap::menu log_window::ref_menu()
+// What the log shows: a preset, two toggles that go with any of them, the
+// pins and hide patterns, which labels are drawn, and (TortoiseGit's ref
+// menu [spec 1.9.1]) a revision to start from instead.
+rap::menu log_window::show_menu()
 {
-    const std::string head = repo_.head_name();
-    const bool at_head = walk_options_.refs == walk_refs::head && walk_options_.rev.empty();
-    auto pick = [this](walk_refs refs, std::string rev = {})
+    const bool following = walk_options_.follow && one_file();
+    auto preset = [&](std::string label, show_preset p, bool checked)
     {
-        return [this, refs, rev]
+        return rap::menu_item{.label = std::move(label),
+                              .action =
+                                  [this, p]
+                              {
+                                  set_show(p);
+                                  reload();
+                              },
+                              .enabled = !following || p == show_preset::current,
+                              .checked = checked,
+                              .radio = true};
+    };
+    auto flip = [this](bool branch_filter::* field)
+    {
+        return [this, field]
         {
-            set_walk(refs, rev);
+            show_.*field = !(show_.*field);
             reload();
         };
     };
-    auto mode = [&](std::string label, walk_refs refs)
+    auto label = [this](const char* text, unsigned bit)
     {
-        return rap::menu_item{.label = std::move(label),
-                              .action = pick(refs),
-                              .checked = walk_options_.refs == refs,
-                              .radio = true};
+        return toggle(text, log_.labels() & bit,
+                      [this, bit] { log_.set_labels(log_.labels() ^ bit); });
     };
+    const bool at_head = show_.preset == show_preset::current && walk_options_.rev.empty();
+    return {
+        preset(_("_Current branch"), show_preset::current, at_head),
+        preset(_("_All branches"), show_preset::all, show_.preset == show_preset::all),
+        preset(_("_Local branches"), show_preset::local, show_.preset == show_preset::local),
+        preset(_("_Pull requests"), show_preset::pull_requests,
+               show_.preset == show_preset::pull_requests),
+        preset(_("_My branches"), show_preset::mine, show_.preset == show_preset::mine),
+        {.label = _("P_ick..."),
+         .action = [this] { pick_branches(); },
+         .enabled = !following,
+         .checked = show_.preset == show_preset::picked,
+         .radio = true},
+        rap::menu_item::separator(),
+        toggle(_("Branch _tips only"), show_.tips_only, flip(&branch_filter::tips_only),
+               !following),
+        toggle(_("Only what's not _merged"), show_.unmerged, flip(&branch_filter::unmerged),
+               !following),
+        rap::menu_item::separator(),
+        {.label = _("Pins and _hidden..."), .action = [this] { edit_pins_and_hidden(); }},
+        {.label = _("La_bels"),
+         .children = {label(_("_Tags"), label_tags), label(_("_Local branches"), label_local),
+                      label(_("_Remote branches"), label_remote),
+                      label(_("Other refs"), label_other)}},
+        rap::menu_item::separator(),
+        {.label = _("_Start from"), .children = start_menu()},
+    };
+}
+
+// One revision to start from, as TortoiseGit's ref menu has them [spec
+// 1.9.1], the branches and tags in submenus.
+// TODO: TortoiseGit's left click opens Browse References straight away.
+rap::menu log_window::start_menu()
+{
+    const std::string head = repo_.head_name();
+    const bool at_head = show_.preset == show_preset::current && walk_options_.rev.empty();
+    auto pick = [this](std::string rev = {})
+    {
+        return [this, rev]
+        {
+            set_walk(walk_refs::head, rev);
+            reload();
+        };
+    };
+    auto from = [&](const std::string& rev)
+    { return show_.preset == show_preset::current && walk_options_.rev == rev; };
     // In process: this menu opens on a click (git would start twice).
     const bool fetch_head = repo_.resolve("FETCH_HEAD").has_value();
     rap::menu out{
@@ -1029,17 +1250,14 @@ rap::menu log_window::ref_menu()
                       });
          }},
         {.label = head == "HEAD" ? "HEAD" : "HEAD -> \"" + menu_text(head) + "\"",
-         .action = pick(walk_refs::head),
+         .action = pick(),
          .checked = at_head,
          .radio = true},
         {.label = "FETCH__HEAD",
-         .action = pick(walk_refs::head, "FETCH_HEAD"),
+         .action = pick("FETCH_HEAD"),
          .enabled = fetch_head,
-         .checked = walk_options_.refs == walk_refs::head && walk_options_.rev == "FETCH_HEAD",
+         .checked = from("FETCH_HEAD"),
          .radio = true},
-        mode(_("All"), walk_refs::all),
-        mode(_("All basic refs"), walk_refs::basic),
-        mode(_("All local branches"), walk_refs::local),
     };
 
     // Each branch and tag, by kind, sorted by name.
@@ -1056,9 +1274,8 @@ rap::menu log_window::ref_menu()
     {
         if (r.full_name.ends_with("/HEAD")) continue;  // origin/HEAD: the default branch's alias
         rap::menu_item item{.label = menu_text(r.name),
-                            .action = pick(walk_refs::head, r.full_name),
-                            .checked = walk_options_.refs == walk_refs::head &&
-                                       walk_options_.rev == r.full_name,
+                            .action = pick(r.full_name),
+                            .checked = from(r.full_name),
                             .radio = true};
         (r.kind == ref_kind::local_branch ? local : r.kind == ref_kind::remote_branch ? remote : tags)
             .push_back(std::move(item));
@@ -1071,8 +1288,8 @@ rap::menu log_window::ref_menu()
     // Recently picked, as TortoiseGit lists them under a separator.
     if (!ref_history_.empty()) out.push_back(rap::menu_item::separator());
     for (const std::string& r : ref_history_)
-        out.push_back({.label = menu_text(r.size() > 150 ? r.substr(0, 150) : r),
-                       .action = pick(walk_refs::head, r)});
+        out.push_back(
+            {.label = menu_text(r.size() > 150 ? r.substr(0, 150) : r), .action = pick(r)});
     return out;
 }
 
@@ -1194,16 +1411,16 @@ void log_window::update_walk_button()
 }
 
 // Following renames, on by default, is for one file's log walked from HEAD
-// [spec 1.9.4]: other refs are set aside meanwhile, and All Branches is off.
+// [spec 1.9.4]: another preset is set aside meanwhile (the Show menu greys
+// them), and so are the pins.
 void log_window::apply_follow()
 {
     const bool following = walk_options_.follow && one_file();
-    if (following && walk_options_.refs != walk_refs::head)
+    if (following && show_.preset != show_preset::current)
     {
-        refs_before_follow_ = walk_options_.refs;
-        set_walk(walk_refs::head);
+        refs_before_follow_ = before_pick_.value_or(show_.preset);
+        set_show(show_preset::current);
     }
-    all_branches_->set_enabled(!following);
 }
 
 // A log of one file (not a folder), which renames can be followed for.
@@ -1239,7 +1456,7 @@ rap::menu log_window::walk_menu()
                 walk_options_.follow = !following;
                 if (!walk_options_.follow && refs_before_follow_)
                 {
-                    set_walk(*refs_before_follow_);
+                    set_show(*refs_before_follow_);
                     refs_before_follow_.reset();
                 }
                 update_walk_button();
@@ -1252,19 +1469,15 @@ rap::menu log_window::walk_menu()
                flip(&walk_options::full_history), path_limited()),
         rap::menu_item::separator(),
         toggle(_("_Compressed Graph"), false, {}, false),
-        toggle(_("Show la_beled commits only"), false, {}, false),
+        // (TortoiseGit's Show labeled commits only is the Show menu's Branch
+        // tips only.)
     };
 }
 
 // View [spec 1.9.5]. Not TortoiseGit's Action Icons (Settings > General
-// has them) or Gravatar (always shown).
+// has them) or Gravatar (always shown); its Labels are the Show menu's.
 rap::menu log_window::view_menu()
 {
-    auto label = [this](const char* text, unsigned bit)
-    {
-        return toggle(text, log_.labels() & bit,
-                      [this, bit] { log_.set_labels(log_.labels() ^ bit); });
-    };
     // Hide and Gray exclude each other, and both can be off: choosing the
     // one that's on turns it off.
     auto unrelated = [this](const char* text, file_view::unrelated_mode mode)
@@ -1286,10 +1499,6 @@ rap::menu log_window::view_menu()
                    show_unversioned_ = !show_unversioned_;
                    selection_changed();
                }),
-        rap::menu_item::separator(),
-        {.label = _("_Labels"),
-         .children = {label(_("_Tags"), label_tags), label(_("_Local branches"), label_local),
-                      label(_("_Remote branches"), label_remote), label(_("Other refs"), label_other)}},
         rap::menu_item::separator(),
         toggle(_("View Patch"), false, {}, false),
         rap::menu_item::separator(),

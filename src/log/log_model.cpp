@@ -5,6 +5,8 @@
 #include "log/ref_labels.h"
 #include "util/calendar.h"
 
+#include <rapport/sys.h>
+
 #include <algorithm>
 #include <cctype>
 #include <chrono>
@@ -284,6 +286,8 @@ void log_model::load(const std::string& path, const walk_options& opts,
     walk_refs_ = opts.refs;
     walk_rev_ = opts.rev;
     walk_paths_ = opts.paths;
+    walked_names_.clear();
+    outcome_ = {};
 
     auto repo = repo::open(path);
     if (!repo)
@@ -303,7 +307,8 @@ void log_model::load(const std::string& path, const walk_options& opts,
     auto generation = generation_;
     start_actions(gen);
     worker_ = std::jthread(
-        [this, path, opts, done, gen, generation](std::stop_token stop)
+        [this, path, opts, done, gen, generation, request = branches_, labels = labels_,
+         mine = mine_cache_](std::stop_token stop)
         {
             // Everything the UI thread touches arrives through post(); the
             // generation check drops stale batches after a reload or cancel.
@@ -336,14 +341,125 @@ void log_model::load(const std::string& path, const walk_options& opts,
                     });
             };
             walk_options walk_opts = opts;
-            if (opts.refs != walk_refs::head)
+            const branch_filter& filter = request.filter;
+            // Following one file's renames is a line from HEAD: no pins.
+            const bool following = opts.follow && opts.paths.size() == 1;
+            const bool refs_first =
+                opts.refs != walk_refs::head ||
+                (!following && (filter.preset != show_preset::current || filter.tips_only));
+            branch_outcome outcome;
+            const std::optional<oid> head = repo->head_id();
+            // The leading remote's main, for Only what's not merged and for
+            // My branches' own commits; asked once.
+            std::optional<std::string> base_name;
+            auto base = [&]() -> const std::string&
+            {
+                if (!base_name)
+                {
+                    std::vector<std::string> leading;
+                    for (const forge_remote& r : leading_remotes(path, request.remotes))
+                        leading.push_back(r.name);
+                    base_name = merge_base_branch(*repo, filter.pins, leading);
+                }
+                return *base_name;
+            };
+            if (refs_first)
             {
                 ref_map refs = repo->refs();
-                for (auto& [tip, labels] : refs)
-                    if (std::ranges::any_of(labels, [&](const ref& r) { return walks_ref(opts.refs, r.full_name); }))
-                        walk_opts.tips.push_back(tip);
+                if (filter.preset != show_preset::current && !following)
+                {
+                    std::unique_ptr<identity> me;
+                    std::optional<oid> mine_base;
+                    if (filter.preset == show_preset::mine)
+                    {
+                        me = std::make_unique<identity>(*repo, accounts());
+                        if (!base().empty()) mine_base = repo->resolve(base());
+                    }
+                    // Whose a branch is, by its tip and the base: kept across
+                    // loads, as walking each branch's own commits adds up.
+                    auto is_mine = [&](const ref& r, const oid& id)
+                    {
+                        const std::string key = r.full_name + ' ' + id.hex() + ' ' +
+                                                (mine_base ? mine_base->hex() : std::string());
+                        {
+                            std::lock_guard lock(mine->mutex);
+                            if (auto it = mine->known.find(key); it != mine->known.end())
+                                return it->second;
+                        }
+                        const bool yes = branch_is_mine(*repo, r, id, mine_base, *me);
+                        std::lock_guard lock(mine->mutex);
+                        mine->known.emplace(key, yes);
+                        return yes;
+                    };
+                    branch_choice choice =
+                        choose_branches(filter, refs, head, request.prs, is_mine);
+                    // All is git log --all (the stash, worktrees' HEADs...),
+                    // less what's hidden.
+                    walk_opts.refs =
+                        filter.preset == show_preset::all ? walk_refs::all : walk_refs::tips;
+                    walk_opts.tips = std::move(choice.shown);
+                    walk_opts.sparse_tips = std::move(choice.pinned);
+                    outcome = {.pins_added = choice.pins_added,
+                               .hidden = choice.hidden,
+                               .waiting = choice.waiting,
+                               .none = choice.none};
+                    auto names =
+                        std::make_shared<std::vector<std::string>>(std::move(choice.shown_names));
+                    deliver([this, names] { walked_names_ = {names->begin(), names->end()}; });
+                }
+                else if (opts.refs != walk_refs::head)
+                    for (auto& [tip, labels] : refs)
+                        if (std::ranges::any_of(labels, [&](const ref& r)
+                                                { return walks_ref(opts.refs, r.full_name); }))
+                            walk_opts.tips.push_back(tip);
+                if (filter.tips_only && !following)
+                {
+                    // The commits wearing a label on show.
+                    auto shown = [&](const ref& r)
+                    {
+                        const unsigned kind = r.kind == ref_kind::tag             ? label_tags
+                                              : r.kind == ref_kind::local_branch  ? label_local
+                                              : r.kind == ref_kind::remote_branch ? label_remote
+                                                                                  : label_other;
+                        return (labels & kind) &&
+                               (is_pinned(r, filter.pins) || !hidden_by(r, filter.hidden));
+                    };
+                    for (auto& [id, refs_here] : refs)
+                        if (std::ranges::any_of(refs_here, shown))
+                            walk_opts.decorated.push_back(id);
+                    walk_opts.tips_only = true;
+                }
                 deliver_refs(std::move(refs));
             }
+            if (filter.preset == show_preset::current && !following)
+            {
+                // The pins that aren't what's checked out, shown sparsely.
+                // (The walk's start, a ref picked, is counted as HEAD.)
+                for (const std::string& p : filter.pins)
+                {
+                    if (p == "HEAD") continue;
+                    const std::optional<oid> id = repo->resolve(p);
+                    if (!id || id == head) continue;
+                    ++outcome.pins_added;
+                    if (std::ranges::find(walk_opts.sparse_tips, *id) ==
+                        walk_opts.sparse_tips.end())
+                        walk_opts.sparse_tips.push_back(*id);
+                }
+            }
+            if (filter.unmerged && !following)
+            {
+                const std::string& b = base();
+                if (const auto id = b.empty() ? std::nullopt : repo->resolve(b))
+                {
+                    walk_opts.unmerged_into = *id;
+                    outcome.base = b.substr(b.starts_with("refs/remotes/") ? 13
+                                            : b.starts_with("refs/heads/") ? 11
+                                                                           : 0);
+                }
+                else
+                    outcome.no_base = true;
+            }
+            deliver([this, outcome] { outcome_ = outcome; });
 
             lane_builder lanes;
             batch batch;
@@ -363,7 +479,7 @@ void log_model::load(const std::string& path, const walk_options& opts,
                                          return !stop.stop_requested();
                                      });
             flush();
-            if (opts.refs == walk_refs::head && !stop.stop_requested()) deliver_refs(repo->refs());
+            if (!refs_first && !stop.stop_requested()) deliver_refs(repo->refs());
             deliver(
                 [this, done, e = result ? std::string() : result.error()]
                 {
@@ -470,8 +586,9 @@ bool log_model::apply_refs(ref_map next)
         for (const oid& id : changed)
         {
             auto it = next.find(id);
-            const bool labelled = it != next.end() && std::ranges::any_of(it->second, [&](const ref& r)
-                                                                          { return walks_ref(walk_refs_, r.full_name); });
+            const bool labelled =
+                it != next.end() &&
+                std::ranges::any_of(it->second, [&](const ref& r) { return walks(r); });
             bool loaded = false;
             for (const tortilla::commit& c : commits_)
                 if (c.id == id)
@@ -486,6 +603,14 @@ bool log_model::apply_refs(ref_map next)
                 reload = true;
         }
     }
+    // A pin moved, or labels came or went with tips only, which keeps the
+    // labelled commits: what's shown changes.
+    const branch_filter& f = branches_.filter;
+    for (const oid& id : changed)
+        for (const ref_map* m : {&refs_, &next})
+            if (auto it = m->find(id); it != m->end())
+                for (const ref& r : it->second)
+                    if ((f.tips_only && !hidden_by(r, f.hidden)) || pinned(r)) reload = true;
     refs_ = std::move(next);
     for (const oid& id : changed)
         if (auto it = row_by_id.find(id); it != row_by_id.end()) notify_changed(it->second, 1);
@@ -526,6 +651,37 @@ std::string log_model::pr_tooltip_at(size_t row, float x) const
     return pr_tooltip(it->second, now);
 }
 
+std::string log_model::tooltip(size_t row, size_t column, rap::point_f at) const
+{
+    if (column != message) return {};
+    if (std::string pr = pr_tooltip_at(row, at.x); !pr.empty()) return pr;
+    const std::optional<ref> r = label_at(row, at.x);
+    if (!r) return {};
+    std::string out;
+    if (!r->worktree.empty())
+        out = rap::i18n::format(
+            _("Checked out in the worktree at {0}"),
+            rap::sys::path_to_utf8(rap::sys::path_from_utf8(r->worktree).make_preferred()));
+    if (pinned(*r)) out += (out.empty() ? "" : " · ") + std::string(_("Pinned: always shown"));
+    return out;
+}
+
+bool log_model::walks(const ref& r) const
+{
+    if (walk_refs_ != walk_refs::tips) return walks_ref(walk_refs_, r.full_name);
+    // A new local branch is walked by the local preset; the others pick
+    // theirs by name.
+    return walked_names_.contains(r.full_name) ||
+           (branches_.filter.preset == show_preset::local && r.kind == ref_kind::local_branch &&
+            !hidden_by(r, branches_.filter.hidden));
+}
+
+void log_model::set_branches(branch_request request)
+{
+    branches_ = std::move(request);
+    notify_changed(0, row_count());  // pins and hidden labels
+}
+
 const tortilla::commit* log_model::commit(size_t row) const
 {
     if (is_working_tree(row)) return nullptr;
@@ -559,6 +715,8 @@ void log_model::set_labels(unsigned mask)
 
 bool log_model::show_label(const ref& r) const
 {
+    // A hidden branch's label too, unless it's pinned.
+    if (!pinned(r) && hidden_by(r, branches_.filter.hidden)) return false;
     switch (r.kind)
     {
     case ref_kind::tag: return labels_ & label_tags;
@@ -925,7 +1083,8 @@ void log_model::paint_message(size_t row, rap::painter& p, const rap::cell_info&
                 if (auto m = pull_requests_.find(r.full_name); m != pull_requests_.end())
                     return mark_of(m->second);
                 return std::nullopt;
-            });
+            },
+            [this](const ref& r) { return pinned(r); });
         if (end > x) x = end + p.measure(" ", subject).w;
     }
 

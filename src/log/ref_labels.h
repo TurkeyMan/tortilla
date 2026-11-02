@@ -51,13 +51,32 @@ enum class mergeable
 void paint_check_mark(rap::painter&, rap::point_f centre, float diameter, check_state,
                       mergeable = mergeable::yes);
 
+// The labels' colours, all in one place [COL:23-54]. A branch checked out
+// in another worktree is like a remote one (it can't be changed from here),
+// so it's pale too; each remote's default branch is a richer remote colour.
+struct label_palette
+{
+    rap::color local{0, 195, 0};
+    rap::color current{200, 0, 0};
+    rap::color worktree{150, 215, 210};
+    rap::color remote{255, 221, 170};
+    rap::color remote_default{255, 196, 120};
+    rap::color tag{255, 255, 0};
+    rap::color stash{128, 128, 128};
+    rap::color other{224, 224, 224};
+};
+inline constexpr label_palette label_colours{};
+rap::color label_colour(const ref&);
+
 // Draws a commit's labels from `x` across a cell `height` tall and returns
 // the x after the last one (`x` itself when nothing was drawn). `show`
 // filters labels (View > Labels); empty shows them all. `boxes`, if given,
-// gets each label's extent.
+// gets each label's extent. A label `pinned` says gets a small pin after
+// its name.
 float paint_ref_labels(rap::painter&, const std::vector<ref>& refs, float x, float height,
                        const std::function<bool(const ref&)>& show = {},
                        std::vector<label_box>* boxes = nullptr,
-                       const std::function<std::optional<pr_mark>(const ref&)>& pr = {});
+                       const std::function<std::optional<pr_mark>(const ref&)>& pr = {},
+                       const std::function<bool(const ref&)>& pinned = {});
 
 }  // namespace tortilla

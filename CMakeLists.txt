@@ -60,6 +60,7 @@ add_library(tortilla_git STATIC
     src/graph/lanes.cpp
     src/log/log_model.cpp
     src/log/ref_labels.cpp
+    src/log/branch_filter.cpp
     src/settings.cpp
     src/rebase/rebase_model.cpp
     src/rebase/rebase_engine.cpp
@@ -102,6 +103,7 @@ add_executable(tortilla
     src/log/reflog_window.cpp
     src/log/worktree_window.cpp
     src/log/bisect_dialog.cpp
+    src/log/show_dialogs.cpp
     src/ui/export_dialog.cpp
     src/changes/changes_view.cpp
     src/changes/changes_window.cpp
@@ -308,6 +310,9 @@ target_link_libraries(tortilla-icon-preview PRIVATE tortilla_git rapport::rappor
 
 add_executable(tortilla-pr-marks-preview tools/pr_marks_preview.cpp)
 target_link_libraries(tortilla-pr-marks-preview PRIVATE tortilla_git rapport::rapport)
+
+add_executable(tortilla-show-dialogs-preview tools/show_dialogs_preview.cpp src/log/show_dialogs.cpp)
+target_link_libraries(tortilla-show-dialogs-preview PRIVATE tortilla_git rapport::rapport)
 
 add_executable(tortilla-rebase-tests tests/rebase_test.cpp)
 target_link_libraries(tortilla-rebase-tests PRIVATE tortilla_git rapport::rapport)

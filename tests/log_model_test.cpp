@@ -1976,6 +1976,235 @@ int main(int argc, char** argv)
               "badge cache: summaries remembered across runs");
     }
 
+    // The Show menu's branch filter: hide patterns and pins.
+    {
+        using tortilla::glob_match;
+        check(glob_match("dependabot/*", "dependabot/npm/x") && glob_match("*", "") &&
+                  glob_match("re?ovate/*-x", "renovate/a-x") &&
+                  !glob_match("dependabot/*", "dependabot") && !glob_match("a*b", "acbd") &&
+                  glob_match("*a*b*", "xxaxxbxx"),
+              "branch filter: glob patterns, * across slashes");
+        const tortilla::ref remote{.name = "origin/dependabot/npm/x",
+                                   .full_name = "refs/remotes/origin/dependabot/npm/x",
+                                   .kind = tortilla::ref_kind::remote_branch};
+        const tortilla::ref tag{.name = "dependabot/v1",
+                                .full_name = "refs/tags/dependabot/v1",
+                                .kind = tortilla::ref_kind::tag};
+        check(tortilla::hidden_by(remote, {"dependabot/*"}) &&
+                  tortilla::hidden_by(remote, {"origin/dependabot/*"}) &&
+                  !tortilla::hidden_by(remote, {"renovate/*"}) && !tortilla::hidden_by(tag, {"*"}),
+              "branch filter: a remote branch hidden with or without its remote; tags never");
+        tortilla::ref current{.name = "topic",
+                              .full_name = "refs/heads/topic",
+                              .kind = tortilla::ref_kind::local_branch,
+                              .current = true};
+        check(tortilla::is_pinned(current, {"HEAD"}) &&
+                  tortilla::is_pinned(remote, {remote.full_name}) &&
+                  !tortilla::is_pinned(remote, {"HEAD"}),
+              "branch filter: pinned by name, or as HEAD");
+        check(tortilla::preset_from_key(tortilla::preset_key(tortilla::show_preset::mine)) ==
+                      tortilla::show_preset::mine &&
+                  tortilla::preset_from_key("nonsense") == tortilla::show_preset::current,
+              "branch filter: presets saved by name");
+    }
+
+    // Presets, pins, My branches, worktree branches, and the tips-only and
+    // not-merged walks, on a repository made for them:
+    //   main: m1 - m2 ------------- M (merge of `merged`)   = origin/main
+    //   theirs: m2 - t1 - t2 (someone else's)
+    //   buried: m2 - b1 (mine) - b2 (someone else's, the tip)
+    //   merged: m2 - x1 (mine), merged into main
+    //   aliased: m2 - a1 (mine under an old address the .mailmap maps)
+    //   fresh: made by me at M, no commits; wt: checked out in a worktree
+    {
+        const std::string dir = std::string(argv[1]) + "/branch-filter";
+        const std::string me = "git -C '" + dir + "' -c user.name=Me -c user.email=me@example.com ";
+        const std::string other =
+            "git -C '" + dir + "' -c user.name=Other -c user.email=other@example.com ";
+        const std::string old_me =
+            "git -C '" + dir + "' -c user.name=Me -c user.email=me@old.example ";
+        sh("git init -q -b main '" + dir + "'");
+        sh("git -C '" + dir + "' config user.email me@example.com");
+        sh("printf 'Me <me@example.com> <me@old.example>\\n' > '" + dir + "/.mailmap'");
+        sh(me + "add .mailmap && " + me + "commit -qm m1 && " + me +
+           "commit -q --allow-empty -m m2");
+        sh(me + "branch theirs && " + me + "branch buried && " + me + "branch merged && " + me +
+           "branch aliased");
+        sh(other + "checkout -q theirs && " + other + "commit -q --allow-empty -m t1 && " + other +
+           "commit -q --allow-empty -m t2");
+        sh(me + "checkout -q buried && " + me + "commit -q --allow-empty -m b1 && " + other +
+           "commit -q --allow-empty -m b2");
+        sh(old_me + "checkout -q aliased && " + old_me + "commit -q --allow-empty -m a1");
+        sh(me + "checkout -q merged && " + me + "commit -q --allow-empty -m x1");
+        sh(me + "checkout -q main && " + me + "merge -q --no-ff merged -m M");
+        sh(me + "branch fresh");
+        sh(me + "remote add up https://example.com/u.git && " + me +
+           "remote add origin https://example.com/o.git");
+        sh(me + "update-ref refs/remotes/origin/main main && " + me +
+           "symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main");
+        sh(me + "update-ref refs/remotes/up/master main~1");
+        sh(me + "worktree add -q -b wt '" + dir + "-wt' main");
+
+        auto r = tortilla::repo::open(dir);
+        check(r.has_value(), "branch filter: the repository opens");
+        if (r)
+        {
+            const auto rev = [&](const char* name) { return *r->resolve(name); };
+            check(
+                tortilla::remote_defaults(*r) ==
+                    std::vector<std::string>{"refs/remotes/origin/main", "refs/remotes/up/master"},
+                "pins: each remote's default, origin's from its HEAD, up's master");
+            check(tortilla::default_pins(*r) == std::vector<std::string>{"HEAD",
+                                                                         "refs/remotes/origin/main",
+                                                                         "refs/remotes/up/master"},
+                  "pins: HEAD and the remotes' defaults by default");
+            check(tortilla::merge_base_branch(*r, {}, {"up"}) == "refs/remotes/up/master" &&
+                      tortilla::merge_base_branch(*r, {}, {}) == "refs/remotes/origin/main",
+                  "not merged: the leading remote's main, else origin's");
+
+            const tortilla::ref_map refs = r->refs();
+            auto find = [&](std::string_view full) -> const tortilla::ref*
+            {
+                for (auto& [id, labels] : refs)
+                    for (const tortilla::ref& x : labels)
+                        if (x.full_name == full) return &x;
+                return nullptr;
+            };
+            const tortilla::ref* wt = find("refs/heads/wt");
+            const tortilla::ref* origin_main = find("refs/remotes/origin/main");
+            const tortilla::ref* fresh = find("refs/heads/fresh");
+            check(wt && wt->worktree.ends_with("branch-filter-wt") && fresh &&
+                      fresh->worktree.empty() && find("refs/heads/main") &&
+                      find("refs/heads/main")->worktree.empty(),
+                  "worktrees: a branch checked out in another worktree says where");
+            check(origin_main && origin_main->remote_default && find("refs/remotes/up/master") &&
+                      find("refs/remotes/up/master")->remote_default,
+                  "labels: each remote's default branch marked");
+
+            // My branches.
+            const tortilla::identity id(
+                *r,
+                {{.kind = tortilla::forge_kind::github, .host = "github.com", .login = "Me-gh"}});
+            check(id.matches("ME@example.com") && id.matches("me@old.example") &&
+                      id.matches("me-gh@users.noreply.github.com") &&
+                      id.matches("123+me-gh@users.noreply.github.com") &&
+                      !id.matches("x+me-gh@users.noreply.github.com") &&
+                      !id.matches("other@example.com"),
+                  "my branches: me by config, mailmap and GitHub noreply addresses");
+            const std::optional<tortilla::oid> base = r->resolve("refs/remotes/origin/main");
+            auto mine = [&](const char* name)
+            {
+                const tortilla::ref* b = find(std::string("refs/heads/") + name);
+                return b && tortilla::branch_is_mine(*r, *b, rev(name), base, id);
+            };
+            check(mine("buried"), "my branches: my commit under someone else's tip");
+            check(!mine("theirs"), "my branches: not someone else's");
+            check(mine("fresh"), "my branches: made here, no commits yet");
+            check(!mine("merged"), "my branches: not once merged");
+            check(mine("aliased"), "my branches: authored under an address the mailmap maps");
+            check(!mine("main"), "my branches: not main itself");
+
+            auto choose =
+                [&](tortilla::branch_filter f, tortilla::pr_branches prs = {.known = true})
+            {
+                return tortilla::choose_branches(
+                    f, refs, r->head_id(), prs,
+                    [&](const tortilla::ref& b, const tortilla::oid& tip)
+                    { return tortilla::branch_is_mine(*r, b, tip, base, id); });
+            };
+            const auto mine_choice =
+                choose({.preset = tortilla::show_preset::mine, .pins = {"HEAD"}});
+            check(mine_choice.shown_names ==
+                      std::vector<std::string>{"refs/heads/aliased", "refs/heads/buried",
+                                               "refs/heads/fresh", "refs/heads/wt"},
+                  "presets: My branches");
+            const auto pulls =
+                choose({.preset = tortilla::show_preset::pull_requests},
+                       {.known = true, .all = {"refs/remotes/origin/main"}, .mine = {}});
+            check(pulls.shown_names == std::vector<std::string>{"refs/remotes/origin/main"} &&
+                      !pulls.waiting,
+                  "presets: pull requests' branches");
+            const auto local = choose({.preset = tortilla::show_preset::local,
+                                       .pins = {"refs/remotes/up/master", "refs/heads/theirs"},
+                                       .hidden = {"the*", "bur*"}});
+            check(std::ranges::find(local.shown_names, "refs/heads/buried") ==
+                          local.shown_names.end() &&
+                      std::ranges::find(local.shown_names, "refs/heads/theirs") !=
+                          local.shown_names.end() &&
+                      std::ranges::find(local.shown_names, "refs/heads/main") !=
+                          local.shown_names.end() &&
+                      local.hidden == 1 && local.pins_added == 1 &&
+                      local.pinned == std::vector{rev("main~1")},
+                  "presets: local, less what's hidden (a pin wins), plus a pin");
+            const auto waiting = choose({.preset = tortilla::show_preset::pull_requests,
+                                         .pins = {"refs/remotes/origin/main"}},
+                                        {.known = false});
+            check(waiting.waiting && waiting.shown == std::vector{rev("main")} &&
+                      waiting.pinned.empty(),
+                  "presets: pull requests before the forge answers, the pins in full");
+            const auto all = choose({.preset = tortilla::show_preset::all, .pins = {"HEAD"}});
+            check(all.pins_added == 0 && all.shown.size() == 6, "presets: all, HEAD in it already");
+
+            auto walk = [&](tortilla::walk_options o)
+            {
+                std::vector<tortilla::commit> out;
+                (void)r->walk(o,
+                              [&](tortilla::commit&& c)
+                              {
+                                  out.push_back(std::move(c));
+                                  return true;
+                              });
+                return out;
+            };
+            auto has = [](const std::vector<tortilla::commit>& cs, const tortilla::oid& id)
+            {
+                return std::ranges::any_of(cs,
+                                           [&](const tortilla::commit& c) { return c.id == id; });
+            };
+            auto get = [](const std::vector<tortilla::commit>& cs, const tortilla::oid& id)
+            { return std::ranges::find(cs, id, &tortilla::commit::id); };
+
+            // Branch tips only: the labelled commits, and where they part
+            // and join. b1 (mine, under b2) and t1 go; m2, where they all
+            // part, stays; b2's parent is m2 now.
+            std::vector<tortilla::oid> labelled;
+            for (auto& [c, labels] : refs) labelled.push_back(c);
+            const auto full = walk({.refs = tortilla::walk_refs::all});
+            const auto tips =
+                walk({.refs = tortilla::walk_refs::all, .tips_only = true, .decorated = labelled});
+            const auto b2 = get(tips, rev("buried"));
+            check(tips.size() < full.size() && !has(tips, rev("buried~1")) &&
+                      !has(tips, rev("theirs~1")) && has(tips, rev("main~1")) && b2 != tips.end() &&
+                      b2->parents == std::vector{rev("main~1")} && has(tips, rev("main")),
+                  "tips only: the labels, the fork between them, parents rewritten");
+
+            // Only what's not merged into main: theirs and buried down to m2,
+            // shown without parents; nothing of main's but that.
+            const auto unmerged = walk({.refs = tortilla::walk_refs::tips,
+                                        .tips = {rev("theirs"), rev("buried")},
+                                        .unmerged_into = rev("main")});
+            const auto m2 = get(unmerged, rev("main~1"));
+            check(unmerged.size() == 5 && m2 != unmerged.end() && m2->parents.empty() &&
+                      !has(unmerged, rev("main~2")),
+                  "not merged: each branch down to its merge base, no further");
+            const auto merged_tip = walk({.refs = tortilla::walk_refs::tips,
+                                          .tips = {rev("merged")},
+                                          .unmerged_into = rev("main")});
+            check(merged_tip.size() == 1 && merged_tip.front().id == rev("merged"),
+                  "not merged: a merged branch is its tip alone");
+
+            // A pin: main's tip on theirs' history, joined where they part.
+            const auto pinned = walk({.rev = "theirs", .sparse_tips = {rev("main")}});
+            const auto main_tip = get(pinned, rev("main"));
+            check(main_tip != pinned.end() && main_tip->parents == std::vector{rev("main~1")} &&
+                      !has(pinned, rev("merged")) && has(pinned, rev("theirs~1")) &&
+                      has(pinned, rev("main~2")),
+                  "pins: a pinned branch's tip, joined to the rest without its own history");
+            const auto pins_only = walk({.refs = tortilla::walk_refs::tips});
+            check(pins_only.empty(), "pins: a tips walk with nothing to walk is empty");
+        }
+    }
+
     std::printf("%s\n", failures ? "FAILED" : "all passed");
     return failures ? 1 : 0;
 }

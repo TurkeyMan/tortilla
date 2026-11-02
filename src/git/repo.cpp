@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstring>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 namespace tortilla
@@ -53,6 +54,107 @@ using owned_commit = owned<git_commit, git_commit_free>;
 using owned_tree = owned<git_tree, git_tree_free>;
 using owned_diff = owned<git_diff, git_diff_free>;
 using owned_patch = owned<git_patch, git_patch_free>;
+
+// Keeps the history `full` reaches as it is and, of the rest, only the
+// `anchors` and the forks and merges between them, as git log
+// --simplify-by-decoration does: each kept commit's parents become the
+// nearest kept ones. A fork is kept where lines reaching different kept
+// commits part, a merge where lines from different ones join; so every
+// commit dropped leads to at most one kept commit each way, which is the
+// one its kept neighbours join through it.
+void simplify_walk(std::vector<commit>& all, const std::vector<oid>& full,
+                   const std::vector<oid>& anchors)
+{
+    const size_t n = all.size();
+    std::unordered_map<oid, size_t, oid_hash> index;
+    for (size_t i = 0; i < n; ++i) index.emplace(all[i].id, i);
+    std::vector<std::vector<size_t>> parents(n), children(n);
+    for (size_t i = 0; i < n; ++i)
+        for (const oid& p : all[i].parents)
+            if (auto it = index.find(p); it != index.end())
+            {
+                parents[i].push_back(it->second);
+                children[it->second].push_back(i);
+            }
+
+    std::vector<char> keep(n, 0);
+    std::vector<size_t> stack;
+    for (const oid& id : full)
+        if (auto it = index.find(id); it != index.end() && !keep[it->second])
+        {
+            keep[it->second] = 1;
+            stack.push_back(it->second);
+        }
+    while (!stack.empty())
+    {
+        const size_t i = stack.back();
+        stack.pop_back();
+        for (size_t p : parents[i])
+            if (!keep[p])
+            {
+                keep[p] = 1;
+                stack.push_back(p);
+            }
+    }
+    for (const oid& id : anchors)
+        if (auto it = index.find(id); it != index.end()) keep[it->second] = 1;
+
+    // Children before parents.
+    std::vector<size_t> order;
+    order.reserve(n);
+    std::vector<size_t> waiting(n);
+    for (size_t i = 0; i < n; ++i)
+        if (!(waiting[i] = children[i].size())) stack.push_back(i);
+    while (!stack.empty())
+    {
+        const size_t i = stack.back();
+        stack.pop_back();
+        order.push_back(i);
+        for (size_t p : parents[i])
+            if (--waiting[p] == 0) stack.push_back(p);
+    }
+
+    constexpr size_t none = SIZE_MAX;
+    // The one kept commit each neighbour leads to, or a second: a fork or
+    // a merge, kept.
+    auto nearest = [&](const std::vector<size_t>& next, const std::vector<size_t>& rep, size_t self)
+    {
+        size_t found = none;
+        for (size_t j : next)
+            if (rep[j] != none)
+            {
+                if (found != none && rep[j] != found) return self;
+                found = rep[j];
+            }
+        return found;
+    };
+    std::vector<size_t> up(n, none), down(n, none);
+    for (size_t i : order)
+    {
+        up[i] = keep[i] ? i : nearest(children[i], up, i);
+        if (up[i] == i) keep[i] = 1;
+    }
+    for (size_t k = order.size(); k-- > 0;)
+    {
+        const size_t i = order[k];
+        down[i] = keep[i] ? i : nearest(parents[i], down, i);
+        if (down[i] == i) keep[i] = 1;
+    }
+
+    std::vector<commit> out;
+    for (size_t i = 0; i < n; ++i)
+    {
+        if (!keep[i]) continue;
+        std::vector<oid> rewritten;
+        for (size_t p : parents[i])
+            if (const size_t to = keep[p] ? p : down[p];
+                to != none && std::ranges::find(rewritten, all[to].id) == rewritten.end())
+                rewritten.push_back(all[to].id);
+        out.push_back(std::move(all[i]));
+        out.back().parents = std::move(rewritten);
+    }
+    all = std::move(out);
+}
 
 }  // namespace
 
@@ -101,6 +203,11 @@ std::string repo::workdir() const
     return w ? w : git_repository_path(repo_);
 }
 
+std::string repo::common_dir() const
+{
+    return git_repository_commondir(repo_);
+}
+
 std::string repo::git_dir() const
 {
     return git_repository_path(repo_);
@@ -121,11 +228,13 @@ std::string repo::head_name() const
 ref_map repo::refs() const
 {
     ref_map out;
-    git_result r =
-        run_git(workdir(),
-               {"for-each-ref", "--format=%(objectname)%09%(objecttype)%09%(*objectname)%09"
-                                "%(refname)%09%(upstream)%09%(HEAD)"},
-               git_output::stdout_only);
+    // "refs/remotes/origin" -> what origin/HEAD names.
+    std::unordered_map<std::string, std::string> remote_heads;
+    git_result r = run_git(workdir(),
+                           {"for-each-ref",
+                            "--format=%(objectname)%09%(objecttype)%09%(*objectname)%09"
+                            "%(refname)%09%(upstream)%09%(HEAD)%09%(worktreepath)%09%(symref)"},
+                           git_output::stdout_only);
     if (!r.ok()) return out;
 
     for (size_t at = 0; at < r.output.size();)
@@ -144,7 +253,7 @@ ref_map repo::refs() const
             if (tab == std::string_view::npos) break;
             p = tab + 1;
         }
-        if (f.size() < 6) continue;
+        if (f.size() < 8) continue;
         std::string_view object = f[0], type = f[1], peeled = f[2], full = f[3];
 
         ref ref;
@@ -159,7 +268,14 @@ ref_map repo::refs() const
         }
         else if (full.starts_with("refs/remotes/"))
         {
-            if (full.ends_with("/HEAD")) continue;
+            // <remote>/HEAD isn't a label: it says which is the default.
+            if (full.ends_with("/HEAD"))
+            {
+                if (!f[7].empty())
+                    remote_heads.emplace(std::string(full.substr(0, full.size() - 5)),
+                                         std::string(f[7]));
+                continue;
+            }
             ref.kind = ref_kind::remote_branch;
             ref.name = strip("refs/remotes/");
         }
@@ -177,6 +293,7 @@ ref_map repo::refs() const
             ref.name = full.starts_with("refs/") ? strip("refs/") : std::string(full);
         ref.upstream = f[4];
         ref.current = f[5] == "*";
+        if (ref.kind == ref_kind::local_branch && !ref.current) ref.worktree = f[6];
 
         // Annotated tags label the commit underneath; refs to trees or
         // blobs aren't shown.
@@ -198,6 +315,32 @@ ref_map repo::refs() const
     if (git_repository_head_detached(repo_) == 1 &&
         git_reference_name_to_id(&head, repo_, "HEAD") == 0)
         out[to_oid(&head)].push_back({"HEAD", "HEAD", ref_kind::head, true});
+
+    // Each remote's default branch: what <remote>/HEAD names, else its main,
+    // else its master.
+    std::unordered_map<std::string, ref*> remote_branches;  // by full name
+    for (auto& [id, refs] : out)
+        for (ref& r : refs)
+            if (r.kind == ref_kind::remote_branch) remote_branches.emplace(r.full_name, &r);
+    std::unordered_set<std::string> remotes;  // "refs/remotes/origin"
+    for (auto& [full, r] : remote_branches)
+    {
+        const size_t slash = full.find('/', 13);
+        if (slash != std::string::npos) remotes.insert(full.substr(0, slash));
+    }
+    for (auto& [prefix, h] : remote_heads) remotes.insert(prefix);
+    for (const std::string& prefix : remotes)
+    {
+        std::vector<std::string> candidates{prefix + "/main", prefix + "/master"};
+        if (auto h = remote_heads.find(prefix); h != remote_heads.end())
+            candidates.insert(candidates.begin(), h->second);
+        for (const std::string& c : candidates)
+            if (auto it = remote_branches.find(c); it != remote_branches.end())
+            {
+                it->second->remote_default = true;
+                break;
+            }
+    }
 
     for (auto& [id, refs] : out) std::ranges::sort(refs, {}, &ref::full_name);
     return out;
@@ -232,7 +375,8 @@ bool walks_ref(walk_refs refs, std::string_view full_name)
         return full_name.starts_with("refs/heads/") || full_name.starts_with("refs/remotes/") ||
                full_name.starts_with("refs/tags/");
     case walk_refs::local: return full_name.starts_with("refs/heads/");
-    case walk_refs::head: break;
+    case walk_refs::head:
+    case walk_refs::tips: break;
     }
     return false;
 }
@@ -245,12 +389,21 @@ std::expected<void, std::string> repo::walk(const walk_options& opts,
     git_revwalk_sorting(w.p, GIT_SORT_TIME);
 
     const bool many = opts.refs != walk_refs::head;
-    if (many && !opts.tips.empty())
+    const bool only_tips = opts.refs == walk_refs::tips;
+    // What the walk starts from in full, for sparse_tips: the rest is theirs.
+    std::vector<oid> dense;
+    auto push = [&](const git_oid* id)
+    {
+        git_revwalk_push(w.p, id);
+        dense.push_back(to_oid(id));
+    };
+    if (only_tips && opts.tips.empty() && opts.sparse_tips.empty()) return {};
+    if (many && (!opts.tips.empty() || only_tips))
     {
         for (const oid& tip : opts.tips)
         {
             git_oid t = to_git(tip);
-            git_revwalk_push(w.p, &t);
+            push(&t);
         }
     }
     else if (many)
@@ -267,7 +420,7 @@ std::expected<void, std::string> repo::walk(const walk_options& opts,
                 owned_object target;
                 if (walks_ref(opts.refs, git_reference_name(raw)) &&
                     git_reference_peel(&target.p, raw, GIT_OBJECT_COMMIT) == 0)
-                    git_revwalk_push(w.p, git_object_id(target.p));
+                    push(git_object_id(target.p));
             }
         }
     }
@@ -279,12 +432,23 @@ std::expected<void, std::string> repo::walk(const walk_options& opts,
         owned_object commit;
         if (git_object_peel(&commit.p, target.p, GIT_OBJECT_COMMIT) != 0)
             return std::unexpected(last_git_error());
-        git_revwalk_push(w.p, git_object_id(commit.p));
+        push(git_object_id(commit.p));
     }
-    else
+    else if (!only_tips)
     {
         // Pushing HEAD fails in an empty repository; that's just "no commits".
-        git_revwalk_push_head(w.p);
+        git_oid head;
+        if (git_reference_name_to_id(&head, repo_, "HEAD") == 0) push(&head);
+    }
+    for (const oid& tip : opts.sparse_tips)
+    {
+        git_oid t = to_git(tip);
+        git_revwalk_push(w.p, &t);
+    }
+    if (opts.unmerged_into)
+    {
+        git_oid base = to_git(*opts.unmerged_into);
+        git_revwalk_hide(w.p, &base);
     }
     if (opts.refs == walk_refs::all)
     {
@@ -303,8 +467,7 @@ std::expected<void, std::string> repo::walk(const walk_options& opts,
                     if (std::fgets(line, sizeof line, f))
                     {
                         git_oid head;
-                        if (git_oid_fromstrn(&head, line, GIT_OID_SHA1_HEXSIZE) == 0)
-                            git_revwalk_push(w.p, &head);
+                        if (git_oid_fromstrn(&head, line, GIT_OID_SHA1_HEXSIZE) == 0) push(&head);
                     }
                     std::fclose(f);
                 }
@@ -359,7 +522,7 @@ std::expected<void, std::string> repo::walk(const walk_options& opts,
         if (follow) args = {"log", "--follow", "--format=%H"};
         if (opts.full_history && !follow) args.push_back("--full-history");
         if (opts.first_parent) args.push_back("--first-parent");
-        if (many && !opts.tips.empty())
+        if (many && (!opts.tips.empty() || only_tips))
             for (const oid& tip : opts.tips) args.push_back(tip.hex());
         else if (opts.refs == walk_refs::all)
             args.push_back("--all");
@@ -369,6 +532,8 @@ std::expected<void, std::string> repo::walk(const walk_options& opts,
             args.push_back("--branches");
         else
             args.push_back(opts.rev.empty() ? std::string("HEAD") : opts.rev);
+        for (const oid& tip : opts.sparse_tips) args.push_back(tip.hex());
+        if (opts.unmerged_into) args.push_back("^" + opts.unmerged_into->hex());
         args.push_back("--");
         args.insert(args.end(), opts.paths.begin(), opts.paths.end());
         const git_result r =
@@ -419,6 +584,45 @@ std::expected<void, std::string> repo::walk(const walk_options& opts,
                 parents.push_back(to_oid(git_commit_parent_id(c.p, i)));
             if (opts.first_parent && n > 1) parents.resize(1);
             add(c, std::move(parents));
+        }
+    }
+
+    if (opts.tips_only || !opts.sparse_tips.empty() || opts.unmerged_into)
+    {
+        std::vector<oid> anchors = dense;
+        anchors.insert(anchors.end(), opts.sparse_tips.begin(), opts.sparse_tips.end());
+        if (opts.unmerged_into)
+        {
+            // Where each branch joins the merged history, and tips already
+            // in it: shown, without their parents.
+            std::vector<oid> missing;
+            for (const commit& c : all)
+                for (const oid& p : c.parents)
+                    if (!index.contains(p)) missing.push_back(p);
+            for (const oid& t : anchors)
+                if (!index.contains(t)) missing.push_back(t);
+            for (const oid& id : missing)
+            {
+                if (index.contains(id)) continue;
+                const git_oid g = to_git(id);
+                owned_commit c;
+                if (git_commit_lookup(&c.p, repo_, &g) != 0) continue;
+                add(c, {});
+                anchors.push_back(id);
+            }
+            for (commit& c : all)
+                std::erase_if(c.parents, [&](const oid& p) { return !index.contains(p); });
+            // In the walk's order (newest first), for the sort below.
+            std::ranges::stable_sort(all, std::greater<>{}, &commit::commit_time);
+            index.clear();
+            for (size_t i = 0; i < all.size(); ++i) index[all[i].id] = i;
+        }
+        if (opts.tips_only || !opts.sparse_tips.empty())
+        {
+            anchors.insert(anchors.end(), opts.decorated.begin(), opts.decorated.end());
+            simplify_walk(all, opts.tips_only ? std::vector<oid>{} : dense, anchors);
+            index.clear();
+            for (size_t i = 0; i < all.size(); ++i) index[all[i].id] = i;
         }
     }
 
