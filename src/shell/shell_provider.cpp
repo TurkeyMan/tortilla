@@ -1,11 +1,14 @@
 // Tortilla's entries in the file manager's context menu: TortoiseGit's
 // Explorer menu [spec 4], built into tortilla-shell by rapport. This runs
 // inside the file manager, so it looks only at the filesystem: no libgit2,
-// no git processes, no toolkit.
+// no git processes, no toolkit: status, and the badges, it asks of tortilla
+// cache (src/cache), over its channel.
 //
-// Until the status cache exists, an item inside a working tree counts as
-// tracked and unmodified: TortoiseGit's own fallback when status fails
-// [spec 4.3 step 3]. So IGN, CONFL, ADDED and DELETED are never set.
+// Without the cache's word on the whole selection (not running, not loaded
+// yet, or not in time), an item inside a working tree counts as tracked and
+// unmodified: TortoiseGit's own fallback when status fails [spec 4.3 step
+// 3]. With it, NORMAL, CONFL and ADDED follow the cache; IGN and DELETED are
+// never set.
 #include "cache/cache_main.h"
 #include "cache/channel.h"
 #include "git/badges.h"
