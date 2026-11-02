@@ -34,6 +34,8 @@
 //   tortilla svndcommit|svnrebase|svnfetch|svnignore [path]  git-svn: SVN DCommit,
 //                                     SVN Rebase, SVN Fetch or Import SVN Ignore
 //   tortilla formatpatch [path]       Create Patch Serial: git format-patch into a folder
+//   tortilla importpatch [path] [patch...]  Apply Patch Serial: git am, to the working
+//                                     tree at path (or the patches' own)
 //   tortilla repocreate [folder]       git init there, bare or not
 //   tortilla rename path               git mv it to a new name
 //   tortilla cleanup [path...]         Clean up: untracked files removed
@@ -287,6 +289,7 @@ int main(int argc, char** argv)
                   std::strcmp(argv[i], "svnrebase") == 0 || std::strcmp(argv[i], "svnfetch") == 0 ||
                   std::strcmp(argv[i], "svnignore") == 0 ||
                   std::strcmp(argv[i], "formatpatch") == 0 ||
+                  std::strcmp(argv[i], "importpatch") == 0 ||
                   std::strcmp(argv[i], "repocreate") == 0 || std::strcmp(argv[i], "rename") == 0 ||
                   std::strcmp(argv[i], "cleanup") == 0 || std::strcmp(argv[i], "compare") == 0 ||
                   std::strcmp(argv[i], "blame") == 0 || std::strcmp(argv[i], "showcompare") == 0 ||
@@ -537,8 +540,71 @@ int main(int argc, char** argv)
         return (*ui)->run();
     }
 
-    // Explorer's git-svn commands [spec 4.2, rows 8-11] and patch serials
-    // [rows 56-57], for the working tree at path.
+    // Explorer's Apply Patch Serial [spec 4.2, row 57]: on a working tree's
+    // folder, or on patch files, applied to the working tree they're in, or
+    // else to one chosen, as TortoiseGit asks.
+    if (command == "importpatch")
+    {
+        std::vector<std::string> patches;
+        std::string where;
+        for (const std::string& a : args)
+        {
+            std::string ext = rap::sys::path_from_utf8(a).extension().string();
+            for (char& c : ext) c = char(std::tolower(static_cast<unsigned char>(c)));
+            if (ext == ".patch" || ext == ".diff")
+            {
+                std::error_code ec;
+                const auto at = std::filesystem::absolute(rap::sys::path_from_utf8(a), ec);
+                patches.push_back(ec ? a : rap::sys::path_to_utf8(at));
+                if (where.empty())
+                    where = rap::sys::path_to_utf8(rap::sys::path_from_utf8(a).parent_path());
+            }
+            else if (where.empty() || patches.empty())
+                where = a;
+        }
+        if (where.empty()) where = ".";
+        tortilla::windows::init(**ui);
+        const size_t running = tortilla::windows::hold({});
+        int code = 1;
+        auto done = [running, &code](bool ok)
+        {
+            code = ok ? 0 : 1;
+            tortilla::windows::release(running);
+        };
+        auto apply = [&ui, patches, done](const std::string& at)
+        {
+            auto repo = tortilla::repo::open(at);
+            if (!repo || repo->bare())
+            {
+                const std::string error =
+                    repo ? std::string(_("This needs a working tree.")) : repo.error();
+                (*ui)->message(
+                    nullptr,
+                    {.icon = rap::message_spec::icon::error, .title = "Tortilla", .text = error},
+                    [done](rap::dialog_role) { done(false); });
+                return;
+            }
+            tortilla::apply_patch_serial(**ui, nullptr, repo->workdir(), patches, done);
+        };
+        if (tortilla::repo::open(where))
+            apply(where);
+        else
+            (*ui)->choose_files(nullptr,
+                                {.mode = rap::file_dialog_spec::mode::folder,
+                                 .title = _("Apply the patches to the working tree in")},
+                                [apply, done](std::vector<std::string> chosen)
+                                {
+                                    if (chosen.empty())
+                                        done(false);
+                                    else
+                                        apply(chosen.front());
+                                });
+        (*ui)->run();
+        return code;
+    }
+
+    // Explorer's git-svn commands [spec 4.2, rows 8-11] and Create Patch
+    // Serial [row 56], for the working tree at path.
     if (command == "svndcommit" || command == "svnrebase" || command == "svnfetch" ||
         command == "svnignore" || command == "formatpatch")
     {
