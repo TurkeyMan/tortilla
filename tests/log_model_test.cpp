@@ -2062,6 +2062,28 @@ int main(int argc, char** argv)
         tortilla::badge_cache later([](const std::vector<std::filesystem::path>&) {}, summaries);
         check(later.ask(other_root) == badge::modified,
               "badge cache: summaries remembered across runs");
+
+        // A linked worktree keeps its index and HEAD in the repository's
+        // .git, outside it: a commit there changes no file in the tree, and
+        // is seen by watching those too.
+        const std::string linked = std::string(argv[1]) + "/badge-cache-linked";
+        sh("cd '" + r + "' && git worktree add -q -b side '" + linked + "' && echo b > '" + linked +
+           "/src/a.txt'");
+        const auto linked_file = std::filesystem::path(linked) / "src" / "a.txt";
+        auto settles_on = [&](badge want)
+        {
+            for (int i = 0; i < 100; ++i)
+            {
+                const auto st = cache.look(linked_file);
+                if (st.b == want && st.current) return true;
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            }
+            return false;
+        };
+        check(settles_on(badge::modified), "badge cache: a linked worktree's edit");
+        sh("cd '" + linked +
+           "' && git -c user.name=Ada -c user.email=ada@example.com commit -qam two");
+        check(settles_on(badge::clean), "badge cache: a commit in a linked worktree is seen");
     }
 
     // The Show menu's branch filter: hide patterns and pins.
