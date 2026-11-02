@@ -164,6 +164,7 @@ struct pull_request
     std::string title, url;  // url: its web page
     forge_repo head;         // where its branch is: the repository, or a fork
     std::string head_branch, base_branch, head_sha;
+    std::string author;  // its author's login on the forge
     bool draft = false;
     check_state checks = check_state::none;
     // The forge's own rules stand in the way of merging, whatever the checks
