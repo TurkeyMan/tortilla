@@ -3,6 +3,7 @@
 #include "i18n.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace tortilla
 {
@@ -90,20 +91,50 @@ std::string block_text(merge_block b, const pull_request& pr)
 // long needle), drawn upright in a unit square, then turned about its middle.
 void paint_pin(rap::painter& p, float x, float h, float size, color fill)
 {
+    // The 📌 emoji's shape, traced from Segoe UI Emoji: a round-cornered cap, a waist, a plate
+    // that flares toward the point, and the needle, along an axis tilted 45 degrees with the
+    // head up and right. Across is a (0 on the axis), along is t (0 the point, 1 the head).
     const color ink = is_dark(fill) ? color{255, 255, 255, 220} : darken(fill, 160);
-    const float k = size * 1.3f;  // its diagonal fills the box
+    const float k = size * 1.2f;  // the axis's length
     const float cx = x + size / 2, cy = h / 2;
     const float c = 0.70710678f;  // cos 45 = sin 45
-    auto at = [&](float u, float v)
+    auto at = [&](float a, float t)
     {
-        const float dx = (u - 0.5f) * k, dy = (v - 0.5f) * k;
-        return rap::point_f{cx + dx * c - dy * c, cy + dx * c + dy * c};
+        const float da = a * k, dt = (t - 0.5f) * k;
+        return rap::point_f{cx + (da + dt) * c, cy + (da - dt) * c};
     };
-    p.line(at(0.5f, 0.45f), at(0.5f, 1.0f), paint{ink}, std::max(1.1f, size / 9),
-           rap::line_cap::round);  // the needle
-    p.polygon({at(0.40f, 0.36f), at(0.60f, 0.36f), at(0.74f, 0.52f), at(0.26f, 0.52f)}, paint{ink},
-              std::nullopt);                                         // the collar
-    p.circle(at(0.5f, 0.24f), k * 0.21f, paint{ink}, std::nullopt);  // the head
+    // A quad with its corners rounded by r, as quadratic curves through each corner.
+    auto rounded = [&](std::initializer_list<rap::point_f> quad, float r)
+    {
+        const std::vector<rap::point_f> q(quad);
+        std::vector<rap::point_f> out;
+        for (std::size_t i = 0; i < q.size(); ++i)
+        {
+            const rap::point_f prev = q[(i + q.size() - 1) % q.size()], v = q[i],
+                               next = q[(i + 1) % q.size()];
+            auto toward = [&](rap::point_f o)
+            {
+                const float dx = o.x - v.x, dy = o.y - v.y, l = std::hypot(dx, dy);
+                const float f = std::min(r / l, 0.5f);
+                return rap::point_f{v.x + dx * f, v.y + dy * f};
+            };
+            const rap::point_f s = toward(prev), e = toward(next);
+            for (int j = 0; j <= 4; ++j)
+            {
+                const float u = j / 4.0f, w = 1 - u;
+                out.push_back({w * w * s.x + 2 * w * u * v.x + u * u * e.x,
+                               w * w * s.y + 2 * w * u * v.y + u * u * e.y});
+            }
+        }
+        p.polygon(out, paint{ink}, std::nullopt);
+    };
+    p.line(at(0, 0.03f), at(0, 0.45f), paint{ink}, std::max(1.1f, k * 0.07f),
+           rap::line_cap::round);                                           // the needle
+    p.polygon({at(-0.19f, 0.6f), at(0.19f, 0.6f), at(0.19f, 0.82f), at(-0.19f, 0.82f)}, paint{ink},
+              std::nullopt);                                                // the waist
+    const float r = k * 0.06f;
+    rounded({at(-0.31f, 0.38f), at(0.31f, 0.38f), at(0.22f, 0.63f), at(-0.22f, 0.63f)}, r);  // the plate
+    rounded({at(-0.27f, 0.79f), at(0.27f, 0.79f), at(0.27f, 1.0f), at(-0.27f, 1.0f)}, r);    // the cap
 }
 
 }  // namespace
