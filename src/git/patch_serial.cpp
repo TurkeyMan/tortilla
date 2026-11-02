@@ -1,5 +1,7 @@
 #include "patch_serial.h"
 
+#include "git/ignore_patterns.h"
+
 #include <rapport/sys.h>
 
 #include <filesystem>
@@ -75,7 +77,9 @@ std::vector<std::string> apply_args(const std::string& patch, const std::vector<
 {
     std::vector<std::string> args{"apply"};
     if (check) args.push_back("--check");
-    for (const std::string& p : only) args.push_back("--include=" + p);
+    // --include takes a pattern (git's wildmatch, as .gitignore's): each
+    // name escaped, so [ab].txt is that file and never a.txt and b.txt.
+    for (const std::string& p : only) args.push_back("--include=" + literal_pattern(p));
     args.insert(args.end(), {"--", patch});
     return args;
 }

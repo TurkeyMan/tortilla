@@ -2617,6 +2617,34 @@ int main(int argc, char** argv)
                 tortilla::run_git(one, {"status", "--porcelain"}, tortilla::git_output::stdout_only)
                         .output == " M x.txt\n?? z.txt\n",
             "single patch: the files chosen applied, the rest left");
+
+        // git apply's --include takes a pattern: a chosen name with a
+        // wildcard in it is that one file, never the files it would match.
+        // The check, the preview and Apply selected share the arguments.
+        const std::string wild = base + "/wild";
+        sh("git init -q -b main '" + wild + "' && " + in(wild) + "config core.autocrlf false");
+        for (const char* n : {"a.txt", "b.txt", "[ab].txt"})
+            sh("echo old > '" + wild + "/" + n + "'");
+        sh(in(wild) + "add . && " + in(wild) + "commit -qm base");
+        for (const char* n : {"a.txt", "b.txt", "[ab].txt"})
+            sh("echo new > '" + wild + "/" + n + "'");
+        sh(in(wild) + "diff > '" + base + "/wild.diff' && " + in(wild) + "reset -q --hard");
+        check(tortilla::apply_args("p.diff", {"[ab]*?.txt", "a\\b"}) ==
+                  std::vector<std::string>{"apply", "--include=\\[ab]\\*\\?.txt",
+                                           "--include=a\\\\b", "--", "p.diff"},
+              "single patch: a chosen name's wildcards escaped");
+        const tortilla::git_result wild_applied =
+            tortilla::run_git(wild, tortilla::apply_args(base + "/wild.diff", {"[ab].txt"}));
+        check(wild_applied.ok() && read_bytes(wild + "/[ab].txt") == "new\n" &&
+                  read_bytes(wild + "/a.txt") == "old\n" && read_bytes(wild + "/b.txt") == "old\n",
+              "single patch: Apply selected changes [ab].txt only, a.txt and b.txt untouched");
+        sh(in(wild) + "checkout -q -- .");
+        sh("echo other > '" + wild + "/a.txt'");  // a.txt's part no longer applies
+        check(tortilla::run_git(wild, tortilla::apply_args(base + "/wild.diff", {"[ab].txt"}, true))
+                      .ok() &&
+                  read_bytes(wild + "/a.txt") == "other\n" &&
+                  read_bytes(wild + "/[ab].txt") == "old\n",
+              "single patch: [ab].txt's check isn't a.txt's, and checking writes nothing");
     }
 
     // Submodules: Add, Update and Sync's arguments, and the list Update

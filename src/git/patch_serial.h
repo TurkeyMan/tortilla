@@ -47,7 +47,8 @@ bool am_in_progress(const std::string& git_dir);
 std::vector<std::string> numstat_paths(std::string_view numstat);
 
 // git apply [--check] [--include=<path>...] -- <patch>: the whole patch, or
-// only those files of it.
+// only those files of it, each name taken literally (its wildcards escaped).
+// The applicability check, Review's preview and Apply selected all use it.
 std::vector<std::string> apply_args(const std::string& patch,
                                     const std::vector<std::string>& only = {}, bool check = false);
 
