@@ -24,6 +24,7 @@
 #include "git/ignore_patterns.h"
 #include "git/lfs.h"
 #include "git/merge_tool.h"
+#include "git/patch_serial.h"
 #include "git/pathspec_file.h"
 #include "git/porcelain.h"
 #include "git/ref_list.h"
@@ -2465,6 +2466,45 @@ int main(int argc, char** argv)
                   tortilla::merge_exclude("", "/a\r\n/a\r\n") == "/a\n" &&
                   tortilla::merge_exclude("x\n", "x\n") == "x\n",
               "git-svn: show-ignore's patterns added to info/exclude, once");
+    }
+
+    // Create Patch Serial: format-patch's revisions as the dialog chooses
+    // them, and the files it writes.
+    {
+        using tortilla::format_patch_options;
+        using which = format_patch_options::which;
+        check(tortilla::format_patch_serial_args({.folder = "out", .since = "origin/main"}) ==
+                      std::vector<std::string>{"format-patch", "-o", "out", "origin/main"} &&
+                  tortilla::format_patch_serial_args(
+                      {.folder = "out", .commits = which::number, .number = 3}) ==
+                      std::vector<std::string>{"format-patch", "-o", "out", "-3"} &&
+                  tortilla::format_patch_serial_args(
+                      {.folder = "out", .commits = which::range, .from = "a"}) ==
+                      std::vector<std::string>{"format-patch", "-o", "out", "a..HEAD"} &&
+                  tortilla::format_patch_serial_args(
+                      {.folder = "out", .commits = which::range, .from = "a", .to = "b"}) ==
+                      std::vector<std::string>{"format-patch", "-o", "out", "a..b"},
+              "patch serial: since a revision, the newest commits, a range");
+
+        namespace fs = std::filesystem;
+        const std::string base = std::string(argv[1]) + "/patch-serial";
+        const std::string src = base + "/src", out = base + "/out";
+        fs::create_directories(base);
+        auto in = [](const std::string& dir)
+        { return "cd '" + dir + "' && git -c user.name=Ada -c user.email=ada@example.com "; };
+        sh("git init -q -b main '" + src + "'");
+        for (const char* n : {"one", "two", "three"})
+            sh("echo " + std::string(n) + " > '" + src + "/" + n + ".txt' && " + in(src) +
+               "add . && " + in(src) + "commit -qm " + n);
+        const bool made =
+            tortilla::run_git(src, tortilla::format_patch_serial_args(
+                                       {.folder = out, .commits = which::number, .number = 2}))
+                .ok();
+        size_t files = 0;
+        std::error_code ec;
+        for (const auto& e : fs::directory_iterator(out, ec))
+            files += e.path().extension() == ".patch";
+        check(made && files == 2, "patch serial: a numbered file per commit");
     }
 
     // Submodules: Add, Update and Sync's arguments, and the list Update
