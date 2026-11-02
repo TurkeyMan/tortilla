@@ -1548,10 +1548,9 @@ rap::menu log_window::walk_menu()
         // side had it are shown too.
         toggle(_("Full history"), path_limited() && walk_options_.full_history,
                flip(&walk_options::full_history), path_limited()),
-        rap::menu_item::separator(),
-        toggle(_("_Compressed Graph"), false, {}, false),
-        // (TortoiseGit's Show labeled commits only is the Show menu's Branch
-        // tips only.)
+        // (TortoiseGit's Compressed Graph and Show labeled commits only are
+        // the Show menu's Branch tips only: the labels, and the forks and
+        // merges between them.)
     };
 }
 
