@@ -113,6 +113,7 @@ enum class run
     svn_fetch,       // tortilla svnfetch <folder>
     svn_ignore,      // tortilla svnignore <folder>
     format_patch,    // tortilla formatpatch <folder>
+    import_patch,    // tortilla importpatch <the patches selected, or the folder>
 };
 
 struct row
@@ -260,7 +261,11 @@ inline constexpr row k_rows[] = {
     {"Submodule Sync", {{{FIG | SUBC, 0}}}, place::shift, run::sub_sync, "subsync"},
     separator,
     {"Create Patch Serial...", {{{FIG | ONE, 0}}}, place::sub, run::format_patch, "formatpatch"},
-    {"Apply Patch Serial...", {{{PATCH, 0}, {FIG | ONE, 0}}}, place::sub, run::none, "importpatch"},
+    {"Apply Patch Serial...",
+     {{{PATCH, 0}, {FIG | ONE, 0}}},
+     place::sub,
+     run::import_patch,
+     "importpatch"},
     {"Review/apply single &patch...",
      {{{PATCH | ONE, 0}, {EXT | ONE, FOLD}}},
      place::sub,
