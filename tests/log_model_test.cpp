@@ -115,7 +115,9 @@ void make_conflict(const std::string& dir, const std::vector<std::string>& files
                    const std::string& how = "merge")
 {
     const std::string g = "git -C '" + dir + "' -c user.name=Ada -c user.email=ada@x ";
-    sh("git init -q -b main '" + dir + "'");
+    // Files as written, whatever the system's core.autocrlf (Git for
+    // Windows sets it): the sides are checked out with line endings applied.
+    sh("git init -q -b main '" + dir + "' && git -C '" + dir + "' config core.autocrlf false");
     auto write_all = [&](const std::string& text)
     {
         for (const std::string& f : files) sh("printf '" + text + "\\n' > '" + dir + "/" + f + "'");
@@ -3562,7 +3564,8 @@ int main(int argc, char** argv)
 #endif
         std::vector<std::string> names{"a.txt", "b.txt", "c.txt"};
         names.insert(names.end(), odd.begin(), odd.end());
-        sh("git init -q -b main '" + dir + "'");
+        // Reverted files as committed, whatever the system's core.autocrlf.
+        sh("git init -q -b main '" + dir + "' && " + g + "config core.autocrlf false");
         for (const std::string& n : names) sh("printf 'one\\n' > '" + dir + "/" + n + "'");
         sh(g + "add -A && " + g + "commit -qm one");
         for (const std::string& n : names) sh("printf 'work\\n' > '" + dir + "/" + n + "'");
