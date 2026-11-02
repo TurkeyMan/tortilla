@@ -553,7 +553,8 @@ std::expected<std::vector<pull_request>, std::string> github_pulls(const forge_r
     constexpr std::string_view query =
         "query($owner:String!,$name:String!){repository(owner:$owner,name:$name){"
         "pullRequests(states:OPEN,first:100,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{"
-        "number title url isDraft headRefName headRefOid baseRefName reviewDecision mergeable "
+        "number title url isDraft author{login} headRefName headRefOid baseRefName reviewDecision "
+        "mergeable "
         "mergeStateStatus "
         "headRepository{name owner{login}} "
         "commits(last:1){nodes{commit{statusCheckRollup{state contexts(first:50){nodes{"
@@ -581,6 +582,7 @@ std::expected<std::vector<pull_request>, std::string> github_pulls(const forge_r
                         .base_branch = n["baseRefName"].str(),
                         .head_sha = n["headRefOid"].str(),
                         .draft = n["isDraft"].boolean()};
+        pr.author = n["author"]["login"].str();
         const json::value head = n["headRepository"];  // null: the fork's gone
         pr.head = {
             .host = r.host, .owner = head["owner"]["login"].str(), .name = head["name"].str()};
@@ -637,6 +639,7 @@ std::expected<std::vector<pull_request>, std::string> gitlab_pulls(const forge_r
                         .base_branch = m["target_branch"].str(),
                         .head_sha = m["sha"].str(),
                         .draft = m["draft"].boolean()};
+        pr.author = m["author"]["username"].str();
         // A fork's merge request: its project isn't this one, and its path
         // would take another request; it's left unmatched.
         if (m["source_project_id"].integer() != m["target_project_id"].integer()) pr.head = {};
@@ -709,6 +712,7 @@ std::expected<std::vector<pull_request>, std::string> gitea_pulls(const forge_re
                         .base_branch = p["base"]["ref"].str(),
                         .head_sha = head["sha"].str(),
                         .draft = p["draft"].boolean()};
+        pr.author = p["user"]["login"].str();
         pr.conflicts = !p["mergeable"].boolean(true);  // Gitea's "not mergeable" is conflicts
         if (pr.conflicts) pr.blocks.push_back(merge_block::conflicts);
         if (pr.draft) pr.blocks.push_back(merge_block::draft);
