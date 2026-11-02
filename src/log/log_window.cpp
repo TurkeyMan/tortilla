@@ -399,7 +399,6 @@ void log_window::build()
                         .stretch(),
                 },
                 hbox{
-                    button{_("S_tatistics")}.bind(statistics_).enabled(false),
                     progress_bar{}.bind(progress_).stretch(),
                     menu_button{_("Walk Be_havior")}.bind(walk_).on_menu([this]
                                                                          { return walk_menu(); }),
@@ -590,8 +589,7 @@ void log_window::restore_layout()
     jump_type_->set_current(int(std::clamp(number("log.jumpType", 0), 0L, 9L)));
 }
 
-// While loading, a progress bar replaces Statistics, Walk Behavior and View
-// [spec 1.2].
+// While loading, a progress bar replaces Walk Behavior and View [spec 1.2].
 // The repository as the log shows it: HEAD and every ref, by their files'
 // times and sizes (a merge, rebase or cherry-pick in progress too). Not the
 // index: the log's own git status touches it.
@@ -685,7 +683,6 @@ void log_window::reload()
             if (const commit* c = log_.commit(*cur)) keep.current = c->id;
         if (!keep.commits.empty() || keep.working_tree) kept_ = std::move(keep);
     }
-    statistics_->set_visible(false);
     walk_->set_visible(false);
     view_->set_visible(false);
     progress_->set_visible(true);
@@ -719,7 +716,6 @@ void log_window::loaded(const std::string& error)
 {
     pulse_timer_.reset();
     progress_->set_visible(false);
-    statistics_->set_visible(true);
     walk_->set_visible(true);
     view_->set_visible(true);
     if (!error.empty())
