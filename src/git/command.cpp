@@ -140,13 +140,15 @@ std::shared_ptr<git_process> git_process::start(rap::ui& ui, const std::string& 
     auto p = std::shared_ptr<git_process>(new git_process);
     auto state = p->state_ = std::make_shared<git_process::state>();
     auto started = process::start("git", git_command_line(dir, args), git_options(mode, prompts));
+    // Callbacks only run while the handle is alive, a start's failure's too.
     if (!started)
     {
         ui.post(
-            [output, done, error = started.error()]
+            [state, output, done, error = started.error()]
             {
-                if (output) output(rap::i18n::format(_("could not start git: {0}"), error) + "\n");
-                if (done) done(-1);
+                if (!state->dropped && output)
+                    output(rap::i18n::format(_("could not start git: {0}"), error) + "\n");
+                if (!state->dropped && done) done(-1);
             });
         return p;
     }
