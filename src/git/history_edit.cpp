@@ -215,6 +215,19 @@ branch_holding(const repo& repository, const std::vector<oid>& commits, const st
     if (!current.empty())
         if (auto h = load_branch_history(repository, current, mainline); h && holds(*h)) return h;
 
+    // Every other branch's line stops at the mainline, so a commit already on
+    // it can only be the mainline's own (a local main): one ancestry check
+    // answers the commonest right-click, an old commit, instead of one per branch.
+    const auto main_tip = mainline.empty() ? std::nullopt : resolve_ref(r, mainline);
+    if (main_tip && std::ranges::any_of(commits, [&](const oid& c)
+                                        { return repository.is_ancestor(c, *main_tip); }))
+    {
+        if (mainline.starts_with("refs/heads/") && mainline != current)
+            if (auto h = load_branch_history(repository, mainline, mainline); h && holds(*h))
+                return h;
+        return std::unexpected(std::string(_("merged")));
+    }
+
     std::vector<branch_history> found;
     git_branch_iterator* it = nullptr;
     if (git_branch_iterator_new(&it, r, GIT_BRANCH_LOCAL) == 0)
@@ -236,10 +249,6 @@ branch_holding(const repo& repository, const std::vector<oid>& commits, const st
     }
     if (found.size() == 1) return std::move(found.front());
     if (found.size() > 1) return std::unexpected(std::string(_("on several branches")));
-    if (const auto main_tip = mainline.empty() ? std::nullopt : resolve_ref(r, mainline))
-        for (const oid& c : commits)
-            if (repository.is_ancestor(c, *main_tip))
-                return std::unexpected(std::string(_("merged")));
     return std::unexpected(std::string(_("not on a local branch")));
 }
 
