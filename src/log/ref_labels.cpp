@@ -51,12 +51,24 @@ void paint_check_mark(rap::painter& p, rap::point_f c, float d, check_state s, m
 {
     const float r = d / 2;
     const color white{255, 255, 255};
+    const color grey{110, 119, 129}, yellow{232, 178, 0};
+    // No checks, but it can't be merged: a "!", grey for conflicts, yellow
+    // for the forge's rules.
+    if (s == check_state::none && m != mergeable::yes)
+    {
+        p.circle(c, r, paint{m == mergeable::conflicts ? grey : yellow}, paint{white});
+        const float w = std::max(1.5f, d / 7);
+        p.line({c.x, c.y - r * 0.5f}, {c.x, c.y + r * 0.12f}, paint{white}, w,
+               rap::line_cap::round);
+        p.circle({c.x, c.y + r * 0.45f}, w * 0.6f, paint{white}, std::nullopt);
+        return;
+    }
     switch (s)
     {
     case check_state::success:
         p.circle(c, r,
-                 paint{m == mergeable::conflicts ? color{110, 119, 129}
-                       : m == mergeable::not_yet ? color{191, 135, 0}
+                 paint{m == mergeable::conflicts ? grey
+                       : m == mergeable::not_yet ? yellow
                                                  : color{26, 127, 55}},
                  paint{white});
         {
@@ -129,7 +141,8 @@ float paint_ref_labels(rap::painter& p, const std::vector<ref>& refs, float x, f
             number_style.fg = is_dark(fill) ? color{255, 255, 255, 150} : color{0, 0, 0, 150};
         const float number_w = mark ? p.measure(number, number_style).w : 0;
         const float dot = std::clamp(h - 7, 8.0f, 14.0f);
-        const bool has_dot = mark && mark->checks != check_state::none;
+        const bool has_dot =
+            mark && (mark->checks != check_state::none || mark->conflicts || mark->blocked);
         if (mark) w += 5 + number_w + (has_dot ? dot + 3 : 0);
         rect_f box{x, 0, w, h};
 

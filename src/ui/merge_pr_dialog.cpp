@@ -90,8 +90,12 @@ void merge_pr_dialog::build()
         dialog{rap::i18n::format(_("Merge Pull Request #{0}"), pr.number),
                {vbox{
                    label{pr.title}.wrap(),
-                   label{rap::i18n::format(_("{0} into {1}"), pr.head.owner + ":" + pr.head_branch,
-                                           pr_.into.repo.path() + ":" + pr.base_branch)},
+                   // The repositories only when they differ: a fork's.
+                   label{own_branch(pr_)
+                             ? rap::i18n::format(_("{0} into {1}"), pr.head_branch, pr.base_branch)
+                             : rap::i18n::format(_("{0} into {1}"),
+                                                 pr.head.path() + ":" + pr.head_branch,
+                                                 pr_.into.repo.path() + ":" + pr.base_branch)},
                    label{_("Asking the forge...")}.bind(status_).wrap(),
                    form{
                        {_("Method"),

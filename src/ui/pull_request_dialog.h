@@ -37,8 +37,8 @@ private:
     void base_changed();
     void create();
     void send();
-    // What Into names: a remote and its branch ("upstream/main", or just
-    // "main" with one remote).
+    // What Into names: a remote and its branch ("upstream/main"; a bare
+    // "main" is the preferred remote's).
     struct target
     {
         const forge_remote* remote;

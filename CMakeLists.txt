@@ -306,6 +306,9 @@ target_link_libraries(tortilla-tests PRIVATE tortilla_git rapport::rapport)
 add_executable(tortilla-icon-preview tools/icon_preview.cpp)
 target_link_libraries(tortilla-icon-preview PRIVATE tortilla_git rapport::rapport)
 
+add_executable(tortilla-pr-marks-preview tools/pr_marks_preview.cpp)
+target_link_libraries(tortilla-pr-marks-preview PRIVATE tortilla_git rapport::rapport)
+
 add_executable(tortilla-rebase-tests tests/rebase_test.cpp)
 target_link_libraries(tortilla-rebase-tests PRIVATE tortilla_git rapport::rapport)
 

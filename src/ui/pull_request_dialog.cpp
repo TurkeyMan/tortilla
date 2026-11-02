@@ -126,7 +126,7 @@ pull_request_dialog::target pull_request_dialog::into() const
     const std::string text = trimmed(base_->text());
     // The longest remote name it starts with, as remote names may hold slashes.
     const forge_remote* remote = nullptr;
-    if (listed_.size() > 1)
+    if (!listed_.empty())
         for (size_t i : listed_)
         {
             const forge_remote& r = remotes_[i];
@@ -228,7 +228,7 @@ void pull_request_dialog::show()
 }
 
 // The branches a PR can go into: the preferred remote's first, then the
-// others', each named with its remote when there's more than one; the
+// others', each named with its remote; the
 // preferred remote's default chosen (what its HEAD names locally, else main or
 // master).
 void pull_request_dialog::fill_into()
@@ -250,7 +250,7 @@ void pull_request_dialog::fill_into()
     for (size_t i : order)
     {
         const std::string remote = remotes_[i].name;
-        const std::string prefix = order.size() > 1 ? remote + "/" : "";
+        const std::string prefix = remote + "/";  // always: two forks can share a branch name
         const auto listed = run_git(
             workdir_,
             {"for-each-ref", "--format=%(refname:lstrip=3)", "refs/remotes/" + remote + "/"},

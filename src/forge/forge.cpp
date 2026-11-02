@@ -777,6 +777,7 @@ std::expected<merge_state, std::string> github_merge_state(const forge_repo& r, 
         "mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed autoMergeAllowed "
         "deleteBranchOnMerge viewerDefaultMergeMethod viewerPermission "
         "pullRequest(number:$number){id title headRefOid isDraft mergeable mergeStateStatus "
+        "reviewDecision "
         "viewerCanMergeAsAdmin viewerCanEnableAutoMerge autoMergeRequest{enabledAt} "
         "commits(last:1){nodes{commit{statusCheckRollup{state}}}}}}}";
     const std::string body =
@@ -832,11 +833,17 @@ std::expected<merge_state, std::string> github_merge_state(const forge_repo& r, 
                                         "doesn't allow: update the branch first.");
     else if (status == "BLOCKED")
     {
-        m.state = checks == check_state::pending ? v::waiting : v::blocked;
-        m.why = checks == check_state::pending ? _("Required checks are still running.")
-                : checks == check_state::failure
-                    ? _("Required checks failed.")
-                    : _("The branch's rules block it: a review or a check they require.");
+        // The review first: no waiting on checks gets past one.
+        const std::string review = pr["reviewDecision"].str();
+        const bool needs_review = review == "REVIEW_REQUIRED" || review == "CHANGES_REQUESTED";
+        m.state = checks == check_state::pending && !needs_review ? v::waiting : v::blocked;
+        m.why = review == "CHANGES_REQUESTED"    ? _("A reviewer asked for changes.")
+                : review == "REVIEW_REQUIRED"    ? _("It needs an approving review.")
+                : checks == check_state::pending ? _("Required checks are still running.")
+                : checks == check_state::failure ? _("Required checks failed.")
+                                                 : _("The branch's rules block it with something "
+                                                     "GitHub doesn't name: a code owner's review, "
+                                                     "signed commits, a deployment...");
     }
     else
         m.state = v::checking, m.why = _("GitHub is still working out whether it can be merged.");
