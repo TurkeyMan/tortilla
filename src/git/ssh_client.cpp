@@ -2,6 +2,7 @@
 
 #include "git/command.h"
 #include "git/remotes.h"
+#include "git/tool_discovery.h"
 #include "i18n.h"
 #include "settings.h"
 #include "util/programs.h"
@@ -97,13 +98,9 @@ std::vector<ssh_client> detect_ssh_clients()
     };
 #ifdef _WIN32
     const std::string system = rap::sys::env("SystemRoot").value_or("C:\\Windows") + "\\System32";
-    std::vector<std::string> putty, tortoise;
-    for (const std::string& root : install_roots())
-    {
-        putty.push_back(root + "\\PuTTY\\plink.exe");
-        tortoise.push_back(root + "\\TortoiseGit\\bin\\TortoiseGitPlink.exe");
-    }
-    putty.push_back("plink");
+    const std::vector<std::string> putty = install_candidates({"PuTTY\\plink.exe"}, "plink"),
+                                   tortoise = install_candidates(
+                                       {"TortoiseGit\\bin\\TortoiseGitPlink.exe"});
 
     add("Windows OpenSSH", first({system + "\\OpenSSH\\ssh.exe"}), "", "ssh");
     // Git for Windows' ssh, in usr\bin of the installation whose git is on

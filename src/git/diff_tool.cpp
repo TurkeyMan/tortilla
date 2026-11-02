@@ -2,6 +2,8 @@
 
 #include "git/command.h"
 #include "git/remotes.h"
+#include "git/temp_files.h"
+#include "git/tool_discovery.h"
 #include "settings.h"
 #include "util/programs.h"
 
@@ -266,76 +268,42 @@ std::vector<detected_tool> detect_diff_tools()
     };
     std::vector<known_tool> known;
 #ifdef _WIN32
-    const std::vector<std::string> roots = install_roots();
     // The usual install folders, then PATH (installed elsewhere).
-    auto at = [&](std::initializer_list<const char*> rel, const char* on_path)
-    {
-        std::vector<std::string> out;
-        for (const std::string& root : roots)
-            for (const char* r : rel) out.push_back(root + "\\" + r);
-        if (on_path) out.push_back(on_path);
-        return out;
-    };
     known = {
-        {"WinMerge", at({"WinMerge\\WinMergeU.exe"}, "WinMergeU"),
+        {"WinMerge", install_candidates({"WinMerge\\WinMergeU.exe"}, "WinMergeU"),
          "/e /u /s- /dl %bname /dr %yname %base %mine"},
         // BComp waits; BCompare hands over to a running copy and returns.
         {"Beyond Compare",
-         at({"Beyond Compare 5\\BComp.exe", "Beyond Compare 4\\BComp.exe"}, "BComp"),
+         install_candidates({"Beyond Compare 5\\BComp.exe", "Beyond Compare 4\\BComp.exe"},
+                            "BComp"),
          "%base %mine /title1=%bname /title2=%yname"},
-        {"Araxis Merge", at({"Araxis\\Araxis Merge\\Compare.exe"}, nullptr),
+        {"Araxis Merge", install_candidates({"Araxis\\Araxis Merge\\Compare.exe"}),
          "/wait /2 /title1:%bname /title2:%yname %base %mine"},
-        {"Code Compare", at({"Devart\\Code Compare\\CodeCompare.exe"}, nullptr),
+        {"Code Compare", install_candidates({"Devart\\Code Compare\\CodeCompare.exe"}),
          "/W /T1=%bname /T2=%yname %base %mine"},
-        {"ExamDiff Pro", at({"ExamDiff Pro\\ExamDiff.com"}, nullptr),
+        {"ExamDiff Pro", install_candidates({"ExamDiff Pro\\ExamDiff.com"}),
          "%base %mine /dn1:%bname /dn2:%yname /nh"},
         {"DeltaWalker",
-         at({"Deltopia\\DeltaWalker\\DeltaWalker.exe",
-             "Deltopia\\DeltaWalker Classic\\DeltaWalker.exe"},
-            nullptr),
+         install_candidates({"Deltopia\\DeltaWalker\\DeltaWalker.exe",
+                             "Deltopia\\DeltaWalker Classic\\DeltaWalker.exe"}),
          "-mi -title1=%bname -title2=%yname %base %mine"},
-        {"Meld", at({"Meld\\Meld.exe"}, "meld"), "%base %mine --label=%bname --label=%yname"},
-        {"KDiff3", at({"KDiff3\\kdiff3.exe", "KDiff3\\bin\\kdiff3.exe"}, "kdiff3"),
+        {"Meld", install_candidates({"Meld\\Meld.exe"}, "meld"),
+         "%base %mine --label=%bname --label=%yname"},
+        {"KDiff3", install_candidates({"KDiff3\\kdiff3.exe", "KDiff3\\bin\\kdiff3.exe"}, "kdiff3"),
          "%base %mine --L1 %bname --L2 %yname"},
-        {"TortoiseGitMerge", at({"TortoiseGit\\bin\\TortoiseGitMerge.exe"}, nullptr),
+        {"TortoiseGitMerge", install_candidates({"TortoiseGit\\bin\\TortoiseGitMerge.exe"}),
          "/base:%base /mine:%mine /basename:%bname /minename:%yname", false},
-        {"TortoiseMerge", at({"TortoiseSVN\\bin\\TortoiseMerge.exe"}, nullptr),
+        {"TortoiseMerge", install_candidates({"TortoiseSVN\\bin\\TortoiseMerge.exe"}),
          "/base:%base /mine:%mine /basename:%bname /minename:%yname", false},
-        {"P4Merge", at({"Perforce\\p4merge.exe"}, "p4merge"), "%base %mine", false},
+        {"P4Merge", install_candidates({"Perforce\\p4merge.exe"}, "p4merge"), "%base %mine", false},
         // bin\code is a shell script, which git's sh runs (code.cmd it can't).
-        {"Visual Studio Code", at({"Microsoft VS Code\\bin\\code"}, nullptr),
+        {"Visual Studio Code", install_candidates({"Microsoft VS Code\\bin\\code"}),
          "--wait --diff %base %mine", false},
     };
     // JetBrains IDEs compare files in the IDE: `<launcher> diff a b`.
-    for (const std::string& root : roots)
-    {
-        std::error_code ec;
-        for (const auto& ide :
-             fs::directory_iterator(rap::sys::path_from_utf8(root + "\\JetBrains"), ec))
-            for (const char* launcher :
-                 {"idea64.exe", "clion64.exe", "rider64.exe", "pycharm64.exe", "webstorm64.exe",
-                  "goland64.exe", "phpstorm64.exe", "rustrover64.exe"})
-            {
-                const fs::path exe = ide.path() / "bin" / launcher;
-                if (fs::is_regular_file(exe, ec))
-                    known.push_back({rap::sys::path_to_utf8(ide.path().filename()),
-                                     {rap::sys::path_to_utf8(exe)},
-                                     "diff %base %mine",
-                                     false});
-            }
-    }
+    for (const jetbrains_ide& ide : jetbrains_ides())
+        known.push_back({ide.name, {ide.launcher}, "diff %base %mine", false});
 #else
-    // A Flatpak app runs through flatpak, if it's installed for the user or
-    // the system.
-    auto flatpak = [](const char* app) -> std::string
-    {
-        std::error_code ec;
-        const std::string home = rap::sys::env("HOME").value_or("");
-        for (const std::string dir :
-             {home + "/.local/share/flatpak/app/", std::string("/var/lib/flatpak/app/")})
-            if (fs::is_directory(dir + app, ec)) return std::string("flatpak run ") + app;
-        return {};
-    };
     known = {
         {"Meld", {"meld"}, "%base %mine --label=%bname --label=%yname"},
         {"KDiff3", {"kdiff3"}, "%base %mine --L1 %bname --L2 %yname"},
@@ -354,21 +322,17 @@ std::vector<detected_tool> detect_diff_tools()
     auto add = [&](const known_tool& k, const std::string& exe)
     { found.push_back({k.name, exe + " " + k.arguments, k.folders}); };
     for (const known_tool& k : known)
-        for (const std::string& program : k.programs)
-            if (!find_program(program).empty())
-            {
-                // A name found on PATH stays a name; a path is quoted if it
-                // has spaces ("C:\Program Files\...").
-                add(k, program.find(' ') != std::string::npos ? "\"" + program + "\"" : program);
-                break;
-            }
+        if (const std::string program = installed_program(k.programs); !program.empty())
+            add(k, program);
 #ifndef _WIN32
+    // A Flatpak app runs through flatpak.
     for (auto [name, app, arguments] :
          {std::tuple{"Meld (Flatpak)", "org.gnome.meld",
                      "%base %mine --label=%bname --label=%yname"},
           std::tuple{"KDiff3 (Flatpak)", "org.kde.kdiff3", "%base %mine --L1 %bname --L2 %yname"},
           std::tuple{"Kompare (Flatpak)", "org.kde.kompare", "-c %base %mine"}})
-        if (const std::string run = flatpak(app); !run.empty()) add({name, {}, arguments}, run);
+        if (const std::string run = flatpak_command(app); !run.empty())
+            add({name, {}, arguments}, run);
 #endif
     return found;
 }

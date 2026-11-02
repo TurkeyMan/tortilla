@@ -2,6 +2,7 @@
 
 #include "git/command.h"
 #include "git/remotes.h"
+#include "git/tool_discovery.h"
 #include "i18n.h"
 #include "settings.h"
 #include "util/programs.h"
@@ -62,49 +63,32 @@ std::vector<detected_merge_tool> detect_merge_tools()
     // Command lines from TortoiseGit's manual where it gives one [spec 9.2],
     // else from the tools' own documentation (and git's mergetools).
 #ifdef _WIN32
-    const std::vector<std::string> roots = install_roots();
-    auto at = [&](std::initializer_list<const char*> rel, const char* on_path)
-    {
-        std::vector<std::string> out;
-        for (const std::string& root : roots)
-            for (const char* r : rel) out.push_back(root + "\\" + r);
-        if (on_path) out.push_back(on_path);
-        return out;
-    };
     list = {
-        {"TortoiseGitMerge", at({"TortoiseGit\\bin\\TortoiseGitMerge.exe"}, nullptr),
+        {"TortoiseGitMerge", install_candidates({"TortoiseGit\\bin\\TortoiseGitMerge.exe"}),
          "/base:%base /theirs:%theirs /mine:%mine /merged:%merged /basename:%bname "
          "/theirsname:%tname "
          "/minename:%yname /mergedname:%mname"},
-        {"KDiff3", at({"KDiff3\\kdiff3.exe", "KDiff3\\bin\\kdiff3.exe"}, "kdiff3"),
+        {"KDiff3", install_candidates({"KDiff3\\kdiff3.exe", "KDiff3\\bin\\kdiff3.exe"}, "kdiff3"),
          "%base %mine %theirs -o %merged --L1 %bname --L2 %yname --L3 %tname"},
-        {"Meld", at({"Meld\\Meld.exe"}, "meld"), "%mine %base %theirs --output %merged"},
+        {"Meld", install_candidates({"Meld\\Meld.exe"}, "meld"),
+         "%mine %base %theirs --output %merged"},
         {"Beyond Compare",
-         at({"Beyond Compare 5\\BComp.exe", "Beyond Compare 4\\BComp.exe"}, "BComp"),
+         install_candidates({"Beyond Compare 5\\BComp.exe", "Beyond Compare 4\\BComp.exe"},
+                            "BComp"),
          "%mine %theirs %base %merged /lefttitle=%yname /righttitle=%tname /centertitle=%bname "
          "/outputtitle=%mname"},
-        {"P4Merge", at({"Perforce\\p4merge.exe"}, "p4merge"), "%base %theirs %mine %merged"},
-        {"WinMerge", at({"WinMerge\\WinMergeU.exe"}, "WinMergeU"),
+        {"P4Merge", install_candidates({"Perforce\\p4merge.exe"}, "p4merge"),
+         "%base %theirs %mine %merged"},
+        {"WinMerge", install_candidates({"WinMerge\\WinMergeU.exe"}, "WinMergeU"),
          "/e /ub /fr /wl /wm /dl %bname /dm %tname /dr %yname %base %theirs %mine /o %merged /ar"},
-        {"Araxis Merge", at({"Araxis\\Araxis Merge\\Compare.exe"}, nullptr),
+        {"Araxis Merge", install_candidates({"Araxis\\Araxis Merge\\Compare.exe"}),
          "/wait /3 /title1:%tname /title2:%bname /title3:%yname %theirs %base %mine %merged /a2"},
-        {"Sublime Merge", at({"Sublime Merge\\smerge.exe"}, "smerge"),
+        {"Sublime Merge", install_candidates({"Sublime Merge\\smerge.exe"}, "smerge"),
          "mergetool %base %mine %theirs -o %merged"},
     };
     // JetBrains IDEs merge in the IDE: `<launcher> merge mine theirs base merged`.
-    for (const std::string& root : roots)
-    {
-        std::error_code ec;
-        for (const auto& ide :
-             fs::directory_iterator(rap::sys::path_from_utf8(root + "\\JetBrains"), ec))
-            for (const char* launcher :
-                 {"idea64.exe", "clion64.exe", "rider64.exe", "pycharm64.exe", "webstorm64.exe",
-                  "goland64.exe", "phpstorm64.exe", "rustrover64.exe"})
-                if (fs::is_regular_file(ide.path() / "bin" / launcher, ec))
-                    list.push_back({rap::sys::path_to_utf8(ide.path().filename()),
-                                    {rap::sys::path_to_utf8(ide.path() / "bin" / launcher)},
-                                    "merge %mine %theirs %base %merged"});
-    }
+    for (const jetbrains_ide& ide : jetbrains_ides())
+        list.push_back({ide.name, {ide.launcher}, "merge %mine %theirs %base %merged"});
 #else
     list = {
         {"Meld", {"meld"}, "%mine %base %theirs --output %merged"},
@@ -121,12 +105,8 @@ std::vector<detected_merge_tool> detect_merge_tools()
 #endif
     std::vector<detected_merge_tool> found;
     for (const known& k : list)
-        for (const std::string& program : k.programs)
-            if (!find_program(program).empty())
-            {
-                found.push_back({k.name, word(program) + " " + k.arguments});
-                break;
-            }
+        if (const std::string program = installed_program(k.programs); !program.empty())
+            found.push_back({k.name, program + " " + k.arguments});
     return found;
 }
 

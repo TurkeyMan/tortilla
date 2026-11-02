@@ -74,6 +74,7 @@ add_library(tortilla_git STATIC
     src/git/merge_tool.cpp
     src/git/temp_files.cpp
     src/git/pathspec_file.cpp
+    src/git/tool_discovery.cpp
     src/util/programs.cpp
     src/util/sha256.cpp
     src/util/json.cpp
