@@ -8,6 +8,7 @@
 #include "git/command.h"
 #include "git/repo_worker.h"
 #include "git/sync.h"
+#include "log/forge_panel.h"
 #include "log/log_model.h"
 #include "rebase/rebase_window.h"
 
@@ -332,6 +333,16 @@ private:
     rap::menu_button* view_ = nullptr;
     rap::progress_bar* progress_ = nullptr;
     rap::splitter* splitter_ = nullptr;
+    // Under the list: the commit's text over its files, and the forge panel
+    // beside both, a column of its own (shown when it has something to say).
+    rap::splitter* details_splitter_ = nullptr;
+    rap::splitter* forge_splitter_ = nullptr;
+    std::unique_ptr<forge_panel> forge_panel_;  // after window_: goes first
+    std::vector<float> forge_sizes_;            // as last shown, for showing it again
+    bool forge_panel_visible_ = false;
+    void forge_panel_shown(bool);
+    void fit_files();
+    rap::subscription fit_timer_;
 
     // Options
     walk_options walk_options_;

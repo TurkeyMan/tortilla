@@ -135,6 +135,10 @@ log_window::open(rap::ui& ui, const std::string& path, bool all_branches, bool o
     w->reload();
     w->watch_repository();
     w->start_sync_watch();
+    w->pr_watch_->on_commit_checks([p = w.get()](const std::string& sha, const commit_runs& runs)
+                                   { p->forge_panel_->commit_checks(sha, runs); });
+    // The forge remotes are known at once; the PRs once they're asked for.
+    w->forge_panel_->set_pull_requests({}, w->pr_watch_->remotes());
     warn_if_lfs_missing(ui, w->window_.get(), w->repo_.workdir());
     return w;
 }
@@ -218,6 +222,17 @@ void log_window::build()
     using namespace rap::layout;
     namespace a = rap;
 
+    forge_panel_ = std::make_unique<forge_panel>(forge_panel::host{
+        .ui = ui_,
+        .window = [this] { return window_.get(); },
+        .workdir = repo_location(),
+        .actions = [this](const open_pr& p) { return pull_request_items(p); },
+        .shown = [this](bool on) { forge_panel_shown(on); },
+        .watch =
+            [this](std::optional<std::string> sha, std::optional<forge_remote> where, bool pending)
+        {
+            if (pr_watch_) pr_watch_->watch(std::move(sha), std::move(where), pending);
+        }});
     window_ = create_window(
         ui_,
         window{
@@ -311,34 +326,48 @@ void log_window::build()
                         .on_cell_context_menu([this](size_t row, size_t column, rap::point_f at)
                                               { return cell_menu(row, column, at); })
                         .stretch(3),
-                    // The details pane keeps its height: dragging the upper
-                    // divider moves the lower one with it, taking space from the
-                    // file list until that reaches its minimum. (TortoiseGit
-                    // shrinks the details first [spec 1.3]; this is deliberate.)
-                    hbox{
-                        text_view{}.read_only().bind(details_).stretch(),
-                        // Kept top right, as TortoiseGit has it [spec 1.2].
-                        vbox{
-                            canvas{}
-                                .on_paint(
-                                    [this](rap::painter& p, rap::size_f size)
-                                    {
-                                        p.rect({0, 0, size.w, size.h}, 0,
-                                               rap::paint{rap::theme_color::window}, std::nullopt);
-                                        if (!avatar_) return;
-                                        p.image(*avatar_,
-                                                {0, 0, float(avatar_->width()),
-                                                 float(avatar_->height())},
-                                                {0, 0, size.w, size.h});
-                                    })
-                                .width(rap::extent{k_avatar_size, rap::extent::unit::px})
-                                .height(rap::extent{k_avatar_size, rap::extent::unit::px})
-                                .bind(avatar_canvas_),
-                            spacer{},
-                        },
+                    // The forge panel, a column beside the commit's text and
+                    // files, when the commit has a PR or CI to show.
+                    splitter{
+                        horizontal,
+                        // The details pane keeps its height: dragging the upper
+                        // divider takes space from the file list until that
+                        // reaches its minimum. (TortoiseGit shrinks the details
+                        // first [spec 1.3]; this is deliberate.)
+                        splitter{
+                            vertical,
+                            hbox{
+                                text_view{}.read_only().bind(details_).stretch(),
+                                // Kept top right, as TortoiseGit has it [spec 1.2].
+                                vbox{
+                                    canvas{}
+                                        .on_paint(
+                                            [this](rap::painter& p, rap::size_f size)
+                                            {
+                                                p.rect({0, 0, size.w, size.h}, 0,
+                                                       rap::paint{rap::theme_color::window},
+                                                       std::nullopt);
+                                                if (!avatar_) return;
+                                                p.image(*avatar_,
+                                                        {0, 0, float(avatar_->width()),
+                                                         float(avatar_->height())},
+                                                        {0, 0, size.w, size.h});
+                                            })
+                                        .width(rap::extent{k_avatar_size, rap::extent::unit::px})
+                                        .height(rap::extent{k_avatar_size, rap::extent::unit::px})
+                                        .bind(avatar_canvas_),
+                                    spacer{},
+                                },
+                            }
+                                .height(9_lines),
+                            files_.list("log.files").height(4_lines).stretch(2),
+                        }
+                            .bind(details_splitter_)
+                            .stretch(3),
+                        forge_panel_->layout(),
                     }
-                        .height(9_lines),
-                    files_.list("log.files").height(4_lines).stretch(2),
+                        .bind(forge_splitter_)
+                        .stretch(2),
                 }
                     .bind(splitter_)
                     .stretch(),
@@ -469,9 +498,11 @@ void log_window::build()
     from_->set_date(local_date(std::time(nullptr)));
     to_->set_date(local_date(std::time(nullptr)));
     update_ref_button();
+    forge_splitter_->on_moved([this] { fit_files(); });
     if (auto saved = settings::get().value("log.actionIcons"); !saved.empty())
         log_.set_action_icon_style(action_icon_style(std::clamp(std::atoi(saved.c_str()), 0, 3)));
     restore_layout();
+    fit_timer_ = ui_.timer(300, false, [this] { fit_files(); });
 }
 
 void log_window::closing()
@@ -492,6 +523,9 @@ void log_window::save_layout()
     settings& st = settings::get();
     st.save_window("log.window", *window_);
     st.set_numbers("log.panes", splitter_->sizes());
+    st.set_numbers("log.panes.details", details_splitter_->sizes());
+    if (forge_panel_visible_) forge_sizes_ = forge_splitter_->sizes();
+    if (!forge_sizes_.empty()) st.set_numbers("log.panes.forge", forge_sizes_);
     st.set_numbers("log.columns", commit_list_->column_widths());
     auto order = [](const std::vector<size_t>& o)
     {
@@ -532,7 +566,17 @@ void log_window::restore_layout()
 {
     settings& st = settings::get();
     st.restore_window("log.window", *window_);
-    if (auto v = st.numbers("log.panes"); v.size() == 3) splitter_->set_sizes(v);
+    // The list, then the rest; before the forge panel, three panes: the list,
+    // the commit's text and its files.
+    if (auto v = st.numbers("log.panes"); v.size() == 3)
+    {
+        splitter_->set_sizes({v[0], v[1] + v[2]});
+        details_splitter_->set_sizes({v[1], v[2]});
+    }
+    else if (v.size() == 2)
+        splitter_->set_sizes(v);
+    if (auto v = st.numbers("log.panes.details"); v.size() == 2) details_splitter_->set_sizes(v);
+    if (auto v = st.numbers("log.panes.forge"); v.size() == 2) forge_sizes_ = v;
     if (auto v = st.numbers("log.columns"); !v.empty()) commit_list_->set_column_widths(v);
     // The lists ignore an order that doesn't fit their columns.
     auto order = [](const std::vector<float>& v)
@@ -776,6 +820,30 @@ void log_window::update_pull_requests()
     if (uses && !log_.loading() &&
         (now.known != before.known || now.all != before.all || now.mine != before.mine))
         reload();
+    forge_panel_->set_pull_requests(pr_watch_->pull_requests(), pr_watch_->remotes());
+}
+
+// The forge panel's column keeps the width it was last given.
+void log_window::forge_panel_shown(bool on)
+{
+    if (!on && forge_panel_visible_) forge_sizes_ = forge_splitter_->sizes();
+    forge_panel_visible_ = on;
+    if (on && forge_sizes_.size() == 2 && forge_sizes_[0] > 0 && forge_sizes_[1] > 0)
+        forge_splitter_->set_sizes(forge_sizes_);
+    // The file list's width changes with it, once the layout's done.
+    fit_timer_ = ui_.timer(50, false, [this] { fit_files(); });
+}
+
+// The file list's Path column takes what its other columns leave.
+void log_window::fit_files()
+{
+    const auto sizes = forge_splitter_->sizes();
+    float width = 0;
+    if (forge_panel_visible_ && !sizes.empty())
+        width = sizes.front();
+    else
+        for (float s : sizes) width += s;
+    files_.fit_path(width);
 }
 
 const open_pr* log_window::pull_request_of(const ref& r) const
@@ -824,6 +892,7 @@ void log_window::selection_changed()
     {
         details_->set_text("");
         show_avatar(nullptr);
+        forge_panel_->show_commit(std::nullopt);
         files_.clear();
     }
     update_status();
@@ -876,6 +945,7 @@ void log_window::show_commit(size_t row)
     if (log_.is_working_tree(row))
     {
         show_avatar(nullptr);
+        forge_panel_->show_commit(std::nullopt);
         // [spec 1.8]: "Fetching Status..." until the status arrives.
         if (!log_.working_tree_known())
         {
@@ -910,6 +980,7 @@ void log_window::show_commit(size_t row)
     text += "\n" + c.message;
     details_->set_text(text, spans);
     show_avatar(&c);
+    forge_panel_->show_commit(c.id.hex());
 
     // The file list comes from the worker, so the click (and its highlight)
     // never waits for git: the files as soon as the tree diff has them, then
