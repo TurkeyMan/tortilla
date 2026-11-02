@@ -1,5 +1,7 @@
 #include "ref_labels.h"
 
+#include "i18n.h"
+
 #include <algorithm>
 
 namespace tortilla
@@ -45,7 +47,158 @@ bool is_dark(color c)
     return c.r * 30 + c.g * 59 + c.b * 11 <= 12800;
 }
 
+std::string count(std::int64_t n)
+{
+    return std::to_string(n);
+}
+
+// "6 min 12 s", "5 min", "45 s", "1 h 3 min"; to the minute, once it's
+// that long, for what's still running (the poll's a minute behind anyway).
+std::string duration_text(std::int64_t s, bool to_the_minute)
+{
+    s = std::max<std::int64_t>(s, 0);
+    if (s >= 3600)
+        return s % 3600 / 60
+                   ? rap::i18n::format(_("{0} h {1} min"), count(s / 3600), count(s % 3600 / 60))
+                   : rap::i18n::format(_("{0} h"), count(s / 3600));
+    if (s >= 60)
+        return s % 60 && !to_the_minute
+                   ? rap::i18n::format(_("{0} min {1} s"), count(s / 60), count(s % 60))
+                   : rap::i18n::format(_("{0} min"), count(s / 60));
+    return rap::i18n::format(_("{0} s"), count(s));
+}
+
+// The first few runs' names: "build, test and 3 more".
+std::string run_names(const std::vector<const check_run*>& runs)
+{
+    constexpr size_t shown = 4;
+    std::string out;
+    for (size_t i = 0; i < runs.size() && i < shown; ++i) out += (i ? ", " : "") + runs[i]->name;
+    if (runs.size() <= shown) return out;
+    const size_t more = runs.size() - shown;
+    return rap::i18n::format(N_("{0} and {1} more", "{0} and {1} more", more), out, count(more));
+}
+
+std::string block_text(merge_block b, const pull_request& pr)
+{
+    switch (b)
+    {
+    case merge_block::conflicts:
+        return pr.base_branch.empty() ? std::string(_("Conflicts with its base"))
+                                      : rap::i18n::format(_("Conflicts with {0}"), pr.base_branch);
+    case merge_block::review_required: return _("Needs an approving review");
+    case merge_block::changes_requested: return _("Changes requested");
+    case merge_block::behind:
+        return pr.base_branch.empty() ? std::string(_("Behind its base"))
+                                      : rap::i18n::format(_("Behind {0}"), pr.base_branch);
+    case merge_block::draft: return _("Draft");
+    case merge_block::discussions: return _("Unresolved threads");
+    case merge_block::blocked_other: return _("The repository's rules stop a merge");
+    }
+    return {};
+}
+
 }  // namespace
+
+pr_mark mark_of(const pull_request& pr)
+{
+    return {.number = pr.number,
+            .checks = pr.checks,
+            .draft = pr.draft,
+            .blocked = pr.blocked,
+            .conflicts = pr.conflicts};
+}
+
+std::string pr_tooltip(const pull_request& pr, std::int64_t now)
+{
+    // The runs that ran (or will): a GitLab job skipped or left to start by
+    // hand doesn't count.
+    std::vector<const check_run*> failed, running;
+    std::int64_t counted = 0, first_start = 0, last_end = 0, running_since = 0;
+    for (const check_run& r : pr.runs)
+    {
+        if (r.state == check_state::none) continue;
+        ++counted;
+        if (r.state == check_state::failure) failed.push_back(&r);
+        if (r.state == check_state::pending)
+        {
+            running.push_back(&r);
+            if (r.started_at && (!running_since || r.started_at < running_since))
+                running_since = r.started_at;
+        }
+        if (r.started_at && (!first_start || r.started_at < first_start))
+            first_start = r.started_at;
+        if (r.completed_at > last_end) last_end = r.completed_at;
+    }
+    if (!running_since) running_since = first_start;
+
+    std::vector<std::string> parts{"#" + count(pr.number)};
+    const bool pipe = pr.pipeline;
+    switch (pr.checks)
+    {
+    case check_state::none: parts.push_back(_("No checks")); break;
+    case check_state::success:
+        // From the first to start to the last to finish.
+        if (first_start && last_end > first_start)
+            parts.push_back(
+                rap::i18n::format(pipe ? _("Pipeline passed in {0}") : _("Checks passed in {0}"),
+                                  duration_text(last_end - first_start, false)));
+        else
+            parts.push_back(pipe ? _("Pipeline passed") : _("Checks passed"));
+        break;
+    case check_state::failure:
+        if (failed.empty())
+            parts.push_back(pipe ? _("Pipeline failed") : _("Checks failed"));
+        else if (pipe)
+            parts.push_back(rap::i18n::format(N_("Pipeline failed: {0} of {1} job: {2}",
+                                                 "Pipeline failed: {0} of {1} jobs: {2}", counted),
+                                              count(failed.size()), count(counted),
+                                              run_names(failed)));
+        else
+            parts.push_back(rap::i18n::format(
+                N_("{0} of {1} check failed: {2}", "{0} of {1} checks failed: {2}", counted),
+                count(failed.size()), count(counted), run_names(failed)));
+        if (!running.empty())
+            parts.push_back(
+                rap::i18n::format(N_("{0} still running", "{0} still running", running.size()),
+                                  count(running.size())));
+        break;
+    case check_state::pending:
+    {
+        std::string text =
+            running.empty() ? std::string(pipe ? _("Pipeline running") : _("Checks running"))
+            : pipe
+                ? rap::i18n::format(N_("Pipeline running: {0} job left",
+                                       "Pipeline running: {0} jobs left", running.size()),
+                                    count(running.size()))
+                : rap::i18n::format(N_("{0} check running", "{0} checks running", running.size()),
+                                    count(running.size()));
+        if (running_since && now > running_since)
+            text += rap::i18n::format(_(", for {0}"), duration_text(now - running_since, true));
+        if (!running.empty()) text += ": " + run_names(running);
+        parts.push_back(std::move(text));
+        if (!failed.empty())
+            parts.push_back(
+                rap::i18n::format(N_("{0} failed: {1}", "{0} failed: {1}", failed.size()),
+                                  count(failed.size()), run_names(failed)));
+        break;
+    }
+    }
+
+    // What stands in the way of a merge; that nothing does only once the
+    // checks are through, or when there are none.
+    if (pr.blocks.empty())
+    {
+        if (pr.checks == check_state::success || pr.checks == check_state::none)
+            parts.push_back(_("Can be merged"));
+    }
+    else
+        for (merge_block b : pr.blocks) parts.push_back(block_text(b, pr));
+
+    std::string out;
+    for (const std::string& p : parts) out += (out.empty() ? "" : " · ") + p;
+    return out;
+}
 
 void paint_check_mark(rap::painter& p, rap::point_f c, float d, check_state s, mergeable m)
 {
@@ -189,7 +342,9 @@ float paint_ref_labels(rap::painter& p, const std::vector<ref>& refs, float x, f
                                  : mark->blocked ? mergeable::not_yet
                                                  : mergeable::yes);
         }
-        if (boxes) boxes->push_back({x, x + w, *ref});
+        if (boxes)
+            boxes->push_back(
+                {.left = x, .right = x + w, .ref = *ref, .pr_left = mark ? x + 4 + t.w + 2.5f : 0});
         x += w + 1;
     }
     return order.empty() ? start : x;

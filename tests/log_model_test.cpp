@@ -186,6 +186,88 @@ int main(int argc, char** argv)
                       heads.at("refs/remotes/upstream/feat/x").pr.number == 8,
                   "forge: pull requests' head branches, remote ones only");
         }
+        // The forges' times, to seconds since 1970.
+        check(tortilla::parse_iso_time("1970-01-01T00:00:00Z") == 0 &&
+                  tortilla::parse_iso_time("2026-10-21T10:44:02Z") == 1792579442 &&
+                  tortilla::parse_iso_time("2016-08-11T11:28:34.085Z") == 1470914914 &&
+                  tortilla::parse_iso_time("2026-11-02T03:19:43+01:00") == 1793585983 &&
+                  tortilla::parse_iso_time("2024-02-29T23:59:59-05:30") == 1709270999,
+              "forge: ISO 8601 times, with fractions and offsets");
+        check(!tortilla::parse_iso_time("") && !tortilla::parse_iso_time("null") &&
+                  !tortilla::parse_iso_time("2026-10-21") &&
+                  !tortilla::parse_iso_time("2026-13-01T00:00:00Z") &&
+                  !tortilla::parse_iso_time("2026-10-21T10:44:02") &&
+                  !tortilla::parse_iso_time("2026-10-21T10:44:02Zx"),
+              "forge: not a time, 0");
+        // What a PR's mark means, as its tooltip says.
+        {
+            using namespace tortilla;
+            const std::int64_t t0 = 1'800'000'000;
+            auto run = [&](std::string name, check_state s, std::int64_t start, std::int64_t end)
+            {
+                return check_run{.name = std::move(name),
+                                 .state = s,
+                                 .started_at = start ? t0 + start : 0,
+                                 .completed_at = end ? t0 + end : 0};
+            };
+            pull_request passed{.number = 870, .base_branch = "master"};
+            passed.checks = check_state::success;
+            passed.runs = {run("build", check_state::success, 10, 300),
+                           run("lint", check_state::success, 12, 382),
+                           run("skipped", check_state::success, 50, 40)};
+            check(pr_tooltip(passed, t0 + 999) ==
+                      "#870 · Checks passed in 6 min 12 s · Can be merged",
+                  "pr tooltip: passed, how long, can be merged");
+            pull_request review = passed;
+            review.number = 869;
+            review.runs = {run("build", check_state::success, 0 + 1, 301)};
+            review.blocked = true;
+            review.blocks = {merge_block::review_required};
+            check(pr_tooltip(review, t0 + 999) ==
+                      "#869 · Checks passed in 5 min · Needs an approving review",
+                  "pr tooltip: passed, but needs a review");
+            pull_request failed{.number = 866, .base_branch = "master"};
+            failed.checks = check_state::failure;
+            for (int i = 0; i < 7; ++i)
+                failed.runs.push_back(run("ok " + std::to_string(i), check_state::success, 1, 2));
+            failed.runs.push_back(run("build (windows)", check_state::failure, 1, 2));
+            failed.runs.push_back(run("test (fedora arm64)", check_state::failure, 1, 2));
+            check(pr_tooltip(failed, t0) ==
+                      "#866 · 2 of 9 checks failed: build (windows), test (fedora arm64)",
+                  "pr tooltip: which checks failed");
+            pull_request running{.number = 867};
+            running.checks = check_state::pending;
+            running.runs = {
+                run("a", check_state::pending, 60, 0), run("b", check_state::pending, 100, 0),
+                run("c", check_state::pending, 0, 0), run("d", check_state::success, 30, 50)};
+            check(pr_tooltip(running, t0 + 60 + 4 * 60 + 25) ==
+                      "#867 · 3 checks running, for 4 min: a, b, c",
+                  "pr tooltip: which are running, and for how long");
+            pull_request none{.number = 805, .base_branch = "master"};
+            none.conflicts = true;
+            none.blocks = {merge_block::conflicts, merge_block::draft};
+            check(pr_tooltip(none, t0) == "#805 · No checks · Conflicts with master "
+                                          "· Draft",
+                  "pr tooltip: no checks, conflicts, a draft");
+            pull_request pipe{.number = 12, .pipeline = true};
+            pipe.checks = check_state::failure;
+            pipe.runs = {run("build", check_state::success, 1, 100),
+                         run("test", check_state::failure, 100, 200),
+                         run("deploy", check_state::none, 0, 0)};
+            check(pr_tooltip(pipe, t0) == "#12 · Pipeline failed: 1 of 2 jobs: test",
+                  "pr tooltip: a GitLab pipeline's failed jobs, skipped ones not counted");
+            pipe.checks = check_state::success;
+            pipe.runs = {run("Pipeline", check_state::success, 1, 2 * 3600 + 3 * 60 + 1)};
+            check(pr_tooltip(pipe, t0) == "#12 · Pipeline passed in 2 h 3 min · Can be "
+                                          "merged",
+                  "pr tooltip: a pipeline's hours");
+            pull_request many{.number = 1};
+            many.checks = check_state::failure;
+            for (int i = 0; i < 6; ++i)
+                many.runs.push_back(run(std::string(1, char('a' + i)), check_state::failure, 0, 0));
+            check(pr_tooltip(many, t0) == "#1 · 6 of 6 checks failed: a, b, c, d and 2 more",
+                  "pr tooltip: a long list cut short");
+        }
 #ifndef _WIN32
         // The GitHub CLI's token, from a stand-in gh first on PATH.
         const std::string bin = std::string(argv[1]) + "/fake-gh";
