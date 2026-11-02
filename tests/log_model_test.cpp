@@ -114,7 +114,9 @@ void make_conflict(const std::string& dir, const std::vector<std::string>& files
                    const std::string& how = "merge")
 {
     const std::string g = "git -C '" + dir + "' -c user.name=Ada -c user.email=ada@x ";
-    sh("git init -q -b main '" + dir + "'");
+    // Files as written, whatever the system's core.autocrlf (Git for
+    // Windows sets it): the sides are checked out with line endings applied.
+    sh("git init -q -b main '" + dir + "' && git -C '" + dir + "' config core.autocrlf false");
     auto write_all = [&](const std::string& text)
     {
         for (const std::string& f : files) sh("printf '" + text + "\\n' > '" + dir + "/" + f + "'");
@@ -127,10 +129,11 @@ void make_conflict(const std::string& dir, const std::vector<std::string>& files
     write_all("ours");
     sh(g + how + " side >/dev/null 2>&1 || true");
 }
+// The bytes of the file at `path`, a UTF-8 name: on Windows a std::string
+// path would be read in the ANSI code page.
 std::string read_bytes(const std::string& path)
 {
-    std::ifstream in(path, std::ios::binary);
-    return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+    return slurp(rap::sys::path_from_utf8(path));
 }
 
 // History editing (git/history_edit.h) on throwaway repositories: each
@@ -490,7 +493,17 @@ void history_edit_tests(const std::string& root)
         const std::string old_tree = tree("HEAD");
         auto plan = plan_combine(*h, {h->line[0], h->line[1]}, "unicode\n");
         auto tip = plan ? replay(*r, *plan) : std::unexpected(replay_failure{});
-        check(tip && apply_edit(*r, edit_from(*r, *h, *plan, *tip, "x")) &&
+        {  // DIAG
+            std::ifstream narrow(dir + "/" + a, std::ios::binary);
+            std::printf("DIAG plan=%d tip=%d narrow_open=%d wide=[%s]\n", !!plan, !!tip,
+                        (int)narrow.is_open(), read_bytes(dir + "/" + a).c_str());
+            std::fflush(stdout);
+            sh("git config --show-origin --get-all core.autocrlf || true");
+        }
+        const bool DIAG_applied = tip && apply_edit(*r, edit_from(*r, *h, *plan, *tip, "x"));
+        std::printf("DIAG applied=%d sametree=%d bytes=[%s]\n", DIAG_applied,
+                    tree("HEAD") == old_tree, read_bytes(dir + "/" + a).c_str());
+        check(DIAG_applied &&
                   tree("HEAD") == old_tree && read_bytes(dir + "/" + a) == "u\n",
               "history: combine with non-ASCII names");
         h = branch_holding(*r, {*r->resolve("HEAD")}, mainline);
@@ -3432,6 +3445,13 @@ int main(int argc, char** argv)
                 tortilla::run_git(dir, {"show", ":" + std::to_string(stage) + ":f.txt"},
                                   tortilla::git_output::stdout_only)
                     .output;
+            {  // DIAG
+                std::printf("DIAG %s tool=", name.c_str());
+                for (unsigned char c : tool) std::printf("%02x", c);
+                std::printf(" menu=");
+                for (unsigned char c : menu) std::printf("%02x", c);
+                std::printf("\n");
+            }
             return std::pair{tool, menu};
         };
         auto [tool, menu] = mine_of("tortilla", "cherry-pick", true);
@@ -3503,7 +3523,8 @@ int main(int argc, char** argv)
 #endif
         std::vector<std::string> names{"a.txt", "b.txt", "c.txt"};
         names.insert(names.end(), odd.begin(), odd.end());
-        sh("git init -q -b main '" + dir + "'");
+        // Reverted files as committed, whatever the system's core.autocrlf.
+        sh("git init -q -b main '" + dir + "' && " + g + "config core.autocrlf false");
         for (const std::string& n : names) sh("printf 'one\\n' > '" + dir + "/" + n + "'");
         sh(g + "add -A && " + g + "commit -qm one");
         for (const std::string& n : names) sh("printf 'work\\n' > '" + dir + "/" + n + "'");
