@@ -1,6 +1,7 @@
 #include "badges.h"
 
 #include "git/command.h"
+#include "git/porcelain.h"
 
 #include <algorithm>
 
@@ -23,19 +24,6 @@ int rank(badge b)
     }
 }
 
-// Each NUL-terminated field in turn.
-template <class F>
-void each_field(std::string_view text, F f)
-{
-    for (size_t at = 0; at < text.size();)
-    {
-        size_t end = text.find('\0', at);
-        if (end == std::string_view::npos) end = text.size();
-        f(text.substr(at, end - at));
-        at = end + 1;
-    }
-}
-
 // The folders above `path`, nearest first, then "" (the top).
 template <class F>
 void each_folder(std::string_view path, F f)
@@ -54,48 +42,40 @@ void each_folder(std::string_view path, F f)
 repo_badges repo_badges::build(std::string_view tracked, std::string_view status)
 {
     repo_badges out;
-    each_field(tracked,
-               [&](std::string_view path)
-               {
-                   if (path.empty()) return;
-                   out.tracked_.emplace(path);
-                   each_folder(path,
-                               [&](std::string_view folder) { out.tracked_.emplace(folder); });
-               });
+    each_nul_field(tracked,
+                   [&](std::string_view path)
+                   {
+                       if (path.empty()) return;
+                       out.tracked_.emplace(path);
+                       each_folder(path,
+                                   [&](std::string_view folder) { out.tracked_.emplace(folder); });
+                   });
 
-    // "XY path", and a rename or copy's old path as the next field.
-    bool skip_next = false;
     std::vector<std::pair<std::string, badge>> files;
-    each_field(status,
-               [&](std::string_view field)
-               {
-                   if (skip_next)
-                   {
-                       skip_next = false;
-                       return;
-                   }
-                   if (field.size() < 4) return;
-                   const char x = field[0], y = field[1];
-                   std::string_view path = field.substr(3);
-                   // Untracked: no badge, but noted (a folder git collapses
-                   // ends in '/'), and its folders hold something untracked.
-                   if (x == '?')
-                   {
-                       while (!path.empty() && path.back() == '/') path.remove_suffix(1);
-                       out.untracked_.emplace(path);
-                       each_folder(path, [&](std::string_view folder)
-                                   { out.untracked_within_.emplace(folder); });
-                       return;
-                   }
-                   badge b = badge::modified;
-                   // Unmerged: both sides' letters, or either one U.
-                   if (x == 'U' || y == 'U' || (x == 'A' && y == 'A') || (x == 'D' && y == 'D'))
-                       b = badge::conflicted;
-                   else if (x == 'A' || x == 'R' || x == 'C')
-                       b = badge::added;  // new here, a rename's or copy's too
-                   if (x == 'R' || x == 'C' || y == 'R' || y == 'C') skip_next = true;
-                   files.emplace_back(path, b);
-               });
+    each_porcelain_entry(status,
+                         [&](const porcelain_entry& e)
+                         {
+                             const char x = e.x, y = e.y;
+                             std::string_view path = e.path;
+                             // Untracked: no badge, but noted (a folder git collapses
+                             // ends in '/'), and its folders hold something untracked.
+                             if (x == '?')
+                             {
+                                 while (!path.empty() && path.back() == '/') path.remove_suffix(1);
+                                 out.untracked_.emplace(path);
+                                 each_folder(path, [&](std::string_view folder)
+                                             { out.untracked_within_.emplace(folder); });
+                                 return;
+                             }
+                             badge b = badge::modified;
+                             // Unmerged: both sides' letters, or either one U.
+                             if (x == 'U' || y == 'U' || (x == 'A' && y == 'A') ||
+                                 (x == 'D' && y == 'D'))
+                                 b = badge::conflicted;
+                             else if (x == 'A' || x == 'R' || x == 'C')
+                                 b = badge::added;  // new here, a rename's or copy's too
+                             files.emplace_back(path, b);
+                         });
     for (auto& [path, b] : files)
     {
         out.changed_[path] = b;

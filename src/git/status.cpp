@@ -1,5 +1,7 @@
 #include "status.h"
 
+#include "git/porcelain.h"
+
 #include <charconv>
 #include <unordered_map>
 
@@ -79,24 +81,22 @@ std::vector<file_change> parse_status(const std::string& porcelain, const std::s
 
     // porcelain v1 -z: "XY path\0", renames and copies "XY new\0old\0".
     std::vector<file_change> out;
-    auto pf = fields(porcelain);
-    for (size_t i = 0; i < pf.size(); ++i)
-    {
-        const std::string& e = pf[i];
-        if (e.size() < 4) continue;
-        file_change f;
-        f.status = status_letter(e[0], e[1]);
-        f.staged = e[0] != ' ' && e[0] != '?' && e[0] != '!';
-        f.path = e.substr(3);
-        if ((e[0] == 'R' || e[0] == 'C') && i + 1 < pf.size()) f.old_path = pf[++i];
-        if (auto it = counts.find(f.path); it != counts.end())
-        {
-            f.added = it->second.added;
-            f.removed = it->second.removed;
-            f.binary = it->second.binary;
-        }
-        out.push_back(std::move(f));
-    }
+    each_porcelain_entry(porcelain,
+                         [&](const porcelain_entry& e)
+                         {
+                             file_change f;
+                             f.status = status_letter(e.x, e.y);
+                             f.staged = e.x != ' ' && e.x != '?' && e.x != '!';
+                             f.path = e.path;
+                             f.old_path = e.old_path;
+                             if (auto it = counts.find(f.path); it != counts.end())
+                             {
+                                 f.added = it->second.added;
+                                 f.removed = it->second.removed;
+                                 f.binary = it->second.binary;
+                             }
+                             out.push_back(std::move(f));
+                         });
     return out;
 }
 
