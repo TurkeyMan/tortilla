@@ -24,11 +24,11 @@
 namespace tortilla
 {
 
-// Which commit fields the search box looks at [spec 1.9.2].
+// Which commit fields the search box looks at [spec 1.9.2]. Not
+// TortoiseGit's Paths, which needs every commit's file list.
 enum filter_field : unsigned
 {
     filter_messages = 0x01,
-    filter_paths = 0x02,  // TODO: needs per-commit file lists
     filter_authors = 0x04,
     filter_revs = 0x08,  // SHA-1
     filter_subject = 0x40,
