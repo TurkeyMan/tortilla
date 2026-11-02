@@ -929,6 +929,96 @@ move_commits(const repo& repository, const branch_history& from, const std::vect
     return e;
 }
 
+std::expected<drop_place, std::string> drop_place_of(const repo& repository, const oid& row,
+                                                     const std::vector<ref>& refs,
+                                                     const std::string& mainline)
+{
+    std::vector<const ref*> tips;
+    bool remote = false;
+    for (const ref& r : refs)
+    {
+        if (r.kind == ref_kind::local_branch) tips.push_back(&r);
+        remote = remote || r.kind == ref_kind::remote_branch;
+    }
+    std::ranges::stable_partition(tips, [](const ref* r) { return r->current; });
+    if (tips.size() > 1 && !tips.front()->current)
+        return std::unexpected(std::string(_("several branches end there")));
+    if (!tips.empty())
+    {
+        auto h = load_branch_history(repository, tips.front()->full_name, mainline);
+        if (!h) return std::unexpected(h.error());
+        return drop_place{.onto = std::move(*h)};
+    }
+    auto h = branch_holding(repository, {row}, mainline);
+    // The mainline's own, or a remote's: not a branch of ours to change.
+    if (!h) return std::unexpected(remote ? std::string(_("not a local branch")) : h.error());
+    const size_t place = *h->index_of(row);
+    return drop_place{.onto = std::move(*h), .place = place};
+}
+
+std::expected<edit_plan, std::string> plan_insert(const repo& repository,
+                                                  const branch_history& onto,
+                                                  const std::vector<oid>& commits, size_t place)
+{
+    if (commits.empty()) return std::unexpected(std::string(_("no commits")));
+    if (place > onto.line.size())
+        return std::unexpected(rap::i18n::format(_("not on {0}"), onto.name()));
+    if (!onto.worktree.empty()) return std::unexpected(std::string(_("in another worktree")));
+    // Where they go: on line[place], or, at the bottom, where the line
+    // leaves the mainline (an empty line: its tip).
+    const std::optional<oid> base =
+        place < onto.line.size() ? std::optional(onto.line[place]) : onto.below;
+    for (const oid& c : commits)
+    {
+        const auto commit = repository.lookup(c);
+        if (!commit) return std::unexpected(rap::i18n::format(_("{0} not found"), c.hex(8)));
+        if (commit->parents.size() > 1) return std::unexpected(std::string(_("a merge")));
+        if (onto.index_of(c) || (base && repository.is_ancestor(c, *base)))
+            return std::unexpected(rap::i18n::format(_("on {0} already"), onto.name()));
+    }
+    // The commits above are replayed onto changed trees.
+    if (place > 0)
+        if (auto why = why_not_editable(
+                onto, std::vector<oid>(onto.line.begin(), onto.line.begin() + place), true))
+            return std::unexpected(*why);
+    edit_plan p{.branch = onto.branch, .old_tip = onto.tip, .base = base};
+    for (const oid& c : commits) p.steps.push_back({.commit = c});
+    pick_above(onto, place, p.steps);
+    return p;
+}
+
+std::expected<history_edit, replay_failure>
+transplant_commits(const repo& repository, const branch_history& onto, size_t place,
+                   const std::vector<oid>& commits, const branch_history* from, std::string reflog)
+{
+    auto refuse = [](std::string why) -> std::unexpected<replay_failure>
+    { return std::unexpected(replay_failure{.message = std::move(why)}); };
+    if (from && from->branch == onto.branch) return refuse(_("the same branch"));
+    auto plan = plan_insert(repository, onto, commits, place);
+    if (!plan) return refuse(plan.error());
+    auto tip = replay(repository, *plan);
+    if (!tip) return std::unexpected(tip.error());
+    history_edit target = edit_from(repository, onto, *plan, *tip, reflog);
+    if (!from) return target;
+
+    auto left = plan_drop(*from, commits);
+    if (!left) return refuse(left.error());
+    auto source = replay(repository, *left);
+    if (!source) return std::unexpected(source.error());
+    history_edit e = edit_from(repository, *from, *left, *source, std::move(reflog));
+    // The pushed branch first: it's the one offered a force push, leasing
+    // on its upstream.
+    if (target.pushed && !e.pushed)
+    {
+        e.moves.insert(e.moves.begin(), target.moves.front());
+        e.lease = target.lease;
+    }
+    else
+        e.moves.push_back(target.moves.front());
+    e.pushed = e.pushed || target.pushed;
+    return e;
+}
+
 std::vector<std::string> force_push_args(const repo& repository, const std::string& branch,
                                          const oid& expected, const oid& tip)
 {

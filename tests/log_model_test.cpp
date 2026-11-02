@@ -471,6 +471,119 @@ void history_edit_tests(const std::string& root)
         sh("cd '" + dir + "' && git checkout -q feature && git stash pop -q --index");
     }
 
+    // Dragging commits onto another branch: moved off their own, or copied;
+    // on the branch's tip, or inserted lower down with the rest replayed.
+    {
+        sh("cd '" + dir +
+           "' && git stash push -q -m history-test6 && git checkout -q -b drag main");
+        commit("d1.txt", "d1\n", "drag one");
+        commit("d2.txt", "d2\n", "drag two");
+        commit("d3.txt", "d3\n", "drag three");
+        sh(g + "checkout -q feature");
+        auto from = load_branch_history(*r, "refs/heads/drag", mainline);
+        auto onto = load_branch_history(*r, "refs/heads/topic", mainline);
+        check(from && onto && from->line.size() == 3 && onto->line.size() == 1,
+              "history: (fixture) two branches to drag between");
+        if (from && onto)
+        {
+            // Onto topic's tip: a row with its label.
+            const std::vector<ref> tip_refs{
+                {.name = "topic", .full_name = "refs/heads/topic", .kind = ref_kind::local_branch}};
+            auto at = drop_place_of(*r, onto->tip, tip_refs, mainline);
+            check(at && at->onto.branch == "refs/heads/topic" && at->place == 0,
+                  "history: dropped on a branch's tip, they go on top of it");
+            auto plan = plan_insert(*r, *onto, {from->line[0]}, 0);
+            check(plan && plan->base == onto->tip && plan->steps.size() == 1,
+                  "history: the plan: the commit picked on the tip");
+            auto moved = transplant_commits(*r, *onto, 0, {from->line[0]}, &*from,
+                                            "tortilla: move 1 commit to topic");
+            check(moved && moved->moves.size() == 2 && !moved->pushed &&
+                      effect_of(*r, *moved) == tree_effect::none && apply_edit(*r, *moved) &&
+                      subject("topic") == "drag three" &&
+                      git({"rev-parse", "topic~1"}) == onto->tip.hex() &&
+                      subject("drag") == "drag two",
+                  "history: moved onto another branch's tip, and off its own");
+            check(moved && apply_edit(*r, moved->undo()) &&
+                      git({"rev-parse", "drag"}) == from->tip.hex() &&
+                      git({"rev-parse", "topic"}) == onto->tip.hex(),
+                  "history: undoing the move puts both branches back");
+            if (moved) apply_edit(*r, *moved);
+
+            // Into topic below its tip: inserted, the commit above replayed.
+            from = load_branch_history(*r, "refs/heads/drag", mainline);
+            onto = load_branch_history(*r, "refs/heads/topic", mainline);
+            at = drop_place_of(*r, onto->line[1], {}, mainline);
+            check(at && at->onto.branch == "refs/heads/topic" && at->place == 1,
+                  "history: dropped on a commit in a branch, they go in front of it");
+            const std::string drag_tip = git({"rev-parse", "drag"});
+            auto copied = transplant_commits(*r, *onto, 1, {from->line[1]}, nullptr,
+                                             "tortilla: copy 1 commit to topic");
+            check(copied && copied->moves.size() == 1 && apply_edit(*r, *copied) &&
+                      subject("topic") == "drag three" && subject("topic~1") == "drag one" &&
+                      subject("topic~2") == "oops one" && git({"show", "topic:d1.txt"}) == "d1" &&
+                      git({"rev-parse", "drag"}) == drag_tip,
+                  "history: copied into the middle of a branch, the source untouched");
+            check(git({"reflog", "-1", "--format=%gs", "topic"}) ==
+                      "tortilla: copy 1 commit to topic",
+                  "history: the copy's reflog");
+
+            // Two moved from topic into the middle of drag, oldest first, the
+            // newest of drag replayed above them.
+            onto = load_branch_history(*r, "refs/heads/topic", mainline);
+            from = load_branch_history(*r, "refs/heads/drag", mainline);
+            auto two = transplant_commits(*r, *from, 1, {onto->line[1], onto->line[0]}, &*onto,
+                                          "tortilla: move 2 commits to drag");
+            check(two && apply_edit(*r, *two) && subject("drag") == "drag two" &&
+                      subject("drag~1") == "drag three" && subject("drag~2") == "drag one" &&
+                      subject("drag~3") == "drag one" && subject("topic") == "oops one",
+                  "history: two moved into the middle of a branch, oldest first");
+
+            // Refusals.
+            onto = load_branch_history(*r, "refs/heads/topic", mainline);
+            from = load_branch_history(*r, "refs/heads/drag", mainline);
+            check(plan_insert(*r, *onto, {onto->line[0]}, 0).error() ==
+                      rap::i18n::format(_("on {0} already"), "topic"),
+                  "history: refused: on the branch already");
+            check(plan_insert(*r, *from, {*r->resolve("main")}, 0).error() ==
+                      rap::i18n::format(_("on {0} already"), "drag"),
+                  "history: refused: below the place already");
+            check(plan_insert(*r, *onto, {from->line[0]}, 5).error() ==
+                      rap::i18n::format(_("not on {0}"), "topic"),
+                  "history: refused: past the branch's line");
+            check(!transplant_commits(*r, *from, 0, {from->line[0]}, &*from, "x") &&
+                      transplant_commits(*r, *from, 0, {from->line[0]}, &*from, "x")
+                              .error()
+                              .message == _("the same branch"),
+                  "history: refused: onto its own branch");
+            auto wm = load_branch_history(*r, "refs/heads/withmerge", mainline);
+            check(wm && plan_insert(*r, *onto, {wm->line[1]}, 0).error() == _("a merge"),
+                  "history: refused: a merge");
+            check(wm && plan_insert(*r, *wm, {from->line[0]}, 2).error() == _("a merge"),
+                  "history: refused: a merge to replay above the place");
+            auto side = load_branch_history(*r, "refs/heads/side", mainline);
+            check(side && plan_insert(*r, *side, {from->line[0]}, 0).error() ==
+                              _("in another worktree"),
+                  "history: refused: a branch checked out in another worktree");
+            const std::vector<ref> remote_refs{{.name = "origin/main",
+                                                .full_name = "refs/remotes/origin/main",
+                                                .kind = ref_kind::remote_branch}};
+            auto remote = drop_place_of(*r, *r->resolve("origin/main"), remote_refs, mainline);
+            check(!remote && remote.error() == _("not a local branch"),
+                  "history: refused: dropped on a remote's branch");
+            auto mainline_tip = drop_place_of(*r, *r->resolve("origin/main"), {}, mainline);
+            check(!mainline_tip && mainline_tip.error() == _("merged"),
+                  "history: refused: on the mainline");
+            const std::vector<ref> two_tips{
+                {.name = "a", .full_name = "refs/heads/a", .kind = ref_kind::local_branch},
+                {.name = "b", .full_name = "refs/heads/b", .kind = ref_kind::local_branch}};
+            auto both = drop_place_of(*r, onto->tip, two_tips, mainline);
+            check(!both && both.error() == _("several branches end there"),
+                  "history: refused: several branches end on the row");
+        }
+        sh("cd '" + dir + "' && git stash pop -q --index");
+        check(snapshot() == dirty, "history: (fixture) local changes back after dragging");
+    }
+
     // Pushed commits: allowed, with a warning.
     {
         sh(g + "push -q -u origin feature");

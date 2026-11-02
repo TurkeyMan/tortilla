@@ -380,8 +380,13 @@ private:
     void history_items(rap::menu&, const std::vector<size_t>& sel);
     // The leading remote's default branch, which edits never rewrite.
     std::string mainline_ref() const;
-    // Dragging commits within the log: reordered on their branch.
-    bool reorder_rows(const std::vector<size_t>& rows, size_t destination);
+    // Dragging commits within the log: reordered on their branch, or, on
+    // another branch's row, moved there (copied, with the copy key held).
+    bool reorder_rows(const std::vector<size_t>& rows, size_t destination, rap::drop_action);
+    // The drop onto another branch: a rebase shorthand (history_actions.cpp).
+    void transplant_rows(const std::vector<oid>& commits,
+                         const std::expected<branch_history, std::string>& source,
+                         size_t destination, bool copy);
     using edit_maker = std::function<std::expected<history_edit, replay_failure>(const repo&)>;
     // The edit made on a worker, then the working tree asked about, then
     // applied there too; a conflict offers the rebase window with `fallback`.

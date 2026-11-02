@@ -63,6 +63,21 @@ std::string commit_label(const repo& r, const oid& id)
     return id.hex(8) + " " + (c ? c->summary : std::string());
 }
 
+// Why the checked-out branch can't be rewritten now: a merge, a rebase
+// and the like under way.
+std::optional<std::string> busy(const repo& r)
+{
+    switch (r.state())
+    {
+    case repo::repo_state::merge: return _("merging");
+    case repo::repo_state::rebase:
+    case repo::repo_state::apply_mailbox: return _("rebasing");
+    case repo::repo_state::cherry_pick: return _("cherry-picking");
+    case repo::repo_state::revert: return _("reverting");
+    default: return std::nullopt;
+    }
+}
+
 }  // namespace
 
 std::string log_window::mainline_ref() const
@@ -98,15 +113,7 @@ void log_window::history_items(menu& m, const std::vector<size_t>& sel)
     if (!found)
         why = found.error();
     else if (found->checked_out)
-        switch (repo_.state())
-        {
-        case repo::repo_state::merge: why = _("merging"); break;
-        case repo::repo_state::rebase:
-        case repo::repo_state::apply_mailbox: why = _("rebasing"); break;
-        case repo::repo_state::cherry_pick: why = _("cherry-picking"); break;
-        case repo::repo_state::revert: why = _("reverting"); break;
-        default: break;
-        }
+        why = busy(repo_);
     // The edits' own rule (a commit in SVN, a merge, another worktree...),
     // shown: each plan checks it again, whichever way it's asked for.
     auto why_not = [&](const std::vector<oid>& which, bool replays) -> std::optional<std::string>
@@ -410,34 +417,45 @@ void log_window::confirm_history_edit(const std::string& title, const std::strin
         });
 }
 
-bool log_window::reorder_rows(const std::vector<size_t>& rows, size_t destination)
+bool log_window::reorder_rows(const std::vector<size_t>& rows, size_t destination,
+                              rap::drop_action action)
 {
     if (picked_ || repo_.bare() || rows.empty()) return false;
+    // Newest first, as the rows run.
+    std::vector<size_t> sorted = rows;
+    std::ranges::sort(sorted);
     std::vector<oid> commits;
-    for (size_t row : rows)
+    for (size_t row : sorted)
     {
         const commit* c = log_.commit(row);
         if (!c) return false;
         commits.push_back(c->id);
     }
+    const bool copy = action == rap::drop_action::copy;
     auto found = branch_holding(repo_, commits, mainline_ref());
-    if (!found)
-    {
-        set_sync_notice(rap::i18n::format(_("Can't reorder: {0}"), found.error()), false);
-        return false;
-    }
-    const branch_history h = std::move(*found);
     // Where they go, as a place in the branch's line: in front of the row
     // dropped on (the working tree row is above the tip).
     std::optional<size_t> place;
-    if (destination < log_.row_count())
+    if (found && destination < log_.row_count())
     {
         if (const commit* c = log_.commit(destination))
-            place = c->id == h.below ? std::optional(h.line.size()) : h.index_of(c->id);
+            place =
+                c->id == found->below ? std::optional(found->line.size()) : found->index_of(c->id);
         else
             place = 0;
     }
-    if (!place) return false;
+    // Anywhere else: onto another branch.
+    if (!place || copy)
+    {
+        if (destination < log_.row_count() && log_.commit(destination))
+            transplant_rows(commits, found, destination, copy);
+        else if (!found)
+            set_sync_notice(rap::i18n::format(_("Can't reorder: {0}"), found.error()), false);
+        else if (copy)
+            set_sync_notice(rap::i18n::format(_("Can't copy: {0}"), _("the same branch")), false);
+        return false;
+    }
+    const branch_history h = std::move(*found);
     const auto plan = plan_reorder(h, commits, *place);
     if (!plan)
     {
@@ -466,6 +484,90 @@ bool log_window::reorder_rows(const std::vector<size_t>& rows, size_t destinatio
                                fallback_of(plan));
         });
     return false;  // the reload shows the new order
+}
+
+void log_window::transplant_rows(const std::vector<oid>& commits,
+                                 const std::expected<branch_history, std::string>& source,
+                                 size_t destination, bool copy)
+{
+    auto refuse = [&](const std::string& why)
+    {
+        set_sync_notice(rap::i18n::format(copy ? _("Can't copy: {0}") : _("Can't move: {0}"), why),
+                        false);
+    };
+    const commit* dropped_on = log_.commit(destination);
+    if (!dropped_on) return;
+    const std::string mainline = mainline_ref();
+
+    // A move takes them off their branch, so that's rewritten as a drop is.
+    if (!copy)
+    {
+        if (!source) return refuse(source.error());
+        if (source->checked_out)
+            if (auto why = busy(repo_)) return refuse(*why);
+        if (auto why = why_not_editable(*source, commits, true)) return refuse(*why);
+    }
+
+    // The branch dropped on, and where on it.
+    static const std::vector<ref> no_refs;
+    const std::vector<ref>* refs = log_.refs_of(destination);
+    auto target = drop_place_of(repo_, dropped_on->id, refs ? *refs : no_refs, mainline);
+    if (!target) return refuse(target.error());
+    const size_t place = target->place;
+    const branch_history to = std::move(target->onto);
+    if (source && source->branch == to.branch)
+        return refuse(copy ? _("the same branch") : _("nothing moves"));
+    if (to.checked_out)
+        if (auto why = busy(repo_)) return refuse(*why);
+    // Oldest first, as the rows run bottom up.
+    std::vector<oid> oldest_first(commits.rbegin(), commits.rend());
+    if (source)
+        std::ranges::sort(oldest_first, std::greater{},
+                          [&](const oid& c) { return source->index_of(c).value_or(0); });
+    const auto plan = plan_insert(repo_, to, oldest_first, place);
+    if (!plan) return refuse(plan.error());
+
+    const size_t n = commits.size();
+    const std::string where =
+        place == 0 ? rap::i18n::format(_("onto {0}"), to.name())
+                   : rap::i18n::format(_("above {0} on {1}"), commit_label(repo_, to.line[place]),
+                                       to.name());
+    std::string question;
+    if (copy)
+        question = source ? rap::i18n::format(N_("Copy {0} commit from {1} {2}?",
+                                                 "Copy {0} commits from {1} {2}?", n),
+                                              n, source->name(), where)
+                          : rap::i18n::format(
+                                N_("Copy {0} commit {1}?", "Copy {0} commits {1}?", n), n, where);
+    else
+        question = rap::i18n::format(
+            N_("Move {0} commit from {1} {2}?", "Move {0} commits from {1} {2}?", n), n,
+            source->name(), where);
+    // Rewritten and on an upstream already: the source above the oldest
+    // moved, the target above the place.
+    size_t oldest = 0;
+    if (!copy)
+        for (const oid& c : commits) oldest = std::max(oldest, source->index_of(c).value_or(0));
+    const bool source_pushed = !copy && rewrites_pushed(repo_, *source, source->line[oldest]);
+    const bool target_pushed = place > 0 && rewrites_pushed(repo_, to, to.line[place - 1]);
+    if (source_pushed && target_pushed) question += "\n\n" + pushed_warning(to);
+    const std::string title = copy ? _("Copy Commits") : _("Move Commits");
+    const std::string reflog = std::string(copy ? "tortilla: copy " : "tortilla: move ") +
+                               std::to_string(n) + (n == 1 ? " commit" : " commits") + " to " +
+                               to.name();
+    std::optional<branch_history> from;
+    if (!copy) from = *source;
+    confirm_history_edit(
+        title, question, source_pushed || target_pushed, source_pushed ? *source : to,
+        [this, title, to, place, oldest_first, from, reflog]
+        {
+            start_history_edit(title,
+                               [to, place, oldest_first, from, reflog](const repo& r)
+                               {
+                                   return transplant_commits(r, to, place, oldest_first,
+                                                             from ? &*from : nullptr, reflog);
+                               });
+        });
 }
 
 void log_window::start_history_edit(const std::string& title, edit_maker make,

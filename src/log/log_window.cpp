@@ -30,6 +30,11 @@ namespace
 // The author's picture, top right of the details, in logical px.
 constexpr int k_avatar_size = 96;
 
+// Held while dragging commits onto another branch, the key that copies
+// them (a cherry-pick) rather than moving them: Ctrl, as Explorer, GNOME
+// and KDE copy files with it.
+constexpr unsigned copy_drag_keys = rap::mod_ctrl;
+
 // Jump combo entries [spec 1.9.6], in order.
 enum jump_type
 {
@@ -304,9 +309,12 @@ void log_window::build()
                         .on_header_menu([this](size_t) { return header_menu(); })
                         .on_cell_drag(label_drag())
                         // Commits dragged within the log: reordered on their
-                        // branch (history_actions.cpp).
-                        .on_reorder([this](const std::vector<size_t>& rows, size_t destination)
-                                    { return reorder_rows(rows, destination); })
+                        // branch, or moved or copied onto another one
+                        // (history_actions.cpp).
+                        .on_reorder_or_copy([this](const std::vector<size_t>& rows,
+                                                   size_t destination, rap::drop_action action)
+                                            { return reorder_rows(rows, destination, action); },
+                                            copy_drag_keys)
                         // Commits dragged out, into a rebase's list or anywhere
                         // taking text: their hashes, newest first as the rows run.
                         .on_drag_out({.begin = [this](std::vector<size_t> rows)
