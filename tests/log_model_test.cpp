@@ -1880,6 +1880,26 @@ int main(int argc, char** argv)
                                             : std::vector<tortilla::blame_line>{};
         check(older.size() == 3 && older[1].commit->summary == "second",
               "blame: at a revision, by its name there");
+        // Names git quotes: an accent (core.quotepath), a tab (always).
+        const std::string cafe = "caf\xc3\xa9.txt", tabbed = "a\tb.txt";
+        sh(g + "mv g.txt '" + cafe + "' && " + g + "commit -qm accent");
+        sh("printf 'x\\n' >> '" + dir + "/" + cafe + "' && " + g + "commit -qam more");
+        const auto accented = run({}, cafe);
+        check(accented.size() == 5 && accented[0].filename == "f.txt" &&
+                  accented[4].filename == cafe && accented[4].commit->previous_filename == cafe,
+              "blame: an accented name as it is");
+        sh(g + "mv '" + cafe + "' 'a\tb.txt' && " + g + "commit -qm tab");
+        sh("printf 'y\\n' >> '" + dir + "/" + tabbed + "' && " + g + "commit -qam again");
+        const auto tab = run({}, tabbed);
+        check(tab.size() == 6 && tab[5].filename == tabbed &&
+                  tab[5].commit->previous_filename == tabbed,
+              "blame: a name with a tab as it is");
+        const auto named = tortilla::parse_file_revisions(
+            tortilla::run_git(dir, tortilla::file_revision_args(tabbed),
+                              tortilla::git_output::stdout_only)
+                .output);
+        check(named.size() >= 3 && named[0].path == tabbed && named[2].path == cafe,
+              "blame: the revisions' names as they are");
     }
 
     // The Repository Browser's reading: a revision's folders and files, in process.
