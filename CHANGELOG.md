@@ -35,7 +35,8 @@ CI from GitHub, GitLab and Gitea/Forgejo on your branches.
   seen from outside.
 - **Linux**: the same menu in Nautilus (GNOME Files), Nemo, Caja, Thunar and
   Dolphin through their extension interfaces, and in PCManFM-Qt and PCManFM
-  as file manager actions; one package per file manager.
+  as file manager actions; one package per file manager. Status badges on
+  icons aren't there yet on Linux: Explorer only, for now.
 - Explorer's Rename, Delete (to the Recycle Bin) and Delete (keep local), Add
   to ignore list, Create repository here, Diff with previous version, and
   Stash changes, Apply and Pop.
