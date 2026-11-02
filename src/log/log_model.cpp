@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <ctime>
 #include <thread>
 #include <unordered_set>
@@ -502,6 +503,29 @@ std::optional<ref> log_model::label_at(size_t row, float x) const
     return std::nullopt;
 }
 
+std::optional<ref> log_model::pr_at(size_t row, float x) const
+{
+    const tortilla::commit* c = commit(row);
+    if (!c) return std::nullopt;
+    auto it = label_boxes_.find(c->id);
+    if (it == label_boxes_.end()) return std::nullopt;
+    for (const label_box& b : it->second)
+        if (b.pr_left > 0 && x >= b.pr_left && x < b.right) return b.ref;
+    return std::nullopt;
+}
+
+std::string log_model::pr_tooltip_at(size_t row, float x) const
+{
+    const std::optional<ref> r = pr_at(row, x);
+    if (!r) return {};
+    auto it = pull_requests_.find(r->full_name);
+    if (it == pull_requests_.end()) return {};
+    const auto now = std::chrono::duration_cast<std::chrono::seconds>(
+                         std::chrono::system_clock::now().time_since_epoch())
+                         .count();
+    return pr_tooltip(it->second, now);
+}
+
 const tortilla::commit* log_model::commit(size_t row) const
 {
     if (is_working_tree(row)) return nullptr;
@@ -898,7 +922,8 @@ void log_model::paint_message(size_t row, rap::painter& p, const rap::cell_info&
             &label_boxes_[c.id],
             [this](const ref& r) -> std::optional<pr_mark>
             {
-                if (auto m = pr_marks_.find(r.full_name); m != pr_marks_.end()) return m->second;
+                if (auto m = pull_requests_.find(r.full_name); m != pull_requests_.end())
+                    return mark_of(m->second);
                 return std::nullopt;
             });
         if (end > x) x = end + p.measure(" ", subject).w;

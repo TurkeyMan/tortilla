@@ -16,6 +16,9 @@ struct label_box
 {
     float left, right;
     tortilla::ref ref;
+    // Where its pull request's part starts (the hairline before "#12"; its
+    // number and mark run to `right`); 0 when it has none.
+    float pr_left = 0;
 };
 
 // A branch that's a pull request's head wears its number and its checks:
@@ -28,6 +31,12 @@ struct pr_mark
     bool blocked = false;    // checks passed, but the forge's rules stop a merge yet
     bool conflicts = false;  // it can't be merged at all
 };
+pr_mark mark_of(const pull_request&);
+
+// What the mark means, for its tooltip: how long the checks took, which
+// failed, which are still running and for how long, and why it can't be
+// merged yet, if it can't. `now` in seconds since 1970.
+std::string pr_tooltip(const pull_request&, std::int64_t now);
 
 // The checks' mark, in a circle `diameter` across at `centre`, ringed in
 // white to stand out on any label: a tick, a cross, or a ring while they run.

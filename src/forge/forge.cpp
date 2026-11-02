@@ -495,6 +495,44 @@ check_state github_rollup(std::string_view state)
     return check_state::none;
 }
 
+// A time member (a string without escapes); 0 for null, or none.
+std::int64_t time_of(const json::value& v)
+{
+    const std::string_view t = v.text();
+    if (t.size() < 2 || t.front() != '"') return 0;
+    return parse_iso_time(t.substr(1, t.size() - 2));
+}
+
+// One of a rollup's contexts: a check run (Actions' jobs, apps' checks) or
+// a commit status, which says only when it was last set.
+check_run github_run(const json::value& c)
+{
+    if (c["__typename"].str_is("StatusContext"))
+    {
+        check_run run{.name = c["context"].str(), .state = github_rollup(c["state"].str())};
+        (run.state == check_state::pending ? run.started_at : run.completed_at) =
+            time_of(c["createdAt"]);
+        return run;
+    }
+    check_run run{.name = c["name"].str(),
+                  .started_at = time_of(c["startedAt"]),
+                  .completed_at = time_of(c["completedAt"])};
+    const json::value conclusion = c["conclusion"];
+    if (!c["status"].str_is("COMPLETED"))
+        run.state = check_state::pending;
+    else if (conclusion.str_is("SUCCESS") || conclusion.str_is("NEUTRAL") ||
+             conclusion.str_is("SKIPPED"))
+        run.state = check_state::success;
+    else if (conclusion.str_is("FAILURE") || conclusion.str_is("TIMED_OUT") ||
+             conclusion.str_is("CANCELLED") || conclusion.str_is("ACTION_REQUIRED") ||
+             conclusion.str_is("STARTUP_FAILURE"))
+        run.state = check_state::failure;
+    // A skipped run passes, but took no time: its times (a moment, ending
+    // before it started) would stretch how long the checks took.
+    if (conclusion.str_is("SKIPPED")) run.started_at = run.completed_at = 0;
+    return run;
+}
+
 // A combined commit status (Gitea), or a pipeline's (GitLab).
 check_state status_word(std::string_view s)
 {
@@ -518,7 +556,9 @@ std::expected<std::vector<pull_request>, std::string> github_pulls(const forge_r
         "number title url isDraft headRefName headRefOid baseRefName reviewDecision mergeable "
         "mergeStateStatus "
         "headRepository{name owner{login}} "
-        "commits(last:1){nodes{commit{statusCheckRollup{state}}}}}}}}";
+        "commits(last:1){nodes{commit{statusCheckRollup{state contexts(first:50){nodes{"
+        "__typename ... on CheckRun{name status conclusion startedAt completedAt} "
+        "... on StatusContext{context state createdAt}}}}}}}}}}}";
     const std::string body = "{\"query\":" + json::quoted(query) +
                              ",\"variables\":{\"owner\":" + json::quoted(r.owner) +
                              ",\"name\":" + json::quoted(r.name) + "}}";
@@ -545,16 +585,30 @@ std::expected<std::vector<pull_request>, std::string> github_pulls(const forge_r
         pr.head = {
             .host = r.host, .owner = head["owner"]["login"].str(), .name = head["name"].str()};
         for (const json::value& c : n["commits"]["nodes"].elements())
-            pr.checks = github_rollup(c["commit"]["statusCheckRollup"]["state"].str());
+        {
+            const json::value rollup = c["commit"]["statusCheckRollup"];
+            pr.checks = github_rollup(rollup["state"].str());
+            for (const json::value& run : rollup["contexts"]["nodes"].elements())
+                pr.runs.push_back(github_run(run));
+        }
         // A list's merge state can be UNKNOWN until GitHub works it out; the
         // review decision is always there.
-        pr.conflicts =
-            n["mergeable"].str_is("CONFLICTING") || n["mergeStateStatus"].str_is("DIRTY");
-        pr.blocked = n["reviewDecision"].str_is("REVIEW_REQUIRED") ||
-                     n["reviewDecision"].str_is("CHANGES_REQUESTED") ||
-                     n["mergeStateStatus"].str_is("BEHIND") ||
-                     (n["mergeStateStatus"].str_is("BLOCKED") &&
-                      pr.checks != check_state::pending && pr.checks != check_state::failure);
+        const json::value review = n["reviewDecision"], merge = n["mergeStateStatus"];
+        pr.conflicts = n["mergeable"].str_is("CONFLICTING") || merge.str_is("DIRTY");
+        pr.blocked = review.str_is("REVIEW_REQUIRED") || review.str_is("CHANGES_REQUESTED") ||
+                     merge.str_is("BEHIND") ||
+                     (merge.str_is("BLOCKED") && pr.checks != check_state::pending &&
+                      pr.checks != check_state::failure);
+        // Why, for its tooltip. BLOCKED while checks run or fail is the
+        // checks themselves, unless a review is wanted too.
+        if (pr.conflicts) pr.blocks.push_back(merge_block::conflicts);
+        if (pr.draft) pr.blocks.push_back(merge_block::draft);
+        if (review.str_is("CHANGES_REQUESTED"))
+            pr.blocks.push_back(merge_block::changes_requested);
+        else if (review.str_is("REVIEW_REQUIRED"))
+            pr.blocks.push_back(merge_block::review_required);
+        if (merge.str_is("BEHIND")) pr.blocks.push_back(merge_block::behind);
+        if (pr.blocked && pr.blocks.empty()) pr.blocks.push_back(merge_block::blocked_other);
         out.push_back(std::move(pr));
     }
     return out;
@@ -591,11 +645,43 @@ std::expected<std::vector<pull_request>, std::string> gitlab_pulls(const forge_r
         pr.blocked = status == "not_approved" || status == "need_rebase" ||
                      status == "discussions_not_resolved" || status == "blocked_status" ||
                      status == "requested_changes";
+        if (pr.conflicts) pr.blocks.push_back(merge_block::conflicts);
+        if (pr.draft || status == "draft_status") pr.blocks.push_back(merge_block::draft);
+        if (status == "not_approved") pr.blocks.push_back(merge_block::review_required);
+        if (status == "requested_changes") pr.blocks.push_back(merge_block::changes_requested);
+        if (status == "need_rebase") pr.blocks.push_back(merge_block::behind);
+        if (status == "discussions_not_resolved") pr.blocks.push_back(merge_block::discussions);
+        if (pr.blocked && pr.blocks.empty()) pr.blocks.push_back(merge_block::blocked_other);
         if (pipes && pipes_reply.status == 200)
             for (const json::value& p : pipes->elements())  // newest first
                 if (p["sha"].str_is(pr.head_sha))
                 {
                     pr.checks = status_word(p["status"].str());
+                    pr.pipeline = true;
+                    // The list gives no duration: from when it was made to
+                    // its last change, once it's done.
+                    pr.runs.push_back({.name = std::string(_("Pipeline")),
+                                       .state = pr.checks,
+                                       .started_at = time_of(p["created_at"]),
+                                       .completed_at = pr.checks == check_state::pending
+                                                           ? 0
+                                                           : time_of(p["updated_at"])});
+                    // A failed or running one's jobs instead, to say which:
+                    // a few requests, and only then.
+                    if (pr.checks != check_state::failure && pr.checks != check_state::pending)
+                        break;
+                    pr.runs.clear();
+                    const auto jobs_reply =
+                        rap::sys::http_get(gitlab_project(r) + "/pipelines/" +
+                                               std::string(p["id"].text()) + "/jobs?per_page=100",
+                                           {.headers = headers});
+                    const auto jobs = json::parse(jobs_reply.body);
+                    if (!jobs || jobs_reply.status != 200) break;
+                    for (const json::value& job : jobs->elements())
+                        pr.runs.push_back({.name = job["name"].str(),
+                                           .state = status_word(job["status"].str()),
+                                           .started_at = time_of(job["started_at"]),
+                                           .completed_at = time_of(job["finished_at"])});
                     break;
                 }
         out.push_back(std::move(pr));
@@ -624,21 +710,89 @@ std::expected<std::vector<pull_request>, std::string> gitea_pulls(const forge_re
                         .head_sha = head["sha"].str(),
                         .draft = p["draft"].boolean()};
         pr.conflicts = !p["mergeable"].boolean(true);  // Gitea's "not mergeable" is conflicts
+        if (pr.conflicts) pr.blocks.push_back(merge_block::conflicts);
+        if (pr.draft) pr.blocks.push_back(merge_block::draft);
         pr.head = {.host = r.host,
                    .owner = head["repo"]["owner"]["login"].str(),
                    .name = head["repo"]["name"].str()};
-        // Each one's checks: the head commit's combined status.
+        // Each one's checks: the head commit's combined status, and the
+        // latest of each context. A status says only when it was set: a
+        // pending one's is when it started, a finished one's when it ended.
         const auto status =
             rap::sys::http_get(root + "/commits/" + pr.head_sha + "/status", {.headers = headers});
         if (const auto s = json::parse(status.body);
             s && status.status == 200 && (*s)["total_count"].integer().value_or(0) > 0)
+        {
             pr.checks = status_word((*s)["state"].str());
+            for (const json::value& c : (*s)["statuses"].elements())
+            {
+                json::value word = c["status"];  // older Gitea: "state"
+                if (!word) word = c["state"];
+                check_run run{.name = c["context"].str(),
+                              .state = word.str_is("skipped") || word.str_is("warning")
+                                           ? check_state::success
+                                           : status_word(word.str())};
+                if (run.state == check_state::pending)
+                    run.started_at = time_of(c["created_at"]);
+                else
+                    run.completed_at = time_of(c["updated_at"]);
+                pr.runs.push_back(std::move(run));
+            }
+        }
         out.push_back(std::move(pr));
     }
     return out;
 }
 
 }  // namespace
+
+std::int64_t parse_iso_time(std::string_view s)
+{
+    // Digits at `at`, `n` of them; -1 if they aren't.
+    auto digits = [&](size_t at, size_t n) -> int
+    {
+        if (at + n > s.size()) return -1;
+        int v = 0;
+        for (size_t i = at; i < at + n; ++i)
+        {
+            if (s[i] < '0' || s[i] > '9') return -1;
+            v = v * 10 + (s[i] - '0');
+        }
+        return v;
+    };
+    const int year = digits(0, 4), month = digits(5, 2), day = digits(8, 2), hour = digits(11, 2),
+              minute = digits(14, 2), second = digits(17, 2);
+    if (year < 0 || month < 1 || month > 12 || day < 1 || day > 31 || hour < 0 || hour > 23 ||
+        minute < 0 || minute > 59 || second < 0 || second > 60 || s[4] != '-' || s[7] != '-' ||
+        (s[10] != 'T' && s[10] != 't' && s[10] != ' ') || s[13] != ':' || s[16] != ':')
+        return 0;
+    size_t at = 19;
+    if (at < s.size() && s[at] == '.')  // a fraction of a second, dropped
+        while (++at < s.size() && s[at] >= '0' && s[at] <= '9')
+        {
+        }
+    std::int64_t offset = 0;  // seconds east of UTC
+    if (at < s.size() && (s[at] == '+' || s[at] == '-'))
+    {
+        const int oh = digits(at + 1, 2), om = digits(at + 4, 2);
+        if (oh < 0 || om < 0 || s[at + 3] != ':') return 0;
+        offset = (s[at] == '-' ? -1 : 1) * (oh * 3600 + om * 60);
+        at += 6;
+    }
+    else if (at < s.size() && (s[at] == 'Z' || s[at] == 'z'))
+        ++at;
+    else
+        return 0;
+    if (at != s.size()) return 0;
+    // Days since 1970 from the civil date (Howard Hinnant's days_from_civil).
+    const int y = year - (month <= 2 ? 1 : 0);
+    const int era = y / 400;  // years from 1 on: never negative here
+    const int yoe = y - era * 400;
+    const int doy = (153 * (month + (month > 2 ? -3 : 9)) + 2) / 5 + day - 1;
+    const int doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    const std::int64_t days = std::int64_t(era) * 146097 + doe - 719468;
+    return days * 86400 + hour * 3600 + minute * 60 + second - offset;
+}
 
 std::expected<std::vector<pull_request>, std::string>
 open_pull_requests(forge_kind k, const forge_repo& r, std::string_view token)

@@ -678,14 +678,9 @@ void log_window::update_pull_requests()
                       return !open;
                   });
     pr_heads_ = match_pull_requests(pr_watch_->remotes(), pr_watch_->pull_requests());
-    std::unordered_map<std::string, pr_mark> marks;
-    for (const auto& [name, p] : pr_heads_)
-        marks.emplace(name, pr_mark{.number = p.pr.number,
-                                    .checks = p.pr.checks,
-                                    .draft = p.pr.draft,
-                                    .blocked = p.pr.blocked,
-                                    .conflicts = p.pr.conflicts});
-    log_.set_pull_requests(std::move(marks));
+    std::unordered_map<std::string, pull_request> prs;
+    for (const auto& [name, p] : pr_heads_) prs.emplace(name, p.pr);
+    log_.set_pull_requests(std::move(prs));
 }
 
 const open_pr* log_window::pull_request_of(const ref& r) const

@@ -153,9 +153,9 @@ public:
 
     // The branches that are pull requests' heads, by full name: their labels
     // wear the PR's number and checks.
-    void set_pull_requests(std::unordered_map<std::string, pr_mark> marks)
+    void set_pull_requests(std::unordered_map<std::string, pull_request> prs)
     {
-        pr_marks_ = std::move(marks);
+        pull_requests_ = std::move(prs);
         notify_changed(0, row_count());
     }
 
@@ -176,6 +176,11 @@ public:
     // The label painted at `x` (Message column, cell coordinates) in `row`,
     // as last painted.
     std::optional<ref> label_at(size_t row, float x) const;
+    // The label whose pull request part (its "#12" and mark, from the
+    // hairline on) is at `x`, if any.
+    std::optional<ref> pr_at(size_t row, float x) const;
+    // What that PR's mark means, for a tooltip over it; "" elsewhere.
+    std::string pr_tooltip_at(size_t row, float x) const;
     bool is_head(size_t row) const;
     const std::optional<oid>& head() const { return head_; }
     tortilla::repo* repo() { return repo_ ? &*repo_ : nullptr; }
@@ -219,7 +224,7 @@ private:
     // filled the column in again row by row.
     std::unordered_map<oid, uint8_t, oid_hash> actions_cache_;
     ref_map refs_;
-    std::unordered_map<std::string, pr_mark> pr_marks_;
+    std::unordered_map<std::string, pull_request> pull_requests_;  // by head's full name
     mutable std::unordered_map<oid, std::vector<label_box>, oid_hash> label_boxes_;  // as last painted
     std::optional<oid> head_;
     bool working_tree_ = false;

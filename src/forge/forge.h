@@ -117,6 +117,28 @@ enum class check_state
     failure,
 };
 
+// One of CI's runs on the head: a check run or a commit status (GitHub,
+// Gitea), or a pipeline's job (GitLab).
+struct check_run
+{
+    std::string name;
+    check_state state = check_state::none;
+    // Seconds since 1970; 0 when the forge doesn't say.
+    std::int64_t started_at = 0, completed_at = 0;
+};
+
+// What stands in the way of merging, besides the checks.
+enum class merge_block
+{
+    conflicts,          // with its base
+    review_required,    // an approving review
+    changes_requested,  // a reviewer asked for changes
+    behind,             // its base has moved on, and the rules want it up to date
+    draft,
+    discussions,    // threads to resolve (GitLab)
+    blocked_other,  // the forge's other rules
+};
+
 struct pull_request
 {
     int number = 0;
@@ -130,7 +152,17 @@ struct pull_request
     bool blocked = false;
     // It conflicts with its base: it can't be merged at all as it is.
     bool conflicts = false;
+    // The checks one by one, where the forge lists them (GitLab's jobs only
+    // for a pipeline that failed or is running; else the pipeline itself).
+    std::vector<check_run> runs;
+    bool pipeline = false;  // GitLab's: the runs are a pipeline's
+    // What stands in the way of merging it: nothing, when it can be.
+    std::vector<merge_block> blocks;
 };
+
+// An ISO 8601 time as the forges give it (2026-10-21T10:44:02Z, with a
+// fraction or an offset too), in seconds since 1970; 0 if it isn't one.
+std::int64_t parse_iso_time(std::string_view);
 
 // The repository's open pull requests (merge requests on GitLab), with their
 // checks: the newest hundred.
