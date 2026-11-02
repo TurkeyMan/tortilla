@@ -6,6 +6,7 @@
 #include "git/command.h"
 #include "git/remotes.h"
 #include "git/repo.h"
+#include "git/temp_files.h"
 #include "i18n.h"
 #include "remote/push_dialog.h"
 #include "ui/progress_dialog.h"
@@ -15,7 +16,6 @@
 
 #include <rapport/sys.h>
 
-#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
@@ -199,27 +199,18 @@ void merge_dialog::ok()
                              : ""));
         }
     }
-    std::error_code ec;
     auto message_file = std::make_shared<fs::path>();
     const std::string message = trimmed(message_->text());
     if (!message.empty() && !squash_->checked())
     {
-        const fs::path dir = fs::temp_directory_path(ec) / "tortilla";
-        fs::create_directories(dir, ec);
-        *message_file =
-            dir /
-            ("merge-" +
-             std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".txt");
-        std::FILE* f = rap::sys::fopen(*message_file, "wb");
-        if (!f || std::fwrite(message.data(), 1, message.size(), f) != message.size())
+        *message_file = unique_temp_path("merge", ".txt");
+        if (message_file->empty() || !write_file(*message_file, message))
         {
-            if (f) std::fclose(f);
             ui_.message(window_.get(), {.icon = rap::message_spec::icon::error,
                                         .title = _("Merge"),
                                         .text = _("Could not save merge message")});
             return;
         }
-        std::fclose(f);
         c.insert(c.end(), {"-F", rap::sys::path_to_utf8(*message_file)});
     }
     c.insert(c.end(), {"--", rev});

@@ -34,12 +34,6 @@ std::string read_file(const fs::path& p)
     return out;
 }
 
-void replace_all(std::string& s, const std::string& from, const std::string& to)
-{
-    for (size_t at = s.find(from); at != std::string::npos; at = s.find(from, at + to.size()))
-        s.replace(at, from.size(), to);
-}
-
 }  // namespace
 
 std::vector<detected_merge_tool> detect_merge_tools()

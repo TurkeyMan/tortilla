@@ -22,11 +22,6 @@ namespace
 
 namespace fs = std::filesystem;
 
-std::string lower(std::string s)
-{
-    std::ranges::transform(s, s.begin(), [](unsigned char c) { return char(std::tolower(c)); });
-    return s;
-}
 
 
 // A name for a path under the folder: relative, staying inside the
@@ -80,7 +75,7 @@ struct state
         const std::string from_rel = rel(name), to_rel = rel(to);
         // Only the letters' case changed: the same file to the filesystem,
         // which git mv is told with -f.
-        const bool case_only = lower(from_rel) == lower(to_rel);
+        const bool case_only = ascii_lower(from_rel) == ascii_lower(to_rel);
         std::error_code ec;
         if (!case_only && fs::exists(rap::sys::path_from_utf8(workdir) / rap::sys::path_from_utf8(to_rel), ec))
             return complain(rap::i18n::format(_("“{0}” already exists."), to));

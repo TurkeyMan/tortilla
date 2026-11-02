@@ -1,6 +1,7 @@
 #include "branch_filter.h"
 
 #include "git/command.h"
+#include "util/strings.h"
 
 #include <git2.h>
 
@@ -19,12 +20,6 @@ constexpr std::pair<show_preset, std::string_view> k_preset_keys[] = {
     {show_preset::mine, "mine"},       {show_preset::picked, "picked"},
 };
 
-std::string lower(std::string_view s)
-{
-    std::string out(s);
-    for (char& c : out) c = char(std::tolower((unsigned char)c));
-    return out;
-}
 
 // A branch's own commits are walked this far at most: further, it's
 // unrelated history (another root), not a branch off main.
@@ -149,19 +144,19 @@ identity::identity(const repo& repo, const std::vector<forge_account>& accounts)
         rest.remove_prefix(end == std::string_view::npos ? rest.size() : end + 1);
         while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.remove_suffix(1);
         if (line.empty()) continue;
-        emails_.push_back(lower(line));
+        emails_.push_back(ascii_lower(line));
         // And what the mailmap makes of it, so its other addresses match.
         const char *name = nullptr, *email = nullptr;
         const std::string given(line);
         if (mailmap_ && git_mailmap_resolve(&name, &email, mailmap_, "", given.c_str()) == 0 &&
             email)
-            emails_.push_back(lower(email));
+            emails_.push_back(ascii_lower(email));
     }
     std::ranges::sort(emails_);
     emails_.erase(std::ranges::unique(emails_).begin(), emails_.end());
     for (const forge_account& a : accounts)
         if (a.kind == forge_kind::github && !a.login.empty())
-            noreply_.emplace_back(lower(a.login), "@users.noreply." + lower(a.host));
+            noreply_.emplace_back(ascii_lower(a.login), "@users.noreply." + ascii_lower(a.host));
 }
 
 identity::~identity()
@@ -188,12 +183,12 @@ bool identity::listed(std::string_view email) const
 
 bool identity::matches(std::string_view email) const
 {
-    const std::string given = lower(email);
+    const std::string given = ascii_lower(email);
     if (listed(given)) return true;
     const char *name = nullptr, *mapped = nullptr;
     const std::string raw(email);
     return mailmap_ && git_mailmap_resolve(&name, &mapped, mailmap_, "", raw.c_str()) == 0 &&
-           mapped && listed(lower(mapped));
+           mapped && listed(ascii_lower(mapped));
 }
 
 bool branch_is_mine(const repo& repo, const ref& r, const oid& tip, const std::optional<oid>& base,

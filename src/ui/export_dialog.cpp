@@ -1,6 +1,7 @@
 #include "export_dialog.h"
 
 #include "git/archive.h"
+#include "git/temp_files.h"
 #include "i18n.h"
 #include "settings.h"
 #include "ui/progress_dialog.h"
@@ -9,7 +10,6 @@
 #include <rapport/sys.h>
 
 #include <cctype>
-#include <chrono>
 #include <filesystem>
 #include <memory>
 #include <thread>
@@ -50,13 +50,7 @@ std::string with_zip(std::string path, bool zip)
 void export_to_folder(rap::ui& ui, rap::window* parent, const std::string& workdir,
                       const std::string& rev, const fs::path& out, std::function<void()> done)
 {
-    std::error_code ec;
-    const fs::path tmp_dir = fs::temp_directory_path(ec) / "tortilla";
-    fs::create_directories(tmp_dir, ec);
-    const fs::path tar =
-        tmp_dir /
-        ("export-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
-         ".tar");
+    const fs::path tar = unique_temp_path("export", ".tar");
     auto open = std::make_shared<bool>(false);
     std::vector<progress_follow_up> follow_ups;
     follow_ups.push_back({.label = _("_Open folder"), .after_close = [open] { *open = true; }});

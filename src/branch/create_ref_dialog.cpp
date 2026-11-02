@@ -3,6 +3,7 @@
 #include "git/command.h"
 #include "git/remotes.h"
 #include "git/repo.h"
+#include "git/temp_files.h"
 #include "i18n.h"
 #include "remote/push_dialog.h"
 #include "settings.h"
@@ -13,7 +14,6 @@
 
 #include <rapport/sys.h>
 
-#include <chrono>
 #include <cstdio>
 #include <filesystem>
 
@@ -201,17 +201,8 @@ void create_ref_dialog::create()
         if (sign_->checked()) args.push_back("-s");
         if (!message.empty())
         {
-            const fs::path dir = fs::temp_directory_path(ec) / "tortilla";
-            fs::create_directories(dir, ec);
-            message_file =
-                dir / ("tag-" +
-                       std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
-                       ".txt");
-            if (std::FILE* f = rap::sys::fopen(message_file, "wb"))
-            {
-                std::fwrite(message.data(), 1, message.size(), f);
-                std::fclose(f);
-            }
+            message_file = unique_temp_path("tag", ".txt");
+            write_file(message_file, message);  // if not, git says it can't read it
             args.insert(args.end(), {"-F", rap::sys::path_to_utf8(message_file)});
         }
         args.insert(args.end(), {"--", name, base});
