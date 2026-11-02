@@ -124,6 +124,14 @@ enum class walk_refs
 // Whether a walk over `refs` starts at the ref named `full_name`.
 bool walks_ref(walk_refs refs, std::string_view full_name);
 
+// The log's sync downloads remotes' branches ahead of time into
+// refs/prefetch/ (git/sync.h): not the user's refs, so never labels, walked
+// or listed.
+inline bool is_prefetch_ref(std::string_view full_name)
+{
+    return full_name.starts_with("refs/prefetch/");
+}
+
 struct walk_options
 {
     walk_refs refs = walk_refs::head;

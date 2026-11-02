@@ -3,6 +3,7 @@
 #include "git/diff_tool.h"
 #include "git/merge_tool.h"
 #include "git/ssh_client.h"
+#include "git/sync.h"
 #include "i18n.h"
 #include "log/action_icons.h"
 #include "settings.h"
@@ -75,6 +76,12 @@ struct state
     rap::tabs* page_tabs = nullptr;
     forge_sign_in accounts_sign_in;
     std::function<void()> remotes_shown;
+    // Sync (the log's Fetch button): when to look and download unasked, in
+    // sync_when's order, and what a sync fast-forwards.
+    rap::drop_down* sync_prefetch = nullptr;
+    rap::drop_down* sync_check = nullptr;
+    rap::check* sync_others = nullptr;
+    rap::check* sync_current = nullptr;
 
     int custom_index() const { return 2 + int(tools.size()); }
     int ssh_custom_index() const { return 1 + int(ssh_clients.size()); }
@@ -485,6 +492,33 @@ rap::node diff_viewer_page(std::shared_ptr<state> st)
     };
 }
 
+// The log's Fetch button, and what it does unasked; on the Network page.
+rap::node sync_group(const std::shared_ptr<state>& st)
+{
+    using namespace rap::layout;
+    const std::vector<std::string> when{_("Always"), _("Not on metered connections"), _("Never")};
+    return group{
+        _("Sync"),
+        vbox{
+            form{
+                {_("Check the forge for changes"),
+                 drop_down{when, int(check_setting())}.bind(st->sync_check)},
+                {_("Download remote changes in the background"),
+                 drop_down{when, int(prefetch_setting())}.bind(st->sync_prefetch)},
+            },
+            check{_("Fast-forward branches I don't have checked out"),
+                  fast_forward_others_setting()}
+                .bind(st->sync_others),
+            check{_("Fast-forward the current branch when the working tree is clean"),
+                  fast_forward_current_setting()}
+                .bind(st->sync_current),
+            label{_("A sync never asks for a password: a remote that needs one is marked on the "
+                    "Fetch button; Fetch... signs in. Background downloads go to refs/prefetch "
+                    "and leave your remote branches as they are.")}
+                .wrap(),
+        }};
+}
+
 // Which SSH client git runs for remotes [TortoiseGit: Settings > Network].
 rap::node network_page(std::shared_ptr<state> st)
 {
@@ -522,33 +556,33 @@ rap::node network_page(std::shared_ptr<state> st)
             s->ssh_command->set_text(s->ssh_clients[size_t(choice - 1)].command);
     };
     return vbox{
-        group{
-            _("SSH client"),
-            vbox{
-                form{
-                    {_("SSH client"),
-                     drop_down{choices, current}.bind(st->ssh_select).on_changed(chosen)},
-                    {_("Command"), entry{saved.command}
-                                    .bind(st->ssh_command)
-                                    .placeholder("ssh -i ~/.ssh/key")
-                                    .visible(custom)},
-                },
-                label{std::string(_("Run for each remote as git's GIT_SSH_COMMAND: git adds the "
-                                    "host and the\ncommand to run there. plink and "
-                                    "TortoiseGitPlink are known by their names."))
+        group{_("SSH client"),
+              vbox{
+                  form{
+                      {_("SSH client"),
+                       drop_down{choices, current}.bind(st->ssh_select).on_changed(chosen)},
+                      {_("Command"), entry{saved.command}
+                                         .bind(st->ssh_command)
+                                         .placeholder("ssh -i ~/.ssh/key")
+                                         .visible(custom)},
+                  },
+                  label{std::string(_("Run for each remote as git's GIT_SSH_COMMAND: git adds the "
+                                      "host and the\ncommand to run there. plink and "
+                                      "TortoiseGitPlink are known by their names."))
 #ifdef _WIN32
-                      // Git for Windows runs it through its MSYS shell, which
-                      // turns /tmp/key into C:/.../Temp/key before WSL sees it.
-                      + _("\nGit for Windows rewrites absolute Linux paths (/...) in it: for WSL "
-                          "ssh,\nwrite them from home (~/...).")
+                        // Git for Windows runs it through its MSYS shell, which
+                        // turns /tmp/key into C:/.../Temp/key before WSL sees it.
+                        + _("\nGit for Windows rewrites absolute Linux paths (/...) in it: for WSL "
+                            "ssh,\nwrite them from home (~/...).")
 #endif
-                }
-                    .handle(st->ssh_help)
-                    .visible(custom),
-            }},
+                  }
+                      .handle(st->ssh_help)
+                      .visible(custom),
+              }},
         label{_("Used by the git Tortilla runs (fetch, pull, push, clone); the repository's "
                 "core.sshCommand applies only with git's own.")}
             .wrap(),
+        sync_group(st),
         spacer{},
     };
 }
@@ -743,6 +777,15 @@ void show_settings(rap::ui& ui, rap::window* parent, const std::string& repo_dir
                         save_ssh_client({.command = keep->ssh_command->text()});
                     else
                         save_ssh_client({});
+                }
+                if (keep->sync_check)
+                {
+                    auto when = [](rap::drop_down* d)
+                    { return sync_when(std::clamp(d->current(), 0, 2)); };
+                    set_check_setting(when(keep->sync_check));
+                    set_prefetch_setting(when(keep->sync_prefetch));
+                    set_fast_forward_others_setting(keep->sync_others->checked());
+                    set_fast_forward_current_setting(keep->sync_current->checked());
                 }
                 if (saved) saved();
             }

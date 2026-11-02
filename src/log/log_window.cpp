@@ -123,14 +123,18 @@ log_window::open(rap::ui& ui, const std::string& path, bool all_branches, bool o
     if (all_branches) w->set_walk(walk_refs::all);
     // Before the first load: it knows the forge remotes, and so whether
     // there are pull requests to wait for.
-    w->pr_watch_ = std::make_unique<pr_watch>(ui, w->repo_location(),
-                                              [p = w.get()]
-                                              {
-                                                  p->prs_known_ = true;
-                                                  p->update_pull_requests();
-                                              });
+    w->pr_watch_ = std::make_unique<pr_watch>(
+        ui, w->repo_location(),
+        [p = w.get()]
+        {
+            p->prs_known_ = true;
+            p->update_pull_requests();
+            p->tips_heard(p->pr_watch_->branch_tips());
+        },
+        allowed_now(check_setting()));
     w->reload();
     w->watch_repository();
+    w->start_sync_watch();
     warn_if_lfs_missing(ui, w->window_.get(), w->repo_.workdir());
     return w;
 }
@@ -221,6 +225,13 @@ void log_window::build()
             {vbox{
                 // Filter bar [spec 1.2, row 1]
                 hbox{
+                    // Sync, far left: its icon's badge says what the remotes
+                    // have that the repository hasn't, or that a remote failed.
+                    button{_("Fetch")}
+                        .icon(fetch_icon())
+                        .icon_only()
+                        .bind(fetch_)
+                        .on_click([this] { sync(); }),
                     menu_button{"HEAD"}
                         .bind(ref_button_)
                         .on_menu([this] { return show_menu(); })
@@ -253,6 +264,22 @@ void log_window::build()
                         .icon_only()
                         .on_click([this] { jump(false); }),
                 },
+                // The current branch behind its upstream, after a sync.
+                hbox{
+                    label{}.bind(hint_text_).ellipsize().stretch(),
+                    button{_("_Fast-forward")}.bind(hint_ff_).on_click([this]
+                                                                       { fast_forward_current(); }),
+                    button{_("_Pull...")}.bind(hint_pull_).on_click([this] { keep_pull_dialog(); }),
+                    button{_("Hide")}.flat().on_click(
+                        [this]
+                        {
+                            hint_hidden_ = current_.branch + ' ' + current_.upstream + ' ' +
+                                           std::to_string(current_.behind);
+                            hint_bar_->set_visible(false);
+                        }),
+                }
+                    .handle(hint_bar_)
+                    .visible(false),
                 // Commit list, details, changed files [spec 1.2, main area]
                 splitter{
                     vertical,
@@ -316,7 +343,25 @@ void log_window::build()
                     .bind(splitter_)
                     .stretch(),
                 // Bottom area [spec 1.2]
-                label{}.selectable().ellipsize().bind(status_),
+                hbox{
+                    // A sync's red "!", while its warning is on show.
+                    canvas{}
+                        .focusable(false)
+                        .bind(status_mark_)
+                        .width(rap::extent{18, rap::extent::unit::px})
+                        .visible(false)
+                        .on_paint([](rap::painter& p, rap::size_f s) { paint_failure_mark(p, s); })
+                        // Clicked: what git said.
+                        .on_pointer(
+                            [this](const rap::pointer_event& e)
+                            {
+                                if (e.type != rap::pointer_event_type::press || e.button != 1)
+                                    return false;
+                                show_sync_output();
+                                return true;
+                            }),
+                    label{}.selectable().ellipsize().bind(status_).stretch(),
+                },
                 hbox{
                     vbox{
                         // TortoiseGit's Show Whole Project the other way up, to
@@ -354,9 +399,6 @@ void log_window::build()
                         .stretch(),
                 },
                 hbox{
-                    button{_("Refresh")}
-                        .tooltip(_("Reload the log (F5)"))
-                        .on_click([this] { reload(); }),
                     button{_("S_tatistics")}.bind(statistics_).enabled(false),
                     progress_bar{}.bind(progress_).stretch(),
                     menu_button{_("Walk Be_havior")}.bind(walk_).on_menu([this]
@@ -562,9 +604,19 @@ std::string log_window::repository_state() const
          {"HEAD", "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "tortilla-rebase-active"})
         add(git_dir_ / f);
     add(common_dir_ / "packed-refs");
+    // Not refs/prefetch: the sync's downloads ahead of a click (git/sync.h)
+    // change nothing the log shows.
+    const auto prefetch = common_dir_ / "refs" / "prefetch";
     for (auto it = std::filesystem::recursive_directory_iterator(common_dir_ / "refs", ec);
          !ec && it != std::filesystem::recursive_directory_iterator(); it.increment(ec))
+    {
+        if (it->path() == prefetch)
+        {
+            it.disable_recursion_pending();
+            continue;
+        }
         add(it->path());
+    }
     return state;
 }
 
@@ -673,6 +725,10 @@ void log_window::loaded(const std::string& error)
     if (log_.row_count() && !commit_list_->current()) commit_list_->set_current(0);
     update_status();
     update_pull_requests();
+    // The refs may have moved: what a sync would bring, and the current
+    // branch against its upstream.
+    recheck_changes();
+    update_branch_hint();
 }
 
 void log_window::update_pull_requests()
@@ -932,8 +988,11 @@ void log_window::update_status()
             _("{0}; line: {1}(+) {2}(-) files: modified = {3} added = {4} deleted = {5} replaced = {6}"), s,
             added, removed, mod, add, del, ren);
     }
-    // What's applied first, so a filtered log isn't taken for the whole.
-    status_->set_text(show_summary() + " — " + s);
+    // A sync's warning first, for its while; then what's applied, so a
+    // filtered log isn't taken for the whole.
+    s = show_summary() + " — " + s;
+    if (!notice_.empty()) s = rap::i18n::format(_("{0} - {1}"), notice_, s);
+    status_->set_text(s);
 }
 
 // The ref selector shows the current ref, or a mode [spec 1.9.1].
@@ -1515,6 +1574,7 @@ void log_window::open_settings(settings_page page)
                       const int style =
                           std::atoi(settings::get().value("log.actionIcons", "1").c_str());
                       log_.set_action_icon_style(action_icon_style(std::clamp(style, 0, 3)));
+                      if (pr_watch_) pr_watch_->want_branch_tips(allowed_now(check_setting()));
                   });
 }
 

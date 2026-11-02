@@ -7,6 +7,7 @@
 #include "forge/pr_watch.h"
 #include "git/command.h"
 #include "git/repo_worker.h"
+#include "git/sync.h"
 #include "log/log_model.h"
 #include "rebase/rebase_window.h"
 
@@ -100,10 +101,11 @@ private:
     void run_ref_commands(const std::string& title, std::vector<std::vector<std::string>> commands);
     // git commands with no progress dialog; `after` gets whether all
     // succeeded and their output. A failure is shown unless `show_failure`
-    // is false (the caller handles it).
+    // is false (the caller handles it). `prompts`: never, for what runs
+    // unasked.
     void run_quietly(const std::string& title, std::vector<std::vector<std::string>> commands,
                      std::function<void(bool ok, const std::string& output)> after,
-                     bool show_failure = true);
+                     bool show_failure = true, git_prompts prompts = git_prompts::ask);
     void refs_changed();
     // The forge's open pull requests: the branches that are their heads, for
     // the labels and the menus. pr_watch_ is made once the window is.
@@ -119,6 +121,84 @@ private:
     // After the forge changed the repository: its remote fetched quietly,
     // the labels refreshed.
     void fetch_after_forge(const std::string& remote);
+    // -- Sync: the Fetch button, top right (log_sync.cpp) --------------------
+    // A click: the remotes fetched side by side (`only` that one, after a
+    // forge action), never asking, the leading one first; the PRs asked
+    // again; branches not checked out fast-forwarded after their remote's
+    // fetch; the log reloaded when the leading remote is in and again when
+    // all are; then the current branch, if it's behind its upstream, offered
+    // forward (or moved, if set to and clean).
+    void sync(const std::string& only = {});
+    struct sync_state
+    {
+        std::string only, leading;
+        size_t pending = 0;
+        std::map<std::string, remote_result, std::less<>> results;
+        std::vector<std::string> moved;  // fast-forwarded branches
+    };
+    std::shared_ptr<sync_state> sync_run_;
+    // One remote fetched, and what moved after it.
+    void remote_synced(const std::shared_ptr<sync_state>&, const std::string& remote, remote_result,
+                       std::vector<std::string> moved);
+    void sync_finished(const std::shared_ptr<sync_state>&);
+    // Before a click: what the remotes have that a sync would bring, from
+    // the PR watch's branch tips (forge remotes) and ls-remote (the rest,
+    // every ten minutes). Compared with the local refs on a worker, and then
+    // downloaded into refs/prefetch/ if allowed.
+    void start_sync_watch();
+    void poll_remotes();
+    void tips_heard(std::map<std::string, remote_tips, std::less<>> tips);
+    void recheck_changes();
+    void prefetch(const std::string& remote);
+    // A background contact's result for one remote: the button only.
+    void contact_result(const std::string& remote, remote_result);
+    // The button's icon and tooltip, as what's known says.
+    void update_sync_badge();
+    void show_sync_output();
+    // The current branch against its upstream, on a worker: the hint bar.
+    void update_branch_hint();
+    void show_branch_hint(const current_state&);
+    void fast_forward_current();
+    // A sync's warning in the status bar, for a while.
+    void set_sync_notice(std::string text, bool failure);
+    void keep_pull_dialog();
+    // The button's icon: the desktop's download icon unbadged (drawn where
+    // there are no named icons, Windows), or drawn with its badge: changes
+    // waiting (a dot with their count), a remote that failed (a red "!"),
+    // or no network (greyed, Offline).
+    enum class fetch_badge
+    {
+        none,
+        changes,
+        failure,
+        offline,
+    };
+    static rap::icon fetch_icon(fetch_badge = fetch_badge::none, size_t count = 0);
+    fetch_badge badge_shown_ = fetch_badge::none;
+    size_t badge_count_ = 0;
+    static void paint_failure_mark(rap::painter&, rap::size_f);
+    rap::button* fetch_ = nullptr;
+    rap::canvas* status_mark_ = nullptr;
+    rap::widget* hint_bar_ = nullptr;
+    rap::label* hint_text_ = nullptr;
+    rap::button* hint_ff_ = nullptr;
+    rap::button* hint_pull_ = nullptr;
+    bool syncing_ = false;
+    // The remotes' branches as last heard, by remote: the forge's answer, or
+    // ls-remote's.
+    std::map<std::string, remote_tips, std::less<>> known_tips_;
+    std::vector<remote_changes> changes_;  // what a sync would bring, by remote
+    // Remotes whose last contact failed, and why; until one succeeds.
+    std::map<std::string, remote_result, std::less<>> failures_;
+    std::string last_output_;  // the last fetch's, for the status bar's "!"
+    std::string notice_;
+    rap::subscription notice_timer_, poll_timer_;
+    std::vector<std::string> prefetching_;
+    bool rechecking_ = false, recheck_again_ = false, polling_ = false;
+    bool after_sync_ = false;  // the next branch hint follows a sync
+    current_state current_;
+    std::string hint_hidden_;  // "branch upstream behind" the user hid
+
     // PRs set to merge when ready, by remote and number: fetched when the
     // watch no longer sees them open.
     std::vector<std::pair<std::string, int>> awaiting_merge_;

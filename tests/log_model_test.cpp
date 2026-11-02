@@ -26,6 +26,7 @@
 #include "git/repo_worker.h"
 #include "git/status.h"
 #include "git/submodule.h"
+#include "git/sync.h"
 #include "git/tree_list.h"
 #include "git/worktrees.h"
 #include "log/log_model.h"
@@ -2244,6 +2245,143 @@ int main(int argc, char** argv)
             const auto pins_only = walk({.refs = tortilla::walk_refs::tips});
             check(pins_only.empty(), "pins: a tips walk with nothing to walk is empty");
         }
+    }
+
+    // The log's sync: a bare "remote", a clone of it, then commits on the
+    // remote the clone hasn't fetched.
+    {
+        using namespace tortilla;
+        const std::string root = std::string(argv[1]) + "/sync";
+        const std::string bare = root + "/remote.git", seed = root + "/seed",
+                          clone = root + "/clone";
+        const std::string id = "-c user.name=Ada -c user.email=ada@example.com ";
+        const std::string s = "git -C '" + seed + "' " + id, c = "git -C '" + clone + "' " + id;
+        sh("git init -q --bare -b main '" + bare + "' && git init -q -b main '" + seed + "'");
+        sh(s + "commit -q --allow-empty -m one && " + s + "remote add origin '" + bare + "'");
+        for (const char* b : {"feature", "other", "feature2", "gone-branch"}) sh(s + "branch " + b);
+        sh(s + "push -q origin main feature other feature2 gone-branch");
+        sh("git clone -q '" + bare + "' '" + clone + "'");
+        // Local branches: two to move on, one with work of its own, one in
+        // another worktree.
+        sh(c + "branch -q --track feature origin/feature && " + c +
+           "branch -q --track stale origin/other && " + c +
+           "branch -q --track mine origin/main && " + c +
+           "branch -q --track wt origin/feature2 && " + c + "worktree add -q '" + root + "/wt' wt");
+        sh(c + "checkout -q mine && " + c + "commit -q --allow-empty -m mine && " + c +
+           "checkout -q main");
+        // The remote moves on.
+        sh(s + "commit -q --allow-empty -m two");
+        for (const char* b : {"feature", "other", "feature2"}) sh(s + "branch -f " + b);
+        sh(s + "branch newbranch && " + s +
+           "push -q -f origin main feature other feature2 newbranch :gone-branch");
+        const std::string remote_main = resolve(seed, "main");
+        const std::string before_main = resolve(clone, "origin/main");
+
+        const git_result listed = run_git(clone, {"ls-remote", "--heads", "origin"});
+        const remote_tips theirs =
+            parse_ls_remote("warning: --heads is deprecated\n" + listed.output);
+        check(listed.ok() && theirs.branches.size() == 5 && theirs.complete &&
+                  std::ranges::any_of(theirs.branches, [&](const branch_tip& b)
+                                      { return b.name == "main" && b.sha == remote_main; }),
+              "sync: ls-remote's branches, its warnings skipped");
+        check(parse_ls_remote("abc\trefs/heads/x\n" + std::string(40, 'a') + "\trefs/tags/v1\n")
+                  .branches.empty(),
+              "sync: ls-remote's tags and junk aren't branches");
+
+        const auto ours = local_tips(clone, {"origin"});
+        const remote_changes changes = compare_tips("origin", theirs, ours.at("origin"));
+        check(changes.moved == std::vector<std::string>{"feature", "feature2", "main", "other"} &&
+                  changes.added == std::vector<std::string>{"newbranch"} &&
+                  changes.deleted == std::vector<std::string>{"gone-branch"},
+              "sync: moved, new and deleted branches against refs/remotes");
+        check(changes_text(changes) ==
+                  "origin: feature moved, feature2 moved, main moved, other moved, newbranch new, "
+                  "gone-branch deleted",
+              "sync: the changes in words");
+        remote_tips partial = theirs;
+        partial.complete = false;
+        check(compare_tips("origin", partial, ours.at("origin")).deleted.empty(),
+              "sync: a partial list deletes nothing");
+        check(compare_tips("origin", theirs,
+                           local_tips(clone, {"origin"}, "refs/prefetch/").at("origin"))
+                      .added.size() == 5,
+              "sync: nothing prefetched yet");
+
+        // The download ahead of a click: refs/prefetch only.
+        const git_result pre =
+            run_git(clone, prefetch_args("origin"), git_output::all, git_prompts::never);
+        check(pre.ok() && resolve(clone, "origin/main") == before_main &&
+                  resolve(clone, "refs/prefetch/origin/main") == remote_main &&
+                  resolve(clone, "refs/remotes/origin/gone-branch").size() == 40 &&
+                  !resolve(clone, "refs/tags/v1").size(),
+              "sync: a prefetch leaves refs/remotes as they were");
+        check(compare_tips("origin", theirs,
+                           local_tips(clone, {"origin"}, "refs/prefetch/").at("origin"))
+                  .empty(),
+              "sync: prefetched, nothing left to download");
+        {
+            auto r = repo::open(clone);
+            bool none = r.has_value();
+            if (r)
+                for (const auto& [oid, refs] : r->refs())
+                    for (const ref& x : refs)
+                        none = none && !x.full_name.starts_with("refs/prefetch/");
+            check(none && !walks_ref(walk_refs::all, "refs/prefetch/origin/main") &&
+                      walks_ref(walk_refs::all, "refs/remotes/origin/main"),
+                  "sync: prefetched refs are no labels, and not walked");
+        }
+
+        // After the real fetch: what can be fast-forwarded.
+        const auto fetched = fetch_remotes(clone, {"origin"});
+        check(fetched.at("origin").failure == fetch_failure::none &&
+                  resolve(clone, "origin/main") == remote_main,
+              "sync: the fetch");
+        const auto targets = fast_forward_targets(clone);
+        std::vector<std::string> names;
+        for (const fast_forward& f : targets) names.push_back(f.branch);
+        std::ranges::sort(names);
+        check(names == std::vector<std::string>{"feature", "stale"},
+              "sync: behind branches move; diverged, current and other worktrees' stay");
+        check(fast_forward_targets(clone, "origin").size() == 2 &&
+                  fast_forward_targets(clone, "elsewhere").empty(),
+              "sync: a remote's fetch moves only branches tracking it");
+        {
+            const auto args = fetch_args("origin");
+            check(std::ranges::find(args, "--no-auto-maintenance") != args.end() ||
+                      std::ranges::find(args, "gc.auto=0") != args.end(),
+                  "sync: fetches side by side leave maintenance alone");
+        }
+        for (const auto& cmd : fast_forward_commands(targets)) run_git(clone, cmd);
+        check(resolve(clone, "feature") == resolve(clone, "origin/feature") &&
+                  resolve(clone, "stale") == resolve(clone, "origin/other") &&
+                  resolve(clone, "wt") != resolve(clone, "origin/feature2") &&
+                  resolve(clone, "mine") != remote_main,
+              "sync: fast-forwarded");
+        const current_state cur = current_against_upstream(clone);
+        check(cur.branch == "main" && cur.upstream == "origin/main" && cur.behind == 1 &&
+                  cur.ahead == 0 && cur.clean,
+              "sync: the current branch is behind its upstream");
+
+        // Remotes that can't be fetched fail, not hang.
+        sh(c + "remote add nowhere '" + root + "/missing.git' && " + c +
+           "remote add closed http://127.0.0.1:9/x.git && " + c + "config remote.skipped.url '" +
+           bare + "' && " + c + "config remote.skipped.skipFetchAll yes");
+        check(fetch_all_remotes(clone) == std::vector<std::string>{"closed", "nowhere", "origin"} ||
+                  fetch_all_remotes(clone) ==
+                      std::vector<std::string>{"origin", "nowhere", "closed"},
+              "sync: --all's remotes, without the skipped");
+        const auto failed = fetch_remotes(clone, {"nowhere", "closed"});
+        check(failed.at("nowhere").failure == fetch_failure::other &&
+                  failed.at("closed").failure == fetch_failure::unreachable,
+              "sync: a missing repository and a closed port fail");
+        check(classify_failure("fatal: could not read Username for 'https://github.com': terminal "
+                               "prompts disabled")
+                          .failure == fetch_failure::credentials &&
+                  classify_failure("ssh: Could not resolve hostname x: Name or service not known")
+                          .failure == fetch_failure::unreachable &&
+                  classify_failure("git@github.com: Permission denied (publickey).").failure ==
+                      fetch_failure::credentials,
+              "sync: failures sorted by kind");
     }
 
     std::printf("%s\n", failures ? "FAILED" : "all passed");
