@@ -75,6 +75,7 @@ add_library(tortilla_git STATIC
     src/git/temp_files.cpp
     src/git/pathspec_file.cpp
     src/git/tool_discovery.cpp
+    src/git/repo_operation.cpp
     src/util/programs.cpp
     src/util/repo_path.cpp
     src/util/search_query.cpp

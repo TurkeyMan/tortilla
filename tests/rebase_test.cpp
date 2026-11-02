@@ -254,6 +254,26 @@ int main(int argc, char** argv)
         check(git(h.repo, {"status", "--porcelain"}).empty(), "abort: clean working tree");
     }
 
+    // Fast-forward: the branch moves to main, and no rebase is left marked
+    // as going on (a later merge's conflicts would take the sides swapped).
+    {
+        harness h(**ui, make_repo(root, "ff"));
+        const std::string g = "git -C '" + h.repo + "' ";
+        sh(g + "checkout -q -B feature main~1");
+        auto opened = repo::open(h.repo);
+        h.engine->start({.branch = "feature",
+                         .branch_head = *opened->resolve("feature"),
+                         .onto = *opened->resolve("main"),
+                         .onto_name = "main",
+                         .checked_out = "feature",
+                         .fast_forward = true});
+        h.settle();
+        check(h.engine->stage() == rebase_stage::done &&
+                  git(h.repo, {"rev-parse", "feature"}) == git(h.repo, {"rev-parse", "main"}),
+              "fast-forward: the branch at main");
+        check(!std::filesystem::exists(h.repo + "/.git/tortilla-rebase-active"),
+              "fast-forward: no rebase marker left");
+    }
     // An untracked file where the upstream has one: git refuses to start,
     // and the file is as it was.
     {

@@ -2,6 +2,7 @@
 
 #include "git/command.h"
 #include "git/remotes.h"
+#include "git/repo_operation.h"
 #include "git/tool_discovery.h"
 #include "i18n.h"
 #include "settings.h"
@@ -18,23 +19,6 @@ namespace fs = std::filesystem;
 
 namespace tortilla
 {
-namespace
-{
-
-
-std::string read_file(const fs::path& p)
-{
-    std::string out;
-    if (std::FILE* f = rap::sys::fopen(p, "rb"))
-    {
-        char buf[4096];
-        while (size_t n = std::fread(buf, 1, sizeof buf, f)) out.append(buf, n);
-        std::fclose(f);
-    }
-    return out;
-}
-
-}  // namespace
 
 std::vector<detected_merge_tool> detect_merge_tools()
 {
@@ -139,43 +123,38 @@ std::expected<conflict_sides, std::string> write_conflict_sides(const std::strin
 
     // During a rebase (tortilla's, or git's) HEAD is the upstream being built
     // on and the pick is the user's own commit: mine is stage 3.
-    const fs::path git_dir = rap::sys::path_from_utf8(trimmed(
-        run_git(workdir, {"rev-parse", "--absolute-git-dir"}, git_output::stdout_only).output));
-    std::error_code ec;
-    const fs::path active = git_dir / "tortilla-rebase-active";
-    const bool rebasing = fs::exists(active, ec) || fs::exists(git_dir / "rebase-merge", ec) ||
-                          fs::exists(git_dir / "rebase-apply", ec);
-    const int mine = rebasing ? 3 : 2, theirs = rebasing ? 2 : 3;
+    const operation_state op = operation_in_progress(workdir);
+    const int mine = op.mine_stage(), theirs = op.theirs_stage();
     s.mine_deleted = !stage[mine];
     s.theirs_deleted = !stage[theirs];
 
     // Titles [spec 9.1.6].
     s.base_title = _("Base");
-    if (rebasing)
+    if (op.rebasing())
     {
-        std::string onto = _("upstream"), branch = _("your branch");
-        const std::string text = read_file(active);
-        if (size_t at = text.find("onto="); at != std::string::npos)
-            onto = text.substr(at + 5, text.find('\n', at) - at - 5);
-        if (size_t at = text.find("branch="); at != std::string::npos)
-            branch = text.substr(at + 7, text.find('\n', at) - at - 7);
-        s.mine_title = branch;
-        s.theirs_title = onto;
+        s.mine_title = op.branch.empty() ? std::string(_("your branch")) : op.branch;
+        s.theirs_title = op.onto.empty() ? std::string(_("upstream")) : op.onto;
     }
     else
     {
         const std::string head = current_branch(workdir);
         s.mine_title = head.empty() ? "HEAD" : head;
         auto short_of = [&](const char* ref) { return resolve(workdir, ref).substr(0, 8); };
-        if (fs::exists(git_dir / "MERGE_HEAD", ec))
+        switch (op.operation)
+        {
+        case repo_operation::merge:
             s.theirs_title = "MERGE_HEAD (" + short_of("MERGE_HEAD") + ")";
-        else if (fs::exists(git_dir / "CHERRY_PICK_HEAD", ec))
+            break;
+        case repo_operation::cherry_pick:
             s.theirs_title = "CHERRY_PICK_HEAD (" + short_of("CHERRY_PICK_HEAD") + ")";
-        else if (fs::exists(git_dir / "REVERT_HEAD", ec))
+            break;
+        case repo_operation::revert:
             s.theirs_title = rap::i18n::format(_("Parent of {0}"), short_of("REVERT_HEAD"));
-        else
-            s.theirs_title = _("Theirs");
+            break;
+        default: s.theirs_title = _("Theirs"); break;
+        }
     }
+    std::error_code ec;
     if (s.mine_deleted || s.theirs_deleted || s.submodule) return s;
 
     // <file>.BASE<ext> beside the file, each side as checked out (filters

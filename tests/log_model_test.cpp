@@ -28,6 +28,7 @@
 #include "git/reflog.h"
 #include "git/remotes.h"
 #include "git/repo.h"
+#include "git/repo_operation.h"
 #include "git/repo_worker.h"
 #include "git/status.h"
 #include "git/submodule.h"
@@ -2840,6 +2841,49 @@ int main(int argc, char** argv)
         check(slurp(d / "a.cpp.LOCAL.cpp") == "my notes\n" && sides && !fs::exists(sides->mine) &&
                   !fs::exists(sides->theirs) && !fs::exists(sides->base),
               "conflict sides: removed, but only the ones written");
+    }
+
+    // Mine and theirs: the merge tool and the conflict menu take the same
+    // side, in Tortilla's rebase (a cherry-pick with its marker), git's
+    // rebase, a merge and a plain cherry-pick.
+    {
+        auto mine_of = [&](const std::string& name, const std::string& how, bool tortilla_rebase)
+        {
+            const std::string dir = std::string(argv[1]) + "/sides-" + name;
+            make_conflict(dir, {"f.txt"}, how);
+            if (tortilla_rebase)
+                sh("git -C '" + dir +
+                   "' update-ref --no-deref HEAD HEAD && printf 'onto=main\\nbranch=side\\n' > '" +
+                   dir + "/.git/tortilla-rebase-active'");
+            auto sides = tortilla::write_conflict_sides(dir, "f.txt");
+            const std::string tool = sides ? slurp(sides->mine) : "";
+            if (sides) tortilla::remove_conflict_sides(*sides);
+            // The stage the menu's "mine" checks out.
+            const int stage = tortilla::operation_in_progress(dir).mine_stage();
+            const std::string menu =
+                tortilla::run_git(dir, {"show", ":" + std::to_string(stage) + ":f.txt"},
+                                  tortilla::git_output::stdout_only)
+                    .output;
+            return std::pair{tool, menu};
+        };
+        auto [tool, menu] = mine_of("tortilla", "cherry-pick", true);
+        check(tool == "theirs\n" && menu == tool,
+              "mine: Tortilla's rebase, the picked commit's side for both");
+        std::tie(tool, menu) = mine_of("rebase", "rebase", false);
+        check(tool == "ours\n" && menu == tool, "mine: git's rebase, the replayed commit's side");
+        std::tie(tool, menu) = mine_of("merge", "merge", false);
+        check(tool == "ours\n" && menu == tool, "mine: a merge, HEAD's side");
+        std::tie(tool, menu) = mine_of("pick", "cherry-pick", false);
+        check(tool == "ours\n" && menu == tool, "mine: a cherry-pick, HEAD's side");
+        {
+            // A marker left behind while a branch is checked out: not a rebase.
+            const std::string dir = std::string(argv[1]) + "/sides-stale";
+            make_conflict(dir, {"f.txt"});
+            sh("printf 'onto=main\\n' > '" + dir + "/.git/tortilla-rebase-active'");
+            const auto op = tortilla::operation_in_progress(dir);
+            check(op.operation == tortilla::repo_operation::merge && op.mine_stage() == 2,
+                  "mine: a stale rebase marker doesn't swap a merge's sides");
+        }
     }
 
     std::printf("%s\n", failures ? "FAILED" : "all passed");

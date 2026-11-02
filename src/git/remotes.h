@@ -26,8 +26,6 @@ bool is_ancestor(const std::string& workdir, const std::string& ancestor, const 
 bool is_shallow(const std::string& workdir);
 // Whether the index holds unmerged (conflicted) files.
 bool has_conflicts(const std::string& workdir);
-// Whether a rebase is under way (git's rebase-merge or rebase-apply).
-bool rebase_in_progress(const std::string& workdir);
 
 // A branch's upstream on its remote: branch.<b>.remote and the branch of
 // branch.<b>.merge (without refs/heads/). Empty when it has none.

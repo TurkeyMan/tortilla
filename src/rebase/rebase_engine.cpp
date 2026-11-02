@@ -138,6 +138,9 @@ void rebase_engine::start(const start_args& s)
             [this](int code, auto&)
             {
                 if (code != 0) return stop(rebase_stage::error);
+                // Done, so no longer a rebase: the marker would swap a later
+                // merge's mine and theirs.
+                std::remove(active_file_.c_str());
                 hooks_.log(rap::i18n::format(_("Fast forward to \"{0}\""), start_.onto.hex(8)) +
                                "\n",
                            true);
