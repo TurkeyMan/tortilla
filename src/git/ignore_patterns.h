@@ -32,7 +32,8 @@ std::vector<std::pair<std::string, std::vector<std::string>>>
 ignore_patterns(const std::vector<ignore_item>&, bool by_extension, bool everywhere, ignore_target);
 
 // A name as a literal pattern: wildcards, a leading # or ! and trailing
-// spaces escaped.
+// spaces escaped. Any of git's wildmatch patterns takes it as that one name
+// (git apply --include's too): a \ before any character is that character.
 std::string literal_pattern(const std::string& name);
 
 // Appends the lines `file` doesn't already have (creating it and its
