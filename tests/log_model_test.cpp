@@ -1038,6 +1038,16 @@ int main(int argc, char** argv)
         check(tortilla::history_with("a\tb\tc", "d", 3) == "d\ta\tb",
               "history: the oldest dropped");
         check(tortilla::history_with("", "x", 25) == "x", "history: the first entry");
+        // Appearance's stored values, both ways.
+        check(tortilla::appearance_from("") == rap::color_scheme::system &&
+                  tortilla::appearance_from("light") == rap::color_scheme::light &&
+                  tortilla::appearance_from("dark") == rap::color_scheme::dark &&
+                  tortilla::appearance_from("purple") == rap::color_scheme::system,
+              "appearance: stored values read");
+        check(tortilla::appearance_value(rap::color_scheme::dark) == "dark" &&
+                  tortilla::appearance_value(rap::color_scheme::light) == "light" &&
+                  tortilla::appearance_value(rap::color_scheme::system).empty(),
+              "appearance: values stored");
     }
     check(tortilla::sha256_hex(std::string(1000, 'a')) ==
               "41edece42d63e8d9bf515a9ba6932e1c20cbc9f5a5d134645adb5db1b9737ea3",
