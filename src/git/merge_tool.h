@@ -34,6 +34,8 @@ struct conflict_sides
     std::string path;                // repository-relative
     std::string base, mine, theirs;  // the files written (absolute); base may be empty, as the file
     std::string merged;              // the working-tree file (absolute)
+    // The files this run made, so the only ones remove_conflict_sides removes.
+    std::vector<std::string> written;
     std::string base_title, mine_title, theirs_title;
     bool mine_deleted = false, theirs_deleted = false;  // a delete/modify conflict: no tool
     bool submodule = false;                             // a gitlink conflict: no tool
