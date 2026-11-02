@@ -17,6 +17,12 @@
 namespace tortilla
 {
 
+// The untracked files (ignored ones aside) that checking out `onto` would
+// overwrite: where it has a file, a folder, or a file in place of one of
+// their folders. Compared without case where core.ignorecase says the disk
+// doesn't tell case apart. Runs git; quick, as only names are read.
+std::vector<std::string> untracked_in_the_way(const std::string& workdir, const oid& onto);
+
 class rebase_engine
 {
 public:
