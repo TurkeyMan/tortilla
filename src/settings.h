@@ -45,6 +45,13 @@ private:
     std::map<std::string, std::string> values_;
 };
 
+// Appearance [Settings > General]: "light", "dark", or as the desktop has
+// it (no value). Applied when the toolkit loads, and live from Settings.
+inline constexpr const char* k_appearance_setting = "appearance";
+rap::color_scheme appearance();
+rap::color_scheme appearance_from(std::string_view stored);
+std::string_view appearance_value(rap::color_scheme);
+
 // The history format on its own, for the tests: a stored value's entries,
 // and the value with `entry` added.
 std::vector<std::string> history_entries(std::string_view stored);

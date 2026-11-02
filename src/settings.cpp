@@ -18,6 +18,23 @@ std::filesystem::path settings_file()
 
 }  // namespace
 
+rap::color_scheme appearance_from(std::string_view stored)
+{
+    return stored == "light"  ? rap::color_scheme::light
+           : stored == "dark" ? rap::color_scheme::dark
+                              : rap::color_scheme::system;
+}
+
+std::string_view appearance_value(rap::color_scheme s)
+{
+    return s == rap::color_scheme::light ? "light" : s == rap::color_scheme::dark ? "dark" : "";
+}
+
+rap::color_scheme appearance()
+{
+    return appearance_from(settings::get().value(k_appearance_setting));
+}
+
 settings& settings::get()
 {
     static settings s;

@@ -27,6 +27,10 @@ namespace tortilla
 namespace
 {
 
+// The Appearance choices, in the drop-down's order.
+constexpr rap::color_scheme k_appearance_choices[] = {
+    rap::color_scheme::system, rap::color_scheme::light, rap::color_scheme::dark};
+
 // The Action icons choices, in the drop-down's order.
 constexpr action_icon_style k_icon_styles[] = {action_icon_style::document,
                                                action_icon_style::glyph, action_icon_style::bevel,
@@ -34,7 +38,11 @@ constexpr action_icon_style k_icon_styles[] = {action_icon_style::document,
 
 struct state
 {
+    rap::ui* ui = nullptr;
     std::unique_ptr<rap::window> window;
+    // Appearance, in k_appearance_choices' order; shown live as it's
+    // chosen, and back as saved on Cancel.
+    rap::drop_down* appearance = nullptr;
     std::string repo_dir;
     // Bound when their page is first shown; null until then, and an
     // unvisited page saves nothing.
@@ -137,11 +145,28 @@ rap::node general_page(std::shared_ptr<state> st)
     int current_language = 0;
     for (size_t i = 1; i < st->language_tags.size(); ++i)
         if (st->language_tags[i] == chosen) current_language = int(i);
+    const rap::color_scheme scheme = appearance();
+    const int current_appearance =
+        int(std::find(std::begin(k_appearance_choices), std::end(k_appearance_choices), scheme) -
+            std::begin(k_appearance_choices));
     return vbox{
         group{_("Language"),
               form{
                   {_("Language"), drop_down{languages, current_language}.bind(st->language)},
                   {"", label{_("Applies the next time Tortilla starts.")}},
+              }},
+        group{_("Appearance"),
+              form{
+                  {_("Appearance"),
+                   drop_down{{_("Follow system"), _("Light"), _("Dark")}, current_appearance}
+                       .bind(st->appearance)
+                       .on_changed(
+                           [weak](int i)
+                           {
+                               auto s = weak.lock();
+                               if (s && s->ui && i >= 0 && i < 3)
+                                   s->ui->set_color_scheme(k_appearance_choices[i]);
+                           })},
               }},
         group{
             _("Log"),
@@ -608,6 +633,7 @@ void show_settings(rap::ui& ui, rap::window* parent, const std::string& repo_dir
                    settings_page first, std::function<void()> saved, std::function<void()> closed)
 {
     auto st = std::make_shared<state>();
+    st->ui = &ui;
     st->repo_dir = repo_dir;
     std::weak_ptr<state> weak = st;
     auto build = [](const std::weak_ptr<state>& w, rap::node (*page)(std::shared_ptr<state>))
@@ -683,9 +709,20 @@ void show_settings(rap::ui& ui, rap::window* parent, const std::string& repo_dir
         {
             auto keep = std::move(st);
             settings::get().save_window("settings.window", *keep->window);  // however it closed
+            // Appearance was shown live: kept on OK, back as saved otherwise.
+            if (keep->appearance && role != rap::dialog_role::ok) ui.set_color_scheme(appearance());
             if (role == rap::dialog_role::ok)
             {
                 settings& settings = settings::get();
+                if (keep->appearance)
+                {
+                    const int i = std::clamp(keep->appearance->current(), 0, 2);
+                    const std::string_view v = appearance_value(k_appearance_choices[i]);
+                    if (v.empty())
+                        settings.remove(k_appearance_setting);
+                    else
+                        settings.set(k_appearance_setting, std::string(v));
+                }
                 if (keep->language)
                 {
                     const int i = keep->language->current();
