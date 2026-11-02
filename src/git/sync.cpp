@@ -258,14 +258,18 @@ std::vector<fast_forward> fast_forward_targets(const std::string& workdir,
     // upstream and how it stands against it.
     const git_result tips = run_git(
         workdir,
-        {"for-each-ref", "--format=%(refname)%09%(objectname)", "refs/heads/", "refs/remotes/"},
+        {"for-each-ref", "--format=%(refname)%09%(objectname)%09%(symref)", "refs/heads/",
+         "refs/remotes/"},
         git_output::stdout_only);
     std::unordered_map<std::string_view, std::string_view> sha_of;
+    std::unordered_set<std::string_view> remote_mains;  // what each origin/HEAD points at
     each_line(tips.output,
               [&](std::string_view line)
               {
-                  const auto [full, sha] = at_tab(line);
+                  const auto [full, rest] = at_tab(line);
+                  const auto [sha, symref] = at_tab(rest);
                   sha_of.emplace(full, sha);
+                  if (full.ends_with("/HEAD") && !symref.empty()) remote_mains.insert(symref);
               });
     const git_result branches =
         run_git(workdir,
@@ -284,7 +288,20 @@ std::vector<fast_forward> fast_forward_targets(const std::string& workdir,
                       return;
                   auto from = sha_of.find(full), to = sha_of.find(upstream);
                   if (from == sha_of.end() || to == sha_of.end()) return;
-                  out.push_back({.branch = std::string(full.substr(11)),
+                  // A feature branch started from origin/main may track it
+                  // (git's and the Track box's old default); once merged, it
+                  // would be dragged up to main's tip on every fetch. So a
+                  // remote's main moves only its namesake; a branch pushed
+                  // under another name still follows that one.
+                  const std::string_view name = full.substr(11);
+                  const bool remote_main = remote_mains.contains(upstream) ||
+                                           upstream.ends_with("/main") ||
+                                           upstream.ends_with("/master");
+                  const bool namesake = upstream.size() > name.size() &&
+                                        upstream.ends_with(name) &&
+                                        upstream[upstream.size() - name.size() - 1] == '/';
+                  if (remote_main && !namesake) return;
+                  out.push_back({.branch = std::string(name),
                                  .upstream = std::string(upstream),
                                  .from = std::string(from->second),
                                  .to = std::string(to->second)});

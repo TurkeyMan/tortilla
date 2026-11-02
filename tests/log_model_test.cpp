@@ -3936,6 +3936,7 @@ int main(int argc, char** argv)
         sh(c + "branch -q --track feature origin/feature && " + c +
            "branch -q --track stale origin/other && " + c +
            "branch -q --track mine origin/main && " + c +
+           "branch -q --track topic origin/main && " + c +
            "branch -q --track wt origin/feature2 && " + c + "worktree add -q '" + root + "/wt' wt");
         sh(c + "checkout -q mine && " + c + "commit -q --allow-empty -m mine && " + c +
            "checkout -q main");
@@ -4011,7 +4012,8 @@ int main(int argc, char** argv)
         for (const fast_forward& f : targets) names.push_back(f.branch);
         std::ranges::sort(names);
         check(names == std::vector<std::string>{"feature", "stale"},
-              "sync: behind branches move; diverged, current and other worktrees' stay");
+              "sync: behind branches move, under another name too; diverged, current, other "
+              "worktrees' and a feature branch tracking the remote's main stay");
         check(fast_forward_targets(clone, "origin").size() == 2 &&
                   fast_forward_targets(clone, "elsewhere").empty(),
               "sync: a remote's fetch moves only branches tracking it");
@@ -4024,6 +4026,7 @@ int main(int argc, char** argv)
         for (const auto& cmd : fast_forward_commands(targets)) run_git(clone, cmd);
         check(resolve(clone, "feature") == resolve(clone, "origin/feature") &&
                   resolve(clone, "stale") == resolve(clone, "origin/other") &&
+                  resolve(clone, "topic") != remote_main &&
                   resolve(clone, "wt") != resolve(clone, "origin/feature2") &&
                   resolve(clone, "mine") != remote_main,
               "sync: fast-forwarded");

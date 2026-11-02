@@ -110,10 +110,14 @@ void create_ref_dialog::base_changed()
 {
     const std::string base = base_.name();
     const bool remote = base_.chosen() == ref_chooser::kind::branch && base.starts_with("remotes/");
-    // (Tracking is offered, and on, for a remote branch.)
+    // (Tracking is offered for a remote branch, and on only for its namesake:
+    // a feature branch started from origin/main isn't main's.)
     track_->set_enabled(remote && !tag_);
-    track_->set_checked(remote && !tag_);
-    if (!remote) return;
+    if (!remote)
+    {
+        track_->set_checked(false);
+        return;
+    }
     const size_t slash = base.find('/', 8);
     const std::string suggested = slash == std::string::npos ? "" : base.substr(slash + 1);
     if (name_->text().empty() || name_->text() == auto_name_)
@@ -121,14 +125,14 @@ void create_ref_dialog::base_changed()
         auto_name_ = suggested;
         name_->set_text(suggested);
     }
+    track_->set_checked(!tag_ && trimmed(name_->text()) == suggested);
 }
 
 void create_ref_dialog::name_changed()
 {
     const std::string base = base_.name();
-    if (base_.chosen() == ref_chooser::kind::branch && base.starts_with("remotes/") &&
-        !base.ends_with("/" + name_->text()))
-        track_->set_checked(false);
+    if (base_.chosen() == ref_chooser::kind::branch && base.starts_with("remotes/") && !tag_)
+        track_->set_checked(base.ends_with("/" + trimmed(name_->text())));
 }
 
 void create_ref_dialog::ok()
