@@ -106,6 +106,7 @@ add_executable(tortilla
     src/log/log_window.cpp
     src/log/log_actions.cpp
     src/log/log_sync.cpp
+    src/log/forge_panel.cpp
     src/log/reflog_window.cpp
     src/log/worktree_window.cpp
     src/log/bisect_dialog.cpp

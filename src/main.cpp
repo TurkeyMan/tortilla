@@ -200,6 +200,7 @@ int main(int argc, char** argv)
     bool named = false;  // a command was given (else the log, or the welcome window)
     bool all_branches = false;
     bool submodule = false;  // the log of a submodule's folder in the repository around it
+    std::string select;      // the log's commit to select
     std::vector<std::string> args;
     for (int i = 1; i < argc; ++i)
     {
@@ -209,6 +210,9 @@ int main(int argc, char** argv)
             all_branches = true;
         else if (std::strcmp(argv[i], "--submodule") == 0)
             submodule = true;
+        // The log opens on that commit, selected, rather than the top row.
+        else if (std::strncmp(argv[i], "--select=", 9) == 0)
+            select = argv[i] + 9;
         else if (std::strcmp(argv[i], "--which-ui") == 0)
         {
             auto d = rap::detect(opts);
@@ -870,6 +874,7 @@ int main(int argc, char** argv)
         (*ui)->run();
         return 1;
     }
+    if (!select.empty()) (*log)->select_commit(select);
     // The log, and the dialogs it opens: until the last closes.
     tortilla::windows::keep(std::move(*log));
     return (*ui)->run();
