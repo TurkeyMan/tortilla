@@ -77,6 +77,7 @@ add_library(tortilla_git STATIC
     src/util/json.cpp
     src/forge/forge.cpp
     src/forge/pr_watch.cpp
+    src/forge/remote_sign_in.cpp
     src/git/ignore_patterns.cpp
     src/git/ref_list.cpp
     src/git/reflog.cpp

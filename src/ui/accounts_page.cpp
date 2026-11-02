@@ -123,7 +123,8 @@ struct accounts_state : std::enable_shared_from_this<accounts_state>
     // The server as typed, without a scheme or a trailing slash.
     std::string chosen_host() const
     {
-        std::string_view h = host->text();
+        const std::string typed = host->text();  // kept: h views it
+        std::string_view h = typed;
         while (!h.empty() && std::isspace(static_cast<unsigned char>(h.front())))
             h.remove_prefix(1);
         while (!h.empty() &&
@@ -160,6 +161,19 @@ struct accounts_state : std::enable_shared_from_this<accounts_state>
         token->set_enabled(!busy);
         sign_out->set_enabled(!busy && !list->selection().empty());
         scopes->set_text(token_scopes(chosen_kind()));
+    }
+
+    // Set for another page's remote; left alone while a sign-in is under way.
+    void prefill(forge_kind k, const std::string& h)
+    {
+        if (!kind || cancelled) return;
+        kind->set_current(int(std::ranges::find(k_kinds, k) - std::begin(k_kinds)));
+        host->set_text(h);
+        update();
+        if (browser_sign_in(k, h))
+            browser->focus();
+        else
+            token->focus();
     }
 
     void reload()
@@ -381,7 +395,7 @@ struct accounts_state : std::enable_shared_from_this<accounts_state>
 
 }  // namespace
 
-rap::node accounts_page(rap::ui& ui, std::function<rap::window*()> parent)
+rap::node accounts_page(rap::ui& ui, std::function<rap::window*()> parent, forge_sign_in* prefill)
 {
     using namespace rap::layout;
     using namespace rap::literals;
@@ -389,6 +403,11 @@ rap::node accounts_page(rap::ui& ui, std::function<rap::window*()> parent)
     st->rows.accounts = accounts();
     st->rows.status.assign(st->rows.accounts.size(), {});
     st->check_accounts();
+    if (prefill)
+        *prefill = [weak = std::weak_ptr(st)](forge_kind k, const std::string& h)
+        {
+            if (auto s = weak.lock()) s->prefill(k, h);
+        };
     // The widgets' callbacks keep the state, which goes with the window; the
     // state keeps no widget alive, so there's no cycle.
     auto with = [st](auto f) { return [st, f] { f(*st); }; };

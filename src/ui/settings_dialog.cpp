@@ -69,6 +69,12 @@ struct state
     rap::entry* ssh_command = nullptr;
     rap::widget* ssh_help = nullptr;
     std::vector<ssh_client> ssh_clients;
+    // One page asking for another: the Remotes page's Sign in... shows
+    // Accounts set for a remote's forge, and Remotes looks at the accounts
+    // again when it's shown after. Each is the page's own, once it's made.
+    rap::tabs* page_tabs = nullptr;
+    forge_sign_in accounts_sign_in;
+    std::function<void()> remotes_shown;
 
     int custom_index() const { return 2 + int(tools.size()); }
     int ssh_custom_index() const { return 1 + int(ssh_clients.size()); }
@@ -547,6 +553,21 @@ rap::node network_page(std::shared_ptr<state> st)
     };
 }
 
+// The Remotes page's Sign in...: Accounts, set for the remote's forge and
+// server. The page is made when it's first shown; set it after.
+void sign_in_on_accounts(rap::ui& ui, const std::weak_ptr<state>& weak, forge_kind k,
+                         std::string host)
+{
+    auto s = weak.lock();
+    if (!s || !s->page_tabs) return;
+    s->page_tabs->set_current(int(settings_page::accounts));
+    ui.post(
+        [weak, k, host = std::move(host)]
+        {
+            if (auto s = weak.lock(); s && s->accounts_sign_in) s->accounts_sign_in(k, host);
+        });
+}
+
 }  // namespace
 
 void show_settings(rap::ui& ui, rap::window* parent, const std::string& repo_dir,
@@ -560,7 +581,6 @@ void show_settings(rap::ui& ui, rap::window* parent, const std::string& repo_dir
         auto s = w.lock();
         return s ? page(s) : rap::node{};
     };
-    rap::tabs* page_tabs = nullptr;
 
     using namespace rap::layout;
     // Lazy pages don't size the dialog, so it has a size of its own.
@@ -588,21 +608,36 @@ void show_settings(rap::ui& ui, rap::window* parent, const std::string& repo_dir
                                                         auto s = weak.lock();
                                                         return s ? s->window.get() : nullptr;
                                                     },
-                                                    s->repo_dir);
+                                                    s->repo_dir,
+                                                    [weak, &ui](forge_kind k, const std::string& h)
+                                                    { sign_in_on_accounts(ui, weak, k, h); },
+                                                    &s->remotes_shown);
                                             }}},
                     page{_("Accounts"), lazy{[weak, &ui]
                                              {
-                                                 return accounts_page(ui,
-                                                                      [weak]
-                                                                      {
-                                                                          auto s = weak.lock();
-                                                                          return s ? s->window.get()
-                                                                                   : nullptr;
-                                                                      });
+                                                 auto s = weak.lock();
+                                                 if (!s) return rap::node{};
+                                                 return accounts_page(
+                                                     ui,
+                                                     [weak]
+                                                     {
+                                                         auto s = weak.lock();
+                                                         return s ? s->window.get() : nullptr;
+                                                     },
+                                                     &s->accounts_sign_in);
                                              }}},
                 }
                     .sidebar()
-                    .bind(page_tabs)
+                    .bind(st->page_tabs)
+                    .on_changed(
+                        [weak](int page)
+                        {
+                            // Remotes looks at the accounts again whenever
+                            // it's shown: one may have been signed in to.
+                            auto s = weak.lock();
+                            if (s && page == int(settings_page::remotes) && s->remotes_shown)
+                                s->remotes_shown();
+                        })
                     .stretch(),
                 buttons{ok, cancel},
             }}}
@@ -714,7 +749,7 @@ void show_settings(rap::ui& ui, rap::window* parent, const std::string& repo_dir
             if (closed) closed();
             ui.post([keep] {});  // destroy after this callback returns
         });
-    page_tabs->set_current(int(first));
+    st->page_tabs->set_current(int(first));
     settings::get().restore_window("settings.window", *st->window);
     st->window->show();
 }
