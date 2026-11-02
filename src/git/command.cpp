@@ -19,11 +19,14 @@ using rap::sys::process;
 // Prompts are disabled: a GUI has no terminal to answer them on, and
 // GIT_EDITOR=true never opens an editor (merge messages etc.). The SSH
 // client is the one chosen in Settings, if any; passwords, passphrases and
-// unknown hosts are asked in a window (askpass_env.h).
+// unknown hosts are asked in a window (askpass_env.h). GIT_OPTIONAL_LOCKS=0:
+// the log's background status mustn't take the index lock to refresh it,
+// or a git the user runs meanwhile fails with "index.lock: File exists".
 process::options git_options(git_output output, git_prompts prompts = git_prompts::ask)
 {
-    process::options o{.env = {{"GIT_TERMINAL_PROMPT", "0"}, {"GIT_EDITOR", "true"}},
-                       .merge_stderr = output == git_output::all};
+    process::options o{
+        .env = {{"GIT_TERMINAL_PROMPT", "0"}, {"GIT_EDITOR", "true"}, {"GIT_OPTIONAL_LOCKS", "0"}},
+        .merge_stderr = output == git_output::all};
     for (auto& e : ssh_environment()) o.env.push_back(std::move(e));
     for (const auto& e : askpass_environment())
         // Never asking: tortilla, started as askpass, says no at once.
