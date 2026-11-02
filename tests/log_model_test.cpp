@@ -30,6 +30,7 @@
 #include "git/tree_list.h"
 #include "git/worktrees.h"
 #include "log/log_model.h"
+#include "raw_client.h"
 #include "shell.h"
 #include "util/json.h"
 #include "util/sha256.h"
@@ -42,10 +43,12 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace
 {
@@ -1923,8 +1926,11 @@ int main(int argc, char** argv)
         std::thread(
             [name]
             {
-                (void)tortilla::channel::serve(name, [](std::string_view q)
-                                               { return "got " + std::string(q); });
+                // "big" is answered with more than any pipe or socket holds
+                // unread, so an asker that doesn't read leaves it stuck.
+                (void)tortilla::channel::serve(
+                    name, [](std::string_view q)
+                    { return q == "big" ? std::string(8 << 20, 'x') : "got " + std::string(q); });
             })
             .detach();
         std::expected<std::string, tortilla::channel::ask_error> answer;
@@ -1939,6 +1945,46 @@ int main(int argc, char** argv)
                   tortilla::channel::ask(name + "-none", "x", std::chrono::milliseconds(200))
                           .error() == tortilla::channel::ask_error::no_server,
               "cache channel: no server is said so");
+
+        // Askers that stall: one connected that sends nothing, one that asks
+        // and never reads. Neither holds up the next question, and each is
+        // let go after channel::k_serve_wait, on every platform.
+        {
+            using tortilla::test::raw_client;
+            using namespace std::chrono_literals;
+            const std::string at = tortilla::channel::address(name);
+            {
+                raw_client idle(at);
+                std::this_thread::sleep_for(50ms);
+                auto after = tortilla::channel::ask(name, "after idle", 200ms);
+                check(idle.connected() && after && *after == "got after idle",
+                      "cache channel: an idle asker doesn't hold up the next");
+                check(idle.let_go(tortilla::channel::k_serve_wait * 3),
+                      "cache channel: an idle asker is let go");
+            }
+            {
+                raw_client deaf(at);
+                const bool asked = deaf.send("big\n");
+                std::this_thread::sleep_for(50ms);
+                auto after = tortilla::channel::ask(name, "after deaf", 200ms);
+                check(asked && after && *after == "got after deaf",
+                      "cache channel: an asker that never reads doesn't hold up the next");
+            }
+            {
+                // More stalled than are served at once, idle and deaf: they're
+                // let go, and the next question is answered after all.
+                std::vector<std::unique_ptr<raw_client>> stalled;
+                for (int i = 0; i < tortilla::channel::k_serve_clients + 2; ++i)
+                {
+                    stalled.push_back(std::make_unique<raw_client>(at));
+                    if (i % 2) stalled.back()->send("big\n");
+                }
+                auto after =
+                    tortilla::channel::ask(name, "after many", tortilla::channel::k_serve_wait * 6);
+                check(after && *after == "got after many",
+                      "cache channel: every slot stalled, the stalled are let go in time");
+            }
+        }
 
         const std::string r = std::string(argv[1]) + "/badge-cache";
         sh("git init -q -b main '" + r + "' && mkdir '" + r + "/src' && echo a > '" + r +
