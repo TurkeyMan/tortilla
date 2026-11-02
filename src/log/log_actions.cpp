@@ -1332,7 +1332,10 @@ void log_window::open_pull_request_menu(rap::menu& m, const ref& r)
         sub.children.push_back(
             item(_("_Open in the browser"), [url = p->pr.url] { rap::sys::open_url(url); }));
         sub.children.push_back(rap::menu_item::separator());
-        sub.children.push_back(item(_("_Merge..."), [this, pr = *p] { merge_pull_request(pr); }));
+        // Conflicts can't be merged at all: nothing for the dialog to offer.
+        sub.children.push_back(item(
+            p->pr.conflicts ? _("_Merge... (it conflicts with its base)") : _("_Merge..."),
+            [this, pr = *p] { merge_pull_request(pr); }, !p->pr.conflicts));
         sub.children.push_back(item(_("_Close..."), [this, pr = *p] { close_pull_request(pr); }));
         m.push_back(std::move(sub));
         return;
