@@ -41,9 +41,9 @@ capable file-manager-integrated git client on any platform.
 
 - **File manager**: TortoiseGit's context menu in Explorer and six Linux file
   managers, with an icon on every entry and each entry's place (top level,
-  submenu or hidden) up to you. On Windows, badges on file and folder icons
-  show Clean, Modified, Conflicted and Added at a glance; Linux file managers
-  have the menu, but no badges yet.
+  submenu or hidden) up to you. Badges on file and folder icons show Clean,
+  Modified, Conflicted and Added at a glance, in Explorer, Nautilus, Nemo,
+  Caja and Dolphin.
 - **Log**: the commit graph with branch, tag and remote labels; filters, date
   ranges and a Show menu (current branch, all, local, pull requests, my
   branches, branch tips only, only what's not merged); drag a label onto a
@@ -85,7 +85,9 @@ pull request marks, Create Pull Request and Accounts on GTK 4 and Qt 6, are on
 - **Linux**, x86_64 and arm64: GTK 4, GTK 3 or Qt 6, whichever matches your
   desktop (`--ui=gtk4`, `--ui=gtk3` or `--ui=qt6` to choose; `--which-ui` lists
   what was detected). Context menus for Nautilus, Nemo, Caja, Thunar, Dolphin,
-  and PCManFM-Qt and PCManFM; icon badges aren't there yet.
+  and PCManFM-Qt and PCManFM; icon badges in Nautilus (beside the icon, or
+  after the name in the list), Nemo, Caja and Dolphin. Thunar and PCManFM
+  give extensions no way to badge icons.
 
 There's no macOS version.
 
