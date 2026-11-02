@@ -8,6 +8,7 @@
 #include "changes/commit_window.h"
 #include "changes/conflict_editor.h"
 #include "changes/revert.h"
+#include "git/ignore_patterns.h"
 #include "git/merge_tool.h"
 #include "git/remotes.h"
 #include "git/repo_operation.h"
@@ -555,36 +556,29 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
                          rap::i18n::format(_("Delete {0}? They go to the Recycle Bin."), count),
                          _("Delete"), keep, {plus({"clean", "-f", "-d", "-q", "--"}, paths)});
                  }));
-        // Patterns appended to the repository's top-level .gitignore.
+        // Patterns appended to the repository's top-level .gitignore, as
+        // the Ignore dialog plans and writes them (names literal, the lines
+        // it has once, after a last line without its newline).
         auto ignore = [this](std::vector<std::string> patterns)
         {
             const auto path = rap::sys::path_from_utf8(host_.workdir) / ".gitignore";
-            std::string add;
-            for (const std::string& p : patterns) add += p + "\n";
-            std::FILE* f = rap::sys::fopen(path, "ab");
-            bool ok = f && std::fwrite(add.data(), 1, add.size(), f) == add.size();
-            if (f) ok = std::fclose(f) == 0 && ok;
-            if (!ok)
+            if (const std::string error = append_ignore_lines(path, patterns); !error.empty())
                 host_.ui.message(host_.window(),
                                  {.icon = rap::message_spec::icon::error,
                                   .title = _("Add to ignore list"),
                                   .text = rap::i18n::format(_("Could not write {0}."),
-                                                            rap::sys::path_to_utf8(path))});
+                                                            rap::sys::path_to_utf8(path)),
+                                  .detail = error});
             host_.refresh();
         };
-        std::vector<std::string> by_name, by_extension;
-        for (const file_change& f : files)
-        {
-            by_name.push_back("/" + f.path);
-            const std::string name = file_name(f.path);
-            const auto dot = name.rfind('.');
-            if (dot != std::string::npos && dot > 0 && name.back() != '/')
-                if (std::string ext = "*" + name.substr(dot);
-                    std::ranges::find(by_extension, ext) == by_extension.end())
-                    by_extension.push_back(ext);
-        }
+        std::vector<std::string> paths_chosen;
+        for (const file_change& f : files) paths_chosen.push_back(f.path);
+        const std::vector<ignore_item> items = ignore_items(paths_chosen);
+        const std::vector<std::string> by_name = ignore_menu_lines(items, false);
+        const std::vector<std::string> by_extension = ignore_menu_lines(items, true);
         menu sub;
-        sub.push_back(item(one ? menu_text(by_name.front()) : std::string(_("Ignore item(s) by name")),
+        sub.push_back(item(one && !by_name.empty() ? menu_text(by_name.front())
+                                                   : std::string(_("Ignore item(s) by name")),
                            [ignore, by_name] { ignore(by_name); }));
         if (!by_extension.empty())
         {

@@ -1828,6 +1828,37 @@ int main(int argc, char** argv)
         std::ifstream in(file, std::ios::binary);
         const std::string got((std::istreambuf_iterator<char>(in)), {});
         check(got == "keep\n*.log\nnew/\n", "existing lines kept once, a newline added before new ones");
+
+        // The file lists' "Add to ignore list" menu goes through the same
+        // planner and writer: names literal, after a last line without its
+        // newline, and only what it names ignored.
+        const std::string ig = std::string(argv[1]) + "/ignore-menu";
+        sh("git init -q -b main '" + ig + "' && git -C '" + ig +
+           "' config core.autocrlf false && mkdir -p '" + ig + "/sub' '" + ig + "/out'");
+        for (const char* n : {"a.txt", "b.txt", "[ab].txt", "x.log", "sub/notes.txt", "out/o.bin"})
+            sh("echo x > '" + ig + "/" + n + "'");
+        sh("printf '*.log' > '" + ig + "/.gitignore'");  // no final newline
+        const auto menu_items = tortilla::ignore_items({"[ab].txt", "sub/notes.txt", "out/"});
+        check(menu_items.size() == 3 && menu_items[0].dir.empty() &&
+                  menu_items[0].name == "[ab].txt" && !menu_items[0].folder &&
+                  menu_items[1].dir == "sub" && menu_items[1].name == "notes.txt" &&
+                  menu_items[2].name == "out" && menu_items[2].folder,
+              "ignore menu: repository paths as items, a folder's by its /");
+        const auto by_name = tortilla::ignore_menu_lines(menu_items, false);
+        const auto by_ext = tortilla::ignore_menu_lines(menu_items, true);
+        check(by_name == std::vector<std::string>{"/\\[ab].txt", "/sub/notes.txt", "/out/"} &&
+                  by_ext == std::vector<std::string>{"*.txt"},
+              "ignore menu: by name anchored and escaped, by extension everywhere");
+        check(tortilla::append_ignore_lines(rap::sys::path_from_utf8(ig) / ".gitignore", by_name)
+                  .empty(),
+              "ignore menu: written");
+        auto ignored = [&](const std::string& p)
+        { return tortilla::run_git(ig, {"check-ignore", "-q", "--no-index", "--", p}).ok(); };
+        check(ignored("[ab].txt") && !ignored("a.txt") && !ignored("b.txt"),
+              "ignore menu: [ab].txt ignores that file, not a.txt and b.txt");
+        check(ignored("x.log") && ignored("sub/notes.txt") && ignored("out/o.bin") &&
+                  read_bytes(ig + "/.gitignore") == "*.log\n/\\[ab].txt\n/sub/notes.txt\n/out/\n",
+              "ignore menu: the last line kept whole, the new ones after it");
     }
 
     std::string repo = std::string(argv[1]) + "/repo";
