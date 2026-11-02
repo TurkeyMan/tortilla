@@ -217,6 +217,32 @@ std::expected<history_edit, replay_failure> move_commits(const repo&, const bran
                                                          const std::string& onto, bool new_branch,
                                                          std::string reflog);
 
+// Where commits dropped on a log row go: on top of the local branch whose
+// tip it is (of the row's `refs`, the checked-out one first), else in front
+// of it on the branch whose own line holds it. Why not: a remote's branch,
+// the mainline ("merged"), several branches' tips.
+struct drop_place
+{
+    branch_history onto;
+    size_t place = 0;  // in onto.line
+};
+std::expected<drop_place, std::string> drop_place_of(const repo&, const oid& row,
+                                                     const std::vector<ref>& refs,
+                                                     const std::string& mainline);
+
+// Dragging commits onto another branch, a rebase shorthand: `commits`
+// (oldest first, no merges, none on `onto` already) put in front of
+// `onto`'s line index `place` (0: on its tip), the commits above that
+// replayed on them. The plan of `onto`'s rewrite, or why not.
+std::expected<edit_plan, std::string> plan_insert(const repo&, const branch_history& onto,
+                                                  const std::vector<oid>& commits, size_t place);
+// The edit: plan_insert's replayed and, given `from`, the commits dropped
+// from it (a move; without, a copy, a cherry-pick). Both refs move, or
+// neither.
+std::expected<history_edit, replay_failure>
+transplant_commits(const repo&, const branch_history& onto, size_t place,
+                   const std::vector<oid>& commits, const branch_history* from, std::string reflog);
+
 // After rewriting pushed commits: git push of `tip` to `branch`'s (full
 // name) upstream branch, only if that is still at `expected` there
 // (--force-with-lease=<its ref>:<expected>, the edit's lease, not the
