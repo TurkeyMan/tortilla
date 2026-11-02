@@ -749,11 +749,6 @@ menu log_window::context_menu(std::optional<size_t> clicked)
             m.push_back(item(_("_Hide branch"), [this, r] { hide_branch(r); }));
         }
         separator(m);
-        if (!log_.filtering() && !log_.is_working_tree(row))
-        {
-            m.push_back(todo(_("Collapse revisions")));
-            separator(m);
-        }
     }
 
     // Always present
