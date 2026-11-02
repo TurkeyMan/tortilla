@@ -9,6 +9,7 @@
 // unmodified: TortoiseGit's own fallback when status fails [spec 4.3 step
 // 3]. With it, NORMAL, CONFL and ADDED follow the cache; IGN and DELETED are
 // never set.
+#include "cache/badge_changes.h"
 #include "cache/cache_main.h"
 #include "cache/channel.h"
 #include "git/badges.h"
@@ -36,6 +37,7 @@
 #include <set>
 #include <string>
 #include <system_error>
+#include <thread>
 #include <unordered_map>
 
 namespace
@@ -224,11 +226,13 @@ bool git_svn_present()
 // none answers. Explorer asks each badge kind in turn about every icon, so
 // an answer is kept a moment for the others; not longer, as the cache tells
 // Explorer to redraw an icon once its badge changes, and the redraw asks
-// again.
+// again. The Linux file managers are told by the extension instead, which
+// asks the cache every so often what changed (cache/badge_changes.h).
 
 constexpr auto k_badge_wait = std::chrono::milliseconds(50);
 constexpr auto k_badge_kept = std::chrono::milliseconds(500);
 constexpr auto k_cache_start_gap = std::chrono::seconds(10);
+constexpr auto k_changes_every = std::chrono::seconds(1);
 
 // Where badges are looked for: not on network or removable drives, which
 // TortoiseGit leaves out by default too (slow, or gone without warning).
@@ -331,6 +335,53 @@ public:
         return out;
     }
 
+    // Asks the cache what changed, on a thread of its own for as long as the
+    // process runs, and passes it on to `changed`: the paths, or none for
+    // everything. Not running, busy, or too old to say: asked again later
+    // (and not started: a badge asked for starts it).
+    void watch(rap::shell::provider::badges_changed changed)
+    {
+        std::thread(
+            [this, changed = std::move(changed)]
+            {
+                std::string run;
+                uint64_t next = 0;
+                for (;;)
+                {
+                    std::this_thread::sleep_for(k_changes_every);
+                    auto answer =
+                        tortilla::channel::ask(tortilla::k_cache_channel,
+                                               tortilla::changes_request(run, next), k_badge_wait);
+                    if (!answer) continue;
+                    auto heard = tortilla::read_changes(*answer);
+                    if (!heard) continue;
+                    run = std::move(heard->run);
+                    next = heard->next;
+                    if (!heard->all && heard->paths.empty()) continue;
+                    std::vector<fs::path> paths;
+                    {
+                        // What's kept would answer the redraw's question.
+                        std::lock_guard lock(m_);
+                        if (heard->all) kept_.clear();
+                        if (!heard->all)
+                            for (std::string_view p : heard->paths)
+                            {
+                                kept_.erase(std::string(p));
+                                paths.emplace_back(std::u8string(p.begin(), p.end()));
+                            }
+                    }
+                    try
+                    {
+                        changed(std::move(paths));
+                    }
+                    catch (...)
+                    {
+                    }
+                }
+            })
+            .detach();
+    }
+
 private:
     void start_cache(std::chrono::steady_clock::time_point now)
     {
@@ -352,10 +403,11 @@ private:
     std::optional<std::chrono::steady_clock::time_point> started_;
 };
 
+// Never destroyed: its watch thread runs until the process ends.
 badge_client& badges()
 {
-    static badge_client c;
-    return c;
+    static auto* c = new badge_client;
+    return *c;
 }
 
 std::string badge_icon(std::string_view kind)
@@ -717,6 +769,8 @@ public:
             return {};
         }
     }
+
+    void watch_badges(badges_changed changed) override { badges().watch(std::move(changed)); }
 
     std::vector<menu_item> menu(const selection& sel) override
     {

@@ -1,6 +1,7 @@
 #include "cache_main.h"
 
 #include "cache/badge_cache.h"
+#include "cache/badge_changes.h"
 #include "cache/channel.h"
 
 #include <rapport/sys.h>
@@ -23,20 +24,26 @@ namespace
 constexpr auto k_idle_exit = std::chrono::minutes(15);
 
 // Tells the file manager these paths' badges changed, so it draws them
-// again. Linux file managers hear it from their extension instead (to come).
-void redraw(const std::vector<std::filesystem::path>& paths)
+// again: Explorer directly, the Linux file managers through their
+// extension, which asks what changed (badge_changes.h).
+void redraw(const std::vector<std::filesystem::path>& paths, badge_changes& changes)
 {
 #ifdef _WIN32
     for (const auto& p : paths)
         SHChangeNotify(SHCNE_UPDATEITEM, SHCNF_PATHW | SHCNF_FLUSHNOWAIT, p.c_str(), nullptr);
+    (void)changes;
 #else
-    (void)paths;
+    std::vector<std::string> utf8;
+    utf8.reserve(paths.size());
+    for (const auto& p : paths) utf8.push_back(rap::sys::path_to_utf8(p));
+    changes.add(utf8);
 #endif
 }
 
 }  // namespace
 
-std::string answer_cache_request(badge_cache& cache, std::string_view request)
+std::string answer_cache_request(badge_cache& cache, std::string_view request,
+                                 const badge_changes* changes)
 {
     // The paths are slices of the request, looked up as they are: no copies.
     if (request.starts_with("badge ")) return std::to_string(int(cache.look(request.substr(6)).b));
@@ -59,6 +66,8 @@ std::string answer_cache_request(badge_cache& cache, std::string_view request)
         }
         return out;
     }
+    // Not a question about a path: the cache's idle time goes on.
+    if (changes && request.starts_with("changes ")) return changes->answer(request.substr(8));
     return "?";
 }
 
@@ -66,7 +75,9 @@ int run_cache()
 {
     if (!channel::hold_single(k_cache_channel)) return 0;  // one is running
     rap::sys::lower_thread_priority();
-    badge_cache cache(redraw);
+    badge_changes changes;
+    badge_cache cache([&changes](const std::vector<std::filesystem::path>& paths)
+                      { redraw(paths, changes); });
     std::thread(
         [&cache]
         {
@@ -77,8 +88,8 @@ int run_cache()
             }
         })
         .detach();
-    auto served = channel::serve(k_cache_channel, [&cache](std::string_view request)
-                                 { return answer_cache_request(cache, request); });
+    auto served = channel::serve(k_cache_channel, [&](std::string_view request)
+                                 { return answer_cache_request(cache, request, &changes); });
     return served ? 0 : 1;
 }
 
