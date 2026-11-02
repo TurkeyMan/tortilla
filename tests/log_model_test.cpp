@@ -22,6 +22,8 @@
 #include "git/ignore_patterns.h"
 #include "git/lfs.h"
 #include "git/merge_tool.h"
+#include "git/pathspec_file.h"
+#include "git/porcelain.h"
 #include "git/ref_list.h"
 #include "git/reflog.h"
 #include "git/remotes.h"
@@ -30,13 +32,18 @@
 #include "git/status.h"
 #include "git/submodule.h"
 #include "git/sync.h"
+#include "git/temp_files.h"
 #include "git/tree_list.h"
 #include "git/worktrees.h"
 #include "log/log_model.h"
 #include "raw_client.h"
+#include "settings.h"
 #include "shell.h"
 #include "util/json.h"
+#include "util/repo_path.h"
+#include "util/search_query.h"
 #include "util/sha256.h"
+#include "util/strings.h"
 
 #include <algorithm>
 #include <cctype>
@@ -85,6 +92,142 @@ int main(int argc, char** argv)
     check(tortilla::sha256_hex("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq") ==
               "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1",
           "sha256 of 448 bits");
+
+    // A revision's files in the temporary folder keep their folders: two
+    // config.h from one commit don't overwrite each other.
+    {
+        namespace fs = std::filesystem;
+        const fs::path root = tortilla::tortilla_temp_dir();
+        const std::string hash = "0123456789abcdef0123456789abcdef01234567";
+        const fs::path a = tortilla::revision_temp_path(hash, "src/config.h");
+        const fs::path b = tortilla::revision_temp_path(hash, "tests/config.h");
+        check(!root.empty() && a == root / "01234567" / "src" / "config.h" &&
+                  b == root / "01234567" / "tests" / "config.h",
+              "revision temp path: <temp>/tortilla/<hash>/<repo path>");
+        check(tortilla::revision_temp_path("origin/main", "a.txt") ==
+                  root / "origin_main" / "a.txt",
+              "revision temp path: a ref name is one folder");
+        check(tortilla::revision_temp_path(hash, "../x/./y") == root / "01234567" / "x" / "y",
+              "revision temp path: stays under the revision's folder");
+        check(tortilla::write_file(a, "one") && tortilla::write_file(b, "two"),
+              "revision temp files written, folders made");
+        auto read = [](const fs::path& p)
+        {
+            std::ifstream in(p, std::ios::binary);
+            return std::string(std::istreambuf_iterator<char>(in), {});
+        };
+        check(read(a) == "one" && read(b) == "two", "same-named revision files kept apart");
+        std::error_code ec;
+        fs::remove_all(root / "01234567", ec);
+
+        // Two names asked for at once are two files.
+        check(tortilla::unique_temp_path("x", ".txt") != tortilla::unique_temp_path("x", ".txt"),
+              "unique temp paths differ");
+
+        // A pathspec file holds the paths NUL-separated, git reads them back
+        // (names with spaces and outside ASCII too), and it goes with the
+        // last copy.
+        const std::vector<std::string> names{"plain.txt", "with space.txt", "caf\xc3\xa9.txt",
+                                             "\xe6\x97\xa5\xe6\x9c\xac/\xe8\xaa\x9e.txt"};
+        fs::path list_path;
+        {
+            auto list = tortilla::pathspec_file::write(names);
+            check(list != nullptr, "pathspec file written");
+            if (list)
+            {
+                list_path = list->path();
+                std::string joined;
+                for (const std::string& n : names) joined += n + '\0';
+                check(read(list_path) == joined, "pathspec file: the paths, NUL-separated");
+                const std::string repo = std::string(argv[1]) + "/pathspec";
+                sh("git init -q -b main '" + repo + "' && mkdir -p '" + repo +
+                   "/\xe6\x97\xa5\xe6\x9c\xac'");
+                for (const std::string& n : names) sh("echo x > '" + repo + "/" + n + "'");
+                sh("echo x > '" + repo + "/other.txt'");
+                std::vector<std::string> add{"add", "-f"};
+                for (std::string& arg : list->arguments()) add.push_back(std::move(arg));
+                check(tortilla::run_git(repo, add).ok(), "git add --pathspec-from-file");
+                const tortilla::git_result staged = tortilla::run_git(
+                    repo, {"-c", "core.quotepath=false", "diff", "--cached", "--name-only", "-z"},
+                    tortilla::git_output::stdout_only);
+                std::vector<std::string> got;
+                for (size_t at = 0; at < staged.output.size();)
+                {
+                    size_t end = staged.output.find('\0', at);
+                    if (end == std::string::npos) end = staged.output.size();
+                    got.push_back(staged.output.substr(at, end - at));
+                    at = end + 1;
+                }
+                std::vector<std::string> want = names;
+                std::ranges::sort(want);
+                std::ranges::sort(got);
+                check(got == want, "pathspec file: git staged exactly those paths");
+            }
+        }
+        check(!list_path.empty() && !fs::exists(list_path),
+              "pathspec file removed with its last copy");
+
+        // Repository-relative paths: '/', "" for the top, none outside, and
+        // names beyond ASCII as UTF-8 (never the code page).
+        const std::string wt = std::string(argv[1]) + "/relative";
+        sh("mkdir -p '" + wt + "/sub/\xc3\xa9t\xc3\xa9' && touch '" + wt +
+           "/sub/\xc3\xa9t\xc3\xa9/\xe6\x97\xa5.txt'");
+        check(tortilla::repo_relative(wt, wt) == std::string(), "repo relative: the top is \"\"");
+        check(tortilla::repo_relative(wt, wt + "/sub/") == std::string("sub"),
+              "repo relative: no trailing slash");
+        check(tortilla::repo_relative(wt, wt + "/sub/\xc3\xa9t\xc3\xa9/\xe6\x97\xa5.txt") ==
+                  std::string("sub/\xc3\xa9t\xc3\xa9/\xe6\x97\xa5.txt"),
+              "repo relative: non-ASCII names kept as UTF-8");
+        check(tortilla::repo_relative(wt, wt + "/sub/../sub/x") == std::string("sub/x"),
+              "repo relative: .. resolved");
+        check(!tortilla::repo_relative(wt, std::string(argv[1])).has_value() &&
+                  !tortilla::repo_relative(wt, wt + "/../elsewhere").has_value(),
+              "repo relative: outside the working tree is none");
+    }
+
+    // trimmed() takes strings and views alike.
+    {
+        const std::string s = " \t a b \r\n";
+        const std::string_view v = s;
+        check(tortilla::trimmed(s) == "a b" && tortilla::trimmed(v) == "a b" &&
+                  tortilla::trimmed("   ") == "" && tortilla::trimmed("") == "" &&
+                  tortilla::trimmed_view(v).data() == s.data() + 3,
+              "trimmed: strings and views, all white space, a view of the original");
+        check(tortilla::ascii_lower("AbC-\xc3\x89") == "abc-\xc3\x89",
+              "ascii_lower keeps non-ASCII bytes");
+        std::string r = "%base %bname %base";
+        tortilla::replace_all(r, "%base", "%base%base");
+        check(r == "%base%base %bname %base%base", "replace_all doesn't rescan what it put in");
+    }
+
+    // The log's and Browse References' search syntax.
+    {
+        using tortilla::search_term;
+        const auto q = tortilla::parse_search_query(R"(  !fix -"wip ""x""" +ok "open)");
+        check(q.invert && q.terms == std::vector<search_term>{{"fix", false},
+                                                              {"wip \"x\"", true},
+                                                              {"ok", false},
+                                                              {"open", false}},
+              "search query: !, -, +, quoted phrases, doubled quotes, an unclosed quote");
+        check(tortilla::parse_search_query("   ").terms.empty() &&
+                  !tortilla::parse_search_query("a!").invert,
+              "search query: blank, and ! only leading");
+        check(tortilla::ref_filter_matches("main -old", "refs/heads/Main") &&
+                  !tortilla::ref_filter_matches("main -old", "refs/heads/main-old") &&
+                  tortilla::ref_filter_matches("!feature", "refs/heads/main"),
+              "ref filter: through the shared parser");
+    }
+
+    // URL histories: newest first, no repeats, the newest kept.
+    {
+        check(tortilla::history_entries("a\t\tb\t") == std::vector<std::string>{"a", "b"},
+              "history: entries, empty ones skipped");
+        check(tortilla::history_with("a\tb\tc", "b", 25) == "b\ta\tc",
+              "history: a repeat moves to the front");
+        check(tortilla::history_with("a\tb\tc", "d", 3) == "d\ta\tb",
+              "history: the oldest dropped");
+        check(tortilla::history_with("", "x", 25) == "x", "history: the first entry");
+    }
     check(tortilla::sha256_hex(std::string(1000, 'a')) ==
               "41edece42d63e8d9bf515a9ba6932e1c20cbc9f5a5d134645adb5db1b9737ea3",
           "sha256 of 1000 bytes");
@@ -1389,6 +1532,24 @@ int main(int argc, char** argv)
         }
         check(tortilla::parse_status(" M x\0"s, "x\ty\tz\0garbage"s).size() == 1,
               "status: odd numstat output doesn't throw");
+
+        // The entries alone, as the changes list and the badges share them:
+        // a rename in the working tree (" R", after intent-to-add) carries
+        // its old path too, and a short field is skipped.
+        std::vector<std::string> seen;
+        tortilla::each_porcelain_entry("M  a\0 R b\0was-b\0xy\0RM c\0was-c\0?? d/\0"s,
+                                       [&](const tortilla::porcelain_entry& e)
+                                       {
+                                           seen.push_back(std::string{e.x, e.y} + "|" +
+                                                          std::string(e.path) + "|" +
+                                                          std::string(e.old_path));
+                                       });
+        check(seen == std::vector<std::string>{"M |a|", " R|b|was-b", "RM|c|was-c", "??|d/|"},
+              "porcelain entries: renames on either side carry their old path");
+        const auto wt_rename = tortilla::parse_status(" R b\0was-b\0 M e\0"s, ""s);
+        check(wt_rename.size() == 2 && wt_rename[0].path == "b" &&
+                  wt_rename[0].old_path == "was-b" && wt_rename[1].path == "e",
+              "status: a working-tree rename's old path isn't read as an entry");
     }
 
     // Check for modifications' reloads: each cancels the git still running
