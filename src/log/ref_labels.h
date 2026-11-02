@@ -57,6 +57,8 @@ enum class mergeable
 };
 void paint_check_mark(rap::painter&, rap::point_f centre, float diameter, check_state,
                       mergeable = mergeable::yes);
+// White or black, whichever reads on a status colour's fill.
+rap::color ink_on(rap::color fill);
 
 // The labels' colours, all in one place [COL:23-54]. A branch checked out
 // in another worktree is like a remote one (it can't be changed from here),

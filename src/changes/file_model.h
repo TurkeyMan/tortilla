@@ -221,23 +221,26 @@ public:
         return {};
     }
 
-    // TortoiseGit's status colours [spec 1.11.2, GitStatusListCtrl].
+    // TortoiseGit's status colours [spec 1.11.2, GitStatusListCtrl], as
+    // the desktop's roles nearest them, so they read on dark themes too:
+    // red for conflicts and deletions (error), blue for changes (link),
+    // added and copied files the desktop's success colour (TortoiseGit's
+    // purple has no role).
     rap::text_style style(size_t row, size_t) const override
     {
         if (row >= files_.size()) return {};
         // Grey comes before the status colours [spec 1.11.2].
         if (grayed_[row]) return {.fg = rap::theme_color::placeholder_text};
-        auto rgb = [](uint8_t r, uint8_t g, uint8_t b)
-        { return rap::text_style{.fg = rap::color{r, g, b}}; };
+        auto role = [](rap::theme_color c) { return rap::text_style{.fg = c}; };
         switch (files_[row].status)
         {
-        case 'U': return rgb(255, 0, 0);
+        case 'U':
+        case 'D': return role(rap::theme_color::negative);
         case 'M':
-        case 'T': return rgb(0, 50, 160);
+        case 'T':
+        case 'R': return role(rap::theme_color::link);
         case 'A':
-        case 'C': return rgb(100, 0, 100);
-        case 'D': return rgb(100, 0, 0);
-        case 'R': return rgb(0, 0, 255);
+        case 'C': return role(rap::theme_color::positive);
         }
         return {};
     }
