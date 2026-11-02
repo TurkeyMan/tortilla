@@ -11,6 +11,7 @@
 #include "ui/progress_dialog.h"
 #include "ui/repo_icon.h"
 #include "ui/windows.h"
+#include "util/strings.h"
 
 #include <rapport/sys.h>
 
@@ -47,13 +48,6 @@ std::string root_of(std::string workdir)
     return rap::sys::path_to_utf8(rap::sys::path_from_utf8(workdir).make_preferred());
 }
 
-std::string trimmed(std::string s)
-{
-    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back()))) s.pop_back();
-    size_t start = 0;
-    while (start < s.size() && std::isspace(static_cast<unsigned char>(s[start]))) ++start;
-    return s.substr(start);
-}
 
 }  // namespace
 

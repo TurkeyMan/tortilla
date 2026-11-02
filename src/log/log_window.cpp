@@ -10,6 +10,7 @@
 #include "ui/repo_icon.h"
 #include "ui/settings_dialog.h"
 #include "util/calendar.h"
+#include "util/repo_path.h"
 
 #include <rapport/sys.h>
 
@@ -165,15 +166,8 @@ log_window::log_window(rap::ui& ui, repo repo, std::string path)
               .open_settings = [this](settings_page page) { open_settings(page); },
               .selection_changed = [this] { update_status(); }})
 {
-    std::error_code ec;
-    const auto root = rap::sys::path_from_utf8(repo_.workdir());
-    const auto rel = std::filesystem::relative(
-        std::filesystem::absolute(rap::sys::path_from_utf8(path_), ec), root, ec);
-    if (!repo_.workdir().empty() && !ec && !rel.empty() && rel != "." && *rel.begin() != "..")
-    {
-        rel_path_ = rap::sys::path_to_utf8(rel);
-        std::ranges::replace(rel_path_, '\\', '/');
-    }
+    if (!repo_.workdir().empty())
+        if (auto rel = repo_relative(repo_.workdir(), path_)) rel_path_ = std::move(*rel);
 }
 
 // The repository's folder, or the path the history is limited to [spec 1.9.7].

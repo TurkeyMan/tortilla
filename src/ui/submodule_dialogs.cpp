@@ -8,6 +8,7 @@
 #include "settings.h"
 #include "ui/progress_dialog.h"
 #include "ui/repo_icon.h"
+#include "util/repo_path.h"
 
 #include <rapport/sys.h>
 
@@ -56,13 +57,7 @@ void remember_url(const std::string& url)
 // a folder outside it).
 std::string relative_folder(const std::string& workdir, const std::string& folder)
 {
-    std::error_code ec;
-    const fs::path top = fs::weakly_canonical(rap::sys::path_from_utf8(workdir), ec);
-    const fs::path at = fs::weakly_canonical(rap::sys::path_from_utf8(folder), ec);
-    std::string rel = rap::sys::path_to_utf8(at.lexically_relative(top).generic_string());
-    while (rel.ends_with('/')) rel.pop_back();
-    if (rel == "." || rel.starts_with("..")) return {};
-    return rel;
+    return repo_relative(workdir, folder).value_or("");
 }
 
 std::string shown_path(const std::string& workdir)

@@ -4,6 +4,7 @@
 #include "git/pathspec_file.h"
 #include "git/repo.h"
 #include "i18n.h"
+#include "util/repo_path.h"
 
 #include <rapport/sys.h>
 
@@ -31,21 +32,17 @@ void remove_files(rap::ui& ui, const std::vector<std::string>& paths, bool keep_
     if (paths.empty()) return done(false);
     auto repo = repo::open(paths.front());
     if (!repo) return fail(repo.error());
-    const fs::path root = rap::sys::path_from_utf8(repo->workdir());
 
     // Repository-relative, as git takes them; absolute, for the trash.
     std::vector<std::string> relative;
     std::vector<fs::path> absolute;
     for (const std::string& p : paths)
     {
+        auto rel = repo_relative(repo->workdir(), p);
+        if (!rel || rel->empty()) continue;  // not inside it, or the top itself
         std::error_code ec;
-        const fs::path abs = fs::absolute(rap::sys::path_from_utf8(p), ec);
-        const fs::path rel = fs::relative(abs, root, ec);
-        if (ec || rel.empty() || rel == "." || *rel.begin() == "..") continue;  // not inside it
-        std::string r = rap::sys::path_to_utf8(rel);
-        std::ranges::replace(r, '\\', '/');
-        relative.push_back(std::move(r));
-        absolute.push_back(abs);
+        relative.push_back(std::move(*rel));
+        absolute.push_back(fs::absolute(rap::sys::path_from_utf8(p), ec));
     }
     if (relative.empty()) return done(false);
 

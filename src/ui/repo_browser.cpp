@@ -13,6 +13,7 @@
 #include "ui/repo_icon.h"
 #include "ui/settings_dialog.h"
 #include "ui/windows.h"
+#include "util/repo_path.h"
 
 #include <rapport/sys.h>
 
@@ -205,12 +206,8 @@ repo_browser::open(rap::ui& ui, const std::string& path, const std::string& revi
     std::string folder, select;
     if (!bare)
     {
-        const fs::path rel = fs::relative(abs, rap::sys::path_from_utf8(b->workdir_), ec);
-        std::string r = ec ? std::string() : rap::sys::path_to_utf8(rel);
-        std::ranges::replace(r, '\\', '/');
-        while (r.ends_with('/')) r.pop_back();
-        if (r == "." || r == ".." || r.starts_with("../") || r == ".git" || r.starts_with(".git/"))
-            r.clear();
+        std::string r = repo_relative(b->workdir_, rap::sys::path_to_utf8(abs)).value_or("");
+        if (r == ".git" || r.starts_with(".git/")) r.clear();
         if (!r.empty() && fs::is_regular_file(abs, ec))
         {
             folder = parent_of(r);

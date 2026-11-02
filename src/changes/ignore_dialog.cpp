@@ -7,6 +7,7 @@
 #include "i18n.h"
 #include "settings.h"
 #include "ui/repo_icon.h"
+#include "util/repo_path.h"
 
 #include <rapport/sys.h>
 
@@ -118,16 +119,14 @@ void show_ignore_dialog(rap::ui& ui, std::vector<std::string> paths, bool by_ext
     st->exclude_file = fs::absolute(root / rap::sys::path_from_utf8(exclude));
     for (const std::string& p : paths)
     {
+        auto rel = repo_relative(st->workdir, p);
+        if (!rel || rel->empty()) continue;  // outside, or the top itself
+        std::string& r = *rel;
         std::error_code ec;
-        const fs::path abs = fs::absolute(rap::sys::path_from_utf8(p), ec);
-        const fs::path rel = fs::relative(abs, root, ec);
-        if (ec || rel.empty() || rel == "." || *rel.begin() == "..") continue;
-        std::string r = rap::sys::path_to_utf8(rel);
-        std::ranges::replace(r, '\\', '/');
         const size_t slash = r.rfind('/');
         st->items.push_back({slash == std::string::npos ? "" : r.substr(0, slash),
                              slash == std::string::npos ? r : r.substr(slash + 1),
-                             fs::is_directory(abs, ec)});
+                             fs::is_directory(rap::sys::path_from_utf8(p), ec)});
         st->relative.push_back(std::move(r));
     }
     // Which of them git tracks: those it can stop tracking.

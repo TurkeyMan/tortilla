@@ -7,6 +7,7 @@
 #include "ui/progress_dialog.h"
 #include "ui/repo_icon.h"
 #include "ui/windows.h"
+#include "util/strings.h"
 
 #include <rapport/sys.h>
 
@@ -19,12 +20,6 @@ namespace tortilla
 namespace
 {
 
-std::string trimmed(std::string_view s)
-{
-    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back()))) s.remove_suffix(1);
-    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front()))) s.remove_prefix(1);
-    return std::string(s);
-}
 
 bool same_repo(const forge_repo& a, const forge_repo& b)
 {

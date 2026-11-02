@@ -1,6 +1,7 @@
 #include "rebase_window.h"
 
 #include "branch/browse_refs.h"
+#include "ui/menu_items.h"
 #include "ui/menu_text.h"
 
 #include "changes/working_tree.h"
@@ -34,11 +35,6 @@ enum page
     page_message,
     page_log,
 };
-
-rap::menu_item item(std::string label, std::function<void()> action, bool enabled = true)
-{
-    return {.label = std::move(label), .action = std::move(action), .enabled = enabled};
-}
 
 }  // namespace
 
