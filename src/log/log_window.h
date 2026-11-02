@@ -329,6 +329,7 @@ private:
     // The preset chosen, while following a file's renames walks from HEAD
     // instead: restored after, and what's saved.
     std::optional<show_preset> refs_before_follow_;
+    rap::button* statistics_ = nullptr;
     rap::menu_button* walk_ = nullptr;
     rap::menu_button* view_ = nullptr;
     rap::progress_bar* progress_ = nullptr;
