@@ -468,10 +468,7 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
         m.push_back(item(
             _("View revision in alternative editor"), [this, f] { view_in_editor(f); }, openable));
         m.push_back(item(_("_Open"), [this, f] { open_file(f, false); }, openable));
-#ifdef _WIN32
-        // Linux desktops have no common chooser (rap::sys::open_with).
-        m.push_back(item(_("Open with..."), [this, f] { open_file(f, true); }, openable));
-#endif
+        m.push_back(open_with_item([this, f] { open_file(f, true); }, openable));
         m.push_back(item(_("Explore to"),
                          [this, f]
                          {
