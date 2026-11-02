@@ -84,18 +84,29 @@ std::string block_text(merge_block b, const pull_request& pr)
     return {};
 }
 
-// A small pushpin, `size` tall, from `x` across the middle of a label `h`
-// tall: a round head and its needle, in the label's own dark shade.
+// A small pushpin, `size` across, from `x` in the middle of a label `h`
+// tall, in the label's own dark shade: a thumbtack tilted 45 degrees, head
+// up and right, needle down and left (a cap, a neck, a wide plate and a long
+// needle), drawn upright in a unit square, then turned about its middle.
 void paint_pin(rap::painter& p, float x, float h, float size, color fill)
 {
-    const color ink = is_dark(fill) ? color{255, 255, 255, 200} : darken(fill, 150);
-    const float r = size * 0.24f, top = (h - size) / 2;
-    const rap::point_f head{x + size * 0.62f, top + r + 0.5f};
-    p.line(head, {x + size * 0.2f, top + size}, paint{ink}, std::max(1.f, size / 9),
-           rap::line_cap::round);
-    p.line({head.x - r * 1.3f, head.y + r * 1.1f}, {head.x + r * 1.1f, head.y - r * 1.3f},
-           paint{ink}, std::max(1.2f, size / 7), rap::line_cap::round);
-    p.circle(head, r, paint{ink}, std::nullopt);
+    const color ink = is_dark(fill) ? color{255, 255, 255, 220} : darken(fill, 160);
+    const float k = size * 1.25f;  // its diagonal fills the box
+    const float cx = x + size / 2, cy = h / 2;
+    const float c = 0.70710678f;  // cos 45 = sin 45
+    auto at = [&](float u, float v)
+    {
+        const float dx = (u - 0.5f) * k, dy = (v - 0.5f) * k;
+        return rap::point_f{cx + dx * c - dy * c, cy + dx * c + dy * c};
+    };
+    auto quad = [&](float u0, float v0, float u1, float v1)
+    { p.polygon({at(u0, v0), at(u1, v0), at(u1, v1), at(u0, v1)}, paint{ink}, std::nullopt); };
+    quad(0.34f, 0.00f, 0.66f, 0.10f);  // the cap
+    p.polygon({at(0.40f, 0.10f), at(0.60f, 0.10f), at(0.64f, 0.40f), at(0.36f, 0.40f)}, paint{ink},
+              std::nullopt);           // the neck, widening
+    quad(0.22f, 0.40f, 0.78f, 0.50f);  // the plate
+    p.line(at(0.5f, 0.50f), at(0.5f, 1.0f), paint{ink}, std::max(1.1f, size / 9),
+           rap::line_cap::round);  // the needle
 }
 
 }  // namespace
