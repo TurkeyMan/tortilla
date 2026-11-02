@@ -80,6 +80,11 @@ public:
     rap::layout::list list(std::string settings_key, bool checkboxes = false);
     void save_layout() const;
     void restore_layout();
+    // Path as wide as the other columns leave of `width` (the list's, in
+    // logical px), so they keep to its right edge without sideways scrolling.
+    // For a window that knows when its list's width changes (rapport's lists
+    // don't say): the log's, as its forge panel comes and goes.
+    void fit_path(float width);
 
     void set_source(changes_source);
     const changes_source& source() const { return source_; }

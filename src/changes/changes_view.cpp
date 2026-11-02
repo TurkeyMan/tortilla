@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -117,12 +118,15 @@ rap::layout::list changes_view::list(std::string settings_key, bool checkboxes)
                               { return context_menu(row, column); });
 }
 
-// Column widths and order, as the user left them.
+// Column widths and order, as the user left them; not Path's, which is what
+// the others leave of the list's width.
 void changes_view::save_layout() const
 {
     if (!list_ || settings_key_.empty()) return;
     settings& st = settings::get();
-    st.set_numbers(settings_key_ + ".columns", list_->column_widths());
+    std::vector<float> widths = list_->column_widths();
+    if (file_model::path < widths.size()) widths[file_model::path] = 0;
+    st.set_numbers(settings_key_ + ".columns", widths);
     std::vector<float> order;
     for (size_t i : list_->column_order()) order.push_back(float(i));
     st.set_numbers(settings_key_ + ".columns.order", order);
@@ -132,11 +136,33 @@ void changes_view::restore_layout()
 {
     if (!list_ || settings_key_.empty()) return;
     settings& st = settings::get();
-    if (auto v = st.numbers(settings_key_ + ".columns"); !v.empty()) list_->set_column_widths(v);
+    if (auto v = st.numbers(settings_key_ + ".columns"); !v.empty())
+    {
+        // A Path width saved before it stretched would fight the stretch.
+        if (file_model::path < v.size()) v[file_model::path] = 0;
+        list_->set_column_widths(v);
+    }
     // The list ignores an order that doesn't fit its columns.
     std::vector<size_t> order;
     for (float f : st.numbers(settings_key_ + ".columns.order")) order.push_back(size_t(f));
     list_->set_column_order(order);
+}
+
+void changes_view::fit_path(float width)
+{
+    if (!list_ || width <= 0) return;
+    std::vector<float> widths = list_->column_widths();
+    if (widths.size() <= file_model::path) return;
+    float others = 0;
+    for (size_t i = 0; i < widths.size(); ++i)
+        if (i != file_model::path && list_->column_visible(i)) others += widths[i];
+    // Room for the frame and a vertical scroll bar; never narrower than a
+    // short path (the list scrolls sideways then).
+    const float path = std::max(160.f, width - others - 24);
+    if (std::abs(path - widths[file_model::path]) < 1) return;
+    std::vector<float> only(widths.size(), 0);
+    only[file_model::path] = path;
+    list_->set_column_widths(only);
 }
 
 void changes_view::set_source(changes_source s)

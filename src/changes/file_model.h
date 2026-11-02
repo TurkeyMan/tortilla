@@ -81,10 +81,10 @@ public:
     {
         using namespace rap::literals;
         return {{.title = _("Path"), .stretch = true},
-                {.title = _("Extension"), .width = 10_ch},
+                {.title = _("Extension"), .width = 9_ch},
                 {.title = _("Status"), .width = 12_ch},
-                {.title = _("Added"), .width = 8_ch, .align = rap::align::end},
-                {.title = _("Removed"), .width = 9_ch, .align = rap::align::end}};
+                {.title = _("Added"), .width = 7_ch, .align = rap::align::end},
+                {.title = _("Removed"), .width = 8_ch, .align = rap::align::end}};
     }
 
     void set(std::vector<file_change> files, bool show_unversioned = true)
