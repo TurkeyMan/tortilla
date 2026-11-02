@@ -532,12 +532,14 @@ void log_model::refresh_refs(std::function<void(bool)> done)
     const unsigned gen = *generation_;
     // for-each-ref: tens of ms on a slow disk, so off the UI thread.
     std::thread(
-        [this, path = path_, done = std::move(done), gen, generation]
+        [this, &ui = ui_, path = path_, done = std::move(done), gen, generation]
         {
             auto repo = repo::open(path);
             auto refs = std::make_shared<std::optional<ref_map>>();
             if (repo) *refs = repo->refs();
-            ui_.post(
+            // ui, not ui_: the model may be gone by now; `this` is only
+            // touched on the UI thread, once the generation says it lives.
+            ui.post(
                 [this, refs, done, gen, generation]
                 {
                     if (*generation != gen) return;  // reloaded or gone meanwhile

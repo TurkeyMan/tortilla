@@ -45,6 +45,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -2802,6 +2803,37 @@ int main(int argc, char** argv)
               "literal: no other file matched as a pattern");
         check(changed.size() == 1 && changed.front().filename() == "[ab].txt",
               "literal: local changes of only the named file");
+    }
+
+    // A log closed while its labels are being read: the worker mustn't
+    // reach into the model that's gone (its memory reused here, zeroed).
+    {
+        bool called = false;
+        for (int i = 0; i < 20; ++i)
+        {
+            auto m = std::make_unique<tortilla::log_model>(**ui);
+            std::optional<std::string> err;
+            m->load(repo, {}, [&](const std::string& e) { err = e; });
+            while (!err)
+            {
+                (*ui)->run();
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            }
+            m->refresh_refs([&](bool) { called = true; });
+            m.reset();
+            std::vector<std::unique_ptr<char[]>> reuse;
+            for (int k = 0; k < 8; ++k)
+            {
+                reuse.push_back(std::make_unique<char[]>(sizeof(tortilla::log_model)));
+                std::memset(reuse.back().get(), 0, sizeof(tortilla::log_model));
+            }
+            for (int k = 0; k < 40; ++k)
+            {
+                (*ui)->run();
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            }
+        }
+        check(!called, "refresh: a model gone before its labels came isn't called back");
     }
 
     std::printf("%s\n", failures ? "FAILED" : "all passed");
