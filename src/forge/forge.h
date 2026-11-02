@@ -356,6 +356,13 @@ std::string delete_branch(forge_kind, const forge_repo&, std::string_view branch
 // login@users.noreply.github.com by its login. "" for any other address.
 std::string noreply_avatar_url(std::string_view email, int px);
 
+// Whether a commit's author (name, email) is the forge user `login`, as far
+// as can be told without asking the forge: their email's user part is the
+// login (a noreply address's too, after its id), their name is, or `account`
+// is that login and has their name. Unsure is no.
+bool author_is(std::string_view login, std::string_view name, std::string_view email,
+               const forge_account& account);
+
 // The forge's picture of a commit's author, `px` square (as near as the
 // forge has it): GitHub's and Gitea's for the user the commit's author is,
 // GitLab's for the user with that public email. The picture's bytes; ""

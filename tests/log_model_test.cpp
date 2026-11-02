@@ -1252,6 +1252,20 @@ int main(int argc, char** argv)
                       heads.at("refs/remotes/upstream/feat/x").pr.number == 8,
                   "forge: pull requests' head branches, remote ones only");
         }
+        // A commit's author is a PR's, as far as can be told without the forge.
+        {
+            using tortilla::author_is;
+            const tortilla::forge_account me{.login = "TurkeyMan", .name = "Manu Evans"};
+            check(author_is("TurkeyMan", "Manu Evans", "turkeyman@gmail.com", {}) &&
+                      author_is("ada", "Ada L", "12345+Ada@users.noreply.github.com", {}) &&
+                      author_is("ada", "ada", "a@example.org", {}) &&
+                      author_is("TurkeyMan", " manu evans ", "manu@work.example", me),
+                  "forge: a commit's author is the PR's author");
+            check(!author_is("TurkeyMan", "Ada L", "ada@example.org", me) &&
+                      !author_is("ada", "Manu Evans", "manu@work.example", me) &&
+                      !author_is("", "", "", {}) && !author_is("ada", "", "ada", {}),
+                  "forge: a commit's author isn't the PR's author");
+        }
         // GitHub's noreply addresses name the account: its picture without the API.
         {
             using tortilla::noreply_avatar_url;
