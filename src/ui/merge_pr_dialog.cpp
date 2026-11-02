@@ -3,6 +3,7 @@
 #include "i18n.h"
 #include "settings.h"
 #include "ui/repo_icon.h"
+#include "util/strings.h"
 
 #include <rapport/sys.h>
 
@@ -24,12 +25,6 @@ std::string method_label(merge_method m)
     }
 }
 
-std::string trimmed(std::string_view s)
-{
-    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back()))) s.remove_suffix(1);
-    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front()))) s.remove_prefix(1);
-    return std::string(s);
-}
 
 // The branch is in the repository the PR is on, so it's there to delete
 // (a fork's branch is its owner's).

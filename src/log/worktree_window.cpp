@@ -8,6 +8,7 @@
 #include "settings.h"
 #include "ui/repo_icon.h"
 #include "ui/windows.h"
+#include "util/strings.h"
 
 #include <rapport/sys.h>
 
@@ -62,13 +63,6 @@ std::string status_text(const worktree_info& w)
     return out;
 }
 
-std::string trimmed(std::string s)
-{
-    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back()))) s.pop_back();
-    size_t start = 0;
-    while (start < s.size() && std::isspace(static_cast<unsigned char>(s[start]))) ++start;
-    return s.substr(start);
-}
 
 }  // namespace
 

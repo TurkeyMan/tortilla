@@ -9,6 +9,8 @@
 #include "ui/progress_dialog.h"
 #include "ui/repo_icon.h"
 #include "ui/settings_dialog.h"
+#include "util/repo_path.h"
+#include "util/strings.h"
 
 #include <rapport/sys.h>
 
@@ -38,13 +40,6 @@ bool flag(const std::string& key, bool fallback)
     return v.empty() ? fallback : v == "1";
 }
 
-std::string trimmed(std::string s)
-{
-    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back()))) s.pop_back();
-    size_t start = 0;
-    while (start < s.size() && std::isspace(static_cast<unsigned char>(s[start]))) ++start;
-    return s.substr(start);
-}
 
 // One per line, for a message.
 std::string lines(const std::vector<std::string>& items)
@@ -68,16 +63,10 @@ commit_window::open(rap::ui& ui, const std::vector<std::string>& paths)
     auto repo = repo::open(first);
     if (!repo) return std::unexpected(repo.error());
     if (repo->bare()) return std::unexpected(_("No working directory found."));
-    std::error_code ec;
-    const fs::path root = fs::weakly_canonical(rap::sys::path_from_utf8(repo->workdir()), ec);
+    // Repository-relative; the root itself becomes "" (the whole project).
     std::vector<std::string> relative;
     for (const std::string& p : paths.empty() ? std::vector<std::string>{"."} : paths)
-    {
-        fs::path abs = fs::weakly_canonical(fs::absolute(rap::sys::path_from_utf8(p), ec), ec);
-        std::string rel = rap::sys::path_to_utf8(abs.lexically_relative(root).generic_string());
-        if (rel == ".") rel.clear();
-        relative.push_back(rel);
-    }
+        if (auto rel = repo_relative(repo->workdir(), p)) relative.push_back(std::move(*rel));
     std::unique_ptr<commit_window> w(new commit_window(ui, std::move(*repo), std::move(relative)));
     // TortoiseGit asks for an identity before anything else [spec 5.4.1].
     if (w->config("user.name").empty() || w->config("user.email").empty())

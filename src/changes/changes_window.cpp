@@ -10,6 +10,7 @@
 #include "ui/settings_dialog.h"
 #include "ui/stash_dialog.h"
 #include "ui/windows.h"
+#include "util/repo_path.h"
 
 #include <rapport/sys.h>
 
@@ -53,16 +54,9 @@ changes_window::open(rap::ui& ui, const std::vector<std::string>& paths)
     if (!repo) return std::unexpected(repo.error());
     if (repo->bare()) return std::unexpected(_("No working directory found."));
     // Repository-relative; the root itself becomes "" (the whole project).
-    std::error_code ec;
-    const fs::path root = fs::weakly_canonical(rap::sys::path_from_utf8(repo->workdir()), ec);
     std::vector<std::string> relative;
     for (const std::string& p : paths.empty() ? std::vector<std::string>{"."} : paths)
-    {
-        fs::path abs = fs::weakly_canonical(fs::absolute(rap::sys::path_from_utf8(p), ec), ec);
-        std::string rel = rap::sys::path_to_utf8(abs.lexically_relative(root).generic_string());
-        if (rel == ".") rel.clear();
-        relative.push_back(rel);
-    }
+        if (auto rel = repo_relative(repo->workdir(), p)) relative.push_back(std::move(*rel));
     std::unique_ptr<changes_window> w(
         new changes_window(ui, std::move(*repo), std::move(relative)));
     w->build();

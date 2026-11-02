@@ -96,6 +96,7 @@
 #include "ui/trust_repository.h"
 #include "ui/welcome_window.h"
 #include "ui/windows.h"
+#include "util/repo_path.h"
 #include "util/restart_explorer.h"
 
 #include <rapport/rapport.h>
@@ -634,13 +635,12 @@ int main(int argc, char** argv)
             std::fprintf(stderr, "tortilla: %s\n", repo.error().c_str());
             return 1;
         }
-        std::error_code ec;
-        const auto root =
-            std::filesystem::weakly_canonical(rap::sys::path_from_utf8(repo->workdir()), ec);
-        const auto file = std::filesystem::weakly_canonical(
-            std::filesystem::absolute(rap::sys::path_from_utf8(path)), ec);
-        const std::string rel =
-            rap::sys::path_to_utf8(file.lexically_relative(root).generic_string());
+        const std::string rel = tortilla::repo_relative(repo->workdir(), path).value_or("");
+        if (rel.empty())
+        {
+            std::fprintf(stderr, "tortilla: %s isn't a file in the repository\n", path.c_str());
+            return 1;
+        }
         tortilla::windows::init(**ui);
         const size_t running = tortilla::windows::hold({});
         const std::string workdir = repo->workdir();
@@ -776,17 +776,9 @@ int main(int argc, char** argv)
             std::fprintf(stderr, "tortilla: %s\n", repo.error().c_str());
             return 1;
         }
-        const std::filesystem::path root = rap::sys::path_from_utf8(repo->workdir());
-        std::error_code ec;
-        const std::filesystem::path where = std::filesystem::relative(
-            std::filesystem::absolute(rap::sys::path_from_utf8(path)), root, ec);
         std::vector<std::string> paths;
-        if (!ec && !where.empty() && where != ".")
-        {
-            std::string rel = rap::sys::path_to_utf8(where);
-            std::ranges::replace(rel, '\\', '/');
-            paths.push_back(rel);
-        }
+        if (auto rel = tortilla::repo_relative(repo->workdir(), path); rel && !rel->empty())
+            paths.push_back(std::move(*rel));
         auto quit = [&] { (*ui)->quit(); };
         std::string against = "HEAD";
         if (command == "prevdiff")

@@ -4,6 +4,8 @@
 #include "git/repo.h"
 #include "i18n.h"
 #include "ui/repo_icon.h"
+#include "util/repo_path.h"
+#include "util/strings.h"
 
 #include <rapport/sys.h>
 
@@ -26,13 +28,6 @@ std::string lower(std::string s)
     return s;
 }
 
-std::string trimmed(std::string s)
-{
-    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back()))) s.pop_back();
-    size_t start = 0;
-    while (start < s.size() && std::isspace(static_cast<unsigned char>(s[start]))) ++start;
-    return s.substr(start);
-}
 
 // A name for a path under the folder: relative, staying inside the
 // repository, and with none of the characters Windows forbids.
@@ -119,14 +114,10 @@ void rename_item(rap::ui& ui, const std::string& path, std::function<void(bool)>
     auto repo = repo::open(path);
     if (!repo) return fail(repo.error());
     if (repo->bare()) return fail(_("This needs a working tree."));
-    const fs::path root = rap::sys::path_from_utf8(repo->workdir());
-    std::error_code ec;
-    const fs::path abs = fs::absolute(rap::sys::path_from_utf8(path), ec);
-    fs::path rel = fs::relative(abs, root, ec);
-    if (ec || rel.empty() || rel == "." || *rel.begin() == "..") return fail(_("Only something inside the repository can be renamed."));
-    std::string r = rap::sys::path_to_utf8(rel);
-    std::ranges::replace(r, '\\', '/');
-    while (!r.empty() && r.back() == '/') r.pop_back();
+    const std::optional<std::string> rel = repo_relative(repo->workdir(), path);
+    if (!rel || rel->empty())
+        return fail(_("Only something inside the repository can be renamed."));
+    const std::string& r = *rel;
     const size_t slash = r.rfind('/');
 
     auto st = std::make_shared<state>(state{.ui = ui,

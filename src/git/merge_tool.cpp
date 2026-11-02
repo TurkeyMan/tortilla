@@ -6,6 +6,7 @@
 #include "i18n.h"
 #include "settings.h"
 #include "util/programs.h"
+#include "util/strings.h"
 
 #include <rapport/sys.h>
 
@@ -20,16 +21,6 @@ namespace tortilla
 namespace
 {
 
-std::string word(const std::string& program)
-{
-    return program.find(' ') != std::string::npos ? "\"" + program + "\"" : program;
-}
-
-std::string trimmed(std::string s)
-{
-    while (!s.empty() && (s.back() == '\n' || s.back() == '\r' || s.back() == ' ')) s.pop_back();
-    return s;
-}
 
 std::string read_file(const fs::path& p)
 {

@@ -6,6 +6,7 @@
 #include "settings.h"
 #include "ui/progress_dialog.h"
 #include "ui/repo_icon.h"
+#include "util/repo_path.h"
 
 #include <rapport/sys.h>
 
@@ -32,21 +33,17 @@ void clean_up(rap::ui& ui, rap::window* parent, std::vector<std::string> paths,
     if (!repo) return fail(repo.error());
     if (repo->bare()) return fail(_("This needs a working tree."));
     const std::string workdir = repo->workdir();
-    const fs::path root = rap::sys::path_from_utf8(workdir);
 
     // Repository-relative folders, each cleaned from inside it (the top as
     // "."), and files chosen one by one.
     std::vector<std::string> folders, files;
     for (const std::string& p : paths)
     {
+        auto rel = repo_relative(workdir, p);
+        if (!rel) continue;  // not inside it
+        if (rel->empty()) *rel = ".";
         std::error_code ec;
-        const fs::path abs = fs::absolute(rap::sys::path_from_utf8(p), ec);
-        const fs::path rel = fs::relative(abs, root, ec);
-        if (ec || rel.empty() || *rel.begin() == "..") continue;  // not inside it
-        std::string r = rap::sys::path_to_utf8(rel);
-        std::ranges::replace(r, '\\', '/');
-        if (r.empty()) r = ".";
-        (fs::is_directory(abs, ec) ? folders : files).push_back(r);
+        (fs::is_directory(rap::sys::path_from_utf8(p), ec) ? folders : files).push_back(*rel);
     }
     if (folders.empty() && files.empty())
         return fail(_("Only something inside the repository can be cleaned up."));

@@ -9,6 +9,7 @@
 #include "ui/progress_dialog.h"
 #include "ui/repo_icon.h"
 #include "ui/windows.h"
+#include "util/strings.h"
 
 #include <rapport/sys.h>
 
@@ -23,13 +24,6 @@ namespace
 
 namespace fs = std::filesystem;
 
-std::string trimmed(std::string s)
-{
-    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back()))) s.pop_back();
-    size_t start = 0;
-    while (start < s.size() && std::isspace(static_cast<unsigned char>(s[start]))) ++start;
-    return s.substr(start);
-}
 
 bool ref_exists(const std::string& workdir, const std::string& ref)
 {

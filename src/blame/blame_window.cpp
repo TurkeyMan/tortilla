@@ -11,6 +11,8 @@
 #include "ui/settings_dialog.h"
 #include "ui/windows.h"
 #include "util/calendar.h"
+#include "util/repo_path.h"
+#include "util/strings.h"
 
 #include <rapport/sys.h>
 
@@ -167,13 +169,11 @@ blame_window::open(rap::ui& ui, const std::string& path, const std::string& revi
     if (!repo) return std::unexpected(repo.error());
     if (repo->bare()) return std::unexpected(std::string(_("This needs a working tree.")));
     std::error_code ec;
-    const fs::path abs = fs::absolute(rap::sys::path_from_utf8(path), ec);
-    const fs::path rel = fs::relative(abs, rap::sys::path_from_utf8(repo->workdir()), ec);
-    if (ec || rel.empty() || rel == "." || *rel.begin() == ".." || fs::is_directory(abs, ec))
+    std::optional<std::string> rel = repo_relative(repo->workdir(), path);
+    if (!rel || rel->empty() || fs::is_directory(rap::sys::path_from_utf8(path), ec))
         return std::unexpected(std::string(_("Blame needs a file in a repository.")));
-    std::string r = rap::sys::path_to_utf8(rel);
-    std::ranges::replace(r, '\\', '/');
-    std::unique_ptr<blame_window> w(new blame_window(ui, repo->workdir(), std::move(r), revision));
+    std::unique_ptr<blame_window> w(
+        new blame_window(ui, repo->workdir(), std::move(*rel), revision));
     w->repo_ = std::make_unique<tortilla::repo>(std::move(*repo));
     w->build();
     return w;

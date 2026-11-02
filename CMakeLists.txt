@@ -76,6 +76,7 @@ add_library(tortilla_git STATIC
     src/git/pathspec_file.cpp
     src/git/tool_discovery.cpp
     src/util/programs.cpp
+    src/util/repo_path.cpp
     src/util/sha256.cpp
     src/util/json.cpp
     src/forge/forge.cpp

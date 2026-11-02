@@ -7,6 +7,7 @@
 #include "ui/progress_dialog.h"
 #include "ui/repo_icon.h"
 #include "ui/settings_dialog.h"
+#include "util/repo_path.h"
 
 #include <rapport/sys.h>
 
@@ -37,16 +38,14 @@ file_action_window::open(rap::ui& ui, file_action action, const std::vector<std:
     if (!repo) return std::unexpected(repo.error());
     if (repo->bare()) return std::unexpected(_("No working directory found."));
     std::error_code ec;
-    const fs::path root = fs::weakly_canonical(rap::sys::path_from_utf8(repo->workdir()), ec);
     std::vector<std::string> relative;
     std::set<std::string> files;
     for (const std::string& p : paths.empty() ? std::vector<std::string>{"."} : paths)
     {
-        fs::path abs = fs::weakly_canonical(fs::absolute(rap::sys::path_from_utf8(p), ec), ec);
-        std::string rel = rap::sys::path_to_utf8(abs.lexically_relative(root).generic_string());
-        if (rel == ".") rel.clear();
-        if (!rel.empty() && !fs::is_directory(abs, ec)) files.insert(rel);
-        relative.push_back(rel);
+        auto rel = repo_relative(repo->workdir(), p);
+        if (!rel) continue;  // outside the working tree
+        if (!rel->empty() && !fs::is_directory(rap::sys::path_from_utf8(p), ec)) files.insert(*rel);
+        relative.push_back(std::move(*rel));
     }
     std::unique_ptr<file_action_window> w(
         new file_action_window(ui, action, std::move(*repo), std::move(relative)));
