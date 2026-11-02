@@ -1774,6 +1774,31 @@ std::string noreply_avatar_url(std::string_view email, int px)
     return "https://github.com/" + std::string(local) + ".png?size=" + size;
 }
 
+bool author_is(std::string_view login, std::string_view name, std::string_view email,
+               const forge_account& account)
+{
+    if (login.empty()) return false;
+    auto trimmed = [](std::string_view v)
+    {
+        while (!v.empty() && std::isspace(static_cast<unsigned char>(v.front())))
+            v.remove_prefix(1);
+        while (!v.empty() && std::isspace(static_cast<unsigned char>(v.back()))) v.remove_suffix(1);
+        return v;
+    };
+    name = trimmed(name);
+    email = trimmed(email);
+    const size_t at = email.find('@');
+    std::string_view user = email.substr(0, at);
+    // 12345+login@users.noreply.github.com
+    if (const size_t plus = user.find('+');
+        plus != std::string_view::npos && email.find("@users.noreply.") != std::string_view::npos)
+        user.remove_prefix(plus + 1);
+    if (at != std::string_view::npos && same_letters(user, login)) return true;
+    if (same_letters(name, login)) return true;
+    return same_letters(account.login, login) && !account.name.empty() &&
+           same_letters(trimmed(account.name), name);
+}
+
 std::expected<std::string, std::string>
 author_avatar(forge_kind k, const forge_repo& r, std::string_view commit, std::string_view email,
               int px, std::string_view token, const std::atomic<bool>* cancelled)

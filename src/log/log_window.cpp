@@ -363,6 +363,7 @@ void log_window::build()
                             files_.list("log.files").height(4_lines).stretch(2),
                         }
                             .bind(details_splitter_)
+                            .width(30_ch)  // the least the forge panel's bar leaves it
                             .stretch(3),
                         forge_panel_->layout(),
                     }
@@ -865,6 +866,15 @@ void log_window::forge_panel_shown(bool on)
     forge_panel_visible_ = on;
     if (on && forge_sizes_.size() == 2 && forge_sizes_[0] > 0 && forge_sizes_[1] > 0)
         forge_splitter_->set_sizes(forge_sizes_);
+    else if (on)
+    {
+        // The first time, a third of the width (about 60 characters at
+        // most); its least is the column's own width, 30 characters.
+        float total = 0;
+        for (float s : forge_splitter_->sizes()) total += s;
+        const float side = std::min(total / 3, 480.f);
+        if (side > 0) forge_splitter_->set_sizes({total - side, side});
+    }
     // The file list's width changes with it, once the layout's done.
     fit_timer_ = ui_.timer(50, false, [this] { fit_files(); });
 }
@@ -1015,7 +1025,7 @@ void log_window::show_commit(size_t row)
     text += "\n" + c.message;
     details_->set_text(text, spans);
     show_avatar(&c);
-    forge_panel_->show_commit(c.id.hex());
+    forge_panel_->show_commit(c.id.hex(), c.author, c.email);
 
     // The file list comes from the worker, so the click (and its highlight)
     // never waits for git: the files as soon as the tree diff has them, then

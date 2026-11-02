@@ -63,7 +63,8 @@ public:
     // which commits are each one's is worked out on a worker.
     void set_pull_requests(const std::vector<open_pr>&, const std::vector<forge_remote>&);
     // The selected commit (its id), or none: the working tree, several.
-    void show_commit(std::optional<std::string> sha);
+    void show_commit(std::optional<std::string> sha, std::string author_name = {},
+                     std::string author_email = {});
     // The commit's runs as a quick ask found them (pr_watch's): the matrix
     // follows them job by job.
     void commit_checks(const std::string& sha, const commit_runs&);
@@ -125,6 +126,7 @@ private:
     // the branch moves.
     std::map<std::string, std::vector<std::string>> commits_cache_;
     std::optional<std::string> sha_;
+    std::string author_name_, author_email_;  // its author's
     // PRs' descriptions and reviews, by "remote #number"; asked once.
     std::map<std::string, pull_request> details_;
     std::set<std::string> details_asked_;
@@ -160,7 +162,8 @@ private:
     rap::canvas* pr_checks_mark_ = nullptr;
     rap::label* pr_checks_ = nullptr;
     rap::label* pr_reviews_ = nullptr;
-    rap::label* pr_body_ = nullptr;
+    rap::text_view* pr_body_ = nullptr;      // its first lines
+    rap::text_view* pr_body_all_ = nullptr;  // taller, after More...
     rap::label* pr_more_ = nullptr;
     rap::label* pr_also_ = nullptr;
     std::array<rap::button*, 3> pr_buttons_{};
@@ -172,7 +175,7 @@ private:
     rap::label* build_toggle_ = nullptr;
     rap::list* matrix_list_ = nullptr;
     rap::widget* failure_part_ = nullptr;
-    rap::label* failure_title_ = nullptr;
+    rap::text_view* failure_title_ = nullptr;
     rap::list* annotations_ = nullptr;
     rap::text_view* log_tail_ = nullptr;
     rap::label* full_log_ = nullptr;
