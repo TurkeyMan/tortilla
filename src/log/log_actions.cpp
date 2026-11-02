@@ -904,14 +904,19 @@ void log_window::keep_dialog(std::expected<std::unique_ptr<Dialog>, std::string>
     {
         if (alive.lock()) reload();
     };
-    // After the dialog acts, or (one that doesn't say) when it closes.
+    // After the dialog acts, or as it closes having changed something (the
+    // Commit dialog's commit): never for one only looked at and closed.
     if constexpr (requires { (*d)->on_done(reload_if_open); })
     {
         (*d)->on_done(reload_if_open);
         windows::keep(std::move(*d));
     }
     else
-        windows::keep(std::move(*d), reload_if_open);
+        windows::keep(std::move(*d), std::function<void(bool)>(
+                                         [reload_if_open](bool changed)
+                                         {
+                                             if (changed) reload_if_open();
+                                         }));
 }
 
 void log_window::move_ref(const ref& ref, const commit& target)
@@ -1387,7 +1392,8 @@ void log_window::open_rebase(const std::string& upstream, const rebase_todo* tod
     raw->on_closed(
         [this, raw]
         {
-            reload();
+            // Closed without starting, nothing moved.
+            if (raw->acted()) reload();
             // Destroyed after the close callback has returned.
             ui_.post([this, raw]
                      { std::erase_if(rebases_, [raw](auto& r) { return r.get() == raw; }); });
@@ -1399,7 +1405,10 @@ void log_window::open_rebase(const std::string& upstream, const rebase_todo* tod
 void log_window::create_pull_request(const ref& r)
 {
     auto d = pull_request_dialog::open(ui_, repo_location(), r, pr_watch_->remotes());
-    if (!d) return keep_dialog(std::move(d));
+    if (!d)
+        return ui_.message(
+            window_.get(),
+            {.icon = rap::message_spec::icon::error, .title = "Tortilla", .text = d.error()});
     (*d)->on_done(
         [this, alive = std::weak_ptr<bool>(alive_)](const pull_request&)
         {

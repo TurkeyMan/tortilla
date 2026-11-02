@@ -27,6 +27,8 @@ public:
     void on_closed(std::function<void()> f) { closed_ = std::move(f); }
     // "Show log" from the post-action menu when the rebase is done.
     void on_show_log(std::function<void()> f) { show_log_ = std::move(f); }
+    // Whether it changed anything: a rebase started, or local changes stashed.
+    bool acted() const;
     // Going on from the log's history edit after a conflict: the window
     // opened with the todo's onto as the upstream, its branch picked, and
     // the list as the todo has it (a squash folds into the row below); the

@@ -604,11 +604,12 @@ rap::menu browse_refs::list_menu(std::optional<size_t>)
                                                      .title = "Tortilla",
                                                      .text = log.error()});
                              // What it did there (a reset, a branch) shows here after.
-                             windows::keep(std::move(*log),
-                                           [this, alive = std::weak_ptr<bool>(alive_)]
-                                           {
-                                               if (alive.lock()) reload();
-                                           });
+                             (*log)->on_done(
+                                 [this, alive = std::weak_ptr<bool>(alive_)]
+                                 {
+                                     if (alive.lock()) reload();
+                                 });
+                             windows::keep(std::move(*log));
                          }});
         if (e.remote_branch())
             if (auto rb = split_remote(workdir_, e.full))
