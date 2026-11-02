@@ -4,6 +4,8 @@
 
 #include <cstdio>
 #include <cstring>
+#include <string_view>
+#include <unordered_set>
 
 namespace tortilla
 {
@@ -23,7 +25,64 @@ bool has_conflict_markers(const std::string& path)
     return found;
 }
 
+// Each entry of git's -z output.
+template <class F>
+void for_each_nul(std::string_view out, F f)
+{
+    for (size_t at = 0; at < out.size();)
+    {
+        size_t end = out.find('\0', at);
+        if (end == std::string_view::npos) end = out.size();
+        if (end > at) f(out.substr(at, end - at));
+        at = end + 1;
+    }
+}
+
 }  // namespace
+
+std::vector<std::string> untracked_in_the_way(const std::string& workdir, const oid& onto)
+{
+    const git_result untracked = run_git(
+        workdir, {"ls-files", "--others", "--exclude-standard", "-z"}, git_output::stdout_only);
+    if (!untracked.ok() || untracked.output.empty()) return {};
+    const git_result tree =
+        run_git(workdir, {"ls-tree", "-r", "-z", "--name-only", "--full-tree", onto.hex()},
+                git_output::stdout_only);
+    if (!tree.ok()) return {};
+    const bool fold =
+        run_git(workdir, {"config", "--bool", "core.ignorecase"}, git_output::stdout_only)
+            .output.starts_with("true");
+    auto key = [fold](std::string_view p)
+    {
+        std::string k(p);
+        if (fold)
+            for (char& c : k)
+                if (c >= 'A' && c <= 'Z') c = char(c - 'A' + 'a');
+        return k;
+    };
+    // onto's files, and the folders they're in.
+    std::unordered_set<std::string> files, folders;
+    for_each_nul(tree.output,
+                 [&](std::string_view p)
+                 {
+                     files.insert(key(p));
+                     for (size_t slash = p.rfind('/'); slash != std::string_view::npos && slash > 0;
+                          slash = p.rfind('/', slash - 1))
+                         if (!folders.insert(key(p.substr(0, slash))).second) break;
+                 });
+    std::vector<std::string> out;
+    for_each_nul(untracked.output,
+                 [&](std::string_view p)
+                 {
+                     const std::string k = key(p);
+                     bool hit = files.contains(k) || folders.contains(k);
+                     for (size_t slash = k.find('/'); !hit && slash != std::string::npos;
+                          slash = k.find('/', slash + 1))
+                         hit = files.contains(k.substr(0, slash));
+                     if (hit) out.emplace_back(p);
+                 });
+    return out;
+}
 
 rebase_engine::rebase_engine(rap::ui& ui, const std::string& workdir, const std::string& git_dir,
                              rebase_model& model, hooks hooks)
@@ -73,24 +132,23 @@ void rebase_engine::start(const start_args& s)
     if (s.fast_forward)
     {
         std::string onto = s.onto.hex();
-        run({"checkout", "--no-track", "-f", "-B", s.branch, onto},
-            [this, onto](int code, auto&)
+        // Without -f: git refuses rather than overwrite an untracked file
+        // the upstream has (local changes were stashed before the start).
+        run({"checkout", "--no-track", "-B", s.branch, onto},
+            [this](int code, auto&)
             {
                 if (code != 0) return stop(rebase_stage::error);
-                run({"reset", "--hard", onto},
-                    [this](int code, auto&)
-                    {
-                        if (code != 0) return stop(rebase_stage::error);
-                        hooks_.log(rap::i18n::format(_("Fast forward to \"{0}\""), start_.onto.hex(8)) + "\n",
-                                   true);
-                        stop(rebase_stage::done);
-                    });
+                hooks_.log(rap::i18n::format(_("Fast forward to \"{0}\""), start_.onto.hex(8)) +
+                               "\n",
+                           true);
+                stop(rebase_stage::done);
             });
         return;
     }
 
     pos_ = int(model_.size()) - 1;
-    run({"checkout", "-f", "--detach", s.onto.hex()},
+    // Without -f, as above: an untracked file in the way stops it here.
+    run({"checkout", "--detach", s.onto.hex()},
         [this](int code, auto&)
         {
             if (code != 0) return stop(rebase_stage::error);
@@ -186,6 +244,9 @@ void rebase_engine::picked(int code, const std::string& output, bool in_group)
                             [this](bool skip)
                             {
                                 if (!skip) return stop(rebase_stage::error);
+                                // Drops what the failed pick staged; reset
+                                // touches only tracked files, so untracked
+                                // ones stay.
                                 run({"reset", "--hard", "HEAD"},
                                     [this](int, auto&)
                                     {
@@ -356,12 +417,25 @@ void rebase_engine::abort(std::function<void()> done)
     run({"cherry-pick", "--abort"},
         [this, done](int, auto&)
         {
+            // Abort throws away the half-done pick and its resolutions: reset
+            // --hard is that, and leaves untracked files alone. The checkout
+            // has no -f: an untracked file made meanwhile where the original
+            // branch has one stops it, rather than being overwritten.
             run({"reset", "--hard"},
                 [this, done](int, auto&)
                 {
-                    run({"checkout", "-f", start_.checked_out},
-                        [this, done](int, auto&)
+                    run({"checkout", start_.checked_out},
+                        [this, done](int code, const std::string& output)
                         {
+                            if (code != 0)
+                            {
+                                hooks_.warn(rap::i18n::format(_("Could not go back to “{0}”: move "
+                                                                "the files git names out of the "
+                                                                "way, then Abort again."),
+                                                              start_.checked_out) +
+                                            "\n\n" + output);
+                                return stop(rebase_stage::error);
+                            }
                             std::remove(msg_file_.c_str());
                             std::remove(active_file_.c_str());
                             hooks_.log(std::string(_("Rebase aborted.")) + "\n", true);
