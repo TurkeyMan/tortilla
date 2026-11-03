@@ -254,7 +254,16 @@ void log_window::build()
                         .width(22_ch),
                     entry{}
                         .bind(search_)
-                        .on_changed([this](const std::string&) { schedule_filter(); })
+                        .clearable()
+                        // Emptied (its clear button), at once.
+                        .on_changed(
+                            [this](const std::string& text)
+                            {
+                                if (text.empty() && !filter_.text.empty())
+                                    apply_filter();
+                                else
+                                    schedule_filter();
+                            })
                         .on_activate([this] { apply_filter(); })
                         .stretch(),
                     // The dates [spec 1.9.3], rarely limited: a pop-up of
@@ -501,6 +510,13 @@ void log_window::build()
         [this](const rap::key_event& e)
         {
             if (!e.press || e.modifiers) return false;
+            // Escape in the filter box clears it, at once.
+            if (e.key == rap::key::escape && search_->has_focus() && !search_->text().empty())
+            {
+                search_->set_text("");
+                if (!filter_.text.empty()) apply_filter();  // unless hearing it did
+                return true;
+            }
             // Escape in the path filter box clears it [spec 1.11.2].
             if (e.key == rap::key::escape && path_filter_->has_focus() &&
                 !path_filter_->text().empty())
@@ -759,18 +775,7 @@ void log_window::reload()
     // (The state as this reload sees it: the log's own changes don't reload
     // it twice.)
     if (!git_dir_.empty()) state_ = repository_state();
-    if (log_.row_count())
-    {
-        kept_selection keep;
-        for (size_t row : commit_list_->selection())
-            if (log_.is_working_tree(row))
-                keep.working_tree = true;
-            else if (const commit* c = log_.commit(row))
-                keep.commits.push_back(c->id);
-        if (auto cur = commit_list_->current(); cur && !log_.is_working_tree(*cur))
-            if (const commit* c = log_.commit(*cur)) keep.current = c->id;
-        if (!keep.commits.empty() || keep.working_tree) kept_ = std::move(keep);
-    }
+    if (auto keep = keep_selection()) kept_ = std::move(keep);
     statistics_->set_visible(false);
     walk_->set_visible(false);
     view_->set_visible(false);
@@ -918,21 +923,46 @@ void log_window::restore_selection()
     if (!kept_) return;
     kept_selection keep = std::move(*kept_);
     kept_.reset();
-    std::unordered_set<oid, oid_hash> wanted(keep.commits.begin(), keep.commits.end());
-    std::vector<size_t> rows;
-    std::optional<size_t> current;
-    for (size_t row = 0; row < log_.row_count(); ++row)
+    put_back(keep);
+}
+
+std::optional<log_window::kept_selection> log_window::keep_selection() const
+{
+    if (!log_.row_count()) return std::nullopt;
+    kept_selection keep;
+    for (size_t row : commit_list_->selection())
+        if (log_.is_working_tree(row))
+            keep.working_tree = true;
+        else if (const commit* c = log_.commit(row))
+            keep.commits.push_back(c->id);
+    if (auto cur = commit_list_->current())
     {
-        const commit* c = log_.commit(row);
-        if (log_.is_working_tree(row) ? keep.working_tree : c && wanted.contains(c->id))
-            rows.push_back(row);
-        if (c && keep.current && c->id == *keep.current) current = row;
+        if (!log_.is_working_tree(*cur))
+            if (const commit* c = log_.commit(*cur)) keep.current = c->id;
+        keep.offset = commit_list_->row_offset(*cur);
     }
+    if (keep.commits.empty() && !keep.working_tree) return std::nullopt;
+    return keep;
+}
+
+void log_window::put_back(const kept_selection& keep)
+{
+    const std::vector<size_t> rows = log_.rows_of(keep.commits, keep.working_tree);
     if (rows.empty()) return;  // gone (a deleted branch's commits): start at the top
+    std::optional<size_t> current;
+    if (keep.current)
+        current = log_.row_of(*keep.current);
+    else if (keep.working_tree && log_.is_working_tree(0))
+        current = 0;
     if (!current) current = rows.front();
     commit_list_->set_current(*current);
     commit_list_->select(rows);
-    commit_list_->scroll_to(*current);
+    // Where it was on screen, so a refresh that changes nothing moves
+    // nothing; centred when it wasn't in view.
+    if (keep.offset)
+        commit_list_->set_row_offset(*current, *keep.offset);
+    else
+        commit_list_->scroll_to(*current, rap::scroll_align::center);
 }
 
 void log_window::selection_changed()
@@ -1576,21 +1606,14 @@ void log_window::apply_filter()
 {
     filter_timer_.reset();
     filter_.text = search_->text();
-    std::optional<oid> keep;
-    if (auto c = commit_list_->current(); c && log_.commit(*c)) keep = log_.commit(*c)->id;
-
+    const auto keep = keep_selection();
     std::string error = log_.set_filter(filter_);
     if (!error.empty())
     {
         status_->set_text(rap::i18n::format(_("Invalid regular expression: {0}"), error));
         return;
     }
-    if (keep)
-        if (auto row = log_.row_of(*keep))
-        {
-            commit_list_->set_current(*row);
-            commit_list_->scroll_to(*row);
-        }
+    if (keep) put_back(*keep);
     update_status();
 }
 

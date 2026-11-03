@@ -179,6 +179,10 @@ public:
     bool is_working_tree(size_t row) const { return working_tree_ && row == 0; }
     const tortilla::commit* commit(size_t row) const;
     std::optional<size_t> row_of(const oid&) const;
+    // The rows showing `ids`, ascending, and the working tree row first with
+    // `working_tree`; those not shown (filtered out, gone) are left out. A
+    // selection kept across a filter or a reload.
+    std::vector<size_t> rows_of(const std::vector<oid>& ids, bool working_tree = false) const;
     size_t commit_rows() const { return row_count() - (working_tree_ ? 1 : 0); }
     const std::vector<file_change>& working_tree_files() const { return wt_files_; }
     // The working-tree status arrives after the history (it can take many

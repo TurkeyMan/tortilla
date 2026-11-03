@@ -2306,6 +2306,21 @@ int main(int argc, char** argv)
     check(!log.set_filter({.text = "(", .regex = true}).empty(), "invalid regex reported");
     log.set_filter({});
     check(log.commit_rows() == 5, "cleared");
+    // A selection kept across filtering: the rows still shown, then all again.
+    {
+        const std::vector<tortilla::oid> picked{log.commit(1)->id, log.commit(3)->id};
+        const std::string kept = log.commit(1)->summary;
+        log.set_filter({.text = kept, .fields = text});
+        const auto shown = log.rows_of(picked, true);
+        const bool second = log.row_of(picked[1]).has_value();
+        check(log.commit_rows() < 5 && shown.size() == (second ? 3u : 2u) && shown[0] == 0 &&
+                  std::ranges::contains(shown, log.row_of(picked[0]).value_or(0)) &&
+                  std::ranges::is_sorted(shown),
+              "rows_of: the selection the filter still shows, and the working tree row");
+        log.set_filter({});
+        const auto all = log.rows_of(picked);
+        check(all.size() == 2 && all[0] == 1 && all[1] == 3, "rows_of: all of it once cleared");
+    }
 
     // Commit order is git's --topo-order, for one branch and for --all.
     {

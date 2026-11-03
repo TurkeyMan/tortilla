@@ -655,6 +655,17 @@ std::optional<size_t> log_model::row_of(const oid& id) const
     return std::nullopt;
 }
 
+std::vector<size_t> log_model::rows_of(const std::vector<oid>& ids, bool working_tree) const
+{
+    std::vector<size_t> rows;
+    if (working_tree && working_tree_) rows.push_back(0);
+    if (ids.empty()) return rows;
+    const std::unordered_set<oid, oid_hash> wanted(ids.begin(), ids.end());
+    for (size_t row = working_tree_ ? 1 : 0; row < row_count(); ++row)
+        if (wanted.contains(commits_[index(row)].id)) rows.push_back(row);
+    return rows;
+}
+
 const std::vector<ref>* log_model::refs_of(size_t row) const
 {
     if (is_working_tree(row)) return nullptr;
