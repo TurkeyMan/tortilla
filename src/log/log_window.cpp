@@ -840,7 +840,21 @@ void log_window::loaded(const std::string& error)
         }
     }
     restore_selection();
-    if (log_.row_count() && !commit_list_->current()) commit_list_->set_current(0);
+    // Opened (nothing chosen yet): on the commit checked out, in the middle
+    // of the view, however far down the other branches put it.
+    if (log_.row_count() && !commit_list_->current())
+    {
+        size_t row = 0;
+        for (size_t r = 0; r < log_.row_count(); ++r)
+            if (log_.commit(r) && log_.is_head(r))
+            {
+                row = r;
+                break;
+            }
+        commit_list_->set_current(row);
+        commit_list_->select({row});
+        commit_list_->scroll_to(row, rap::scroll_align::center);
+    }
     update_status();
     update_pull_requests();
     // The refs may have moved: what a sync would bring, and the current
