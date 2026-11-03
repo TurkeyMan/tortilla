@@ -16,6 +16,11 @@
 namespace tortilla
 {
 
+// Hunk headers in git's cyan, a teal on light text views and a light cyan
+// on dark ones: the theme's accent may be red (Windows lets users pick
+// it), and then "@@" lines looked like removed ones.
+constexpr rap::scheme_color k_hunk_colour{{0, 120, 140}, {0x5c, 0xc8, 0xdc}};
+
 std::vector<rap::text_view::span> diff_spans(const std::string& text)
 {
     std::vector<rap::text_view::span> spans;
@@ -37,7 +42,7 @@ std::vector<rap::text_view::span> diff_spans(const std::string& text)
         else if (line.starts_with("@@"))
         {
             in_header = false;
-            s.fg = rap::theme_color::accent;
+            s.fg = k_hunk_colour;
         }
         else if (in_header)
         {
