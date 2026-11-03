@@ -1,6 +1,6 @@
-// The Show menu's dialogs: Pick... (a checklist of branches, shown for
-// once), and Pins and hidden (the branches always shown and the patterns
-// of those never shown).
+// The Show menu's Pins and hidden dialog: the branches always shown and the
+// patterns of those never shown. (Pick... is Browse References, checking
+// branches: branch/browse_refs.h.)
 #pragma once
 
 #include "git/repo.h"
@@ -13,12 +13,6 @@
 
 namespace tortilla
 {
-
-// Every branch, local then remote, by full name; `checked` start ticked.
-// `chosen` gets the ones ticked on OK.
-void pick_branches_dialog(rap::ui&, rap::window* parent, const ref_map&,
-                          const std::vector<std::string>& checked,
-                          std::function<void(std::vector<std::string>)> chosen);
 
 struct pins_and_hidden
 {

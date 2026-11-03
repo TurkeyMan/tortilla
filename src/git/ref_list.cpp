@@ -135,6 +135,75 @@ std::vector<std::string> ref_folders(const std::vector<ref_entry>& refs)
     return {folders.begin(), folders.end()};
 }
 
+namespace
+{
+
+bool branch(const ref_entry& e)
+{
+    return e.local_branch() || e.remote_branch();
+}
+
+bool under(std::string_view full, std::string_view folder)
+{
+    return full.size() > folder.size() && full.starts_with(folder) && full[folder.size()] == '/';
+}
+
+}  // namespace
+
+std::map<std::string, folder_check, std::less<>> folder_checks(const std::vector<ref_entry>& refs,
+                                                               const checked_refs& checked)
+{
+    // Each folder's branches, and how many of them are checked: one pass,
+    // each branch counted in every folder above it.
+    std::map<std::string, std::pair<size_t, size_t>, std::less<>> counts;
+    for (const std::string& f : ref_folders(refs)) counts[f];
+    for (const ref_entry& e : refs)
+    {
+        if (!branch(e)) continue;
+        const bool on = checked.contains(e.full);
+        const std::string_view full = e.full;
+        for (size_t slash = full.find('/'); slash != std::string_view::npos;
+             slash = full.find('/', slash + 1))
+            if (auto it = counts.find(full.substr(0, slash)); it != counts.end())
+            {
+                ++it->second.first;
+                it->second.second += on;
+            }
+    }
+    std::map<std::string, folder_check, std::less<>> out;
+    for (auto& [folder, n] : counts)
+        out.emplace_hint(out.end(), folder,
+                         n.second == 0         ? folder_check::unchecked
+                         : n.second == n.first ? folder_check::checked
+                                               : folder_check::mixed);
+    return out;
+}
+
+void toggle_folder(const std::vector<ref_entry>& refs, checked_refs& checked,
+                   std::string_view folder)
+{
+    bool all = true;
+    for (const ref_entry& e : refs)
+        if (branch(e) && under(e.full, folder) && !checked.contains(e.full)) all = false;
+    for (const ref_entry& e : refs)
+        if (branch(e) && under(e.full, folder))
+        {
+            if (all)
+                checked.erase(e.full);
+            else
+                checked.insert(e.full);
+        }
+}
+
+std::vector<std::string> checked_branches(const std::vector<ref_entry>& refs,
+                                          const checked_refs& checked)
+{
+    std::vector<std::string> out;
+    for (const ref_entry& e : refs)
+        if (branch(e) && checked.contains(e.full)) out.push_back(e.full);
+    return out;
+}
+
 bool ref_filter_matches(const std::string& filter, const std::string& text)
 {
     // Case-insensitive, each term a substring.

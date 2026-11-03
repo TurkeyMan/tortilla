@@ -35,6 +35,11 @@ public:
         unsigned kinds = all;
         bool pick = false;      // a picker: OK returns what's selected
         bool multiple = false;  // several rows (space-separated short names)
+        // Checking branches rather than picking one (the log's Show >
+        // Pick...): a box on each branch, and on each folder for all its
+        // branches; OK returns those checked. Tags aren't offered.
+        bool check = false;
+        std::vector<std::string> checked;  // full names, checked at first
     };
 
     static std::expected<std::unique_ptr<browse_refs>, std::string>
@@ -46,6 +51,11 @@ public:
     // one row, the short names for several, the current branch's short
     // name (its hash when detached), or "" when cancelled.
     void on_picked(std::function<void(const std::string&)> f) { picked_ = std::move(f); }
+    // Checking branches: the full names checked, on OK only.
+    void on_checked(std::function<void(std::vector<std::string>)> f)
+    {
+        checked_done_ = std::move(f);
+    }
 
 private:
     class rows;  // the list's model
@@ -64,6 +74,8 @@ private:
     std::string picked_text() const;
     void finish(std::string picked);
     void ok();
+    void toggle_rows(size_t row);  // a branch's box, and the selection's with it
+    void update_checks();          // the folders' boxes, and the list's
 
     rap::menu list_menu(std::optional<size_t> row);
     rap::menu folder_menu(const std::string& folder);
@@ -86,6 +98,8 @@ private:
     std::string current_branch_;  // refs/heads/<b>, or "" when detached
     std::function<void()> closed_;
     std::function<void(const std::string&)> picked_;
+    std::function<void(std::vector<std::string>)> checked_done_;
+    checked_refs checked_;  // checking branches: full names
     bool done_ = false;
     // The filter's fields [spec 10.6], all at first each time.
     enum : unsigned
@@ -116,5 +130,12 @@ private:
 // gets the choice, or "" when cancelled.
 void pick_ref(rap::ui&, rap::window* parent, const std::string& workdir, browse_refs::options,
               std::function<void(const std::string&)> done);
+
+// Opens Browse References over `parent` for checking branches, `checked`
+// (full names) checked at first; `done` gets those checked on OK, and
+// nothing on Cancel.
+void check_refs(rap::ui&, rap::window* parent, const std::string& workdir,
+                std::vector<std::string> checked,
+                std::function<void(std::vector<std::string>)> done);
 
 }  // namespace tortilla
