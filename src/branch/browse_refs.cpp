@@ -81,6 +81,13 @@ int compare_text(const std::string& a, const std::string& b)
     return a.size() == b.size() ? 0 : a.size() < b.size() ? -1 : 1;
 }
 
+rap::check_state tree_check(folder_check c)
+{
+    return c == folder_check::checked ? rap::check_state::checked
+           : c == folder_check::mixed ? rap::check_state::indeterminate
+                                      : rap::check_state::unchecked;
+}
+
 std::string parent_of(const std::string& full)
 {
     const size_t slash = full.rfind('/');
@@ -128,6 +135,21 @@ public:
         }
     }
     std::string relative(const ref_entry& e) const { return e.full.substr(base.size() + 1); }
+
+    // Checking branches: each row's box, and what a click on one does.
+    const checked_refs* checked_set = nullptr;
+    std::function<void(size_t)> toggled;
+    rap::check_state checked(size_t row) const override
+    {
+        return checked_set && row < items.size() && checked_set->contains(items[row]->full)
+                   ? rap::check_state::checked
+                   : rap::check_state::unchecked;
+    }
+    void toggle_checked(size_t row) override
+    {
+        if (toggled) toggled(row);
+    }
+    void changed() { notify_changed(0, items.size()); }
 
     void set(std::vector<const ref_entry*> rows, std::string folder)
     {
@@ -203,6 +225,29 @@ void browse_refs::build()
     std::string root = workdir_;
     while (root.size() > 1 && (root.back() == '/' || root.back() == '\\')) root.pop_back();
     root = rap::sys::path_to_utf8(rap::sys::path_from_utf8(root).make_preferred());
+    const bool checking = options_.check;
+    if (checking)
+    {
+        options_.pick = false;
+        options_.kinds = heads | remotes;
+        checked_ = {options_.checked.begin(), options_.checked.end()};
+        rows_->checked_set = &checked_;
+        rows_->toggled = [this](size_t row) { toggle_rows(row); };
+    }
+    // Checking, OK and Cancel only: Current Branch is a pick.
+    auto dialog_buttons = [this, checking]
+    {
+        auto ok_button = dialog_button{rap::dialog_role::ok, ""}.on_click([this] { ok(); });
+        if (checking) return buttons{ok_button, cancel};
+        return buttons{dialog_button{rap::dialog_role::none, _("Current Branch")}.on_click(
+                           [this]
+                           {
+                               // The short name, or the hash when detached [spec 10.12].
+                               std::string b = current_branch(workdir_);
+                               finish(b.empty() || b == "HEAD" ? resolve(workdir_, "HEAD") : b);
+                           }),
+                       ok_button, cancel};
+    };
 
     window_ = create_window(
         ui_,
@@ -236,15 +281,24 @@ void browse_refs::build()
                         .bind(tree_)
                         .on_selection_changed([this] { fill(); })
                         .on_context_menu([this](std::optional<std::string> id) -> rap::menu
-                                         { return folder_menu(id.value_or(std::string())); }),
+                                         { return folder_menu(id.value_or(std::string())); })
+                        .on_toggled(
+                            [this](const std::string& folder)
+                            {
+                                toggle_folder(refs_, checked_, folder);
+                                update_checks();
+                            }),
                     list{columns(), rows_.get()}
+                        .checkboxes(checking)
                         .bind(list_)
                         .on_selection_changed([this] { update_info(); })
                         .on_activate(
                             [this](size_t row)
                             {
                                 if (row >= rows_->items.size()) return;
-                                if (options_.pick)
+                                if (options_.check)
+                                    toggle_rows(row);
+                                else if (options_.pick)
                                     ok();
                                 else
                                     show_log(rows_->items[row]->full);
@@ -277,15 +331,7 @@ void browse_refs::build()
                     label{}.bind(info_).stretch(),
                     // Current Branch in the dialog's own buttons, so each
                     // platform places it with OK and Cancel.
-                    buttons{dialog_button{rap::dialog_role::none, _("Current Branch")}.on_click(
-                                [this]
-                                {
-                                    // The short name, or the hash when detached [spec 10.12].
-                                    std::string b = current_branch(workdir_);
-                                    finish(b.empty() || b == "HEAD" ? resolve(workdir_, "HEAD") : b);
-                                }),
-                            dialog_button{rap::dialog_role::ok, ""}.on_click([this] { ok(); }),
-                            cancel},
+                    dialog_buttons(),
                 },
             }}}
             .size(130_ch, 30_lines),
@@ -335,6 +381,9 @@ void browse_refs::build()
             if (!done_ && picked_) std::exchange(picked_, {})(std::string());
             if (closed_) closed_();
         });
+    // Checking, the first branch checked shows at first.
+    if (checking && options_.initial.empty() && !options_.checked.empty())
+        options_.initial = options_.checked.front();
     reload(options_.initial.empty() ? std::string("HEAD") : options_.initial);
     update_filter_cue();
     list_->focus();  // as TortoiseGit has it [spec 10.1]
@@ -364,23 +413,28 @@ void browse_refs::reload(std::string select)
                                     .detail = loaded.error});
     // The kinds a picker offers [spec 10.3, 4].
     const unsigned k = options_.kinds;
+    // Checking: branches alone.
     std::erase_if(loaded.refs,
-                  [k](const ref_entry& e)
+                  [k, check = options_.check](const ref_entry& e)
                   {
                       if (e.local_branch()) return !(k & heads);
                       if (e.tag()) return !(k & tags);
                       if (e.remote_branch()) return !(k & remotes);
-                      return k == remotes;
+                      return check || k == remotes;
                   });
     refs_ = std::move(loaded.refs);
 
-    // Folders, each under its parent, labelled with its last segment.
+    // Folders, each under its parent, labelled with its last segment; a
+    // box on each when checking, for all its branches.
     std::map<std::string, std::vector<std::string>> children;
     for (const std::string& f : ref_folders(refs_))
         if (f != "refs") children[parent_of(f)].push_back(f);
+    const auto checks = options_.check ? folder_checks(refs_, checked_)
+                                       : decltype(folder_checks(refs_, checked_)){};
     std::function<rap::tree_item(const std::string&)> item = [&](const std::string& f)
     {
         rap::tree_item t{.label = f.substr(f.rfind('/') + 1), .id = f};
+        if (auto c = checks.find(f); c != checks.end()) t.check = tree_check(c->second);
         for (const std::string& c : children[f]) t.children.push_back(item(c));
         return t;
     };
@@ -524,8 +578,16 @@ rap::menu browse_refs::filter_menu()
 void browse_refs::update_info()
 {
     if (!info_ || !list_) return;
-    info_->set_text(rap::i18n::format(_("Showing {0} ref(s), {1} ref(s) selected"),
-                                      std::to_string(rows_->items.size()), std::to_string(list_->selection().size())));
+    std::string text = rap::i18n::format(_("Showing {0} ref(s), {1} ref(s) selected"),
+                                         std::to_string(rows_->items.size()),
+                                         std::to_string(list_->selection().size()));
+    if (options_.check)
+    {
+        const size_t n = checked_branches(refs_, checked_).size();
+        text += ", " + rap::i18n::format(N_("{0} branch checked", "{0} branches checked", n),
+                                         std::to_string(n));
+    }
+    info_->set_text(text);
 }
 
 std::vector<const ref_entry*> browse_refs::selection() const
@@ -547,7 +609,42 @@ std::string browse_refs::picked_text() const
     return out;
 }
 
-void browse_refs::ok() { finish(options_.pick ? picked_text() : std::string()); }
+void browse_refs::ok()
+{
+    if (!options_.check) return finish(options_.pick ? picked_text() : std::string());
+    std::vector<std::string> names = checked_branches(refs_, checked_);
+    done_ = true;
+    auto callback = std::exchange(checked_done_, {});
+    window_->close();
+    if (callback) callback(std::move(names));
+}
+
+// A click on a box in the selection sets the whole selection to its new
+// state, as the Commit dialog's list does.
+void browse_refs::toggle_rows(size_t row)
+{
+    if (row >= rows_->items.size()) return;
+    std::vector<size_t> rows = list_->selection();
+    if (!std::ranges::contains(rows, row)) rows = {row};
+    const bool on = !checked_.contains(rows_->items[row]->full);
+    for (size_t r : rows)
+        if (r < rows_->items.size())
+        {
+            if (on)
+                checked_.insert(rows_->items[r]->full);
+            else
+                checked_.erase(rows_->items[r]->full);
+        }
+    update_checks();
+}
+
+void browse_refs::update_checks()
+{
+    for (const auto& [folder, c] : folder_checks(refs_, checked_))
+        tree_->set_check(folder, tree_check(c));
+    rows_->changed();
+    update_info();
+}
 
 void browse_refs::finish(std::string picked)
 {
@@ -954,6 +1051,22 @@ void pick_ref(rap::ui& ui, rap::window* parent, const std::string& workdir, brow
         return;
     }
     (*d)->on_picked(std::move(done));
+    windows::keep(std::move(*d));
+}
+
+void check_refs(rap::ui& ui, rap::window* parent, const std::string& workdir,
+                std::vector<std::string> checked,
+                std::function<void(std::vector<std::string>)> done)
+{
+    auto d = browse_refs::open(ui, workdir, {.check = true, .checked = std::move(checked)}, parent);
+    if (!d)
+    {
+        ui.message(
+            parent,
+            {.icon = rap::message_spec::icon::error, .title = "Tortilla", .text = d.error()});
+        return;
+    }
+    (*d)->on_checked(std::move(done));
     windows::keep(std::move(*d));
 }
 

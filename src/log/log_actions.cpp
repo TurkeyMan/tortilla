@@ -3,6 +3,7 @@
 // progress dialog, as TortoiseGit does, then reload the log.
 #include "log_window.h"
 
+#include "branch/browse_refs.h"
 #include "branch/create_ref_dialog.h"
 #include "branch/merge_dialog.h"
 #include "branch/switch_dialog.h"
@@ -1543,18 +1544,17 @@ void log_window::open_worktree(const std::string& path)
     windows::keep(std::move(*log));
 }
 
+// Browse References with a box on each branch, those picked before checked.
 void log_window::pick_branches()
 {
-    const ref_map loaded = log_.refs().empty() ? repo_.refs() : ref_map{};
-    pick_branches_dialog(
-        ui_, window_.get(), log_.refs().empty() ? loaded : log_.refs(), show_.picked,
-        [this, alive = std::weak_ptr<bool>(alive_)](std::vector<std::string> picked)
-        {
-            if (!alive.lock()) return;
-            show_.picked = std::move(picked);
-            set_show(show_preset::picked);
-            reload();
-        });
+    check_refs(ui_, window_.get(), repo_location(), show_.picked,
+               [this, alive = std::weak_ptr<bool>(alive_)](std::vector<std::string> picked)
+               {
+                   if (!alive.lock() || picked.empty()) return;
+                   show_.picked = std::move(picked);
+                   set_show(show_preset::picked);
+                   reload();
+               });
 }
 
 void log_window::edit_pins_and_hidden()

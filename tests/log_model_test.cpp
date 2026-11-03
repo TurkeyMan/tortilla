@@ -2418,6 +2418,50 @@ int main(int argc, char** argv)
         check(std::ranges::none_of(merged.refs, [](auto& e) { return e.full == "refs/heads/feature/x"; }) &&
                   std::ranges::any_of(merged.refs, [](auto& e) { return e.full == "refs/heads/main"; }),
               "list_refs: merged into HEAD");
+        // Checking branches (Show > Pick...): folders' boxes from their
+        // branches, nested folders and the remotes' too; tags aren't counted.
+        {
+            using tortilla::folder_check;
+            std::vector<tortilla::ref_entry> refs;
+            for (const char* f :
+                 {"refs/heads/main", "refs/heads/feature/a", "refs/heads/feature/b",
+                  "refs/heads/feature/deep/c", "refs/remotes/origin/main",
+                  "refs/remotes/origin/dev", "refs/remotes/fork/main", "refs/tags/v1"})
+                refs.push_back({.full = f});
+            tortilla::checked_refs checked{"refs/heads/feature/a", "refs/remotes/origin/main",
+                                           "refs/remotes/origin/dev", "refs/heads/gone"};
+            auto states = tortilla::folder_checks(refs, checked);
+            check(states["refs/heads/feature"] == folder_check::mixed &&
+                      states["refs/heads/feature/deep"] == folder_check::unchecked &&
+                      states["refs/remotes/origin"] == folder_check::checked &&
+                      states["refs/remotes/fork"] == folder_check::unchecked &&
+                      states["refs/remotes"] == folder_check::mixed &&
+                      states["refs"] == folder_check::mixed,
+                  "folder_checks: checked when all are, mixed when some, nested and per remote");
+            check(states["refs/tags"] == folder_check::unchecked &&
+                      states.size() == tortilla::ref_folders(refs).size(),
+                  "folder_checks: every folder, tags never checked");
+            tortilla::toggle_folder(refs, checked, "refs/heads/feature");
+            states = tortilla::folder_checks(refs, checked);
+            check(checked.contains("refs/heads/feature/b") &&
+                      checked.contains("refs/heads/feature/deep/c") &&
+                      states["refs/heads/feature"] == folder_check::checked &&
+                      states["refs/heads"] == folder_check::mixed,
+                  "toggle_folder: a mixed folder checks all its branches, nested ones too");
+            tortilla::toggle_folder(refs, checked, "refs/heads/feature");
+            check(!checked.contains("refs/heads/feature/a") &&
+                      !checked.contains("refs/heads/feature/deep/c") &&
+                      checked.contains("refs/heads/gone"),
+                  "toggle_folder: a checked folder unchecks them all, and only them");
+            tortilla::toggle_folder(refs, checked, "refs/remotes/fork");
+            check(tortilla::checked_branches(refs, checked) ==
+                      std::vector<std::string>{"refs/remotes/origin/main",
+                                               "refs/remotes/origin/dev", "refs/remotes/fork/main"},
+                  "checked_branches: those still there, in the refs' order");
+            tortilla::toggle_folder(refs, checked, "refs/heads/feat");
+            check(!checked.contains("refs/heads/feature/a"),
+                  "toggle_folder: a folder is a whole segment");
+        }
         sh(git + "branch -D -q feature/x gone-up");
         sh(git + "tag -d rel1 >/dev/null");
         sh(git + "config --unset branch.main.description");
