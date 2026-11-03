@@ -93,7 +93,7 @@ private:
     void schedule_filter();
     void apply_filter();
     void jump(bool up);
-    // The date range [spec 1.9.3]: a button beside the filter box, held
+    // The date range [spec 1.9.3]: a button in the filter box's end, held
     // down while the dates limit the log, and its pop-up with the pickers.
     void dates_changed();
     void open_dates();
@@ -331,7 +331,7 @@ private:
 
     // Widgets
     rap::menu_button* ref_button_ = nullptr;
-    rap::tool_button* dates_ = nullptr;
+    rap::entry_action* dates_ = nullptr;
     // The date pop-up, while open, and its pickers.
     std::unique_ptr<rap::window> dates_popup_;
     rap::date_picker* from_ = nullptr;
