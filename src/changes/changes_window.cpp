@@ -1,6 +1,7 @@
 #include "changes_window.h"
 
 #include "changes/commit_window.h"
+#include "git/remotes.h"
 #include "i18n.h"
 #include "log/reflog_window.h"
 #include "settings.h"
@@ -347,9 +348,7 @@ rap::menu changes_window::stash_menu()
     auto after = [this](bool) { reload(); };
     rap::menu m{{.label = _("Stash changes"),
                  .action = [this, after] { stash_changes(ui_, window_.get(), workdir_, after); }}};
-    git_result has = run_git(workdir_, {"rev-parse", "--verify", "--quiet", "refs/stash"},
-                             git_output::stdout_only);
-    if (has.ok())
+    if (ref_exists(workdir_, "refs/stash"))
     {
         m.push_back({.label = _("Stash Pop"),
                      .action = [this, after]

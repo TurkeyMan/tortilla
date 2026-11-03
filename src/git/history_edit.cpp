@@ -512,20 +512,10 @@ std::expected<void, std::string> move_refs(git_repository* r, const history_edit
     return {};
 }
 
-std::string stash_index(const std::string& workdir, const std::string& sha)
+std::string stash_index(const repo& repository, const std::string& sha)
 {
-    const git_result list =
-        run_git(workdir, {"stash", "list", "--format=%H"}, git_output::stdout_only);
-    size_t n = 0, start = 0;
-    while (start < list.output.size())
-    {
-        size_t end = list.output.find('\n', start);
-        if (end == std::string::npos) end = list.output.size();
-        if (std::string_view(list.output).substr(start, end - start) == sha)
-            return "stash@{" + std::to_string(n) + "}";
-        ++n;
-        start = end + 1;
-    }
+    for (const repo::stash_entry& s : repository.stashes())
+        if (s.id.hex() == sha) return s.selector;
     return {};
 }
 
@@ -590,7 +580,7 @@ std::expected<std::string, std::string> apply_edit(const repo& repository, const
             return rap::i18n::format(_("Your local changes didn't go back cleanly; they're kept in "
                                        "the stash ({0}).\n{1}"),
                                      stashed.substr(0, 8), applied.output);
-        if (const std::string at = stash_index(workdir, stashed); !at.empty())
+        if (const std::string at = stash_index(repository, stashed); !at.empty())
             run_git(workdir, {"stash", "drop", "-q", at});
         return {};
     };
@@ -598,10 +588,8 @@ std::expected<std::string, std::string> apply_edit(const repo& repository, const
     {
         const git_result pushed = run_git(workdir, {"stash", "push", "-m", e.reflog});
         if (!pushed.ok()) return std::unexpected(pushed.output);
-        stashed = run_git(workdir, {"rev-parse", "--verify", "refs/stash"}, git_output::stdout_only)
-                      .output;
-        while (!stashed.empty() && (stashed.back() == '\n' || stashed.back() == '\r'))
-            stashed.pop_back();
+        // The stash just made, in process.
+        if (const auto made = repository.resolve("refs/stash")) stashed = made->hex();
     }
 
     if (auto moved = move_refs(r, e); !moved)

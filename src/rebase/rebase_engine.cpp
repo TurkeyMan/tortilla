@@ -1,5 +1,8 @@
 #include "rebase_engine.h"
 
+#include "git/remotes.h"
+#include "git/repo.h"
+#include "git/tree_list.h"
 #include "i18n.h"
 
 #include <rapport/sys.h>
@@ -57,13 +60,17 @@ std::vector<std::string> untracked_in_the_way(const std::string& workdir, const 
     const git_result untracked = run_git(
         workdir, {"ls-files", "--others", "--exclude-standard", "-z"}, git_output::stdout_only);
     if (!untracked.ok() || untracked.output.empty()) return {};
-    const git_result tree =
-        run_git(workdir, {"ls-tree", "-r", "-z", "--name-only", "--full-tree", onto.hex()},
-                git_output::stdout_only);
+    // onto's files and core.ignorecase in process; git's ls-tree when
+    // libgit2 can't read the tree.
+    git_result tree{.exit_code = 0};
+    auto r = repo::open(workdir);
+    if (const auto files = r ? tree_files(*r, onto) : std::nullopt)
+        for (const std::string& f : *files) tree.output += f + '\0';
+    else
+        tree = run_git(workdir, {"ls-tree", "-r", "-z", "--name-only", "--full-tree", onto.hex()},
+                       git_output::stdout_only);
     if (!tree.ok()) return {};
-    const bool fold =
-        run_git(workdir, {"config", "--bool", "core.ignorecase"}, git_output::stdout_only)
-            .output.starts_with("true");
+    const bool fold = config_bool(workdir, "core.ignorecase").value_or(false);
     auto key = [fold](std::string_view p)
     {
         std::string k(p);

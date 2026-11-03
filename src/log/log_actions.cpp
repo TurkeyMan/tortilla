@@ -847,6 +847,12 @@ menu log_window::context_menu(std::optional<size_t> clicked)
         if (const commit* c = log_.commit(sel.front()))
             m.push_back(item(_("Show branches this commit is _on"),
                              [this, c] { show_branches_containing(*c); }));
+    // Without git: what reads in process stays; the rest is greyed.
+    grey_without_git(m, {_("Show changes as _unified diff"), _("_Unified diff with"),
+                         _("Show log..."), _("Show log of {0}"), _("_Browse repository"),
+                         _("Stash List"), _("Copy to clipboard"), _("Search _log messages..."),
+                         _("Show branches this commit is _on"), _("Open _worktree “{0}”"),
+                         _("U_npin"), _("_Pin: always show"), _("_Hide branch")});
     return m;
 }
 
@@ -897,12 +903,12 @@ void log_window::copy_to_clipboard(const std::vector<size_t>& rows, int format)
 
 void log_window::show_branches_containing(const commit& c)
 {
-    git_result r = run_git(repo_.workdir(), {"branch", "-a", "--contains", c.id.hex()},
-                           git_output::stdout_only);
-    ui_.message(window_.get(), {.icon = rap::message_spec::icon::info,
-                                .title = _("Branches"),
-                                .text = rap::i18n::format(_("Branches containing {0}:"), c.id.hex(8)),
-                                .detail = r.output});
+    // In process (the message waits for it), as git branch -a --contains.
+    ui_.message(window_.get(),
+                {.icon = rap::message_spec::icon::info,
+                 .title = _("Branches"),
+                 .text = rap::i18n::format(_("Branches containing {0}:"), c.id.hex(8)),
+                 .detail = repo_.branches_containing(c.id)});
 }
 
 // TortoiseGit's Create Branch dialog, reduced to the common options.
@@ -994,16 +1000,19 @@ void log_window::move_ref(const ref& ref, const commit& target)
         detail = rap::i18n::format(_("A fast-forward: {0} gains commits and loses none."), ref.name);
     else
     {
-        git_result lost = run_git(repo_.workdir(), {"rev-list", "--count", to + ".." + from->hex()},
-                                  git_output::stdout_only);
-        git_result some = run_git(
-            repo_.workdir(), {"log", "--format=%h %s", "--max-count=6", to + ".." + from->hex()},
-            git_output::stdout_only);
+        // What it loses, in process: rev-list --count and log --max-count=6
+        // of to..from.
+        const auto dest = repo_.resolve(to);
+        const std::vector<oid> lost = dest ? repo_.rev_list({*from}, {*dest}) : std::vector<oid>{};
+        std::string some;
+        for (size_t i = 0; i < lost.size() && i < 6; ++i)
+        {
+            const auto c = repo_.lookup(lost[i]);
+            some += repo_.short_id(lost[i]) + " " + (c ? c->summary : std::string()) + "\n";
+        }
         detail = rap::i18n::format(_("{0} will no longer contain {1} commit(s):\n{2}"
-                                "(They stay reachable from the reflog for a while.)"),
-                              ref.name,
-                              lost.ok() ? lost.output.substr(0, lost.output.find('\n')) : _("some"),
-                              some.output);
+                                     "(They stay reachable from the reflog for a while.)"),
+                                   ref.name, dest ? std::to_string(lost.size()) : _("some"), some);
     }
 
     arg_list args;
@@ -1012,9 +1021,8 @@ void log_window::move_ref(const ref& ref, const commit& target)
     else if (ref.annotated)
     {
         // Keeping it annotated: same message on the new commit.
-        git_result msg = run_git(repo_.workdir(), {"tag", "-l", "--format=%(contents)", ref.name},
-                                 git_output::stdout_only);
-        args = {"tag", "--force", "-a", ref.name, to, "-m", msg.ok() ? msg.output : ref.name};
+        const auto msg = repo_.tag_message(ref.name);
+        args = {"tag", "--force", "-a", ref.name, to, "-m", msg ? *msg : ref.name};
     }
     else
         args = {"tag", "--force", ref.name, to};
@@ -1208,21 +1216,12 @@ void log_window::offer_stash_pop()
 {
     auto head = repo_.resolve("HEAD");
     if (!head) return;
-    git_result list = run_git(repo_.workdir(), {"stash", "list", "--format=%gd%x09%P%x09%gs"},
-                              git_output::stdout_only);
-    if (!list.ok()) return;
-    for (size_t at = 0; at < list.output.size();)
+    // The stash list in process, newest first.
+    for (const repo::stash_entry& s : repo_.stashes())
     {
-        size_t nl = list.output.find('\n', at);
-        if (nl == std::string::npos) nl = list.output.size();
-        const std::string line = list.output.substr(at, nl - at);
-        at = nl + 1;
-        const size_t t1 = line.find('\t'),
-                     t2 = t1 == std::string::npos ? t1 : line.find('\t', t1 + 1);
-        if (t2 == std::string::npos) continue;
-        const std::string ref = line.substr(0, t1), parent = line.substr(t1 + 1, 40);
-        if (parent != head->hex()) continue;
-        const std::string subject = line.substr(t2 + 1);
+        if (s.base != head) continue;
+        const std::string& ref = s.selector;
+        const std::string& subject = s.subject;
         // On the commit it was made on, with nothing else changed, a stash
         // applies cleanly by construction. Only changes already here (ones
         // brought along by the switch) can stand in its way.

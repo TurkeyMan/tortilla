@@ -24,12 +24,6 @@ namespace
 
 namespace fs = std::filesystem;
 
-
-bool ref_exists(const std::string& workdir, const std::string& ref)
-{
-    return run_git(workdir, {"show-ref", "--verify", "--quiet", ref}, git_output::stdout_only).ok();
-}
-
 }  // namespace
 
 std::expected<std::unique_ptr<create_ref_dialog>, std::string>
@@ -56,9 +50,11 @@ void create_ref_dialog::build(const std::string& base, const std::string& name, 
 {
     using namespace rap::layout;
     using namespace rap::literals;
+    const auto opened = repo::open(workdir_);
     const bool bare =
-        run_git(workdir_, {"rev-parse", "--is-bare-repository"}, git_output::stdout_only)
-            .output.starts_with("true");
+        opened ? opened->bare()
+               : run_git(workdir_, {"rev-parse", "--is-bare-repository"}, git_output::stdout_only)
+                     .output.starts_with("true");
     const bool can_sign = !config_value(workdir_, "user.signingkey").empty();
     window_ = create_window(
         ui_,
@@ -148,11 +144,8 @@ void create_ref_dialog::ok()
     if (tag_ && sign_->checked() && message.empty())
         return refuse(_("You must enter a log message for the commit"));
     // [spec 8.2.3]
-    const bool valid =
-        !name.empty() && name.find_first_of("\"|<>") == std::string::npos &&
-        run_git(workdir_, {"check-ref-format", tag_ ? "refs/tags/" + name : "refs/heads/" + name},
-                git_output::stdout_only)
-            .ok();
+    const bool valid = !name.empty() && name.find_first_of("\"|<>") == std::string::npos &&
+                       valid_ref_name(tag_ ? "refs/tags/" + name : "refs/heads/" + name);
     if (!valid) return refuse(_("Branch/Tag name must not be empty or is invalid."));
     if (!force_->checked() && ref_exists(workdir_, (tag_ ? "refs/tags/" : "refs/heads/") + name))
     {

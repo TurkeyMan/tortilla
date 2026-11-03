@@ -2,6 +2,7 @@
 
 #include "git/command.h"
 #include "git/remotes.h"
+#include "git/repo.h"
 #include "i18n.h"
 #include "settings.h"
 #include "ui/progress_dialog.h"
@@ -248,12 +249,35 @@ void pull_request_dialog::fill_into()
     {
         const std::string remote = remotes_[i].name;
         const std::string prefix = remote + "/";  // always: two forks can share a branch name
-        const auto listed = run_git(
-            workdir_,
-            {"for-each-ref", "--format=%(refname:lstrip=3)", "refs/remotes/" + remote + "/"},
-            git_output::stdout_only);
+        // The remote's branches and its HEAD in process (the dialog waits);
+        // git when libgit2 can't read them.
+        auto local = repo::open(workdir_);
+        const auto refs =
+            local ? local->refs_under({"refs/remotes/" + remote + "/"}) : std::nullopt;
+        std::string text, head;
+        if (refs)
+            for (const repo::listed_ref& l : *refs)
+            {
+                // %(refname:lstrip=3): without refs/remotes/<first part>/.
+                std::string_view name = l.full_name;
+                for (int n = 0; n < 3 && !name.empty(); ++n)
+                {
+                    const size_t slash = name.find('/');
+                    name = slash == std::string_view::npos ? std::string_view()
+                                                           : name.substr(slash + 1);
+                }
+                text += std::string(name) + '\n';
+                if (l.full_name == "refs/remotes/" + remote + "/HEAD")
+                    head = local->short_ref_name(l.symref);
+            }
+        else
+            text = run_git(workdir_,
+                           {"for-each-ref", "--format=%(refname:lstrip=3)",
+                            "refs/remotes/" + remote + "/"},
+                           git_output::stdout_only)
+                       .output;
         std::vector<std::string> branches;
-        for (std::string_view rest = listed.output; !rest.empty();)
+        for (std::string_view rest = text; !rest.empty();)
         {
             const size_t nl = rest.find('\n');
             const std::string_view line = rest.substr(0, nl);
@@ -262,10 +286,12 @@ void pull_request_dialog::fill_into()
         }
         if (i == preferred_)
         {
-            chosen = trimmed(
-                run_git(workdir_, {"symbolic-ref", "--short", "refs/remotes/" + remote + "/HEAD"},
-                        git_output::stdout_only)
-                    .output);
+            chosen = refs ? head
+                          : trimmed(run_git(workdir_,
+                                            {"symbolic-ref", "--short",
+                                             "refs/remotes/" + remote + "/HEAD"},
+                                            git_output::stdout_only)
+                                        .output);
             if (chosen.starts_with(remote + "/")) chosen = chosen.substr(remote.size() + 1);
             for (const char* usual : {"main", "master"})
                 if (chosen.empty() && std::ranges::find(branches, usual) != branches.end())
@@ -296,9 +322,23 @@ void pull_request_dialog::base_changed()
     const bool fetched = !base.empty() && !resolve(workdir_, base_ref).empty();
     if (fetched)
     {
-        const auto log = run_git(workdir_, {"log", "--format=%s%x1f%b%x1e", base_ref + ".." + tip_},
-                                 git_output::stdout_only);
-        for (std::string_view rest = log.output; !rest.empty();)
+        // In process, as git log --format=%s%x1f%b%x1e base..tip gives
+        // them; git when libgit2 can't.
+        std::string text;
+        auto local = repo::open(workdir_);
+        const auto from = local ? local->resolve(base_ref) : std::nullopt;
+        const auto to = local ? local->resolve(tip_) : std::nullopt;
+        if (from && to)
+        {
+            for (const oid& id : local->rev_list({*to}, {*from}))
+                if (const auto c = local->lookup(id))
+                    text += c->summary + '\x1f' + commit_body(c->message) + '\x1e';
+        }
+        else
+            text = run_git(workdir_, {"log", "--format=%s%x1f%b%x1e", base_ref + ".." + tip_},
+                           git_output::stdout_only)
+                       .output;
+        for (std::string_view rest = text; !rest.empty();)
         {
             const size_t end = rest.find('\x1e');
             std::string_view one = rest.substr(0, end);

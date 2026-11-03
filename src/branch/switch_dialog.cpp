@@ -146,14 +146,9 @@ void switch_dialog::ok()
     if (make)
     {
         // [spec 8.3.3]
-        if (name.empty() ||
-            !run_git(workdir_, {"check-ref-format", "--branch", name}, git_output::stdout_only)
-                 .ok())
+        if (name.empty() || !valid_branch_name(name))
             return refuse(_("Branch/Tag name must not be empty or is invalid."));
-        if (!override_->checked() &&
-            run_git(workdir_, {"show-ref", "--verify", "--quiet", "refs/heads/" + name},
-                    git_output::stdout_only)
-                .ok())
+        if (!override_->checked() && ref_exists(workdir_, "refs/heads/" + name))
             return refuse(_("A branch with this name already exists. Use a different name or use the "
                             "\"Override branch\" "
                             "option."));
