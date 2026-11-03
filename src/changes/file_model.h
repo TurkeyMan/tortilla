@@ -221,26 +221,33 @@ public:
         return {};
     }
 
-    // TortoiseGit's status colours [spec 1.11.2, GitStatusListCtrl], as
-    // the desktop's roles nearest them, so they read on dark themes too:
-    // red for conflicts and deletions (error), blue for changes (link),
-    // added and copied files the desktop's success colour (TortoiseGit's
-    // purple has no role).
+    // TortoiseGit's status colours [spec 1.11.2, GitStatusListCtrl]: its
+    // own on a light list, the same hues lightened on a dark one (at least
+    // 4.5:1 on #2d2d2d). Fixed, not the theme's roles: Windows' link colour
+    // is the accent, so a red accent made modified files look deleted.
+    // Deleted is a dark red (on a dark list, a dusty one), conflicted a
+    // bright one.
+    static constexpr rap::scheme_color modified_colour{{0, 50, 160}, {0x5c, 0x9a, 0xff}};
+    static constexpr rap::scheme_color added_colour{{100, 0, 100}, {0xe0, 0x8a, 0xe0}};
+    static constexpr rap::scheme_color deleted_colour{{100, 0, 0}, {0xc8, 0x86, 0x86}};
+    static constexpr rap::scheme_color conflicted_colour{{255, 0, 0}, {0xff, 0x64, 0x64}};
+    static constexpr rap::scheme_color renamed_colour{{0, 0, 255}, {0xbc, 0xbc, 0xff}};
+
     rap::text_style style(size_t row, size_t) const override
     {
         if (row >= files_.size()) return {};
         // Grey comes before the status colours [spec 1.11.2].
         if (grayed_[row]) return {.fg = rap::theme_color::placeholder_text};
-        auto role = [](rap::theme_color c) { return rap::text_style{.fg = c}; };
+        auto ink = [](const rap::scheme_color& c) { return rap::text_style{.fg = c}; };
         switch (files_[row].status)
         {
-        case 'U':
-        case 'D': return role(rap::theme_color::negative);
+        case 'U': return ink(conflicted_colour);
+        case 'D': return ink(deleted_colour);
         case 'M':
-        case 'T':
-        case 'R': return role(rap::theme_color::link);
+        case 'T': return ink(modified_colour);
+        case 'R': return ink(renamed_colour);
         case 'A':
-        case 'C': return role(rap::theme_color::positive);
+        case 'C': return ink(added_colour);
         }
         return {};
     }
