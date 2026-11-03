@@ -2660,6 +2660,26 @@ int main(int argc, char** argv)
         if (!ran) std::printf("     git exited %d:\n%s\n", r.exit_code, r.output.c_str());
     }
 
+    // Comparing images: the detected tools that compare images too, with
+    // their own command lines, in the order found.
+    {
+        const std::vector<tortilla::detected_tool> found{
+            {"Meld", "meld %base %mine", true},
+            {"Beyond Compare", "bcomp %base %mine -title1=%bname -title2=%yname", true},
+            {"KDiff3", "kdiff3 %base %mine", true},
+            {"P4Merge", "p4merge %base %mine", false},
+            {"WinMerge", "WinMergeU /e /u %base %mine", true},
+        };
+        const auto images = tortilla::image_tools(found);
+        check(images.size() == 3 && images[0].name == "Beyond Compare" &&
+                  images[0].command == found[1].command && images[1].name == "P4Merge" &&
+                  images[1].command == "p4merge %base %mine" && images[2].name == "WinMerge" &&
+                  !images[0].folders,
+              "image tools: P4Merge, Beyond Compare and WinMerge from the diff tools found");
+        check(tortilla::image_tools({{"Meld", "meld %base %mine", true}}).empty(),
+              "image tools: none without an image-capable tool");
+    }
+
     // core.editor as words, for View revision in alternative editor.
     {
         using words = std::vector<std::string>;
