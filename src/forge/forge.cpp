@@ -345,7 +345,21 @@ std::optional<forge_token> load_token(const forge_account& a, std::string* why)
 {
     if (a.via_gh)
     {
-        auto token = gh_token(a.host);
+        // Asked of gh once a session per host: starting it costs a process
+        // on every log that opens (Settings' sign-in still asks afresh).
+        static std::mutex mutex;
+        static std::map<std::string, std::string, std::less<>> asked;
+        std::expected<std::string, std::string> token;
+        {
+            std::lock_guard lock(mutex);
+            if (auto it = asked.find(a.host); it != asked.end()) token = it->second;
+        }
+        if (!token || token->empty())
+        {
+            token = gh_token(a.host);
+            std::lock_guard lock(mutex);
+            if (token) asked[a.host] = *token;
+        }
         if (why) *why = token ? std::string() : token.error();
         if (!token) return std::nullopt;
         forge_detail::bind_token(*token, a.host);
