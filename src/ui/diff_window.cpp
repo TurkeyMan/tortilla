@@ -1,6 +1,8 @@
 #include "diff_window.h"
 
 #include "git/command.h"
+#include "git/git_install.h"
+#include "git/patch_text.h"
 #include "i18n.h"
 #include "settings.h"
 #include "ui/repo_icon.h"
@@ -191,6 +193,14 @@ public:
             window_->show();
             return;
         }
+        // Without git, libgit2's patch.
+        if (!git_installed())
+            if (auto text = patch_in_process(dir, git_args))
+            {
+                set(title_, std::move(*text), true);
+                window_->show();
+                return;
+            }
         // The window comes up at once and git fills it in: a big commit's
         // diff can take a while. The process dies with the window.
         text_->set_text(_("Loading…"), {});

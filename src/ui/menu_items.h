@@ -2,6 +2,7 @@
 // only between groups that produced items [spec 1.11].
 #pragma once
 
+#include "git/git_install.h"
 #include "i18n.h"
 #include "shell/menu_icons.h"
 
@@ -14,6 +15,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <vector>
 
 namespace tortilla
 {
@@ -61,6 +63,31 @@ inline rap::menu_item open_with_item(std::function<void()> action, bool enabled 
 {
     return item(available ? _("Open with...") : _("Open with... (no desktop portal)"),
                 std::move(action), enabled && available);
+}
+
+// Without git, the items that need it greyed with the reason, as other
+// greyed items give theirs; those `reads` names (labels, or formats up to
+// their first "{") run in process and stay, their submenus too.
+inline void grey_without_git(rap::menu& m, const std::vector<std::string>& reads)
+{
+    if (git_installed()) return;
+    auto kept = [&](const std::string& label)
+    {
+        return std::ranges::any_of(reads, [&](const std::string& r)
+                                   { return label.starts_with(r.substr(0, r.find('{'))); });
+    };
+    const std::string why = " (" + git_missing_reason() + ")";
+    for (rap::menu_item& i : m)
+    {
+        if (i.is_separator() || kept(i.label)) continue;
+        if (!i.children.empty())
+            grey_without_git(i.children, reads);
+        else if (i.enabled)
+        {
+            i.enabled = false;
+            i.label += why;
+        }
+    }
 }
 
 inline void separator(rap::menu& m)

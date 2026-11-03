@@ -23,11 +23,9 @@ working_tree_changes load_working_tree(const std::string& workdir, const working
                                        git_canceller* canceller)
 {
     working_tree_changes out;
+    // git's while it's installed; libgit2's without it.
     auto git = [&](const std::vector<std::string>& args)
-    {
-        return canceller ? run_git(workdir, args, git_output::stdout_only, *canceller)
-                         : run_git(workdir, args, git_output::stdout_only);
-    };
+    { return run_status(workdir, args, canceller); };
     // Staged changes elsewhere need the whole repository asked; the rest is
     // filtered to the paths here.
     const bool everywhere = o.paths.empty() || o.all_staged;

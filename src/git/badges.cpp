@@ -2,6 +2,7 @@
 
 #include "git/command.h"
 #include "git/porcelain.h"
+#include "git/status.h"
 
 #include <algorithm>
 
@@ -118,17 +119,16 @@ namespace
 // some cost: the menu wants to know a folder has none.
 git_result quiet_status(const std::string& workdir, bool untracked = false)
 {
-    return run_git(workdir,
-                   {"--no-optional-locks", "status", "--porcelain", "-z",
-                    untracked ? "--untracked-files=normal" : "--untracked-files=no"},
-                   git_output::stdout_only);
+    // (libgit2's without git.)
+    return run_status(workdir, {"--no-optional-locks", "status", "--porcelain", "-z",
+                                untracked ? "--untracked-files=normal" : "--untracked-files=no"});
 }
 
 }  // namespace
 
 std::expected<repo_badges, std::string> load_badges(const std::string& workdir)
 {
-    const git_result tracked = run_git(workdir, {"ls-files", "-z"}, git_output::stdout_only);
+    const git_result tracked = run_status(workdir, {"ls-files", "-z"});
     if (!tracked.ok()) return std::unexpected(tracked.output);
     const git_result status = quiet_status(workdir, true);
     if (!status.ok()) return std::unexpected(status.output);

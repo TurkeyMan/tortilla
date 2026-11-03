@@ -1,5 +1,6 @@
 #include "log_model.h"
 
+#include "git/git_install.h"
 #include "git/status.h"
 #include "i18n.h"
 #include "log/ref_labels.h"
@@ -124,6 +125,30 @@ void log_model::start_status()
         for (const std::string& p : walk_paths_) args.push_back(":(top)" + p);
         return args;
     };
+    if (!git_installed())
+    {
+        // Without git, libgit2's status on a worker (slower: no fsmonitor
+        // or untracked cache), delivered as git's two would be.
+        auto generation = generation_;
+        const unsigned gen = *generation_;
+        std::thread(
+            [&ui = ui_, dir, status = limited(k_status_args), numstat = limited(k_numstat_args),
+             out, finished, generation, gen]
+            {
+                auto s = status_in_process(dir, status), n = status_in_process(dir, numstat);
+                ui.post(
+                    [=]
+                    {
+                        if (*generation != gen) return;  // reloaded or gone meanwhile
+                        out->first = s && s->ok() ? s->output : "";
+                        out->second = n && n->ok() ? n->output : "";
+                        finished(0);
+                        finished(0);
+                    });
+            })
+            .detach();
+        return;
+    }
     status_[0] = git_process::start(
         ui_, dir, limited(k_status_args), [out](const std::string& c) { out->first += c; },
         finished, git_output::stdout_only);
