@@ -1,5 +1,7 @@
 #include "tree_list.h"
 
+#include "git/libgit2_oid.h"
+
 #include <git2.h>
 
 #include <cstring>
@@ -9,20 +11,6 @@ namespace tortilla
 {
 namespace
 {
-
-oid to_oid(const git_oid* o)
-{
-    oid out;
-    std::memcpy(out.bytes.data(), o->id, out.bytes.size());
-    return out;
-}
-
-git_oid to_git(const oid& o)
-{
-    git_oid out{};
-    std::memcpy(out.id, o.bytes.data(), o.bytes.size());
-    return out;
-}
 
 using object_ptr = std::unique_ptr<git_object, decltype(&git_object_free)>;
 using tree_ptr = std::unique_ptr<git_tree, decltype(&git_tree_free)>;

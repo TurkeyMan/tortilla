@@ -1,6 +1,8 @@
 #include "repo.h"
 
 #include "command.h"
+#include "libgit2_oid.h"
+#include "worktrees.h"
 
 #include <git2.h>
 #include <rapport/sys.h>
@@ -21,20 +23,6 @@ void init_libgit2()
 {
     static const int once = git_libgit2_init();
     (void)once;
-}
-
-oid to_oid(const git_oid* o)
-{
-    oid out;
-    std::memcpy(out.bytes.data(), o->id, out.bytes.size());
-    return out;
-}
-
-git_oid to_git(const oid& o)
-{
-    git_oid out{};
-    std::memcpy(out.id, o.bytes.data(), o.bytes.size());
-    return out;
 }
 
 template <class t, void (*Free)(t*)>
