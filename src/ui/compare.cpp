@@ -1,13 +1,15 @@
 #include "compare.h"
 
+#include "git/diff_sides.h"
 #include "git/diff_tool.h"
 #include "i18n.h"
+#include "ui/busy_pointer.h"
 #include "ui/diff_window.h"
 
 #include <rapport/sys.h>
 
-#include <git2.h>
-
+#include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <optional>
 
@@ -50,59 +52,6 @@ void start_image_tool(rap::ui& ui, rap::window* parent, const std::string& dir,
     running.push_back(std::move(process));
 }
 
-// The paths that differ between `revisions` (one: against the working
-// tree) under `paths`, through libgit2: these checks run before the tool
-// starts, where starting git costs most (near a second on Windows over
-// \\wsl.localhost). nullopt where git should answer: no paths (a whole
-// tree, where git's index caches are faster) or a revision libgit2 can't
-// resolve.
-std::optional<std::vector<std::string>> changed_paths(const std::string& dir,
-                                                      const std::vector<std::string>& revisions,
-                                                      const std::vector<std::string>& paths)
-{
-    if (paths.empty() || revisions.empty() || revisions.size() > 2) return std::nullopt;
-    static const int init = git_libgit2_init();
-    (void)init;
-    git_repository* raw = nullptr;
-    if (git_repository_open_ext(&raw, dir.c_str(), 0, nullptr) != 0) return std::nullopt;
-    std::unique_ptr<git_repository, decltype(&git_repository_free)> repo(raw, &git_repository_free);
-    std::vector<std::unique_ptr<git_tree, decltype(&git_tree_free)>> trees;
-    for (const std::string& rev : revisions)
-    {
-        // git's empty tree needn't be stored: no tree, to libgit2.
-        if (rev == "4b825dc642cb6eb9a060e54bf8d69288fbee4904")
-        {
-            trees.emplace_back(nullptr, &git_tree_free);
-            continue;
-        }
-        git_object* obj = nullptr;
-        if (git_revparse_single(&obj, repo.get(), rev.c_str()) != 0) return std::nullopt;
-        git_object* tree = nullptr;
-        const int peeled = git_object_peel(&tree, obj, GIT_OBJECT_TREE);
-        git_object_free(obj);
-        if (peeled != 0) return std::nullopt;
-        trees.emplace_back(reinterpret_cast<git_tree*>(tree), &git_tree_free);
-    }
-    std::vector<char*> specs;
-    for (const std::string& p : paths) specs.push_back(const_cast<char*>(p.c_str()));
-    git_diff_options o = GIT_DIFF_OPTIONS_INIT;
-    o.pathspec = {specs.data(), specs.size()};
-    git_diff* diff = nullptr;
-    const int made =
-        trees.size() == 2
-            ? git_diff_tree_to_tree(&diff, repo.get(), trees[0].get(), trees[1].get(), &o)
-            : git_diff_tree_to_workdir_with_index(&diff, repo.get(), trees[0].get(), &o);
-    if (made != 0) return std::nullopt;
-    std::vector<std::string> out;
-    for (size_t i = 0, n = git_diff_num_deltas(diff); i < n; ++i)
-    {
-        const git_diff_delta* d = git_diff_get_delta(diff, i);
-        out.emplace_back(d->new_file.path ? d->new_file.path : d->old_file.path);
-    }
-    git_diff_free(diff);
-    return out;
-}
-
 void offer_diff_settings(rap::ui& ui, rap::window* parent, const std::string& text,
                          std::function<void()> open_settings, std::function<void()> done)
 {
@@ -121,6 +70,60 @@ void offer_diff_settings(rap::ui& ui, rap::window* parent, const std::string& te
                });
 }
 
+// Whether two files hold the same bytes, read here: no git diff --no-index
+// --quiet to start. nullopt if either can't be read.
+std::optional<bool> same_bytes(const std::filesystem::path& a, const std::filesystem::path& b)
+{
+    std::error_code ec;
+    const auto size_a = std::filesystem::file_size(a, ec);
+    if (ec) return std::nullopt;
+    const auto size_b = std::filesystem::file_size(b, ec);
+    if (ec) return std::nullopt;
+    if (size_a != size_b) return false;
+    std::unique_ptr<std::FILE, decltype(&std::fclose)> fa(rap::sys::fopen(a, "rb"), &std::fclose),
+        fb(rap::sys::fopen(b, "rb"), &std::fclose);
+    if (!fa || !fb) return std::nullopt;
+    static char x[65536], y[65536];  // the UI thread's
+    for (;;)
+    {
+        const size_t n = std::fread(x, 1, sizeof x, fa.get());
+        if (std::fread(y, 1, sizeof y, fb.get()) != n || std::memcmp(x, y, n) != 0) return false;
+        if (n < sizeof x) return true;
+    }
+}
+
+// The custom tool started on two files itself, without git difftool and
+// its sh (TortoiseGit's way): null where it needs those after all (a
+// command for sh, a script), and git difftool runs it. `cleanup` goes with
+// the last of the callbacks, once the tool has exited or been stopped.
+std::shared_ptr<git_process> start_direct(rap::ui& ui, rap::window* parent, const std::string& dir,
+                                          const std::string& base, const std::string& mine,
+                                          const std::string& base_name,
+                                          const std::string& mine_name, std::function<void()> done,
+                                          std::shared_ptr<void> cleanup = {})
+{
+    auto words = diff_tool_words(diff_command(), base, mine, base_name, mine_name);
+    if (!words) return nullptr;
+    const std::string program = words->front();
+    words->erase(words->begin());
+    auto output = std::make_shared<std::string>();
+    return git_process::start_program(
+        ui, dir, program, std::move(*words),
+        [output](const std::string& chunk) { *output += chunk; },
+        [&ui, parent, output, done, cleanup](int code)
+        {
+            // Its exit code isn't the comparison's: as git difftool (without
+            // difftool.trustExitCode), only a tool that didn't start failed.
+            if (code != -1) return done();
+            ui.message(parent,
+                       {.icon = rap::message_spec::icon::error,
+                        .title = "Tortilla",
+                        .text = _("The diff tool failed."),
+                        .detail = *output},
+                       [done](rap::dialog_role) { done(); });
+        });
+}
+
 }  // namespace
 
 std::shared_ptr<git_process> compare_files(rap::ui& ui, rap::window* parent,
@@ -129,6 +132,13 @@ std::shared_ptr<git_process> compare_files(rap::ui& ui, rap::window* parent,
                                            std::function<void()> done)
 {
     if (!done) done = [] {};
+    // The busy pointer until the tool is up (or a message or window shows).
+    const auto idle = show_busy_pointer(ui);
+    done = [idle, done]
+    {
+        idle();
+        done();
+    };
     namespace fs = std::filesystem;
     std::error_code ec;
     const fs::path a = fs::absolute(rap::sys::path_from_utf8(base), ec);
@@ -142,8 +152,10 @@ std::shared_ptr<git_process> compare_files(rap::ui& ui, rap::window* parent,
 
     std::vector<std::string> quiet{"diff", "--no-index", "--quiet"};
     quiet.insert(quiet.end(), sides.begin(), sides.end());
-    if (run_git(dir, quiet, git_output::stdout_only).exit_code == 0)
+    const std::optional<bool> same = same_bytes(a, b);
+    if (same ? *same : run_git(dir, quiet, git_output::stdout_only).exit_code == 0)
     {
+        idle();
         ui.message(parent,
                    {.icon = rap::message_spec::icon::info,
                     .title = "Tortilla",
@@ -168,12 +180,14 @@ std::shared_ptr<git_process> compare_files(rap::ui& ui, rap::window* parent,
     {
         std::vector<std::string> diff{"diff", "--no-index"};
         diff.insert(diff.end(), sides.begin(), sides.end());
+        idle();
         show_unified_diff(ui, na + " : " + nb, dir, diff, done);
         return nullptr;
     }
     case diff_mode::git:
         if (git_diff_tool(dir).empty())
         {
+            idle();
             offer_diff_settings(ui, parent, _("git has no diff tool configured (diff.tool)."),
                                 open_settings, done);
             return nullptr;
@@ -184,9 +198,14 @@ std::shared_ptr<git_process> compare_files(rap::ui& ui, rap::window* parent,
     case diff_mode::custom:
         if (diff_command().empty())
         {
+            idle();
             offer_diff_settings(ui, parent, _("No diff program is set."), open_settings, done);
             return nullptr;
         }
+        if (auto tool =
+                start_direct(ui, parent, dir, rap::sys::path_to_utf8(fs::path(a).make_preferred()),
+                             rap::sys::path_to_utf8(fs::path(b).make_preferred()), na, nb, done))
+            return tool;
         args = custom_difftool_args(diff_command(), {"--no-index"}, na, nb, {pa, pb}, false);
         break;
     }
@@ -212,16 +231,26 @@ compare_revisions(rap::ui& ui, rap::window* parent, const std::string& dir,
                   std::function<void()> open_settings, std::function<void()> done)
 {
     if (!done) done = [] {};
+    // The busy pointer until the tool is up (or a message or window shows).
+    const auto idle = show_busy_pointer(ui);
+    done = [idle, done]
+    {
+        idle();
+        done();
+    };
     auto name = [](const std::string& rev)
     {
         // Full hashes as TortoiseGit shows them: 8 characters.
         const bool hex = rev.size() >= 40 && rev.find_first_not_of("0123456789abcdef") >= 40;
         return hex ? rev.substr(0, 8) + rev.substr(40) : rev;
     };
+    const std::string base_rev = name(revisions.front());
+    const std::string mine_rev =
+        revisions.size() > 1 ? name(revisions[1]) : std::string(_("working tree"));
     // One file: its name too, as TortoiseGit titles a file comparison.
     const std::string file = paths.size() == 1 ? paths.front() + " : " : "";
-    const std::string base = file + name(revisions.front());
-    const std::string mine = file + (revisions.size() > 1 ? name(revisions[1]) : std::string(_("working tree")));
+    const std::string base = file + base_rev;
+    const std::string mine = file + mine_rev;
     // Renames are only found with both paths given (rename detection is
     // on by default in git diff).
     std::vector<std::string> limit;
@@ -230,13 +259,17 @@ compare_revisions(rap::ui& ui, rap::window* parent, const std::string& dir,
         limit.push_back("--");
         limit.insert(limit.end(), paths.begin(), paths.end());
     }
-    auto offer_settings = [&ui, parent, open_settings, &done](const std::string& text)
-    { offer_diff_settings(ui, parent, text, open_settings, done); };
+    auto offer_settings = [&ui, parent, open_settings, &done, &idle](const std::string& text)
+    {
+        idle();
+        offer_diff_settings(ui, parent, text, open_settings, done);
+    };
 
     // Nothing to compare: say so. A diff tool given identical sides (git
     // difftool starts none at all) would otherwise just end, so it looked
     // like nothing happened [TortoiseGit says "no differences" too].
-    const auto changed = changed_paths(dir, revisions, paths);
+    // libgit2 answers where it can (no git to start), its renames paired.
+    std::optional<std::vector<file_diff>> changed = diff_files(dir, revisions, paths);
     {
         std::vector<std::string> quiet{"diff", "--quiet"};
         quiet.insert(quiet.end(), revisions.begin(), revisions.end());
@@ -244,6 +277,7 @@ compare_revisions(rap::ui& ui, rap::window* parent, const std::string& dir,
         if (changed ? changed->empty()
                     : run_git(dir, quiet, git_output::stdout_only).exit_code == 0)
         {
+            idle();
             ui.message(parent,
                        {.icon = rap::message_spec::icon::info,
                         .title = "Tortilla",
@@ -262,7 +296,7 @@ compare_revisions(rap::ui& ui, rap::window* parent, const std::string& dir,
     {
         std::vector<std::string> listed;
         if (changed)
-            listed = *changed;
+            for (const file_diff& f : *changed) listed.push_back(f.path);
         else
         {
             std::vector<std::string> names{"diff", "--name-only", "-z"};
@@ -297,9 +331,21 @@ compare_revisions(rap::ui& ui, rap::window* parent, const std::string& dir,
                 start_image_tool(ui, parent, dir, custom_difftool_args(image_tool, revisions, b, m, {image}, false),
                                  done);
             }
-            // Only images: that's all. Otherwise the rest, by name.
+            // Only images: that's all. Otherwise the rest, by name (a
+            // rename's old one too, so git pairs them).
             if (others.empty()) return nullptr;
-            paths = others;
+            paths.clear();
+            if (changed)
+            {
+                std::erase_if(*changed, [](const file_diff& f) { return is_image_path(f.path); });
+                for (const file_diff& f : *changed)
+                {
+                    paths.push_back(f.path);
+                    if (f.old_path != f.path) paths.push_back(f.old_path);
+                }
+            }
+            else
+                paths = others;
             limit = {"--"};
             limit.insert(limit.end(), paths.begin(), paths.end());
         }
@@ -313,6 +359,7 @@ compare_revisions(rap::ui& ui, rap::window* parent, const std::string& dir,
         std::vector<std::string> diff{"diff"};
         diff.insert(diff.end(), revisions.begin(), revisions.end());
         diff.insert(diff.end(), limit.begin(), limit.end());
+        idle();
         show_unified_diff(ui, base + ".." + mine, dir, diff, done);
         return nullptr;
     }
@@ -338,6 +385,28 @@ compare_revisions(rap::ui& ui, rap::window* parent, const std::string& dir,
         {
             offer_settings(_("No diff program is set."));
             return nullptr;
+        }
+        // One file (a rename's two names are one): its sides written here
+        // and the tool started with them, as TortoiseGit does, where git
+        // difftool takes git, git diff and sh before the tool starts.
+        if (changed && changed->size() == 1 && changed->front().regular &&
+            diff_tool_words(diff_command(), "", "", "", ""))
+        {
+            const file_diff& f = changed->front();
+            if (auto sides = write_diff_sides(dir, revisions, f))
+            {
+                auto written = std::shared_ptr<diff_sides>(new diff_sides(std::move(*sides)),
+                                                           [](diff_sides* s)
+                                                           {
+                                                               remove_diff_sides(*s);
+                                                               delete s;
+                                                           });
+                if (auto tool = start_direct(ui, parent, dir, written->base, written->mine,
+                                             f.old_path + " : " + base_rev,
+                                             f.path + " : " + mine_rev, done, written))
+                    return tool;
+            }
+            // Otherwise git difftool, which says what went wrong.
         }
         args = custom_difftool_args(diff_command(), revisions, base, mine, paths, diff_folders());
         break;

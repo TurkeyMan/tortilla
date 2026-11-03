@@ -16,6 +16,7 @@
 #include "i18n.h"
 #include "log/log_window.h"
 #include "settings.h"
+#include "ui/busy_pointer.h"
 #include "ui/compare.h"
 #include "ui/diff_window.h"
 #include "ui/menu_items.h"
@@ -665,6 +666,8 @@ void changes_view::activated(size_t row)
 // with].
 void changes_view::open_file(const file_change& f, bool choose)
 {
+    // The busy pointer while its program comes up (Open with asks first).
+    const std::function<void()> idle = choose ? [] {} : show_busy_pointer(host_.ui);
     std::filesystem::path path =
         rap::sys::path_from_utf8(host_.workdir) / rap::sys::path_from_utf8(f.path);
     if (source_.what == changes_source::revision)
@@ -673,6 +676,7 @@ void changes_view::open_file(const file_change& f, bool choose)
         path = revision_temp_path(source_.hash, f.path);
         if (!r.ok() || path.empty() || !write_temp_file(path, r.output))
         {
+            idle();
             host_.ui.message(host_.window(), {.icon = rap::message_spec::icon::error,
                                               .title = _("Open"),
                                               .text = rap::i18n::format(_("Could not get {0} at {1}."),
@@ -682,10 +686,13 @@ void changes_view::open_file(const file_change& f, bool choose)
         }
     }
     if (!(choose ? rap::sys::open_with(path) : rap::sys::open_path(path)))
+    {
+        idle();
         host_.ui.message(host_.window(),
                          {.icon = rap::message_spec::icon::error,
                           .title = _("Open"),
                           .text = rap::i18n::format(_("Could not open {0}."), rap::sys::path_to_utf8(path))});
+    }
 }
 
 // The file as the list shows it: the working file where the list is the
@@ -746,8 +753,9 @@ void changes_view::compare(const version& base, const version& mine, const std::
 void changes_view::view_in_editor(const file_change& f)
 {
     const std::string title = _("View revision in alternative editor");
+    const auto idle = show_busy_pointer(host_.ui);
     const auto path = file_of(version_of(f), title);
-    if (!path) return;
+    if (!path) return idle();
     std::string editor = config_value(host_.workdir, "core.editor");
 #ifdef _WIN32
     if (editor.empty()) editor = "notepad.exe";
@@ -758,26 +766,32 @@ void changes_view::view_in_editor(const file_change& f)
     if (editor.empty())
     {
         if (!rap::sys::open_path(*path))
+        {
+            idle();
             host_.ui.message(host_.window(),
                              {.icon = rap::message_spec::icon::error,
                               .title = title,
                               .text = rap::i18n::format(_("Could not open {0}."),
                                                         rap::sys::path_to_utf8(*path))});
+        }
         return;
     }
 #endif
     std::vector<std::string> args = command_words(editor);
-    if (args.empty()) return;
+    if (args.empty()) return idle();
     const std::string program = args.front();
     args.erase(args.begin());
     args.push_back(rap::sys::path_to_utf8(*path));
     auto p = rap::sys::process::start(program, args);
     if (!p)
+    {
+        idle();
         return host_.ui.message(
             host_.window(),
             {.icon = rap::message_spec::icon::error,
              .title = title,
              .text = rap::i18n::format(_("Could not start {0}: {1}"), program, p.error())});
+    }
     // Not waited for here: the editor stays open as long as the user likes.
     // A thread drains and reaps it, as dropping the process would kill it.
     std::thread(

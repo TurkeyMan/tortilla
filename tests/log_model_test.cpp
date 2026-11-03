@@ -21,6 +21,7 @@
 #include "git/blame.h"
 #include "git/clean.h"
 #include "git/command.h"
+#include "git/diff_sides.h"
 #include "git/diff_tool.h"
 #include "git/history_edit.h"
 #include "git/ignore_patterns.h"
@@ -52,6 +53,7 @@
 #include "ui/menu_items.h"
 #include "util/entry_path.h"
 #include "util/json.h"
+#include "util/programs.h"
 #include "util/repo_path.h"
 #include "util/search_query.h"
 #include "util/sha256.h"
@@ -141,6 +143,180 @@ void make_conflict(const std::string& dir, const std::vector<std::string>& files
 std::string read_bytes(const std::string& path)
 {
     return slurp(rap::sys::path_from_utf8(path));
+}
+
+// A diff tool's sides written here, not by git difftool (git/diff_sides.h):
+// the bytes a checkout would write for a modified, renamed, added and
+// deleted file, line endings and filters honoured; the working tree's file
+// itself; the tool's words; and no git started for any of it.
+void diff_sides_tests(rap::ui& ui, const std::string& root)
+{
+    using namespace tortilla;
+    namespace fs = std::filesystem;
+    const std::string dir = root + "/sides";
+    const std::string g = "git -C '" + dir + "' -c user.name=Ada -c user.email=ada@example.com ";
+    // Written as given, whatever the system's core.autocrlf.
+    sh("git init -q -b main '" + dir + "' && git -C '" + dir + "' config core.autocrlf false");
+    const std::string renamed = "d\xc3\xafr/n\xc3\xa4me \xe2\x9c\x93.txt";  // non-ASCII, a space
+    const std::string lines = "one\\ntwo\\nthree\\nfour\\nfive\\nsix\\n";
+    sh("cd '" + dir + "' && printf 'a\\nb\\n' > mod.txt && printf 'bye\\n' > gone.txt && printf '" +
+       lines + "' > 'old name.txt' && printf 'w\\nx\\n' > win.txt && printf 'u\\n' > up.up && " +
+       "printf 'win.txt text eol=crlf\\n*.up filter=upper\\n' > .gitattributes");
+    sh(g + "add -A && " + g + "commit -qm one");
+    sh("cd '" + dir + "' && mkdir -p 'd\xc3\xafr' && git mv 'old name.txt' '" + renamed +
+       "' && printf 'a\\nB\\n' > mod.txt && git rm -q gone.txt && printf 'new\\n' > added.txt && " +
+       "printf 'w\\nX\\n' > win.txt && printf 'u2\\n' > up.up");
+    sh(g + "add -A && " + g + "commit -qm two");
+    const std::string one =
+        run_git(dir, {"rev-parse", "HEAD~1"}, git_output::stdout_only).output.substr(0, 40);
+    const std::string two =
+        run_git(dir, {"rev-parse", "HEAD"}, git_output::stdout_only).output.substr(0, 40);
+    const std::vector<std::string> both{one, two};
+
+    // Everything below without git: PATH leads nowhere while it runs.
+    const std::string path = rap::sys::env("PATH").value_or("");
+    set_env("PATH", root + "/no-git-here");
+    auto bytes = [](const std::string& p) { return read_bytes(p); };
+    auto one_diff = [&](const std::vector<std::string>& revs, const std::vector<std::string>& paths)
+    {
+        auto d = diff_files(dir, revs, paths);
+        return d && d->size() == 1 ? std::optional(d->front()) : std::nullopt;
+    };
+    const std::string empty =
+        rap::sys::path_to_utf8(rap::sys::path_from_utf8(empty_file()).make_preferred());
+
+    const auto mod = one_diff(both, {"mod.txt"});
+    auto sides = mod ? write_diff_sides(dir, both, *mod) : std::unexpected(std::string("no diff"));
+    check(mod && mod->status == 'M' && sides && bytes(sides->base) == "a\nb\n" &&
+              bytes(sides->mine) == "a\nB\n" && sides->written.size() == 2 &&
+              sides->base.ends_with("mod.txt") && sides->base != sides->mine,
+          "diff sides: a modified file's two revisions, byte for byte");
+    if (sides)
+    {
+        remove_diff_sides(*sides);
+        check(!fs::exists(sides->written[0]) && !fs::exists(sides->written[1]),
+              "diff sides: removed once the tool is done");
+    }
+
+    // A rename: one file, its old name and content on the base side.
+    const auto ren = one_diff(both, {renamed, "old name.txt"});
+    sides = ren ? write_diff_sides(dir, both, *ren) : std::unexpected(std::string("no diff"));
+    check(ren && ren->status == 'R' && ren->old_path == "old name.txt" && ren->path == renamed &&
+              sides && sides->base.ends_with("old name.txt") &&
+              sides->mine.ends_with(
+                  rap::sys::path_to_utf8(rap::sys::path_from_utf8(renamed).filename())) &&
+              bytes(sides->base) == "one\ntwo\nthree\nfour\nfive\nsix\n" &&
+              bytes(sides->mine) == bytes(sides->base),
+          "diff sides: a rename is one file, the base under its old name");
+    if (sides) remove_diff_sides(*sides);
+
+    const auto add = one_diff(both, {"added.txt"});
+    sides = add ? write_diff_sides(dir, both, *add) : std::unexpected(std::string("no diff"));
+    check(add && add->status == 'A' && sides && sides->base == empty &&
+              bytes(sides->mine) == "new\n" && sides->written.size() == 1,
+          "diff sides: an added file against the empty file");
+    if (sides) remove_diff_sides(*sides);
+    const auto del = one_diff(both, {"gone.txt"});
+    sides = del ? write_diff_sides(dir, both, *del) : std::unexpected(std::string("no diff"));
+    check(del && del->status == 'D' && sides && bytes(sides->base) == "bye\n" &&
+              sides->mine == empty,
+          "diff sides: a deleted file against the empty file");
+    if (sides) remove_diff_sides(*sides);
+
+    // Line endings as a checkout writes them: eol=crlf, and core.autocrlf.
+    const auto win = one_diff(both, {"win.txt"});
+    sides = win ? write_diff_sides(dir, both, *win) : std::unexpected(std::string("no diff"));
+    check(sides && bytes(sides->base) == "w\r\nx\r\n" && bytes(sides->mine) == "w\r\nX\r\n",
+          "diff sides: eol=crlf honoured");
+    if (sides) remove_diff_sides(*sides);
+    {
+        // Set in the config file itself: PATH has no git.
+        std::FILE* f = rap::sys::fopen(rap::sys::path_from_utf8(dir + "/.git/config"), "ab");
+        if (f)
+        {
+            std::fputs("[core]\n\tautocrlf = true\n", f);
+            std::fclose(f);
+        }
+    }
+    sides = mod ? write_diff_sides(dir, both, *mod) : std::unexpected(std::string("no diff"));
+    check(sides && bytes(sides->base) == "a\r\nb\r\n" && bytes(sides->mine) == "a\r\nB\r\n",
+          "diff sides: core.autocrlf true honoured");
+    if (sides) remove_diff_sides(*sides);
+
+    // Against the working tree: that side is the file itself, no copy.
+    const auto clean = diff_files(dir, {two}, {"mod.txt"});
+    check(clean && clean->empty(), "diff sides: no changes, said without git");
+    set_env("PATH", path);
+    sh("cd '" + dir +
+       "' && git config --replace-all core.autocrlf false && printf 'a\\nC\\n' > mod.txt");
+    set_env("PATH", root + "/no-git-here");
+    const auto wt = one_diff({two}, {"mod.txt"});
+    sides = wt ? write_diff_sides(dir, {two}, *wt) : std::unexpected(std::string("no diff"));
+    check(sides && bytes(sides->base) == "a\nB\n" && sides->written.size() == 1 &&
+              rap::sys::path_from_utf8(sides->mine) ==
+                  rap::sys::path_from_utf8(sides->mine).make_preferred() &&
+              fs::equivalent(rap::sys::path_from_utf8(sides->mine),
+                             rap::sys::path_from_utf8(dir) / "mod.txt"),
+          "diff sides: the working tree's side is its file");
+    if (sides) remove_diff_sides(*sides);
+    set_env("PATH", path);
+
+    // A filter driver of git's config (as Git LFS's smudge) goes through
+    // git, which runs it.
+    sh(g + "config filter.upper.smudge 'tr a-z A-Z' && " + g + "config filter.upper.clean cat");
+    const auto up = one_diff(both, {"up.up"});
+    sides = up ? write_diff_sides(dir, both, *up) : std::unexpected(std::string("no diff"));
+    check(sides && bytes(sides->base) == "U\n" && bytes(sides->mine) == "U2\n",
+          "diff sides: a filter driver's smudge applied, as git difftool would");
+    if (sides) remove_diff_sides(*sides);
+
+    // The tool's words: placeholders replaced within words, no quoting
+    // needed for spaces, quotes or non-ASCII; sh's syntax left to git.
+    const std::string program = find_program("git");
+    const std::string a = dir + "/a b/\xc3\xbc.txt", b = dir + "/%mine x.txt";
+    using words = std::vector<std::string>;
+    check(diff_tool_words("git --label=%bname %base %mine -L %yname", a, b, "x : abc12345",
+                          "it's $y") ==
+              words{program, "--label=x : abc12345", a, b, "-L", "it's $y"},
+          "diff tool words: placeholders replaced, values whole");
+    check(diff_tool_words("\"git\" \"/base:%base\" '/mine:%mine' /t1=\"%bname\"", a, b, "n", "m") ==
+              words{program, "/base:" + a, "/mine:" + b, "/t1=n"},
+          "diff tool words: quotes honoured and dropped");
+    check(diff_tool_words("git /x", a, b, "n", "m") == words{program, "/x", a, b},
+          "diff tool words: without placeholders the files go last");
+    check(diff_tool_words("git %mine%base", b, a, "n", "m") == words{program, a + b},
+          "diff tool words: a value holding a placeholder stays as it is");
+    check(!diff_tool_words("git %base | cat", a, b, "", "") &&
+              !diff_tool_words("$HOME/tool %base %mine", a, b, "", "") &&
+              !diff_tool_words("X=1 git %base", a, b, "", "") &&
+              !diff_tool_words("git \"$x\" %base", a, b, "", "") &&
+              !diff_tool_words("no-such-tool-here %base %mine", a, b, "", ""),
+          "diff tool words: sh's syntax or an unknown program left to git difftool");
+
+    // Started directly: the tool gets the paths as they are.
+    fs::create_directories(rap::sys::path_from_utf8(dir + "/a b"));
+    write_file(rap::sys::path_from_utf8(a), "one\n");
+    write_file(rap::sys::path_from_utf8(b), "two\n");
+    const std::string expected =
+        run_git(dir, {"hash-object", "--", a, b}, git_output::stdout_only).output;
+    auto w = diff_tool_words("git hash-object -- %base %mine", a, b, "", "");
+    std::string said;
+    int code = -2;
+    std::shared_ptr<git_process> tool;
+    if (w)
+    {
+        const std::string p = w->front();
+        w->erase(w->begin());
+        tool = git_process::start_program(
+            ui, dir, p, *w, [&](const std::string& s) { said += s; }, [&](int c) { code = c; });
+    }
+    for (int i = 0; i < 400 && code == -2; ++i)
+    {
+        ui.run();
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    check(code == 0 && !expected.empty() && said == expected,
+          "diff tool: started directly with paths beyond ASCII and with spaces and quotes");
 }
 
 // History editing (git/history_edit.h) on throwaway repositories: each
@@ -4545,6 +4721,7 @@ int main(int argc, char** argv)
         check(!called, "refresh: a model gone before its labels came isn't called back");
     }
     history_edit_tests(argv[1]);
+    diff_sides_tests(**ui, argv[1]);
     ref_journal_tests(argv[1]);
 
     std::printf("%s\n", failures ? "FAILED" : "all passed");
