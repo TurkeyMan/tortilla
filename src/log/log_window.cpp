@@ -29,6 +29,7 @@ namespace
 
 // The author's picture, top right of the details, in logical px.
 constexpr int k_avatar_size = 96;
+constexpr float k_avatar_least = 32;  // smaller than this, it isn't drawn
 
 // Held while dragging commits onto another branch, the key that copies
 // them (a cherry-pick) rather than moving them: Ctrl, as Explorer, GNOME
@@ -371,10 +372,17 @@ void log_window::build()
                                                        rap::paint{rap::theme_color::window},
                                                        std::nullopt);
                                                 if (!avatar_) return;
-                                                p.image(*avatar_,
-                                                        {0, 0, float(avatar_->width()),
-                                                         float(avatar_->height())},
-                                                        {0, 0, size.w, size.h});
+                                                // Laid out smaller than asked (a
+                                                // short details pane): whole and
+                                                // in shape at its top right, or
+                                                // not at all once too small to
+                                                // make out.
+                                                const float iw = float(avatar_->width()),
+                                                            ih = float(avatar_->height());
+                                                const rap::rect_f at = rap::fit_inside(
+                                                    {0, 0, size.w, size.h}, iw, ih, 1, 0);
+                                                if (std::min(at.w, at.h) < k_avatar_least) return;
+                                                p.image(*avatar_, {0, 0, iw, ih}, at);
                                             })
                                         .width(rap::extent{k_avatar_size, rap::extent::unit::px})
                                         .height(rap::extent{k_avatar_size, rap::extent::unit::px})

@@ -449,10 +449,12 @@ rap::node forge_panel::layout()
                                    {
                                        background(p, size);
                                        if (!picture_) return;
-                                       p.image(*picture_,
-                                               {0, 0, float(picture_->width()),
-                                                float(picture_->height())},
-                                               {0, 0, size.w, size.h});
+                                       // Whole and in shape if laid out
+                                       // smaller than asked.
+                                       const float iw = float(picture_->width()),
+                                                   ih = float(picture_->height());
+                                       p.image(*picture_, {0, 0, iw, ih},
+                                               rap::fit_inside({0, 0, size.w, size.h}, iw, ih));
                                    })
                                .width(rap::extent{k_picture_size, rap::extent::unit::px})
                                .height(rap::extent{k_picture_size, rap::extent::unit::px})
