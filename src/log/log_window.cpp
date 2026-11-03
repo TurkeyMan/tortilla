@@ -252,6 +252,11 @@ void log_window::build()
                         .bind(ref_button_)
                         .on_menu([this] { return show_menu(); })
                         .width(22_ch),
+                    // What this window did to the refs, undone and redone.
+                    tool_button{undo_icon(false), _("Undo")}.bind(undo_).on_click(
+                        [this] { step_journal(false); }),
+                    tool_button{undo_icon(true), _("Redo")}.bind(redo_).on_click(
+                        [this] { step_journal(true); }),
                     entry{}
                         .bind(search_)
                         .clearable()
@@ -410,19 +415,6 @@ void log_window::build()
                                 return true;
                             }),
                     label{}.selectable().ellipsize().bind(status_).stretch(),
-                    // After a history edit, for a while: put the branch back.
-                    button{_("_Undo")}.bind(undo_).visible(false).on_click(
-                        [this]
-                        {
-                            if (!last_edit_) return;
-                            undo_timer_ = {};
-                            start_history_edit(
-                                _("Undo"),
-                                [e = last_edit_->undo()](
-                                    const repo&) -> std::expected<history_edit, replay_failure>
-                                { return e; },
-                                {}, true);
-                        }),
                 },
                 hbox{
                     vbox{
@@ -509,7 +501,16 @@ void log_window::build()
     window_->on_key(
         [this](const rap::key_event& e)
         {
-            if (!e.press || e.modifiers) return false;
+            if (!e.press) return false;
+            // Undo and Redo in the commit list (text fields keep theirs:
+            // their keys don't come here).
+            if ((e.modifiers & ~rap::mod_shift) == rap::mod_ctrl && commit_list_->has_focus() &&
+                e.key == rap::key::character && (e.codepoint == 'z' || e.codepoint == 'y'))
+            {
+                step_journal(e.codepoint == 'y' || (e.modifiers & rap::mod_shift));
+                return true;
+            }
+            if (e.modifiers) return false;
             // Escape in the filter box clears it, at once.
             if (e.key == rap::key::escape && search_->has_focus() && !search_->text().empty())
             {
@@ -542,6 +543,7 @@ void log_window::build()
     // Today until the loaded range replaces it (not 1970 while loading).
     loaded_from_ = loaded_to_ = local_date(std::time(nullptr));
     update_dates_button();
+    update_undo_buttons();
     update_ref_button();
     forge_splitter_->on_moved([this] { fit_files(); });
     if (auto saved = settings::get().value("log.actionIcons"); !saved.empty())
