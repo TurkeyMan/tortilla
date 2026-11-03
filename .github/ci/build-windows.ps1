@@ -1,7 +1,8 @@
 # Build with MSVC (static runtime, static libgit2 from vcpkg, rapport linked
 # in), run the tests, and package: a zip and an NSIS installer, each holding
-# a self-contained tortilla.exe and the Explorer extension. Leaves them in
-# dist\. Expects VCPKG_ROOT (rapport's vcpkg action sets it).
+# a self-contained tortilla.exe, the Explorer extension and the sparse
+# package for Windows 11's menu. Leaves them in dist\. Expects VCPKG_ROOT
+# (rapport's vcpkg action sets it) and the Windows SDK.
 #   .github/ci/build-windows.ps1 [-Version 0.2.0] [-ConfigureOnly]
 # -ConfigureOnly stops once vcpkg has built the ports, so CI can save its
 # cache before anything else can fail.
@@ -69,6 +70,12 @@ Copy-Item README.md, LICENSE, NOTICES.md $stage
 # Self-contained: nothing but Windows' own DLLs, for the exe and for the
 # extension Explorer loads.
 Run 'the import check' { python rapport/ci/check-imports.py "$stage/bin/tortilla.exe" "$stage/bin/tortilla-shell.dll" }
+# The sparse package Setup adds on Windows 11, for its own Explorer menu;
+# signed with the test certificate, whose public half is left in build-win
+# for trusting by hand.
+Run 'the sparse package' {
+    & .github/ci/sparse-package.ps1 -Version $fileVersion -Out "$stage/tortilla.msix" -Certificate build-win/tortilla-test.cer
+}
 
 Compress-Archive -Path $stage -DestinationPath "dist/tortilla$suffix-windows-x86_64.zip"
 $makensis = Get-Command makensis -ErrorAction SilentlyContinue

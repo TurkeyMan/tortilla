@@ -206,10 +206,13 @@ endif()
 # tortilla [spec 4]. On Windows built beside tortilla, which registers it
 # (tortilla --register-shell); on Linux one extension per file manager, each
 # its own install component (tortilla-shell-nautilus, ...), which packages
-# put in the file manager's extension directory.
+# put in the file manager's extension directory. Windows 11's own menu is
+# the same DLL's WINDOWS_COMMAND_CLSID, named by the sparse package's
+# manifest (data/windows/AppxManifest.xml; .github/ci reads it from here).
 rapport_add_shell_extension(tortilla-shell
     NAME "Tortilla" ID org.tortilla.Tortilla
     WINDOWS_CLSID {D73E7C0C-F88B-4DD5-AC56-9AABAB52E4EB}
+    WINDOWS_COMMAND_CLSID {D1D0D0A5-0C3B-4B89-B9EB-97BE720A9BBA}
     SOURCES src/shell/shell_provider.cpp src/cache/channel.cpp src/cache/badge_changes.cpp)
 target_include_directories(tortilla-shell_provider PRIVATE src)
 if(UNIX AND NOT APPLE)

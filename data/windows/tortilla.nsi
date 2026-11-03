@@ -14,6 +14,14 @@
 ; again as its user, not as Setup): the old extension is deleted while it's
 ; stopped, and the new one, with its badges, loads as it starts. No reboot,
 ; unless Explorer is to be left alone: then the old one goes at the next.
+;
+; On Windows 11, Setup also adds the sparse package (tortilla.msix, its
+; external location the install directory), which puts Tortilla's entry on
+; Explorer's own menu as well as "Show more options". It's added for the
+; user running Setup only, and only if Windows trusts its signature (the
+; test certificate isn't, unless trusted by hand); otherwise it's skipped,
+; and the classic menu is all there is. Windows 10 shows a package's verbs
+; on the classic menu, beside the extension's, so it's not added there.
 
 Unicode true
 !include "MUI2.nsh"
@@ -57,6 +65,10 @@ VIAddVersionKey "LegalCopyright" "Manu Evans, GPL-3.0"
 ; The badges' status cache (tortilla.exe cache): no window and nothing to
 ; lose, so stopped without asking; Explorer's extension starts it again.
 !define PS_TORTILLA_CACHE `powershell.exe -NoProfile -NonInteractive -Command "Get-CimInstance Win32_Process -Filter \"Name='tortilla.exe'\" | Where-Object { $$_.ExecutablePath -eq '$INSTDIR\bin\tortilla.exe' -and $$_.CommandLine -match ' cache$$' } | ForEach-Object { Stop-Process -Id $$_.ProcessId -Force }"`
+; The sparse package, through 64-bit PowerShell: Setup is 32-bit, and the
+; Appx cmdlets don't load under WOW64.
+!define PS64 `"$WINDIR\Sysnative\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -Command`
+!define REMOVE_PACKAGE `${PS64} "Get-AppxPackage -Name TortillaGit.Tortilla | Remove-AppxPackage"`
 
 Var Asked      ; the programs using Tortilla's files were listed, and closing them agreed
 Var Leftover   ; the old extension, moved aside but still loaded, else ""
@@ -169,6 +181,9 @@ Section "Tortilla"
     StrCpy $Restart 1
   ${EndIf}
   !insertmacro CloseTortilla
+  ; The last install's package goes first: it names files about to change.
+  nsExec::Exec `${REMOVE_PACKAGE}`
+  Pop $R1
   ; A reinstall replaces the old tree rather than mixing DLLs of two versions.
   !insertmacro MoveAsideShellExtension
   RMDir /r "$INSTDIR\bin"
@@ -182,6 +197,19 @@ Section "Tortilla"
   ExecWait '"$INSTDIR\bin\tortilla.exe" --register-shell --all-users' $0
   ${If} $0 != 0
     MessageBox MB_ICONEXCLAMATION "Tortilla's Explorer menu couldn't be registered."
+  ${EndIf}
+
+  ; Windows 11's own menu, for this user: said in the details if it's
+  ; skipped (exit 2: not Windows 11; 1: Windows refused it, its signature
+  ; untrusted, say), never asked about.
+  nsExec::ExecToStack `${PS64} "if ([Environment]::OSVersion.Version.Build -lt 22000) { exit 2 }; try { Add-AppxPackage -Path '$INSTDIR\tortilla.msix' -ExternalLocation '$INSTDIR' -ErrorAction Stop } catch { $$_.Exception.Message; exit 1 }"`
+  Pop $R1
+  Pop $R2
+  ${If} $R1 == 1
+    DetailPrint "Windows 11's Explorer menu skipped: $R2"
+  ${ElseIf} $R1 != 0
+  ${AndIf} $R1 != 2
+    DetailPrint "Windows 11's Explorer menu skipped ($R1)"
   ${EndIf}
 
   WriteRegStr HKLM "Software\Tortilla" "InstallDir" "$INSTDIR"
@@ -211,6 +239,8 @@ SectionEnd
 Section "Uninstall"
   SetShellVarContext all
   !insertmacro CloseTortilla
+  nsExec::Exec `${REMOVE_PACKAGE}`
+  Pop $R1
   ExecWait '"$INSTDIR\bin\tortilla.exe" --unregister-shell --all-users'
   ; Explorer has the extension loaded: restarting it lets go, and it's
   ; deleted then; or it goes at the next reboot.
@@ -236,6 +266,7 @@ Section "Uninstall"
   Delete "$INSTDIR\README.md"
   Delete "$INSTDIR\LICENSE"
   Delete "$INSTDIR\NOTICES.md"
+  Delete "$INSTDIR\tortilla.msix"
   Delete "$INSTDIR\uninstall.exe"
   Delete "$INSTDIR\ns*.tmp"
   RMDir /REBOOTOK "$INSTDIR"
