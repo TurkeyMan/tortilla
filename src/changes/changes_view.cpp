@@ -21,6 +21,7 @@
 #include "ui/menu_items.h"
 #include "ui/menu_text.h"
 #include "ui/windows.h"
+#include "util/check_rows.h"
 #include "util/entry_path.h"
 
 #include <rapport/sys.h>
@@ -92,9 +93,8 @@ rap::layout::list changes_view::list(std::string settings_key, bool checkboxes)
         model_.on_toggle = [this](size_t row)
         {
             // A box in the selection sets the whole selection to its new state.
-            std::vector<size_t> rows = selection();
-            if (std::ranges::find(rows, row) == rows.end()) rows = {row};
-            model_.set_checked(rows, !model_.is_checked(row));
+            const auto [rows, on] = box_clicked(selection(), row, model_.is_checked(row));
+            model_.set_checked(rows, on);
             if (host_.checks_changed) host_.checks_changed();
         };
     return rap::layout::list{file_model::columns(), &model_}

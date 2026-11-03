@@ -50,6 +50,7 @@
 #include "settings.h"
 #include "shell.h"
 #include "ui/menu_items.h"
+#include "util/check_rows.h"
 #include "util/entry_path.h"
 #include "util/json.h"
 #include "util/repo_path.h"
@@ -1215,6 +1216,24 @@ int main(int argc, char** argv)
         std::string r = "%base %bname %base";
         tortilla::replace_all(r, "%base", "%base%base");
         check(r == "%base%base %bname %base%base", "replace_all doesn't rescan what it put in");
+    }
+
+    // A checkbox clicked (or Space) in Browse References or the Commit
+    // list: the selection takes the row's new state, from that row alone;
+    // outside the selection, the row alone changes.
+    {
+        const auto in = tortilla::box_clicked({1, 3, 4}, 3, false);
+        check(in.rows == std::vector<size_t>{1, 3, 4} && in.on,
+              "box in the selection: all of it, checked");
+        const auto mixed = tortilla::box_clicked({1, 3, 4}, 4, true);
+        check(mixed.rows == std::vector<size_t>{1, 3, 4} && !mixed.on,
+              "box in a mixed selection: the clicked row's state decides (cleared)");
+        const auto out = tortilla::box_clicked({1, 3}, 2, false);
+        check(out.rows == std::vector<size_t>{2} && out.on,
+              "box outside the selection: that row alone");
+        const auto none = tortilla::box_clicked({}, 0, true);
+        check(none.rows == std::vector<size_t>{0} && !none.on,
+              "box with nothing selected: that row");
     }
 
     // The log's and Browse References' search syntax.
