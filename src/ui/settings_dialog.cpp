@@ -62,6 +62,8 @@ struct state
     rap::drop_down* image_select = nullptr;
     rap::entry* image_command = nullptr;
     std::vector<detected_tool> image_tools;
+    rap::widget* ifritview_help = nullptr;  // what IfritView is, and where to get it
+    rap::widget* ifritview_link = nullptr;
     int image_custom_index() const { return 2 + int(image_tools.size()); }
     // Resolving conflicts: each merge tool found, then Custom.
     rap::drop_down* merge_select = nullptr;
@@ -465,6 +467,11 @@ rap::node diff_viewer_page(std::shared_ptr<state> st)
         if (!s || !s->image_command) return;
         const bool custom = choice == s->image_custom_index();
         s->image_command->set_visible(custom);
+        // IfritView's description, only while it's the one chosen.
+        if (s->ifritview_help) s->ifritview_help->set_visible(choice == int(image_mode::ifritview));
+        if (s->ifritview_link)
+            s->ifritview_link->set_visible(choice == int(image_mode::ifritview) &&
+                                           find_ifritview().empty());
         // Custom starts from the last tool picked, to adjust.
         if (choice >= 2 && !custom)
             s->image_command->set_text(s->image_tools[size_t(choice - 2)].command);
@@ -505,10 +512,13 @@ rap::node diff_viewer_page(std::shared_ptr<state> st)
                   label{_("IfritView: a fast image viewer that compares two images side by side, "
                           "by swipe, or "
                           "as their difference, pixel for pixel.")}
-                      .wrap(),
+                      .wrap()
+                      .handle(st->ifritview_help)
+                      .visible(image_current == int(image_mode::ifritview)),
                   label{_("Get IfritView")}
                       .link([] { rap::sys::open_url("https://github.com/TurkeyMan/ifritview"); })
-                      .visible(!ifritview),
+                      .handle(st->ifritview_link)
+                      .visible(image_current == int(image_mode::ifritview) && !ifritview),
               }},
         group{_("Resolving conflicts"),
               vbox{
