@@ -37,6 +37,45 @@ The **no git** column says what the feature does when git isn't installed:
 installed"), **fallback** (libgit2's answer, git's when it's there), or
 **off** (silently skipped).
 
+## Summary
+
+Of the rows below (a row may stand for a few call sites of one command):
+56 reads moved to libgit2 (37 that a click waits for, 18 on workers, and
+LFS detection); 5 more were libgit2 already (git/remotes.cpp); 10 status
+reads, 2 big walks, 7 worker reads and 2 click reads stay on git (each with
+its reason); 20 writes and 5 network calls stay on git; 5 belong to the
+in-process diff tool work. git's view of a folder's owner (safe.directory)
+and the committer identity check before a rebase stay git's own.
+
+Every in-process read falls back to git when libgit2 can't open the
+repository (an extension it refuses: reftable, sha256) or doesn't know the
+syntax; config reads fall back when a config uses includeIf hasconfig:,
+which libgit2 skips. Opened through `git_repository_open_ext`, as the log
+always has been: GIT_DIR and GIT_WORK_TREE in the environment are not
+followed (git's are, where git still runs).
+
+Counting: `TORTILLA_GIT_TRACE=<file>` writes a line for each git started.
+
+Processes started per click path, before and after (strace -f -e execve,
+offscreen GTK 4 on Linux, a clone of this repository: 341 commits, 64 refs):
+
+| Path | Before | After |
+|---|---|---|
+| Opening the log, to the Working tree row | 13: rev-parse, for-each-ref, git lfs version (and the 4 it starts), status, diff --numstat, for-each-ref --contains, symbolic-ref, rev-parse @{u}, rev-list --count | 2: status, diff --numstat |
+| The log's sync check (no network part) | 4: remote, config, for-each-ref x2 | 0 |
+| The log reloading after a fetch | 7 | 2: status, diff --numstat |
+| Switch/Checkout dialog | 3 for-each-ref | 0 |
+| Browse References | 2: for-each-ref, config | 0 |
+| Commit dialog | 2: status, diff --numstat | 2 (kept); ticking Amend 2 -> 0 |
+| Push, Settings | 0 | 0 |
+| The log's context menu | 0 to open; Branches containing 1, dragging a label 2, moving an annotated tag 1, the stash offer after a switch 1 | 0 to open; 0 each (the stash offer keeps its status) |
+| Explorer's context menu | 0 (badges come from the cache's status, kept on git) | 0 |
+
+The log's status started 2.18 s after launch before and 1.81 s after, on a
+loaded Linux machine; on Windows each process saved is tens of
+milliseconds more. Without git on PATH the log opens with no process
+started at all.
+
 ## Log window (opening, refreshing, the sync check, forge data)
 
 | Call | Where | Class | Decision | No git |
@@ -171,8 +210,8 @@ installed"), **fallback** (libgit2's answer, git's when it's there), or
 | `apply -z --numstat`, `apply --check` | ui/review_patch.cpp:196, 219 | worker | git: git apply's own rules | greyed |
 | `apply` (patch serial) | git/patch_serial.cpp:169 | write | git | greyed |
 | `status`, `config --get svn.*`, `rev-parse`, `merge-base`, svn ignore | ui/svn_dialogs.cpp:65-385 | git svn | git (svn is git's) | off |
-| `cat-file --filters` (repo browser Open / Save) | ui/repo_browser.cpp:551, 578, 602 | net/hooks/filters | other agent (`revision_file`) | works through libgit2 blobs when git is missing |
-| blame history, blame | blame/blame_window.cpp:329, 388 | walk | git: blame and `--follow` are git's | fallback (libgit2 blame) |
+| `cat-file --filters` (repo browser Open / Save) | ui/repo_browser.cpp:551, 578, 602 | net/hooks/filters | other agent (`revision_file`) | not yet: fails until `revision_file` reads blobs in process (fast-difftool) |
+| blame history, blame | blame/blame_window.cpp:329, 388 | walk | git: blame and `--follow` are git's | not yet: the Blame command needs git (libgit2 blame to come) |
 | diff window | ui/diff_window.cpp:198 | worker | git: git's patch text; libgit2 patch when git is missing | fallback |
 
 ## Not git
