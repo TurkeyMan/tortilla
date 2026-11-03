@@ -28,6 +28,7 @@
 #include "git/patch_serial.h"
 #include "git/pathspec_file.h"
 #include "git/porcelain.h"
+#include "git/ref_journal.h"
 #include "git/ref_list.h"
 #include "git/reflog.h"
 #include "git/remotes.h"
@@ -511,6 +512,98 @@ void history_edit_tests(const std::string& root)
               "history: drop with non-ASCII names");
         sh("cd '" + dir + "' && git stash pop -q --index");
     }
+}
+
+// The log's Undo and Redo (git/ref_journal.h): steps undone and redone in
+// order, a new step dropping what was undone, the limit, and a step whose
+// refs moved since refused without touching anything.
+void ref_journal_tests(const std::string& root)
+{
+    using namespace tortilla;
+    const std::string dir = root + "/journal";
+    const std::string g = "git -C '" + dir + "' ";
+    sh("git init -q -b main '" + dir + "' && " + g + "config user.name Tester && " + g +
+       "config user.email t@example.com && " + g + "config core.autocrlf false && " + g +
+       "commit -q --allow-empty -m one && " + g + "commit -q --allow-empty -m two && " + g +
+       "commit -q --allow-empty -m three && " + g + "branch topic HEAD~2 && " + g +
+       "tag -a -m release v1 HEAD~1");
+    auto r = repo::open(dir);
+    check(r.has_value(), "journal: the repository opens");
+    if (!r) return;
+    const oid one = *r->resolve("HEAD~2"), two = *r->resolve("HEAD~1"), three = *r->resolve("HEAD");
+    auto at = [&](const std::string& ref) { return ref_target(*r, ref); };
+    const std::optional<oid> tag_object = at("refs/tags/v1");
+    check(tag_object && *tag_object != two, "journal: a ref's own value, not peeled");
+
+    ref_journal j(3);
+    check(!j.next_undo() && !j.next_redo() && !j.undo_edit(), "journal: empty at first");
+    // A branch moved (as a label dropped on another commit), then deleted.
+    history_edit move{.reflog = "tortilla: move topic",
+                      .moves = {{"refs/heads/topic", one, three}}};
+    check(apply_edit(*r, move).has_value(), "journal: the move applies");
+    j.record("Move topic", move);
+    history_edit drop{.reflog = "tortilla: delete topic",
+                      .moves = {{"refs/heads/topic", three, std::nullopt}}};
+    check(apply_edit(*r, drop).has_value() && !at("refs/heads/topic"),
+          "journal: the delete applies");
+    j.record("Delete topic", drop);
+    check(j.next_undo() && j.next_undo()->label == "Delete topic" && j.undo_count() == 2,
+          "journal: the newest step is undone first");
+
+    // Undo both, newest first.
+    auto u = j.undo_edit();
+    check(u && !why_stale(*r, *u) && apply_edit(*r, *u) && at("refs/heads/topic") == three,
+          "journal: undoing a delete makes the branch again");
+    j.undone();
+    u = j.undo_edit();
+    check(u && apply_edit(*r, *u) && at("refs/heads/topic") == one, "journal: and the move");
+    j.undone();
+    check(!j.next_undo() && j.next_redo() && j.next_redo()->label == "Move topic",
+          "journal: redo has them, the first first");
+
+    // Redo the move only; a new step then drops the delete's redo.
+    auto d = j.redo_edit();
+    check(d && !why_stale(*r, *d) && apply_edit(*r, *d) && at("refs/heads/topic") == three,
+          "journal: redo moves it again");
+    j.redone();
+    history_edit retag{.reflog = "tortilla: move v1", .moves = {{"refs/tags/v1", tag_object, one}}};
+    check(apply_edit(*r, retag).has_value(), "journal: a tag moves");
+    j.record("Move v1", retag);
+    check(!j.next_redo() && j.undo_count() == 2, "journal: a new step drops what was undone");
+    u = j.undo_edit();
+    check(u && apply_edit(*r, *u) && at("refs/tags/v1") == tag_object,
+          "journal: undoing puts the annotated tag's own object back");
+    j.undone();
+
+    // Something else moved the branch: undoing the move under it is refused,
+    // and nothing changes.
+    sh(g + "branch -f topic HEAD~1");
+    u = j.undo_edit();
+    const auto stale = u ? why_stale(*r, *u) : std::nullopt;
+    check(stale && stale->find("topic") != std::string::npos,
+          "journal: a branch moved since is noticed");
+    check(u && !apply_edit(*r, *u) && at("refs/heads/topic") == two,
+          "journal: and never overwritten");
+    j.forget_undo();
+    check(!j.next_undo() && j.next_redo(), "journal: the stale step is forgotten, alone");
+
+    // A redo whose branch was made again meanwhile is refused too.
+    history_edit make{.reflog = "x", .moves = {{"refs/heads/fresh", std::nullopt, one}}};
+    check(apply_edit(*r, make).has_value(), "journal: a branch made");
+    j.record("Create fresh", make);
+    u = j.undo_edit();
+    check(u && apply_edit(*r, *u) && !at("refs/heads/fresh"), "journal: undoing it deletes it");
+    j.undone();
+    sh(g + "branch fresh HEAD");
+    d = j.redo_edit();
+    check(d && why_stale(*r, *d) && !apply_edit(*r, *d) && at("refs/heads/fresh") == three,
+          "journal: a redo over a branch made since is refused");
+
+    // The limit: the oldest steps go.
+    ref_journal small(2);
+    for (int i = 0; i < 4; ++i) small.record("step " + std::to_string(i), move);
+    check(small.undo_count() == 2 && small.next_undo()->label == "step 3",
+          "journal: only the newest steps are kept");
 }
 
 }  // namespace
@@ -3695,6 +3788,7 @@ int main(int argc, char** argv)
         check(!called, "refresh: a model gone before its labels came isn't called back");
     }
     history_edit_tests(argv[1]);
+    ref_journal_tests(argv[1]);
 
     std::printf("%s\n", failures ? "FAILED" : "all passed");
     return failures ? 1 : 0;

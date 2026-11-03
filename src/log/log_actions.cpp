@@ -80,6 +80,27 @@ std::string format_time(int64_t time, int offset_minutes)
     return buf;
 }
 
+// The ref a branch, tag or update-ref command changes, full name; nullopt
+// for any other (a push deleting a remote's branch isn't the journal's).
+std::optional<std::string> ref_changed_by(const arg_list& args)
+{
+    if (args.empty()) return std::nullopt;
+    const std::string_view verb = args[0];
+    if (verb != "branch" && verb != "tag" && verb != "update-ref") return std::nullopt;
+    for (size_t i = 1; i < args.size(); ++i)
+    {
+        if (args[i].starts_with('-'))
+        {
+            if (args[i] == "-m") ++i;  // its message
+            continue;
+        }
+        if (verb == "branch") return "refs/heads/" + args[i];
+        if (verb == "tag") return "refs/tags/" + args[i];
+        return args[i];
+    }
+    return std::nullopt;
+}
+
 }  // namespace
 
 void log_window::run_git_commands(const std::string& title, std::vector<arg_list> commands)
@@ -88,9 +109,32 @@ void log_window::run_git_commands(const std::string& title, std::vector<arg_list
                         [this](bool) { reload(); });
 }
 
-void log_window::run_ref_commands(const std::string& title, std::vector<arg_list> commands)
+void log_window::run_ref_commands(const std::string& title, std::vector<arg_list> commands,
+                                  std::string label)
 {
-    run_quietly(title, std::move(commands), [this](bool, const std::string&) { refs_changed(); });
+    // The refs as they were, for the journal: what moved is a step, even
+    // when a later command failed.
+    std::vector<ref_move> moves;
+    if (!label.empty())
+        for (const arg_list& args : commands)
+            if (auto name = ref_changed_by(args))
+                moves.push_back({*name, ref_target(repo_, *name), std::nullopt});
+    run_quietly(title, std::move(commands),
+                [this, label, moves](bool, const std::string&) mutable
+                {
+                    std::erase_if(moves,
+                                  [&](ref_move& m)
+                                  {
+                                      m.to = ref_target(repo_, m.ref);
+                                      return m.to == m.from;
+                                  });
+                    if (!moves.empty())
+                    {
+                        journal_.record(label, {.reflog = "tortilla: " + label, .moves = moves});
+                        update_undo_buttons();
+                    }
+                    refs_changed();
+                });
 }
 
 void log_window::run_quietly(const std::string& title, std::vector<arg_list> commands,
@@ -151,14 +195,14 @@ void log_window::refs_changed()
 }
 
 void log_window::confirm_then_run(const std::string& question, const std::string& title,
-                                  std::vector<arg_list> commands)
+                                  std::vector<arg_list> commands, std::string label)
 {
     ui_.message(window_.get(),
                 {.icon = rap::message_spec::icon::question,
                  .title = title,
                  .text = question,
                  .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
-                [this, title, commands](rap::dialog_role r)
+                [this, title, commands, label](rap::dialog_role r)
                 {
                     if (r != rap::dialog_role::yes) return;
                     // Deleting local branches and tags only touches refs.
@@ -170,7 +214,7 @@ void log_window::confirm_then_run(const std::string& question, const std::string
                                    (a[0] == "branch" || a[0] == "tag" || a[0] == "update-ref");
                         });
                     if (refs_only)
-                        run_ref_commands(title, commands);
+                        run_ref_commands(title, commands, label);
                     else
                         run_git_commands(title, commands);
                 });
@@ -716,7 +760,8 @@ menu log_window::context_menu(std::optional<size_t> clicked)
                                  confirm_then_run(
                                      stash ? std::string(_("Drop the newest stash (stash@{0})?"))
                                            : rap::i18n::format(_("Delete {0}?"), r.full_name),
-                                     stash ? _("Drop stash") : _("Delete"), {delete_args(r)});
+                                     stash ? _("Drop stash") : _("Delete"), {delete_args(r)},
+                                     rap::i18n::format(_("Delete {0}"), r.name));
                              }));
         }
         else if (deletable.size() > 1)
@@ -727,18 +772,25 @@ menu log_window::context_menu(std::optional<size_t> clicked)
             {
                 arg_list args = delete_args(*r);
                 all.push_back(args);
-                sub.children.push_back(
-                    item(menu_text(r->full_name), [this, r, args]
-                         { confirm_then_run(rap::i18n::format(_("Delete {0}?"), r->full_name), _("Delete"), {args}); }));
+                sub.children.push_back(item(
+                    menu_text(r->full_name),
+                    [this, args, full = r->full_name, name = r->name]
+                    {
+                        confirm_then_run(rap::i18n::format(_("Delete {0}?"), full), _("Delete"),
+                                         {args}, rap::i18n::format(_("Delete {0}"), name));
+                    }));
             }
-            sub.children.push_back(item(_("All"),
-                                        [this, all]
-                                        {
-                                            confirm_then_run(
-                                                rap::i18n::format(N_("Delete {0} ref?", "Delete {0} refs?", all.size()),
-                                                   all.size()),
-                                                _("Delete"), all);
-                                        }));
+            sub.children.push_back(
+                item(_("All"),
+                     [this, all]
+                     {
+                         confirm_then_run(
+                             rap::i18n::format(
+                                 N_("Delete {0} ref?", "Delete {0} refs?", all.size()), all.size()),
+                             _("Delete"), all,
+                             rap::i18n::format(N_("Delete {0} ref", "Delete {0} refs", all.size()),
+                                               all.size()));
+                     }));
             m.push_back(std::move(sub));
         }
 
@@ -962,16 +1014,17 @@ void log_window::move_ref(const ref& ref, const commit& target)
         args = {"tag", "--force", ref.name, to};
 
     const std::string title = tag ? _("Move Tag") : _("Move Branch");
-    ui_.message(window_.get(),
-                {.icon = rap::message_spec::icon::question,
-                 .title = title,
-                 .text = text,
-                 .detail = detail,
-                 .buttons = {rap::dialog_role::ok, rap::dialog_role::cancel}},
-                [this, title, args](rap::dialog_role r)
-                {
-                    if (r == rap::dialog_role::ok) run_ref_commands(title, {args});
-                });
+    ui_.message(
+        window_.get(),
+        {.icon = rap::message_spec::icon::question,
+         .title = title,
+         .text = text,
+         .detail = detail,
+         .buttons = {rap::dialog_role::ok, rap::dialog_role::cancel}},
+        [this, title, args, label = rap::i18n::format(_("Move {0}"), ref.name)](rap::dialog_role r)
+        {
+            if (r == rap::dialog_role::ok) run_ref_commands(title, {args}, label);
+        });
 }
 
 // A right-click on a label makes the menu about that label (checkout,

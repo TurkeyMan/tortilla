@@ -7,6 +7,7 @@
 #include "forge/pr_watch.h"
 #include "git/command.h"
 #include "git/history_edit.h"
+#include "git/ref_journal.h"
 #include "git/repo_worker.h"
 #include "git/sync.h"
 #include "log/forge_panel.h"
@@ -109,7 +110,9 @@ private:
     void run_git_commands(const std::string& title, std::vector<std::vector<std::string>> commands);
     // Local branch/tag changes: no progress dialog, git's output only if
     // a command fails, and the labels refreshed instead of a full reload.
-    void run_ref_commands(const std::string& title, std::vector<std::vector<std::string>> commands);
+    // With a `label`, the refs they change go in the journal as a step.
+    void run_ref_commands(const std::string& title, std::vector<std::vector<std::string>> commands,
+                          std::string label = {});
     // git commands with no progress dialog; `after` gets whether all
     // succeeded and their output. A failure is shown unless `show_failure`
     // is false (the caller handles it). `prompts`: never, for what runs
@@ -225,7 +228,7 @@ private:
     void apply_follow();
     void difftool(std::vector<std::string> revisions, std::vector<std::string> paths = {});
     void confirm_then_run(const std::string& question, const std::string& title,
-                          std::vector<std::vector<std::string>> commands);
+                          std::vector<std::vector<std::string>> commands, std::string label = {});
     void create_branch(const commit&, const std::string& name = {}, bool switch_to = false,
                        const std::string& start_point = {});
     void create_tag(const commit&);
@@ -394,21 +397,37 @@ private:
     using edit_maker = std::function<std::expected<history_edit, replay_failure>(const repo&)>;
     // The edit made on a worker, then the working tree asked about, then
     // applied there too; a conflict offers the rebase window with `fallback`.
+    // `label` names it in the journal ("Reword 1a2b3c4d"; the title when
+    // empty); `use`: a new step, or the journal's own undoing or redoing.
+    enum class journal_use
+    {
+        record,
+        undo,
+        redo,
+    };
     void start_history_edit(const std::string& title, edit_maker,
-                            std::optional<rebase_todo> fallback = {}, bool undoing = false);
+                            std::optional<rebase_todo> fallback = {}, std::string label = {},
+                            journal_use use = journal_use::record);
     void history_replayed(const std::string& title, std::expected<history_edit, replay_failure>,
-                          tree_effect, std::optional<rebase_todo> fallback, bool undoing);
-    void apply_history_edit(const std::string& title, history_edit, bool stash, bool undoing);
+                          tree_effect, std::optional<rebase_todo> fallback, std::string label,
+                          journal_use);
+    void apply_history_edit(const std::string& title, history_edit, bool stash, std::string label,
+                            journal_use);
     // A question first when the commits are on the upstream already.
     void confirm_history_edit(const std::string& title, const std::string& question, bool pushed,
                               const branch_history&, std::function<void()> go);
     std::string pushed_warning(const branch_history&) const;
     void offer_force_push(const history_edit&);
     std::unique_ptr<repo_worker> edit_worker_;
-    // The last edit, for the status bar's Undo while it shows.
-    std::optional<history_edit> last_edit_;
-    rap::button* undo_ = nullptr;
-    rap::subscription undo_timer_;
+    // -- Undo and Redo: what this window did to the refs (history edits,
+    // labels dragged, branches and tags deleted), the buttons top left and
+    // Ctrl+Z / Ctrl+Y in the commit list.
+    ref_journal journal_;
+    rap::tool_button* undo_ = nullptr;
+    rap::tool_button* redo_ = nullptr;
+    void step_journal(bool redo);
+    void update_undo_buttons();
+    static rap::icon undo_icon(bool redo);
     std::vector<oid> history_;  // selection history, for the "Selection History" jump
     // The selected commit's author, top right of the details [spec 1.2].
     void show_avatar(const commit*);
