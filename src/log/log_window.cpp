@@ -252,15 +252,17 @@ void log_window::build()
                         .bind(ref_button_)
                         .on_menu([this] { return show_menu(); })
                         .width(22_ch),
-                    label{_("From:")},
-                    date_picker{}.bind(from_).on_changed([this](a::date) { dates_changed(); }),
-                    label{_("To:")},
-                    date_picker{}.bind(to_).on_changed([this](a::date) { dates_changed(); }),
                     entry{}
                         .bind(search_)
                         .on_changed([this](const std::string&) { schedule_filter(); })
                         .on_activate([this] { apply_filter(); })
                         .stretch(),
+                    // The dates [spec 1.9.3], rarely limited: a pop-up of
+                    // their own, the button held down while they are.
+                    // TODO: inside the filter box's end, where the toolkit
+                    // has room for one.
+                    tool_button{calendar_icon(), _("Date range")}.toggle().bind(dates_).on_click(
+                        [this] { open_dates(); }),
                     // TODO: TortoiseGit puts this magnifier inside the search box.
                     menu_button{""}
                         .icon(rap::icon::named("edit-find-symbolic"))
@@ -522,8 +524,8 @@ void log_window::build()
     progress_->set_visible(false);
     cancel_->set_visible(false);  // picking commits only
     // Today until the loaded range replaces it (not 1970 while loading).
-    from_->set_date(local_date(std::time(nullptr)));
-    to_->set_date(local_date(std::time(nullptr)));
+    loaded_from_ = loaded_to_ = local_date(std::time(nullptr));
+    update_dates_button();
     update_ref_button();
     forge_splitter_->on_moved([this] { fit_files(); });
     if (auto saved = settings::get().value("log.actionIcons"); !saved.empty())
@@ -823,8 +825,13 @@ void log_window::loaded(const std::string& error)
     size_t first = log_.row_count() - log_.commit_rows();
     if (log_.commit_rows() && !since_ && !until_)
     {
-        from_->set_date(local_date(log_.commit(log_.row_count() - 1)->time));
-        to_->set_date(local_date(log_.commit(first)->time));
+        loaded_from_ = local_date(log_.commit(log_.row_count() - 1)->time);
+        loaded_to_ = local_date(log_.commit(first)->time);
+        if (from_ && to_)
+        {
+            from_->set_date(loaded_from_);
+            to_->set_date(loaded_to_);
+        }
     }
     restore_selection();
     if (log_.row_count() && !commit_list_->current()) commit_list_->set_current(0);
@@ -1808,6 +1815,7 @@ rap::menu log_window::header_menu()
 // From is clamped to To and back; changes restart the log [spec 1.9.3].
 void log_window::dates_changed()
 {
+    if (!from_ || !to_) return;
     rap::date from = from_->date(), to = to_->date();
     if (from > to)
     {
@@ -1816,7 +1824,104 @@ void log_window::dates_changed()
     }
     since_ = local_time(from, false);
     until_ = local_time(to, true);
+    update_dates_button();
     reload();
+}
+
+// A calendar page: the desktop's, else drawn in the text colour (Windows).
+rap::icon log_window::calendar_icon()
+{
+    rap::icon icon = rap::icon::drawn(
+        [](rap::painter& p, rap::size_f s)
+        {
+            const float w = s.w, h = s.h;
+            const float line = std::max(1.0f, w / 14);
+            const rap::paint ink{rap::theme_color::window_text};
+            const rap::rect_f page{w * 0.12f, h * 0.2f, w * 0.76f, h * 0.68f};
+            p.rect(page, w * 0.08f, std::nullopt, ink);
+            p.rect({page.x, page.y, page.w, h * 0.16f}, w * 0.06f, ink, std::nullopt);
+            for (float x : {0.32f, 0.68f})
+                p.line({w * x, h * 0.1f}, {w * x, h * 0.28f}, ink, line * 1.4f,
+                       rap::line_cap::round);
+            for (int row = 0; row < 2; ++row)
+                for (int col = 0; col < 3; ++col)
+                    p.rect(
+                        {w * (0.24f + 0.2f * col), h * (0.5f + 0.18f * row), w * 0.12f, h * 0.1f},
+                        0, ink, std::nullopt);
+        });
+    icon.name = "x-office-calendar-symbolic";
+    return icon;
+}
+
+namespace
+{
+std::string date_text(rap::date d)
+{
+    char buf[16];
+    std::snprintf(buf, sizeof buf, "%04d-%02d-%02d", d.year, d.month, d.day);
+    return buf;
+}
+}  // namespace
+
+// Held down while the dates limit the log, the tooltip saying how.
+void log_window::update_dates_button()
+{
+    if (!dates_) return;
+    const bool limited = since_ || until_;
+    dates_->set_checked(limited);
+    if (!limited) return dates_->set_tooltip(_("Date range: all dates"));
+    const rap::date from = local_date(since_.value_or(0)), to = local_date(until_.value_or(0));
+    dates_->set_tooltip(
+        rap::i18n::format(_("Date range: {0} to {1}"), date_text(from), date_text(to)));
+}
+
+// The From and To pickers in a small window of their own, beside the log
+// rather than over it: changes apply as they're made, Clear lifts both.
+void log_window::open_dates()
+{
+    update_dates_button();  // the click toggled it: what's in effect says
+    if (dates_popup_)
+    {
+        dates_popup_->show();
+        return;
+    }
+    using namespace rap::layout;
+    using namespace rap::literals;
+    namespace a = rap;
+    dates_popup_ = create_window(
+        ui_,
+        dialog{_("Date Range"),
+               {vbox{form{
+                         {_("From"), date_picker{}.bind(from_).on_changed([this](a::date)
+                                                                          { dates_changed(); })},
+                         {_("To"),
+                          date_picker{}.bind(to_).on_changed([this](a::date) { dates_changed(); })},
+                     },
+                     buttons{reset(_("C_lear")), close}}}}
+            .modeless()
+            .resizable(false),
+        window_.get());
+    from_->set_date(since_ ? local_date(*since_) : loaded_from_);
+    to_->set_date(until_ ? local_date(*until_) : loaded_to_);
+    dates_popup_->on_finished(
+        [this, alive = std::weak_ptr<bool>(alive_)](rap::dialog_role role)
+        {
+            from_ = to_ = nullptr;
+            if (role == rap::dialog_role::reset && (since_ || until_))
+            {
+                since_.reset();
+                until_.reset();
+                update_dates_button();
+                reload();
+            }
+            // The window goes after this returns.
+            ui_.post(
+                [this, alive]
+                {
+                    if (alive.lock()) dates_popup_.reset();
+                });
+        });
+    dates_popup_->show();
 }
 
 // Up looks toward newer commits for the next row matching the selection

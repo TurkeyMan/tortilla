@@ -92,7 +92,12 @@ private:
     void schedule_filter();
     void apply_filter();
     void jump(bool up);
+    // The date range [spec 1.9.3]: a button beside the filter box, held
+    // down while the dates limit the log, and its pop-up with the pickers.
     void dates_changed();
+    void open_dates();
+    void update_dates_button();
+    static rap::icon calendar_icon();
     void save_layout();
     // The window closing: its layout kept, and View Patch's window closed
     // with it (on for next time).
@@ -323,8 +328,12 @@ private:
 
     // Widgets
     rap::menu_button* ref_button_ = nullptr;
+    rap::tool_button* dates_ = nullptr;
+    // The date pop-up, while open, and its pickers.
+    std::unique_ptr<rap::window> dates_popup_;
     rap::date_picker* from_ = nullptr;
     rap::date_picker* to_ = nullptr;
+    rap::date loaded_from_, loaded_to_;  // the dates loaded, without limits
     rap::entry* search_ = nullptr;
     rap::drop_down* jump_type_ = nullptr;
     rap::list* commit_list_ = nullptr;
