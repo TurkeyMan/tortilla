@@ -422,8 +422,14 @@ private:
         std::vector<oid> commits;
         bool working_tree = false;
         std::optional<oid> current;  // nullopt with working_tree: that row
+        std::optional<float> offset;  // the current row's place in the view, if shown
     };
     std::optional<kept_selection> kept_;
+    // One rule wherever the rows are repopulated (a filter, a reload): the
+    // selection kept, and the current row left where it was on screen, or
+    // centred when it can't be.
+    std::optional<kept_selection> keep_selection() const;
+    void put_back(const kept_selection&);
     size_t history_pos_ = 0;
     bool navigating_ = false;
 };
