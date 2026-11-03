@@ -43,16 +43,6 @@ rap::paint lane_colour(uint16_t lane)
     return colours[lane % 8];
 }
 
-
-std::string format_date(int64_t time, int offset_minutes)
-{
-    std::time_t t = time + int64_t(offset_minutes) * 60;
-    std::tm tm = utc_calendar(t);
-    char buf[32];
-    std::strftime(buf, sizeof buf, "%Y-%m-%d %H:%M", &tm);
-    return buf;
-}
-
 }  // namespace
 
 log_model::log_model(rap::ui& ui)
@@ -821,12 +811,12 @@ std::string log_model::text(size_t row, size_t column) const
     {
     case message: return c.summary;
     case author: return c.author;
-    case date: return format_date(c.time, c.offset_minutes);
+    case date: return commit_date_text(c.time, c.offset_minutes);
     case hash: return c.id.hex();
     case email: return c.email;
     case commit_name: return c.committer;
     case commit_email: return c.committer_email;
-    case commit_date: return format_date(c.commit_time, c.commit_offset_minutes);
+    case commit_date: return commit_date_text(c.commit_time, c.commit_offset_minutes);
     }
     return {};
 }

@@ -9,19 +9,6 @@
 
 namespace tortilla
 {
-namespace
-{
-
-std::string format_date(int64_t time, int offset_minutes)
-{
-    std::time_t t = time + int64_t(offset_minutes) * 60;
-    std::tm tm = utc_calendar(t);
-    char buf[32];
-    std::strftime(buf, sizeof buf, "%Y-%m-%d %H:%M", &tm);
-    return buf;
-}
-
-}  // namespace
 
 const char* action_name(rebase_action a)
 {
@@ -210,7 +197,7 @@ std::string rebase_model::text(size_t row, size_t column) const
     case hash: return r.commit.id.hex();
     case message: return r.commit.summary;
     case author: return r.commit.author;
-    case date: return format_date(r.commit.time, r.commit.offset_minutes);
+    case date: return commit_date_text(r.commit.time, r.commit.offset_minutes);
     }
     return {};
 }
