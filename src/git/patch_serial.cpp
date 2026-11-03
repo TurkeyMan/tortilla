@@ -2,6 +2,7 @@
 
 #include "git/diff_tool.h"
 #include "git/ignore_patterns.h"
+#include "git/remotes.h"
 #include "util/entry_path.h"
 
 #include <git2.h>
@@ -9,6 +10,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <iterator>
 #include <memory>
 
 namespace tortilla
@@ -156,8 +158,15 @@ patch_preview preview_patch_entry(const std::string& workdir, const std::string&
         fs::create_directories(base.parent_path(), ec);
         fs::copy_file(original, base, ec);
     }
-    // git apply outside a repository works as patch does.
-    out.applied = run_git(rap::sys::path_to_utf8(folder), apply_args(patch, {e.path}));
+    // git apply outside a repository works as patch does, but with the
+    // repository's line endings: Windows' global autocrlf would otherwise
+    // write a new file CRLF where the repository writes it as it is.
+    std::vector<std::string> args;
+    for (const char* key : {"core.autocrlf", "core.eol"})
+        if (const std::string v = config_value(workdir, key); !v.empty())
+            args.insert(args.end(), {"-c", std::string(key) + "=" + v});
+    std::ranges::move(apply_args(patch, {e.path}), std::back_inserter(args));
+    out.applied = run_git(rap::sys::path_to_utf8(folder), args);
     out.base = existed ? rap::sys::path_to_utf8(original) : empty_file();
     out.mine = fs::is_regular_file(fs::symlink_status(patched, ec))
                    ? rap::sys::path_to_utf8(patched)
