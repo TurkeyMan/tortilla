@@ -182,27 +182,20 @@ bool split_remote(std::string_view url, std::string_view& host, std::string_view
     return !host.empty();
 }
 
-// The origin a request's URL goes to: scheme://host:port, in lower case,
-// the port spelt out; "" for what isn't an absolute URL.
+// The origin a request's URL goes to (rap::sys::url_origin, which
+// http_request holds redirects to): scheme://host:port, in lower case, the
+// port spelt out; "" for what isn't an http(s) URL, which matches no origin
+// (see same_origin).
 std::string url_origin(std::string_view url)
 {
-    const size_t colon = url.find("://");
-    if (colon == std::string_view::npos || colon == 0) return {};
-    std::string scheme;
-    for (char c : url.substr(0, colon))
-        scheme += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    std::string_view authority = url.substr(colon + 3);
-    authority = authority.substr(0, authority.find_first_of("/?#"));
-    if (const size_t at = authority.rfind('@'); at != std::string_view::npos)
-        authority.remove_prefix(at + 1);
-    std::string host(authority), port;
-    const size_t close = host.find(']');  // [IPv6]
-    if (const size_t c = host.rfind(':');
-        c != std::string::npos && (close == std::string::npos || c > close))
-        port = host.substr(c + 1), host.resize(c);
-    for (char& c : host) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    if (port.empty()) port = scheme == "https" ? "443" : "80";
-    return scheme + "://" + host + ":" + port;
+    const auto o = rap::sys::url_origin(url);
+    return o ? o->str() : std::string();
+}
+
+// Whether two origins are one: never when either is "" (none).
+bool same_origin(std::string_view a, std::string_view b)
+{
+    return !a.empty() && a == b;
 }
 
 std::expected<forge_token, std::string> token_from(const json::value& j)
@@ -326,7 +319,7 @@ std::optional<forge_account> account_for_url(std::string_view url,
     if (!split_remote(url, host, path)) return std::nullopt;
     const std::string origin = web_origin(host);
     for (const forge_account& a : accounts)
-        if (web_origin(a.host) == origin) return a;
+        if (same_origin(web_origin(a.host), origin)) return a;
     return std::nullopt;
 }
 
@@ -1682,7 +1675,7 @@ std::expected<std::string, std::string> fetch_avatar(forge_kind k, const forge_r
                                    .timeout = std::chrono::seconds(10),
                                    .max_bytes = size_t(1) << 20,
                                    .cancelled = cancelled};
-    if (!token.empty() && url_origin(url) == web_origin(r.host))
+    if (!token.empty() && same_origin(url_origin(url), web_origin(r.host)))
         options.headers.emplace_back(
             "Authorization", (k == forge_kind::gitea ? "token " : "Bearer ") + std::string(token));
     auto reply = forge_detail::http_get(url, options);
@@ -2086,8 +2079,9 @@ bool token_allowed(std::string_view token, std::string_view url)
     return std::ranges::any_of(it->second,
                                [&](const std::string& origin)
                                {
-                                   return to == origin || (origin == "https://github.com:443" &&
-                                                           to == "https://api.github.com:443");
+                                   return same_origin(to, origin) ||
+                                          (origin == "https://github.com:443" &&
+                                           to == "https://api.github.com:443");
                                });
 }
 
