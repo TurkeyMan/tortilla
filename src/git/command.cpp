@@ -7,6 +7,9 @@
 #include <rapport/sys.h>
 
 #include <atomic>
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
 #include <thread>
 
 namespace tortilla
@@ -37,8 +40,29 @@ process::options git_options(git_output output, git_prompts prompts = git_prompt
     return o;
 }
 
+// TORTILLA_GIT_TRACE=<file>: a line per git started (milliseconds since
+// the first, the folder, the command), for counting what a click costs.
+void trace(const std::string& dir, const std::vector<std::string>& args)
+{
+    static const char* file = std::getenv("TORTILLA_GIT_TRACE");
+    if (!file || !*file) return;
+    static const auto start = std::chrono::steady_clock::now();
+    static std::mutex mutex;
+    std::lock_guard lock(mutex);
+    if (std::FILE* f = std::fopen(file, "a"))
+    {
+        const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now() - start)
+                            .count();
+        std::fprintf(f, "%lld\t%s\t%s\n", static_cast<long long>(ms), dir.c_str(),
+                     command_line(args).c_str());
+        std::fclose(f);
+    }
+}
+
 std::vector<std::string> git_command_line(const std::string& dir, const std::vector<std::string>& args)
 {
+    trace(dir, args);
     std::vector<std::string> all{"-C", dir};
     all.insert(all.end(), args.begin(), args.end());
     return all;
