@@ -278,12 +278,11 @@ void log_window::build()
                         // down while they are.
                         .trailing_action(
                             calendar_icon(), _("Date range"), [this] { open_dates(); }, dates_)
+                        // Which fields the text is looked for in, and how:
+                        // TortoiseGit's magnifier at the box's start.
+                        .leading_menu(rap::icon::named("edit-find-symbolic"), _("Filter options"),
+                                      [this] { return filter_menu(); })
                         .stretch(),
-                    // TODO: TortoiseGit puts this magnifier inside the search box.
-                    menu_button{""}
-                        .icon(rap::icon::named("edit-find-symbolic"))
-                        .on_menu([this] { return filter_menu(); })
-                        .tooltip(_("Filter options")),
                     drop_down{{_("Author Email"), _("Committer Email"), _("Merge Point"),
                                _("Parent 1"), _("Parent 2"), _("Tag"), _("Tag (FF)"), _("Branch"),
                                _("Branch (FF)"), _("Selection History")},
@@ -1612,6 +1611,9 @@ rap::menu log_window::filter_menu()
                    filter_.case_sensitive = !filter_.case_sensitive;
                    apply_filter();
                }),
+        rap::menu_item::separator(),
+        // The calendar's pop-up, from here too.
+        {.label = _("_Date range..."), .action = [this] { open_dates(); }},
     };
 }
 
