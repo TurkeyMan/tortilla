@@ -306,27 +306,27 @@ menu log_window::context_menu(std::optional<size_t> clicked)
         // Group A: diffs
         if (wc)
         {
-            m.push_back(item(_("C_ommit..."),
+            m.push_back(item(_("C_ommit..."), "commit",
                              [this] { keep_dialog(commit_window::open(ui_, {repo_.workdir()})); }));
             if (merging)
-                m.push_back(item(_("Abort _Merge"), [this]
+                m.push_back(item(_("Abort _Merge"), "merge", [this]
                                  { keep_dialog(abort_merge_dialog::open(ui_, repo_.workdir())); }));
-            m.push_back(item(_("Show changes as _unified diff"),
+            m.push_back(item(_("Show changes as _unified diff"), "diff",
                              [this]
                              {
                                  show_unified_diff(ui_, _("Working tree changes"), repo_.workdir(),
                                                    {"diff", "HEAD"});
                              }));
-            m.push_back(item(_("_Compare with previous revision"), [this] { difftool({"HEAD"}); }));
+            m.push_back(item(_("_Compare with previous revision"), "prevdiff", [this] { difftool({"HEAD"}); }));
         }
         else
         {
             if (has_wc)
-                m.push_back(item(_("Compare with _working tree"), [this, hash] { difftool({hash}); }));
+                m.push_back(item(_("Compare with _working tree"), "diff", [this, hash] { difftool({hash}); }));
             if (c->parents.size() > 1)
             {
-                menu_item udiff{.label = _("_Unified diff with")};
-                menu_item compare{.label = _("_Compare with previous revision")};
+                menu_item udiff{.label = _("_Unified diff with"), .icon = menu_icon("diff")};
+                menu_item compare{.label = _("_Compare with previous revision"), .icon = menu_icon("prevdiff")};
                 for (size_t i = 0; i < c->parents.size(); ++i)
                 {
                     std::string p = c->parents[i].hex();
@@ -350,27 +350,27 @@ menu log_window::context_menu(std::optional<size_t> clicked)
             else
             {
                 if (has_wc)
-                    m.push_back(item(_("Show changes as _unified diff"),
+                    m.push_back(item(_("Show changes as _unified diff"), "diff",
                                      [this, hash]
                                      {
                                          show_unified_diff(ui_, hash.substr(0, 8), repo_.workdir(),
                                                            {"show", "--format=fuller", hash});
                                      }));
                 if (!c->parents.empty())
-                    m.push_back(item(_("_Compare with previous revision"),
+                    m.push_back(item(_("_Compare with previous revision"), "prevdiff",
                                      [this, hash] { difftool({hash + "^", hash}); }));
             }
         }
         separator(m);
 
         // Group B: stash
-        if (wc && !merging) m.push_back(item(_("Stash changes..."), [this] { stash_changes(); }));
+        if (wc && !merging) m.push_back(item(_("Stash changes..."), "stashsave", [this] { stash_changes(); }));
         if ((wc || is_stash) && has_stash)
         {
             m.push_back(
-                item(_("Stash Pop"), [this] { run_git_commands(_("Stash Pop"), {{"stash", "pop"}}); }));
+                item(_("Stash Pop"), "stashpop", [this] { run_git_commands(_("Stash Pop"), {{"stash", "pop"}}); }));
             m.push_back(
-                item(_("Stash List"), [this]
+                item(_("Stash List"), "stashlist", [this]
                      { keep_dialog(reflog_window::open(ui_, repo_.workdir(), "refs/stash")); }));
         }
         separator(m);
@@ -386,13 +386,13 @@ menu log_window::context_menu(std::optional<size_t> clicked)
             std::vector<std::string> revs;
             if (!wc) revs.push_back(hash);
             m.push_back(
-                item(_("Bisect good"), [bisect, revs] { bisect(bisect_step::good, revs); }));
-            m.push_back(item(_("Bisect bad"), [bisect, revs] { bisect(bisect_step::bad, revs); }));
+                item(_("Bisect good"), "bisect", [bisect, revs] { bisect(bisect_step::good, revs); }));
+            m.push_back(item(_("Bisect bad"), "bisect", [bisect, revs] { bisect(bisect_step::bad, revs); }));
             m.push_back(
-                item(_("Bisect skip"), [bisect, revs] { bisect(bisect_step::skip, revs); }));
+                item(_("Bisect skip"), "bisect", [bisect, revs] { bisect(bisect_step::skip, revs); }));
         }
         if (wc && bisecting)
-            m.push_back(item(_("Bisect reset"), [bisect] { bisect(bisect_step::reset, {}); }));
+            m.push_back(item(_("Bisect reset"), "bisect", [bisect] { bisect(bisect_step::reset, {}); }));
         separator(m);
 
         // Group D: working tree row
@@ -400,13 +400,13 @@ menu log_window::context_menu(std::optional<size_t> clicked)
         {
             if (!merging)
                 m.push_back(
-                    item(_("_Pull..."), [this]
+                    item(_("_Pull..."), "pull", [this]
                          { keep_dialog(pull_fetch_dialog::open(ui_, repo_.workdir(), true)); }));
             m.push_back(
-                item(_("F_etch..."), [this]
+                item(_("F_etch..."), "fetch", [this]
                      { keep_dialog(pull_fetch_dialog::open(ui_, repo_.workdir(), false)); }));
             if (has_submodules(repo_.workdir()))
-                m.push_back(item(_("Submodule Update"),
+                m.push_back(item(_("Submodule Update"), "subupdate",
                                  [this]
                                  {
                                      update_submodules(ui_, window_.get(), repo_.workdir(),
@@ -414,7 +414,7 @@ menu log_window::context_menu(std::optional<size_t> clicked)
                                  }));
             separator(m);
             m.push_back(item(
-                _("_Clean up..."), [this]
+                _("_Clean up..."), "cleanup", [this]
                 { clean_up(ui_, window_.get(), {repo_.workdir()}, [this](bool) { reload(); }); }));
             separator(m);
         }
@@ -427,11 +427,11 @@ menu log_window::context_menu(std::optional<size_t> clicked)
                 // From the row's ref, so the new log follows that branch or
                 // tag; with several, the one to walk from is picked.
                 if (refs->size() == 1)
-                    m.push_back(item(_("Show log..."),
+                    m.push_back(item(_("Show log..."), "log",
                                      [this, r = refs->front().full_name] { show_log_at(r); }));
                 else
                 {
-                    menu_item sub{.label = _("Show log...")};
+                    menu_item sub{.label = _("Show log..."), .icon = menu_icon("log")};
                     for (const ref& r : *refs)
                         sub.children.push_back(item(menu_text(r.name), [this, full = r.full_name]
                                                     { show_log_at(full); }));
@@ -440,7 +440,7 @@ menu log_window::context_menu(std::optional<size_t> clicked)
             }
             // At this commit, from the path the log is limited to.
             m.push_back(item(
-                _("_Browse repository"),
+                _("_Browse repository"), "repobrowser",
                 [this, hash]
                 {
                     const std::string from =
@@ -468,10 +468,10 @@ menu log_window::context_menu(std::optional<size_t> clicked)
                             break;
                         }
                 m.push_back(
-                    item(rap::i18n::format(_("_Merge to {0}..."), cur), [this, c, what] { merge_from(*c, what); }));
+                    item(rap::i18n::format(_("_Merge to {0}..."), cur), "merge", [this, c, what] { merge_from(*c, what); }));
             }
             if (has_wc && !is_stash)
-                m.push_back(item(rap::i18n::format(_("R_eset {0} to this..."), cur), [this, c] { reset_to(*c); }));
+                m.push_back(item(rap::i18n::format(_("R_eset {0} to this..."), cur), "revert", [this, c] { reset_to(*c); }));
 
             std::vector<std::string> branches;
             if (refs)
@@ -483,18 +483,18 @@ menu log_window::context_menu(std::optional<size_t> clicked)
                 auto checkout = [this](const std::string& b)
                 { run_git_commands(_("Switch/Checkout"), {{"checkout", b}}); };
                 if (branches.size() == 1)
-                    m.push_back(item(rap::i18n::format(_("_Switch/Checkout to \"{0}\""), menu_text(branches[0])),
+                    m.push_back(item(rap::i18n::format(_("_Switch/Checkout to \"{0}\""), menu_text(branches[0])), "switch",
                                      [checkout, b = branches[0]] { checkout(b); }));
                 else
                 {
-                    menu_item sub{.label = _("_Switch/Checkout to")};
+                    menu_item sub{.label = _("_Switch/Checkout to"), .icon = menu_icon("switch")};
                     for (auto& b : branches)
                         sub.children.push_back(item(menu_text(b), [checkout, b] { checkout(b); }));
                     m.push_back(std::move(sub));
                 }
             }
             if (!head && has_wc && !is_stash)
-                m.push_back(item(_("Sw_itch/Checkout to this..."),
+                m.push_back(item(_("Sw_itch/Checkout to this..."), "switch",
                                  [this, c]
                                  {
                                      keep_dialog(switch_dialog::open(ui_, repo_.workdir(),
@@ -503,13 +503,13 @@ menu log_window::context_menu(std::optional<size_t> clicked)
             if (!is_stash)
             {
                 m.push_back(
-                    item(_("Create Br_anch at this version..."), [this, c] { create_branch(*c); }));
-                m.push_back(item(_("Create _Tag at this version..."), [this, c] { create_tag(*c); }));
+                    item(_("Create Br_anch at this version..."), "branch", [this, c] { create_branch(*c); }));
+                m.push_back(item(_("Create _Tag at this version..."), "tag", [this, c] { create_tag(*c); }));
             }
             if (!head && has_wc && !merging && !is_stash)
-                m.push_back(item(rap::i18n::format(_("Rebase {0} onto this...(_G)"), cur),
+                m.push_back(item(rap::i18n::format(_("Rebase {0} onto this...(_G)"), cur), "rebase",
                                  [this, hash] { open_rebase(hash); }));
-            m.push_back(item(_("E_xport this version..."), [this, hash]
+            m.push_back(item(_("E_xport this version..."), "export", [this, hash]
                              { export_revision(ui_, window_.get(), repo_.workdir(), hash); }));
             if (has_wc && !merging && !is_stash)
             {
@@ -523,7 +523,7 @@ menu log_window::context_menu(std::optional<size_t> clicked)
                 };
                 if (c->parents.size() > 1)
                 {
-                    menu_item sub{.label = _("_Revert change by this commit")};
+                    menu_item sub{.label = _("_Revert change by this commit"), .icon = menu_icon("revert")};
                     for (size_t i = 0; i < c->parents.size(); ++i)
                         sub.children.push_back(item(rap::i18n::format(_("Parent {0} ({1})"), i + 1,
                                                                       c->parents[i].hex(8)),
@@ -531,7 +531,7 @@ menu log_window::context_menu(std::optional<size_t> clicked)
                     m.push_back(std::move(sub));
                 }
                 else
-                    m.push_back(item(_("_Revert change by this commit"), [revert] { revert({}); }));
+                    m.push_back(item(_("_Revert change by this commit"), "revert", [revert] { revert({}); }));
             }
             if (!is_stash) m.push_back(item(_("Edit _Notes"), [this, c] { edit_notes(*c); }));
             separator(m);
@@ -548,11 +548,11 @@ menu log_window::context_menu(std::optional<size_t> clicked)
         {
             std::string a = oldest->id.hex(), b = newest->id.hex();
             if (sel.size() == 2 || contiguous)
-                m.push_back(item(_("_Compare revisions"), [this, a, b] { difftool({a, b}); }));
+                m.push_back(item(_("_Compare revisions"), "diff", [this, a, b] { difftool({a, b}); }));
             if (sel.size() == 2)
             {
                 if (has_wc)
-                    m.push_back(item(_("Show changes as _unified diff"),
+                    m.push_back(item(_("Show changes as _unified diff"), "diff",
                                      [this, a, b]
                                      {
                                          show_unified_diff(ui_,
@@ -565,13 +565,13 @@ menu log_window::context_menu(std::optional<size_t> clicked)
                 {
                     m.push_back(item(rap::i18n::format(_("Show log of {0}"),
                                                        x.substr(0, 8) + dots + y.substr(0, 8)),
-                                     [this, r = x + dots + y] { show_log_at(r); }));
+                                     "log", [this, r = x + dots + y] { show_log_at(r); }));
                 };
                 range(a, "..", b);
                 range(b, "..", a);
                 range(a, "...", b);
                 m.push_back(
-                    item(_("Comp_are change sets"), [this, a, b] { compare_change_sets(a, b); }));
+                    item(_("Comp_are change sets"), "diff", [this, a, b] { compare_change_sets(a, b); }));
             }
             separator(m);
             if (has_wc && !merging)
@@ -580,7 +580,7 @@ menu log_window::context_menu(std::optional<size_t> clicked)
                 arg_list args{"revert", "--no-edit"};
                 for (size_t r : sel)
                     if (const commit* c = log_.commit(r)) args.push_back(c->id.hex());
-                m.push_back(item(_("_Revert changes by these commits"),
+                m.push_back(item(_("_Revert changes by these commits"), "revert",
                                  [this, args]
                                  {
                                      const size_t n = args.size() - 2;
@@ -597,7 +597,7 @@ menu log_window::context_menu(std::optional<size_t> clicked)
                 for (size_t r : sel)
                     if (const commit* c = log_.commit(r)) revs.push_back(c->id.hex());
                 m.push_back(
-                    item(_("Bisect skip"), [bisect, revs] { bisect(bisect_step::skip, revs); }));
+                    item(_("Bisect skip"), "bisect", [bisect, revs] { bisect(bisect_step::skip, revs); }));
             }
             separator(m);
         }
@@ -623,7 +623,7 @@ menu log_window::context_menu(std::optional<size_t> clicked)
                 args.insert(args.end(), picks.begin(), picks.end());
                 std::string label = picks.size() == 1 ? _("Cherr_y Pick this commit...")
                                                       : _("Cherr_y Pick selected commits...");
-                m.push_back(item(label,
+                m.push_back(item(label, "patch",
                                  [this, args, n = picks.size()]
                                  {
                                      confirm_then_run(
@@ -646,7 +646,7 @@ menu log_window::context_menu(std::optional<size_t> clicked)
                 std::string title =
                     series ? picks.front().substr(0, 8) + ".." + picks.back().substr(0, 8)
                            : picks.front().substr(0, 8);
-                m.push_back(item(_("_Format Patch..."),
+                m.push_back(item(_("_Format Patch..."), "formatpatch",
                                  [this, range, title, series]
                                  {
                                      std::function<void(rap::window*)> save;
@@ -668,7 +668,7 @@ menu log_window::context_menu(std::optional<size_t> clicked)
         // Bisect start: the older of the two worked, the newer doesn't.
         if (sel.size() == 2 && picks.size() == 2 && !any_stash && has_wc && !merging && !bisecting)
         {
-            m.push_back(item(_("Bisect start"), [bisect, good = picks.front(), bad = picks.back()]
+            m.push_back(item(_("Bisect start"), "bisect", [bisect, good = picks.front(), bad = picks.back()]
                              { bisect(bisect_step::start, {bad, good}); }));
             separator(m);
         }
@@ -695,7 +695,7 @@ menu log_window::context_menu(std::optional<size_t> clicked)
             std::string local;
             for (const auto& r : *refs)
                 if (r.kind == ref_kind::local_branch && local.empty()) local = r.name;
-            m.push_back(item(_("Pus_h..."), [this, local]
+            m.push_back(item(_("Pus_h..."), "push", [this, local]
                              { keep_dialog(push_dialog::open(ui_, repo_.workdir(), local)); }));
             // A git-svn repository's: HEAD's commits to SVN.
             if (has_wc && git_svn_ok_)
@@ -727,7 +727,7 @@ menu log_window::context_menu(std::optional<size_t> clicked)
         }
         if (log_.is_head(row) && has_wc && !merging)
             m.push_back(
-                item(_("_Pull..."),
+                item(_("_Pull..."), "pull",
                      [this] { keep_dialog(pull_fetch_dialog::open(ui_, repo_.workdir(), true)); }));
 
         std::vector<const ref*> deletable;
@@ -756,7 +756,7 @@ menu log_window::context_menu(std::optional<size_t> clicked)
             const bool stash = r.kind == ref_kind::stash;
             m.push_back(item(stash ? std::string(_("_Drop newest stash"))
                                    : rap::i18n::format(_("_Delete {0}"), menu_text(r.full_name)),
-                             [this, r, delete_args, stash]
+                             "remove", [this, r, delete_args, stash]
                              {
                                  confirm_then_run(
                                      stash ? std::string(_("Drop the newest stash (stash@{0})?"))
@@ -767,7 +767,7 @@ menu log_window::context_menu(std::optional<size_t> clicked)
         }
         else if (deletable.size() > 1)
         {
-            menu_item sub{.label = _("_Delete branch/tag")};
+            menu_item sub{.label = _("_Delete branch/tag"), .icon = menu_icon("remove")};
             std::vector<arg_list> all;
             for (const ref* r : deletable)
             {
@@ -816,7 +816,7 @@ menu log_window::context_menu(std::optional<size_t> clicked)
             {
                 const std::string folder =
                     rap::sys::path_to_utf8(rap::sys::path_from_utf8(r.worktree).filename());
-                m.push_back(item(rap::i18n::format(_("Open _worktree “{0}”"), menu_text(folder)),
+                m.push_back(item(rap::i18n::format(_("Open _worktree “{0}”"), menu_text(folder)), "worktreelist",
                                  [this, path = r.worktree] { open_worktree(path); }));
             }
             const bool pinned = log_.pinned(r);
