@@ -1,6 +1,7 @@
 #include "history_edit.h"
 
 #include "git/command.h"
+#include "git/libgit2_oid.h"
 #include "git/svn.h"
 #include "git/worktrees.h"
 #include "i18n.h"
@@ -15,20 +16,6 @@ namespace tortilla
 {
 namespace
 {
-
-oid to_oid(const git_oid* o)
-{
-    oid out;
-    std::memcpy(out.bytes.data(), o->id, out.bytes.size());
-    return out;
-}
-
-git_oid to_git(const oid& o)
-{
-    git_oid out{};
-    std::memcpy(out.id, o.bytes.data(), o.bytes.size());
-    return out;
-}
 
 template <class t, void (*Free)(t*)>
 struct owned
