@@ -93,6 +93,8 @@ add_library(tortilla_git STATIC
     src/git/ref_list.cpp
     src/git/reflog.cpp
     src/git/worktrees.cpp
+    src/git/git_install.cpp
+    src/git/patch_text.cpp
     src/git/lfs.cpp
     src/git/clean.cpp
     src/git/blame.cpp
@@ -172,6 +174,7 @@ add_executable(tortilla
     src/branch/merge_dialog.cpp
     src/branch/browse_refs.cpp
     src/ui/create_repo_dialog.cpp
+    src/ui/git_missing.cpp
     src/ui/trust_repository.cpp
     src/changes/rename_dialog.cpp)
 target_link_libraries(tortilla PRIVATE rapport::rapport tortilla_git)

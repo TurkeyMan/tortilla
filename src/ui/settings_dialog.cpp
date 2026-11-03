@@ -1,6 +1,7 @@
 #include "settings_dialog.h"
 
 #include "git/diff_tool.h"
+#include "git/git_install.h"
 #include "git/merge_tool.h"
 #include "git/ssh_client.h"
 #include "git/sync.h"
@@ -11,8 +12,10 @@
 #include "shell/menu_icons.h"
 #include "shell/menu_table.h"
 #include "ui/accounts_page.h"
+#include "ui/git_missing.h"
 #include "ui/remotes_page.h"
 #include "ui/repo_icon.h"
+#include "util/programs.h"
 
 #include <rapport/sys.h>
 
@@ -154,7 +157,22 @@ rap::node general_page(std::shared_ptr<state> st)
     const int current_appearance =
         int(std::find(std::begin(k_appearance_choices), std::end(k_appearance_choices), scheme) -
             std::begin(k_appearance_choices));
+    // Looked for again as Settings opens: installed meanwhile, say.
+    const bool have_git = recheck_git();
+    const std::string git_path = have_git ? find_program("git") : std::string();
     return vbox{
+        group{_("Git"),
+              form{
+                  {_("Git"), have_git ? rap::node(label{git_path})
+                                      : rap::node(hbox{label{git_missing_reason()},
+                                                       button{_("How to install git...")}.on_click(
+                                                           [weak]
+                                                           {
+                                                               if (auto s = weak.lock(); s && s->ui)
+                                                                   show_git_missing(
+                                                                       *s->ui, s->window.get());
+                                                           })})},
+              }},
         group{_("Language"),
               form{
                   {_("Language"), drop_down{languages, current_language}.bind(st->language)},

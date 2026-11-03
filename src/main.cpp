@@ -76,6 +76,7 @@
 #include "changes/remove.h"
 #include "changes/rename_dialog.h"
 #include "git/askpass_env.h"
+#include "git/git_install.h"
 #include "git/repo.h"
 #include "git/ssh_client.h"
 #include "i18n.h"
@@ -93,6 +94,7 @@
 #include "ui/create_repo_dialog.h"
 #include "ui/diff_window.h"
 #include "ui/export_dialog.h"
+#include "ui/git_missing.h"
 #include "ui/patch_serial_dialogs.h"
 #include "ui/progress_dialog.h"
 #include "ui/pull_request_dialog.h"
@@ -120,6 +122,8 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <set>
+#include <string>
 
 #ifndef _WIN32
 #include <spawn.h>
@@ -343,6 +347,22 @@ int main(int argc, char** argv)
 #ifndef _WIN32
     show_toolkit_hint(**ui, opts);
 #endif
+
+    // Without git Tortilla is a viewer: said once a session; a command that
+    // needs git says so rather than failing as it runs.
+    if (!tortilla::git_installed())
+    {
+        static const std::set<std::string, std::less<>> reads{
+            "log",       "settings",    "repostatus", "refbrowse", "reflog",
+            "stashlist", "repobrowser", "worktrees",  "about",     "help"};
+        if (!reads.contains(command))
+        {
+            tortilla::show_git_missing(**ui, nullptr, [&] { (*ui)->quit(); });
+            (*ui)->run();
+            return 1;
+        }
+        tortilla::notice_if_git_missing(**ui);
+    }
 
     // A repository git refuses for its folder's owner (a network share,
     // WSL's files from Windows): offered to trust it first, as TortoiseGit
