@@ -137,17 +137,39 @@ std::shared_ptr<git_process> git_process::start(rap::ui& ui, const std::string& 
                                                 std::function<void(int)> done, git_output mode,
                                                 git_prompts prompts)
 {
+    return launch(ui, "git", git_command_line(dir, args), git_options(mode, prompts),
+                  std::move(output), std::move(done));
+}
+
+std::shared_ptr<git_process> git_process::start_program(
+    rap::ui& ui, const std::string& dir, const std::string& program, std::vector<std::string> args,
+    std::function<void(const std::string&)> output, std::function<void(int)> done)
+{
+    return launch(ui, program, args, {.dir = rap::sys::path_from_utf8(dir)}, std::move(output),
+                  std::move(done));
+}
+
+std::shared_ptr<git_process> git_process::launch(rap::ui& ui, const std::string& program,
+                                                 const std::vector<std::string>& args,
+                                                 const rap::sys::process::options& options,
+                                                 std::function<void(const std::string&)> output,
+                                                 std::function<void(int)> done)
+{
     auto p = std::shared_ptr<git_process>(new git_process);
     auto state = p->state_ = std::make_shared<git_process::state>();
-    auto started = process::start("git", git_command_line(dir, args), git_options(mode, prompts));
+    auto started = process::start(program, args, options);
     // Callbacks only run while the handle is alive, a start's failure's too.
     if (!started)
     {
         ui.post(
-            [state, output, done, error = started.error()]
+            [state, output, done, program, error = started.error()]
             {
                 if (!state->dropped && output)
-                    output(rap::i18n::format(_("could not start git: {0}"), error) + "\n");
+                    output(
+                        (program == "git"
+                             ? rap::i18n::format(_("could not start git: {0}"), error)
+                             : rap::i18n::format(_("could not start {0}: {1}"), program, error)) +
+                        "\n");
                 if (!state->dropped && done) done(-1);
             });
         return p;

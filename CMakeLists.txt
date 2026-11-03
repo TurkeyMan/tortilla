@@ -68,6 +68,7 @@ add_library(tortilla_git STATIC
     src/git/status.cpp
     src/git/repo_worker.cpp
     src/git/diff_tool.cpp
+    src/git/diff_sides.cpp
     src/git/ssh_client.cpp
     src/git/askpass_env.cpp
     src/git/remotes.cpp
@@ -146,6 +147,7 @@ add_executable(tortilla
     src/ui/repo_browser.cpp
     src/rebase/rebase_window.cpp
     src/ui/compare.cpp
+    src/ui/busy_pointer.cpp
     src/ui/progress_dialog.cpp
     src/ui/diff_window.cpp
     src/ui/settings_dialog.cpp

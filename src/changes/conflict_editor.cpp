@@ -3,6 +3,7 @@
 #include "git/command.h"
 #include "git/merge_tool.h"
 #include "i18n.h"
+#include "ui/busy_pointer.h"
 
 #include <rapport/sys.h>
 
@@ -97,16 +98,19 @@ void edit_conflict(rap::ui& ui, rap::window* parent, const std::string& workdir,
     // The tool runs off the UI thread; when it exits its sides go, and
     // unless it marked the file resolved itself (TortoiseGitMerge does) the
     // user says whether the merge worked [spec 9.1.3, MergeBlockTrustBehavior 1].
+    // The busy pointer meanwhile, while it comes up.
+    const auto idle = show_busy_pointer(ui);
     std::thread(
-        [&ui, workdir, path, sides = *sides, program, argv, finish]
+        [&ui, workdir, path, sides = *sides, program, argv, finish, idle]
         {
             auto result = rap::sys::process::run(program, argv, {.merge_stderr = true});
             const std::string error = result ? "" : result.error();
             ui.post(
-                [&ui, workdir, path, sides, program, error, finish]
+                [&ui, workdir, path, sides, program, error, finish, idle]
                 {
                     // (The window that asked may be gone: these stand alone.)
                     remove_conflict_sides(sides);
+                    idle();
                     if (!error.empty())
                     {
                         ui.message(nullptr,

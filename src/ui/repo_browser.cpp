@@ -8,6 +8,7 @@
 #include "i18n.h"
 #include "log/log_window.h"
 #include "settings.h"
+#include "ui/busy_pointer.h"
 #include "ui/compare.h"
 #include "ui/menu_items.h"
 #include "ui/repo_icon.h"
@@ -547,15 +548,23 @@ rap::menu repo_browser::folder_menu(const std::string& f)
 // Open does: through git's filters, so an LFS file is its content.
 void repo_browser::open_file(const std::string& path, bool choose)
 {
+    // The busy pointer while its program comes up (Open with asks first).
+    const std::function<void()> idle = choose ? [] {} : show_busy_pointer(ui_);
     const std::string rev = revision_id();
     const git_result r = revision_file(workdir_, rev, path);
     const fs::path file = revision_temp_path(rev, path);
     if (!r.ok() || file.empty() || !write_temp_file(file, r.output))
+    {
+        idle();
         return error(_("Open"),
                      rap::i18n::format(_("Could not get {0} at {1}."), path, rev.substr(0, 8)),
                      r.ok() ? "" : r.output);
+    }
     if (!(choose ? rap::sys::open_with(file) : rap::sys::open_path(file)))
+    {
+        idle();
         error(_("Open"), rap::i18n::format(_("Could not open {0}."), rap::sys::path_to_utf8(file)));
+    }
 }
 
 void repo_browser::save_as(const std::string& path)
