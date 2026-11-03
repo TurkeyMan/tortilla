@@ -17,6 +17,7 @@
 #include "ui/repo_icon.h"
 #include "ui/windows.h"
 #include "util/calendar.h"
+#include "util/check_rows.h"
 
 #include <rapport/sys.h>
 
@@ -620,13 +621,12 @@ void browse_refs::ok()
 }
 
 // A click on a box in the selection sets the whole selection to its new
-// state, as the Commit dialog's list does.
+// state, as the Commit dialog's list does (box_clicked).
 void browse_refs::toggle_rows(size_t row)
 {
     if (row >= rows_->items.size()) return;
-    std::vector<size_t> rows = list_->selection();
-    if (!std::ranges::contains(rows, row)) rows = {row};
-    const bool on = !checked_.contains(rows_->items[row]->full);
+    const auto [rows, on] =
+        box_clicked(list_->selection(), row, checked_.contains(rows_->items[row]->full));
     for (size_t r : rows)
         if (r < rows_->items.size())
         {
