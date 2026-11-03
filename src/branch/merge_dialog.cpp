@@ -257,8 +257,14 @@ void merge_dialog::ok()
          .offered =
              [workdir, rev](bool ok)
          {
-             return !ok &&
-                    !run_git(workdir, {"merge-base", "HEAD", rev}, git_output::stdout_only).ok();
+             if (ok) return false;
+             // Unrelated histories, in process; git when libgit2 can't say.
+             if (auto r = repo::open(workdir))
+             {
+                 const auto head = r->head_id(), other = r->resolve(rev);
+                 if (head && other) return !r->merge_base(*head, *other);
+             }
+             return !run_git(workdir, {"merge-base", "HEAD", rev}, git_output::stdout_only).ok();
          }},
         {.label = _("Remove _branch"),
          .after_close =

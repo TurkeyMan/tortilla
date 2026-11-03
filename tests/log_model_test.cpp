@@ -22,6 +22,7 @@
 #include "git/clean.h"
 #include "git/command.h"
 #include "git/diff_tool.h"
+#include "git/git_install.h"
 #include "git/history_edit.h"
 #include "git/ignore_patterns.h"
 #include "git/lfs.h"
@@ -56,6 +57,7 @@
 #include "util/search_query.h"
 #include "util/sha256.h"
 #include "util/strings.h"
+#include "util/version_order.h"
 
 #include <algorithm>
 #include <atomic>
@@ -858,6 +860,467 @@ void ref_journal_tests(const std::string& root)
     for (int i = 0; i < 4; ++i) small.record("step " + std::to_string(i), move);
     check(small.undo_count() == 2 && small.next_undo()->label == "step 3",
           "journal: only the newest steps are kept");
+}
+
+// What libgit2 answers in process against what git itself says, on
+// repositories with the cases that differ most: packed and loose refs, refs
+// with slashes and beyond ASCII, a branch named like a hash, annotated and
+// lightweight tags, upstreams (gone ones too), a linked worktree, a
+// detached HEAD, an unborn branch and an includeIf config. Then the same
+// reads with git off PATH: they must not need it.
+std::string labels_text(const tortilla::ref_map& refs)
+{
+    std::vector<std::string> lines;
+    for (const auto& [id, labels] : refs)
+        for (const tortilla::ref& r : labels)
+            lines.push_back(id.hex() + ' ' + r.full_name + ' ' + r.name + ' ' +
+                            std::to_string(int(r.kind)) + (r.current ? " current" : "") +
+                            (r.annotated ? " annotated" : "") + " up=" + r.upstream +
+                            " wt=" + r.worktree + (r.remote_default ? " default" : ""));
+    std::ranges::sort(lines);
+    std::string out;
+    for (const std::string& l : lines) out += l + '\n';
+    return out;
+}
+
+std::string git_out(const std::string& dir, const std::vector<std::string>& args)
+{
+    const tortilla::git_result r = tortilla::run_git(dir, args, tortilla::git_output::stdout_only);
+    std::string out = r.ok() ? r.output : "";
+    while (!out.empty() && (out.back() == '\n' || out.back() == '\r')) out.pop_back();
+    return out;
+}
+
+std::vector<std::string> lines_of(const std::string& text)
+{
+    std::vector<std::string> out;
+    for (std::string_view rest = text; !rest.empty();)
+    {
+        const size_t nl = rest.find('\n');
+        out.emplace_back(rest.substr(0, nl));
+        rest.remove_prefix(nl == std::string_view::npos ? rest.size() : nl + 1);
+    }
+    return out;
+}
+
+void libgit2_parity_tests(const std::string& root)
+{
+    using namespace tortilla;
+    namespace fs = std::filesystem;
+    const std::string up = root + "/parity-upstream.git", dir = root + "/parity",
+                      wt = root + "/parity-wt", empty = root + "/parity-unborn";
+    const std::string g = "git -C '" + dir + "' ";
+    sh("git init -q --bare -b main '" + up + "'");
+    sh("git init -q -b main '" + dir + "' && " + g + "config user.name Tester && " + g +
+       "config user.email t@example.com && " + g + "config core.autocrlf false");
+    sh(g + "commit -q --allow-empty -m one && " + g + "commit -q --allow-empty -m two && " + g +
+       "commit -q --allow-empty -m three");
+    sh(g + "remote add origin '" + up + "' && " + g + "push -q origin main 2>/dev/null");
+    // origin: main two ahead of ours (as fetched), a feature branch with
+    // slashes, one beyond ASCII, and HEAD naming main.
+    sh(g + "branch -q 'feature/deep/x' HEAD~1 && " + g + "branch -q 'café' HEAD~2 && " + g +
+       "push -q origin 'feature/deep/x' 'café' 2>/dev/null && " + g + "fetch -q origin && " + g +
+       "remote set-head origin main");
+    sh(g + "branch -q --set-upstream-to=origin/feature/deep/x 'feature/deep/x' && " + g +
+       "branch -q --set-upstream-to=origin/café 'café' && " + g +
+       "branch -q --set-upstream-to=origin/main main && " + g + "reset -q --hard HEAD~2");
+    // Ahead too, and a branch whose upstream is gone.
+    sh(g + "commit -q --allow-empty -m ahead && " + g + "branch -q gone && " + g +
+       "config branch.gone.remote origin && " + g + "config branch.gone.merge refs/heads/gone");
+    // Tags: annotated and lightweight; then everything packed, and more refs
+    // loose on top, one a branch named like a commit's short hash.
+    const std::string one = git_out(dir, {"rev-parse", "HEAD~1"});
+    sh(g + "tag -a -m release v1 HEAD~1 && " + g + "tag v2 HEAD && " + g + "pack-refs --all && " +
+       g + "tag -a -m later v3 HEAD && " + g + "branch -q " + one.substr(0, 7) + " HEAD && " + g +
+       "branch -q local-only HEAD~1");
+    sh(g + "worktree add -q '" + wt + "' 'feature/deep/x' 2>/dev/null");
+    // includeIf on this repository's folder: an address only it has.
+    const std::string extra = root + "/parity-extra.cfg";
+    sh("printf '[user]\\n\\temail = included@example.com\\n' > '" + extra + "'");
+    sh(g + "config --add 'includeIf.gitdir:" + dir + "/.path' '" + extra + "' && " + g +
+       "config remote.origin.skipfetchall false && " + g + "remote add other '" + up + "' && " + g +
+       "config remote.other.skipfetchall yes");
+    sh("git init -q -b fresh '" + empty + "'");
+
+    auto r = repo::open(dir);
+    check(r.has_value(), "parity: the repository opens");
+    if (!r) return;
+
+    // The log's labels: every field as for-each-ref gave them.
+    const std::string labels = labels_text(r->refs());
+    check(!labels.empty() && labels == labels_text(r->refs_by_git()),
+          "parity: the log's labels through libgit2 are git's");
+    check(labels.find("wt=" + fs::weakly_canonical(fs::path(wt)).generic_string()) !=
+                  std::string::npos ||
+              labels.find("wt=" + wt) != std::string::npos,
+          "parity: a branch checked out in a linked worktree says where");
+    if (labels != labels_text(r->refs_by_git()))
+        std::printf("libgit2:\n%sgit:\n%s", labels.c_str(), labels_text(r->refs_by_git()).c_str());
+
+    // for-each-ref <prefixes>.
+    auto listed = [&](const repo& in, const std::vector<std::string>& prefixes)
+    {
+        std::string out;
+        if (auto refs = in.refs_under(prefixes))
+            for (const repo::listed_ref& l : *refs)
+                out += l.target.hex() + ' ' + l.full_name + ' ' + l.symref + '\n';
+        return out;
+    };
+    for (const std::vector<std::string>& prefixes :
+         {std::vector<std::string>{"refs/remotes/origin/"},
+          std::vector<std::string>{"refs/heads/", "refs/remotes/"}, std::vector<std::string>{}})
+    {
+        std::vector<std::string> args{"for-each-ref",
+                                      "--format=%(objectname) %(refname) %(symref)"};
+        args.insert(args.end(), prefixes.begin(), prefixes.end());
+        const std::string theirs = git_out(dir, args) + '\n';
+        const std::string ours = listed(*r, prefixes);
+        check(ours == theirs, "parity: refs under a prefix, as for-each-ref lists them");
+        if (ours != theirs) std::printf("libgit2:\n%sgit:\n%s", ours.c_str(), theirs.c_str());
+    }
+
+    // Upstreams, ahead/behind, the branch hint.
+    for (const char* b : {"main", "feature/deep/x", "café", "gone", "local-only"})
+        check(r->upstream_ref(b) == git_out(dir, {"for-each-ref", "--format=%(upstream)",
+                                                  std::string("refs/heads/") + b}),
+              (std::string("parity: %(upstream) of ") + b).c_str());
+    {
+        const auto counts = r->ahead_behind(*r->resolve("main"), *r->resolve("origin/main"));
+        check(counts &&
+                  std::to_string(counts->first) + '\t' + std::to_string(counts->second) ==
+                      git_out(dir, {"rev-list", "--left-right", "--count", "main...origin/main"}),
+              "parity: ahead and behind, as rev-list --left-right --count");
+        const current_state s = current_against_upstream(dir);
+        check(s.branch == git_out(dir, {"symbolic-ref", "-q", "--short", "HEAD"}) &&
+                  s.upstream ==
+                      git_out(dir, {"rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"}) &&
+                  s.ahead == 1 && s.behind == 2,
+              "parity: the branch hint (branch, upstream, ahead 1, behind 2)");
+    }
+
+    // Revisions: a range, a hash-like branch (the branch, as git takes it),
+    // ancestry, and what doesn't resolve.
+    check(r->revision_exists("HEAD~1") && r->revision_exists("origin/main..main") &&
+              r->revision_exists("main...origin/main") && !r->revision_exists("no-such-thing") &&
+              !r->revision_exists("main..no-such-thing"),
+          "parity: revisions and ranges that resolve, and those that don't");
+    check(r->resolve(one.substr(0, 7)) &&
+              r->resolve(one.substr(0, 7))->hex() ==
+                  git_out(dir, {"rev-parse", one.substr(0, 7) + "^{commit}"}),
+          "parity: a branch named like a short hash is the branch, as git takes it");
+    check(r->resolve("v1")->hex() == git_out(dir, {"rev-parse", "v1^{commit}"}),
+          "parity: an annotated tag resolves to its commit");
+
+    // Config: includeIf, multi-valued keys, booleans.
+    check(config_values(dir, "user.email") ==
+                  std::vector<std::string>{"t@example.com", "included@example.com"} &&
+              git_out(dir, {"config", "--get-all", "user.email"}) ==
+                  "t@example.com\nincluded@example.com",
+          "parity: an includeIf gitdir config, as git config --get-all reads it");
+    check(fetch_all_remotes(dir) == std::vector<std::string>{"origin"} &&
+              git_out(dir, {"remote"}) == "origin\nother",
+          "parity: remotes to fetch, skipFetchAll yes left out");
+    check(config_bool(dir, "remote.other.skipfetchall") == true &&
+              config_bool(dir, "remote.origin.skipfetchall") == false &&
+              !config_bool(dir, "remote.none.skipfetchall"),
+          "parity: boolean config values");
+
+    // The sync check's tips, the forge's commit lists.
+    {
+        const auto tips = local_tips(dir, {"origin"});
+        std::string ours;
+        for (const branch_tip& t : tips.at("origin")) ours += t.sha + ' ' + t.name + '\n';
+        std::string theirs;
+        for (const std::string& line :
+             lines_of(git_out(dir, {"for-each-ref", "--format=%(objectname) %(refname:lstrip=3)",
+                                    "refs/remotes/origin/"})))
+            if (!line.ends_with(" HEAD")) theirs += line + '\n';
+        check(ours == theirs, "parity: the sync check's remote tips");
+        const auto commits = pull_request_commits(dir, "origin/main", "main", 10);
+        std::string joined;
+        for (const std::string& c : commits) joined += (joined.empty() ? "" : "\n") + c;
+        check(commits.size() == 2 && joined == git_out(dir, {"rev-list", "--max-count=10",
+                                                             "origin/main", "^main", "--"}),
+              "parity: a pull request's commits, as rev-list");
+        std::vector<forge_remote> remotes{{.name = "origin"}};
+        check(remote_with_commit(dir, git_out(dir, {"rev-parse", "café"}), remotes) ==
+                      &remotes[0] &&
+                  !remote_with_commit(dir, git_out(dir, {"rev-parse", "HEAD"}), remotes),
+              "parity: the remote holding a commit, as for-each-ref --contains");
+    }
+    {
+        // feature/deep/x is checked out in the worktree: it stays.
+        sh(g + "branch -q behind origin/café && " + g +
+           "branch -q --set-upstream-to=origin/main behind");
+        sh(g + "update-ref refs/remotes/origin/behind \"$(" + g + "rev-parse origin/main)\" && " +
+           g + "branch -q --set-upstream-to=origin/behind behind");
+        const auto ff = fast_forward_targets(dir);
+        check(ff.size() == 1 && ff[0].branch == "behind" &&
+                  ff[0].to == git_out(dir, {"rev-parse", "origin/main"}),
+              "parity: the branches sync may fast-forward");
+        sh(g + "branch -q -D behind && " + g + "update-ref -d refs/remotes/origin/behind");
+    }
+
+    // A linked worktree: its common directory, its own HEAD.
+    {
+        auto w = repo::open(wt);
+        check(w && fs::equivalent(fs::path(w->common_dir()),
+                                  fs::path(git_out(wt, {"rev-parse", "--path-format=absolute",
+                                                        "--git-common-dir"}))),
+              "parity: a linked worktree's common directory");
+        check(w && labels_text(w->refs()) == labels_text(w->refs_by_git()),
+              "parity: the labels seen from a linked worktree");
+        check(current_against_upstream(wt).branch == "feature/deep/x",
+              "parity: a linked worktree's branch");
+    }
+    // Detached, then unborn.
+    sh(g + "checkout -q --detach HEAD~1");
+    check(labels_text(r->refs()) == labels_text(r->refs_by_git()) &&
+              current_against_upstream(dir).branch.empty(),
+          "parity: a detached HEAD's labels and branch hint");
+    sh(g + "checkout -q main");
+    if (auto e = repo::open(empty))
+        check(e->refs().empty() && e->refs_by_git().empty() &&
+                  current_against_upstream(empty).branch == "fresh" &&
+                  current_against_upstream(empty).upstream.empty(),
+              "parity: an unborn branch has no labels, and is the branch");
+
+    // LFS: said by a .gitattributes in the index, as the attr pathspec has it.
+    {
+        const std::string lfs = root + "/parity-lfs";
+        const std::string l = "git -C '" + lfs + "' ";
+        sh("git init -q -b main '" + lfs + "' && mkdir -p '" + lfs +
+           "/sub' && printf '*.bin filter=lfs\\n' > '" + lfs +
+           "/sub/.gitattributes' && printf 'x' > '" + lfs + "/sub/a.bin' && " + l + "add -A");
+        check(uses_lfs(lfs) && !git_out(lfs, {"ls-files", "--", ":(attr:filter=lfs)"}).empty(),
+              "parity: a repository using LFS, from a nested .gitattributes");
+        check(!uses_lfs(dir) && git_out(dir, {"ls-files", "--", ":(attr:filter=lfs)"}).empty(),
+              "parity: a repository not using LFS");
+    }
+
+    // Without git: the same answers, nothing run.
+    {
+        const std::string path = rap::sys::env("PATH").value_or("");
+        const std::string nowhere = root + "/parity-no-git";
+        fs::create_directories(rap::sys::path_from_utf8(nowhere));
+        set_env("PATH", nowhere);
+        check(!recheck_git(), "no git: git isn't found with PATH stripped of it");
+        check(labels_text(r->refs()) == labels, "no git: the log's labels");
+        check(current_against_upstream(dir).behind == 2 && fetch_all_remotes(dir).size() == 1 &&
+                  config_values(dir, "user.email").size() == 2,
+              "no git: the branch hint, remotes and config");
+        check(fast_forward_targets(dir).empty() &&
+                  local_tips(dir, {"origin"}).at("origin").size() == 3,
+              "no git: the sync check's reads");
+        set_env("PATH", path);
+        check(recheck_git(), "no git: found again with PATH back");
+    }
+
+    // How to install git, by distribution.
+    auto help = [](std::string_view os_release)
+    { return linux_git_install_help(os_release).command; };
+    check(help("ID=ubuntu\nID_LIKE=debian\n") == "sudo apt install git" &&
+              help("ID=linuxmint\nID_LIKE=\"ubuntu debian\"\n") == "sudo apt install git" &&
+              help("ID=\"fedora\"\n") == "sudo dnf install git" &&
+              help("ID=\"centos\"\nVERSION_ID=\"7\"\n") == "sudo yum install git" &&
+              help("ID=\"rhel\"\nVERSION_ID=\"9.2\"\n") == "sudo dnf install git" &&
+              help("ID=\"rocky\"\nID_LIKE=\"rhel centos fedora\"\nVERSION_ID=\"9.3\"\n") ==
+                  "sudo dnf install git" &&
+              help("ID=arch\n") == "sudo pacman -S git" &&
+              help("ID=endeavouros\nID_LIKE=arch\n") == "sudo pacman -S git" &&
+              help("ID=manjaro\nID_LIKE=arch\n") == "sudo pacman -S git" &&
+              help("ID=\"opensuse-tumbleweed\"\nID_LIKE=\"opensuse suse\"\n") ==
+                  "sudo zypper install git" &&
+              help("ID=alpine\n") == "sudo apk add git" &&
+              help("ID=void\n") == "sudo xbps-install git" &&
+              help("ID=gentoo\n") == "sudo emerge dev-vcs/git",
+          "git install help: the command for each distribution");
+    check(help("ID=nixos\n").empty() &&
+              linux_git_install_help("ID=nixos\n").text.find("configuration.nix") !=
+                  std::string::npos &&
+              help("ID=weird\n").empty() && !linux_git_install_help("").text.empty(),
+          "git install help: NixOS's note, and a generic line for the rest");
+}
+
+// The dialogs' reads in process against git's: ref names and their checks,
+// short names, version order, merge bases, stashes, tag messages, commit
+// bodies, Browse References' list, a tree's files and the index.
+void libgit2_dialog_parity_tests(const std::string& root)
+{
+    using namespace tortilla;
+    namespace fs = std::filesystem;
+    const std::string dir = root + "/parity-dialogs", wt = root + "/parity-dialogs-wt";
+    const std::string g = "git -C '" + dir + "' ";
+    sh("git init -q -b main '" + dir + "' && " + g + "config user.name Tester && " + g +
+       "config user.email t@example.com && " + g + "config core.autocrlf false");
+    sh("mkdir -p '" + dir + "/src/deep' && printf 'a\\n' > '" + dir +
+       "/src/deep/a.txt' && printf 'b\\n' > '" + dir + "/b.txt' && " + g + "add -A && " + g +
+       "commit -qm 'First line\nof the subject\n\n\nBody one\n\nBody two'");
+    sh(g + "commit -q --allow-empty -m second && " + g +
+       "tag -a -m 'Release notes\n\nMore' v1.9 HEAD~1 && " + g + "tag v1.10 HEAD && " + g +
+       "tag v1.2 HEAD && " + g + "branch -q v1.2 HEAD~1 && " + g + "branch -q 'ünï/cödé' HEAD && " +
+       g + "branch -q side HEAD~1 && " + g + "checkout -q side && " + g +
+       "commit -q --allow-empty -m on-side && " + g + "checkout -q main");
+    sh(g + "config branch.side.description 'Side work\nsecond line'");
+    auto r = repo::open(dir);
+    check(r.has_value(), "dialog parity: the repository opens");
+    if (!r) return;
+
+    // Names: valid or not, as check-ref-format says.
+    bool names_agree = true;
+    for (const char* n :
+         {"main", "feature/x", "a..b", "a.lock", "-dash", "HEAD",    "x/",  "/x",
+          "a b",  "a~b",       "a^b",  "a:b",    "a?b",   "a*b",     "a[b", "a\\b",
+          "@",    "a@{b",      "ünï",  "a/.b",   "a//b",  ".hidden", "x.",  "ok-1.2_3"})
+    {
+        const bool git_branch = run_git(dir, {"check-ref-format", "--branch", n}).ok();
+        const bool git_ref =
+            run_git(dir, {"check-ref-format", std::string("refs/heads/") + n}).ok();
+        if (valid_branch_name(n) != git_branch ||
+            valid_ref_name(std::string("refs/heads/") + n) != git_ref)
+        {
+            names_agree = false;
+            std::printf("  name %s: libgit2 %d/%d git %d/%d\n", n, valid_branch_name(n),
+                        valid_ref_name(std::string("refs/heads/") + n), git_branch, git_ref);
+        }
+    }
+    check(names_agree, "dialog parity: branch and ref names, as check-ref-format");
+    for (const char* full :
+         {"refs/heads/main", "refs/heads/nope", "refs/tags/v1.9", "main", "HEAD"})
+        check(ref_exists(dir, full) ==
+                  run_git(dir, {"show-ref", "--verify", "--quiet", full}, git_output::stdout_only)
+                      .ok(),
+              (std::string("dialog parity: show-ref --verify ") + full).c_str());
+
+    // Short names (a branch and a tag both v1.2), full names, version order.
+    std::string ours, theirs = git_out(dir, {"for-each-ref", "--format=%(refname:short)"});
+    for (const repo::listed_ref& l : *r->refs_under({}))
+        ours += (ours.empty() ? "" : "\n") + r->short_ref_name(l.full_name);
+    check(ours == theirs, "dialog parity: short names, as %(refname:short)");
+    if (ours != theirs) std::printf("libgit2:\n%s\ngit:\n%s\n", ours.c_str(), theirs.c_str());
+    for (const char* n : {"main", "HEAD", "v1.9", "side", "ünï/cödé"})
+        check(r->full_ref_name(n) == git_out(dir, {"rev-parse", "--symbolic-full-name", n}),
+              (std::string("dialog parity: rev-parse --symbolic-full-name ") + n).c_str());
+    check(r->full_ref_name(r->head_id()->hex()).empty(), "dialog parity: a hash is no ref");
+    {
+        std::vector<std::string> tags;
+        for (const repo::listed_ref& l : *r->refs_under({"refs/tags/"}))
+            tags.push_back(l.full_name);
+        std::ranges::stable_sort(tags, version_less);
+        std::string sorted;
+        for (const std::string& t : tags) sorted += (sorted.empty() ? "" : "\n") + t;
+        check(sorted == git_out(dir, {"for-each-ref", "--sort=version:refname",
+                                      "--format=%(refname)", "refs/tags"}),
+              "dialog parity: tags in version order");
+        check(version_less("v1.9", "v1.10") && version_less("1.01", "1.1") &&
+                  version_less("a", "b") && !version_less("v2", "v2") && version_less("x9", "x10"),
+              "version order: numbers by value, fractions first");
+    }
+
+    // Ancestry, commit text, tags, stashes.
+    const oid head = *r->head_id(), side = *r->resolve("side");
+    check(r->merge_base(head, side)->hex() == git_out(dir, {"merge-base", "main", "side"}),
+          "dialog parity: merge-base");
+    check(r->short_id(head) == git_out(dir, {"log", "-1", "--format=%h"}), "dialog parity: %h");
+    const oid first = *r->resolve("HEAD~1");
+    check(trimmed(commit_body(r->lookup(first)->message)) ==
+                  git_out(dir, {"log", "-1", "--format=%b", "HEAD~1"}) &&
+              r->lookup(first)->summary == git_out(dir, {"log", "-1", "--format=%s", "HEAD~1"}),
+          "dialog parity: a commit's subject and body, as %s and %b");
+    check(r->tag_message("v1.9") &&
+              trimmed(*r->tag_message("v1.9")) ==
+                  git_out(dir, {"tag", "-l", "--format=%(contents)", "v1.9"}) &&
+              !r->tag_message("v1.10"),
+          "dialog parity: an annotated tag's message, none for a lightweight one");
+    check(trimmed(r->branches_containing(first)) ==
+              git_out(dir, {"branch", "-a", "--contains", first.hex()}),
+          "dialog parity: branches containing a commit, as git branch -a --contains");
+    sh("printf 'changed\\n' > '" + dir + "/b.txt' && " + g +
+       "stash push -q -m 'first stash' && printf 'again\\n' > '" + dir + "/b.txt' && " + g +
+       "stash push -q");
+    {
+        std::string listed;
+        for (const repo::stash_entry& s : r->stashes())
+            listed += (listed.empty() ? "" : "\n") + s.selector + '\t' + s.id.hex() + '\t' +
+                      s.subject + '\t' + (s.base ? s.base->hex() : "");
+        // %P's first parent: the commit it was made on.
+        std::string expected;
+        for (const std::string& line :
+             lines_of(git_out(dir, {"stash", "list", "--format=%gd%x09%H%x09%gs%x09%P"})))
+            expected += (expected.empty() ? "" : "\n") + line.substr(0, line.rfind('\t') + 41);
+        check(listed == expected && r->stashes().size() == 2, "dialog parity: the stash list");
+    }
+
+    // Browse References: every field, and the merged filters.
+    auto entries = [](const ref_list_result& l)
+    {
+        std::string out;
+        for (const ref_entry& e : l.refs)
+            out += e.full + '|' + e.hash + '|' + e.type + '|' + e.upstream + '|' + e.subject + '|' +
+                   e.author + '|' + std::to_string(e.author_date) + '|' + e.committer + '|' +
+                   std::to_string(e.commit_date) + '|' + e.description + '\n';
+        return out;
+    };
+    const std::string listed = entries(list_refs(dir));
+    std::string expected;
+    for (std::string line : lines_of(git_out(
+             dir,
+             {"for-each-ref",
+              "--format=%(refname)|%(objectname)|%(objecttype)||%(subject)|"
+              "%(if)%(authorname)%(then)%(authorname)|%(authordate:unix)|%(committername)|%("
+              "committerdate:unix)"
+              "%(else)%(taggername)|%(taggerdate:unix)|%(taggername)|%(taggerdate:unix)%(end)|"})))
+    {
+        if (line.starts_with("refs/heads/side|")) line += "Side work second line";
+        expected += line + '\n';
+    }
+    check(listed == expected, "dialog parity: Browse References' refs, as for-each-ref");
+    if (listed != expected) std::printf("libgit2:\n%sgit:\n%s", listed.c_str(), expected.c_str());
+    auto names = [](const ref_list_result& l)
+    {
+        std::string out;
+        for (const ref_entry& e : l.refs) out += e.full + '\n';
+        return out;
+    };
+    check(
+        names(list_refs(dir, merged_filter::merged)) ==
+                git_out(dir, {"for-each-ref", "--merged", "HEAD", "--format=%(refname)"}) + '\n' &&
+            names(list_refs(dir, merged_filter::unmerged)) ==
+                git_out(dir, {"for-each-ref", "--no-merged", "HEAD", "--format=%(refname)"}) + '\n',
+        "dialog parity: merged and unmerged refs, as --merged/--no-merged HEAD");
+
+    // A tree's files, the index, a worktree's exclude file.
+    {
+        std::string files;
+        for (const std::string& f : *tree_files(*r, first))
+            files += (files.empty() ? "" : "\n") + f;
+        check(files == git_out(dir, {"ls-tree", "-r", "--name-only", "--full-tree", first.hex()}),
+              "dialog parity: a tree's files, as ls-tree -r");
+        check(any_tracked(dir, {"src"}) == true && any_tracked(dir, {"src/deep/a.txt"}) == true &&
+                  any_tracked(dir, {"sr"}) == false &&
+                  any_tracked(dir, {"nope", "b.txt"}) == true &&
+                  git_out(dir, {"ls-files", "--", "sr"}).empty(),
+              "dialog parity: tracked paths, as ls-files");
+        sh(g + "worktree add -q '" + wt + "' side 2>/dev/null");
+        auto w = repo::open(wt);
+        check(w && fs::equivalent(fs::path(w->common_dir()) / "info",
+                                  fs::path(git_out(wt, {"rev-parse", "--path-format=absolute",
+                                                        "--git-path", "info/exclude"}))
+                                      .parent_path()),
+              "dialog parity: a worktree's info/exclude is the main one's");
+    }
+
+    // includeIf hasconfig: libgit2 skips it, so git is asked.
+    const std::string extra = root + "/parity-hasconfig.cfg";
+    sh("printf '[user]\\n\\temail = hasconfig@example.com\\n' > '" + extra + "' && " + g +
+       "remote add origin https://example.com/x.git && " + g +
+       "config 'includeIf.hasconfig:remote.*.url:https://example.com/**.path' '" + extra + "'");
+    std::string all;
+    for (const std::string& e : config_values(dir, "user.email"))
+        all += (all.empty() ? "" : "\n") + e;
+    check(all == git_out(dir, {"config", "--get-all", "user.email"}) &&
+              all.find("hasconfig@") != std::string::npos,
+          "dialog parity: an includeIf hasconfig config, through git");
 }
 
 }  // namespace
@@ -4526,6 +4989,8 @@ int main(int argc, char** argv)
     }
     history_edit_tests(argv[1]);
     ref_journal_tests(argv[1]);
+    libgit2_parity_tests(argv[1]);
+    libgit2_dialog_parity_tests(argv[1]);
 
     std::printf("%s\n", failures ? "FAILED" : "all passed");
     return failures ? 1 : 0;

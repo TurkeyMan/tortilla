@@ -1,6 +1,7 @@
 #include "repo_operation.h"
 
 #include "git/command.h"
+#include "git/repo.h"
 
 #include <rapport/sys.h>
 
@@ -79,8 +80,13 @@ operation_state operation_in_git_dir(const std::string& git_dir)
 
 operation_state operation_in_progress(const std::string& workdir)
 {
-    std::string dir =
-        run_git(workdir, {"rev-parse", "--absolute-git-dir"}, git_output::stdout_only).output;
+    // The git folder through libgit2 (a click waits for it); git's when
+    // libgit2 can't open the repository.
+    std::string dir;
+    if (auto r = repo::open(workdir))
+        dir = r->git_dir();
+    else
+        dir = run_git(workdir, {"rev-parse", "--absolute-git-dir"}, git_output::stdout_only).output;
     while (!dir.empty() && (dir.back() == '\n' || dir.back() == '\r')) dir.pop_back();
     return operation_in_git_dir(dir);
 }

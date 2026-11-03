@@ -180,8 +180,7 @@ void clone_dialog::ok()
                     {.icon = rap::message_spec::icon::warning, .title = _("Clone"), .text = text});
     };
     if (url.empty() || dir.empty()) return refuse(_("URL and directory must not be empty."));
-    if (branch_->checked() &&
-        !run_git(".", {"check-ref-format", "--branch", branch_name_->text()}).ok())
+    if (branch_->checked() && !valid_branch_name(branch_name_->text()))
         return refuse(rap::i18n::format(_("“{0}” isn't a valid branch name."), branch_name_->text()));
     if (origin_->checked() && !bare_->checked() && origin_name_->text().empty())
         return refuse(_("Enter the origin's name."));

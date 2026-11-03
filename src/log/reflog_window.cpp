@@ -371,9 +371,20 @@ void reflog_window::difftool(std::vector<std::string> revisions)
 
 void reflog_window::reset(const reflog_entry& e)
 {
-    const git_result subject =
-        run_git(workdir_, {"log", "-1", "--format=%s", e.id}, git_output::stdout_only);
-    std::string summary = subject.ok() ? subject.output : std::string();
+    // Its subject in process (the reset waits for it); git's when libgit2
+    // can't open the repository.
+    std::string summary;
+    auto r = repo::open(workdir_);
+    if (const auto id = r ? r->resolve(e.id) : std::nullopt)
+    {
+        if (const auto c = r->lookup(*id)) summary = c->summary;
+    }
+    else if (!r)
+    {
+        const git_result subject =
+            run_git(workdir_, {"log", "-1", "--format=%s", e.id}, git_output::stdout_only);
+        summary = subject.ok() ? subject.output : std::string();
+    }
     while (!summary.empty() && (summary.back() == '\n' || summary.back() == '\r'))
         summary.pop_back();
     tortilla::reset_to(ui_, window_.get(), workdir_, current_branch(workdir_), e.id, summary,
@@ -434,9 +445,14 @@ void reflog_window::delete_entries(std::vector<size_t> sel)
 // count on the button, and no default button for Enter to press by habit.
 void reflog_window::clear_stash()
 {
-    const git_result listed =
-        run_git(workdir_, {"stash", "list", "--format=%gd  %s"}, git_output::stdout_only);
-    std::string stashes = listed.output;
+    // In process, as git stash list --format="%gd  %s" has them.
+    std::string stashes;
+    if (auto r = repo::open(workdir_))
+        for (const repo::stash_entry& s : r->stashes())
+        {
+            const auto c = r->lookup(s.id);
+            stashes += s.selector + "  " + (c ? c->summary : std::string()) + "\n";
+        }
     while (!stashes.empty() && stashes.back() == '\n') stashes.pop_back();
     const size_t n = stashes.empty() ? 0 : size_t(std::ranges::count(stashes, '\n')) + 1;
     if (n == 0) return;

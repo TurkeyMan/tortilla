@@ -5,8 +5,13 @@
 #include "util/search_query.h"
 #include "util/strings.h"
 
+#include <git2.h>
+
 #include <algorithm>
 #include <cctype>
+#include <cstring>
+#include <memory>
+#include <optional>
 #include <set>
 #include <string_view>
 #include <unordered_map>
@@ -41,6 +46,138 @@ int64_t number(std::string_view s)
     return v;
 }
 
+// A message's subject as git's %(subject): its first paragraph, its lines
+// joined by spaces.
+std::string subject_of(std::string_view message)
+{
+    std::string out;
+    bool started = false;
+    while (!message.empty())
+    {
+        const size_t nl = message.find('\n');
+        std::string_view line = message.substr(0, nl);
+        message.remove_prefix(nl == std::string_view::npos ? message.size() : nl + 1);
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ' || line.back() == '\t'))
+            line.remove_suffix(1);
+        if (line.empty())
+        {
+            if (started) break;
+            continue;
+        }
+        if (started) out += ' ';
+        out += line;
+        started = true;
+    }
+    return out;
+}
+
+// for-each-ref's lines as list_refs asks for them (fields NUL-separated),
+// through libgit2: Browse References opens on them. nullopt when libgit2
+// can't read the refs, or HEAD for the merged filters.
+std::optional<std::string> refs_in_process(const std::string& workdir, merged_filter filter)
+{
+    auto r = repo::open(workdir);
+    if (!r) return std::nullopt;
+    const auto refs = r->refs_under({});
+    if (!refs) return std::nullopt;
+    git_repository* raw = r->raw();
+    git_odb* odb = nullptr;
+    if (git_repository_odb(&odb, raw) != 0) return std::nullopt;
+    std::unique_ptr<git_odb, decltype(&git_odb_free)> owned_odb(odb, git_odb_free);
+
+    // --merged/--no-merged HEAD: the commits HEAD reaches, walked once.
+    std::unordered_set<oid, oid_hash> reached;
+    if (filter != merged_filter::all)
+    {
+        const auto head = r->head_id();
+        if (!head) return std::nullopt;
+        for (const oid& id : r->rev_list({*head}, {})) reached.insert(id);
+    }
+    auto when = [](const git_signature* s) { return s ? std::to_string(s->when.time) : ""; };
+    auto name = [](const git_signature* s) { return std::string(s && s->name ? s->name : ""); };
+    std::string out;
+    for (const repo::listed_ref& l : *refs)
+    {
+        const git_oid id = [&]
+        {
+            git_oid g;
+            std::memcpy(g.id, l.target.bytes.data(), l.target.bytes.size());
+            return g;
+        }();
+        size_t size = 0;
+        git_object_t type = GIT_OBJECT_INVALID;
+        if (git_odb_read_header(&size, &type, odb, &id) != 0) return std::nullopt;
+        std::string fields[11];
+        fields[0] = l.full_name;
+        fields[1] = l.target.hex();
+        fields[2] = git_object_type2string(type);
+        if (l.full_name.starts_with("refs/heads/"))
+            fields[3] = r->upstream_ref(std::string_view(l.full_name).substr(11));
+        std::optional<oid> commit;
+        if (type == GIT_OBJECT_COMMIT)
+        {
+            git_commit* c = nullptr;
+            if (git_commit_lookup(&c, raw, &id) != 0) return std::nullopt;
+            if (const char* s = git_commit_message(c)) fields[4] = subject_of(s);
+            fields[5] = name(git_commit_author(c));
+            fields[6] = when(git_commit_author(c));
+            fields[7] = name(git_commit_committer(c));
+            fields[8] = when(git_commit_committer(c));
+            git_commit_free(c);
+            commit = l.target;
+        }
+        else if (type == GIT_OBJECT_TAG)
+        {
+            git_tag* t = nullptr;
+            if (git_tag_lookup(&t, raw, &id) != 0) return std::nullopt;
+            if (const char* m = git_tag_message(t)) fields[4] = subject_of(m);
+            fields[9] = name(git_tag_tagger(t));
+            fields[10] = when(git_tag_tagger(t));
+            git_object* peeled = nullptr;
+            if (git_tag_peel(&peeled, t) == 0)
+            {
+                if (git_object_type(peeled) == GIT_OBJECT_COMMIT)
+                {
+                    oid o;
+                    std::memcpy(o.bytes.data(), git_object_id(peeled)->id, o.bytes.size());
+                    commit = o;
+                }
+                git_object_free(peeled);
+            }
+            git_tag_free(t);
+        }
+        if (filter != merged_filter::all &&
+            (!commit || reached.contains(*commit) != (filter == merged_filter::merged)))
+            continue;
+        for (size_t i = 0; i < 11; ++i)
+        {
+            if (i) out += '\0';
+            out += fields[i];
+        }
+        out += '\n';
+    }
+    return out;
+}
+
+// git config --null --get-regexp ^branch\..*\.description$'s output,
+// through libgit2; nullopt when it can't read the config.
+std::optional<std::string> descriptions_in_process(const std::string& workdir)
+{
+    auto r = repo::open(workdir);
+    git_config* config = nullptr;
+    if (!r || git_repository_config_snapshot(&config, r->raw()) != 0) return std::nullopt;
+    std::string out;
+    git_config_iterator* it = nullptr;
+    if (git_config_iterator_glob_new(&it, config, "^branch\\..*\\.description$") == 0)
+    {
+        git_config_entry* e = nullptr;
+        while (git_config_next(&e, it) == 0)
+            out += std::string(e->name) + '\n' + (e->value ? e->value : "") + '\0';
+        git_config_iterator_free(it);
+    }
+    git_config_free(config);
+    return out;
+}
 
 }  // namespace
 
@@ -61,7 +198,11 @@ ref_list_result list_refs(const std::string& workdir, merged_filter filter)
                                   "%(taggername)%00%(taggerdate:unix)"};
     if (filter == merged_filter::merged) args.insert(args.begin() + 1, {"--merged", "HEAD"});
     if (filter == merged_filter::unmerged) args.insert(args.begin() + 1, {"--no-merged", "HEAD"});
-    const git_result r = run_git(workdir, args, git_output::stdout_only);
+    git_result r{.exit_code = 0};
+    if (auto listed = refs_in_process(workdir, filter))
+        r.output = std::move(*listed);
+    else
+        r = run_git(workdir, args, git_output::stdout_only);
     if (!r.ok())
     {
         out.error = r.output;
@@ -104,8 +245,12 @@ ref_list_result list_refs(const std::string& workdir, merged_filter filter)
         }
 
     // Descriptions (branch.<name>.description), newlines as spaces.
-    const git_result d = run_git(workdir, {"config", "--null", "--get-regexp", "^branch\\..*\\.description$"},
-                                 git_output::stdout_only);
+    git_result d{.exit_code = 0};
+    if (auto found = descriptions_in_process(workdir))
+        d.output = std::move(*found);
+    else
+        d = run_git(workdir, {"config", "--null", "--get-regexp", "^branch\\..*\\.description$"},
+                    git_output::stdout_only);
     if (d.ok())
     {
         std::unordered_map<std::string, std::string> desc;
