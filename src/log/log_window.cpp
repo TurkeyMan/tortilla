@@ -265,13 +265,12 @@ void log_window::build()
                                     schedule_filter();
                             })
                         .on_activate([this] { apply_filter(); })
+                        // The dates [spec 1.9.3], rarely limited: a pop-up
+                        // of their own from the box's end, the button held
+                        // down while they are.
+                        .trailing_action(
+                            calendar_icon(), _("Date range"), [this] { open_dates(); }, dates_)
                         .stretch(),
-                    // The dates [spec 1.9.3], rarely limited: a pop-up of
-                    // their own, the button held down while they are.
-                    // TODO: inside the filter box's end, where the toolkit
-                    // has room for one.
-                    tool_button{calendar_icon(), _("Date range")}.toggle().bind(dates_).on_click(
-                        [this] { open_dates(); }),
                     // TODO: TortoiseGit puts this magnifier inside the search box.
                     menu_button{""}
                         .icon(rap::icon::named("edit-find-symbolic"))
@@ -1886,7 +1885,6 @@ void log_window::update_dates_button()
 // rather than over it: changes apply as they're made, Clear lifts both.
 void log_window::open_dates()
 {
-    update_dates_button();  // the click toggled it: what's in effect says
     if (dates_popup_)
     {
         dates_popup_->show();
