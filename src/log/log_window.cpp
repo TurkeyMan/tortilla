@@ -3,7 +3,9 @@
 #include "branch/browse_refs.h"
 
 #include "git/command.h"
+#include "git/git_install.h"
 #include "git/lfs.h"
+#include "git/patch_text.h"
 #include "git/svn.h"
 #include "i18n.h"
 #include "settings.h"
@@ -739,16 +741,9 @@ std::string log_window::repository_state() const
 void log_window::watch_repository()
 {
     git_dir_ = rap::sys::path_from_utf8(repo_.git_dir());
-    const git_result common = run_git(repo_.workdir().empty() ? repo_.git_dir() : repo_.workdir(),
-                                      {"rev-parse", "--git-common-dir"}, git_output::stdout_only);
-    std::string dir = common.ok() ? common.output : "";
-    while (!dir.empty() && (dir.back() == '\n' || dir.back() == '\r')) dir.pop_back();
-    // (Relative to where git ran; a worktree's refs are in the main one's.)
-    const std::filesystem::path common_dir = rap::sys::path_from_utf8(dir);
-    const std::string ran_in = repo_.workdir().empty() ? repo_.git_dir() : repo_.workdir();
-    common_dir_ = dir.empty()                ? git_dir_
-                  : common_dir.is_absolute() ? common_dir
-                                             : rap::sys::path_from_utf8(ran_in) / common_dir;
+    // A worktree's refs are in the main one's.
+    const std::string dir = repo_.common_dir();
+    common_dir_ = dir.empty() ? git_dir_ : rap::sys::path_from_utf8(dir);
     state_ = repository_state();
     auto changed = [this, alive = std::weak_ptr<bool>(alive_)](rap::sys::watch_batch)
     {
@@ -787,7 +782,8 @@ void log_window::reload()
     // A ref picked to start from that has since gone: back to HEAD. (A
     // range, a..b, is no one rev to --verify.)
     const std::string& rev = walk_options_.rev;
-    if (!rev.empty() &&
+    // libgit2 first (every reload asks); git for syntax it doesn't know.
+    if (!rev.empty() && !repo_.revision_exists(rev) &&
         !run_git(repo_.workdir().empty() ? repo_.git_dir() : repo_.workdir(),
                  rev.find("..") != std::string::npos
                      ? std::vector<std::string>{"rev-parse", "-q", rev}
@@ -1801,8 +1797,11 @@ void log_window::update_patch()
                 [this, &ui = ui_, gen, title, args, alive = std::weak_ptr<bool>(alive_),
                  dir = repo_.workdir().empty() ? repo_.git_dir() : repo_.workdir()]
                 {
-                    auto r =
-                        std::make_shared<git_result>(run_git(dir, args, git_output::stdout_only));
+                    // libgit2's patch without git.
+                    const auto own = git_installed() ? std::nullopt : patch_in_process(dir, args);
+                    auto r = std::make_shared<git_result>(
+                        own ? git_result{.exit_code = 0, .output = *own}
+                            : run_git(dir, args, git_output::stdout_only));
                     ui.post(
                         [this, gen, title, r, alive]
                         {

@@ -3,6 +3,8 @@
 // queries, for the UI thread.
 #pragma once
 
+#include "git/command.h"
+
 #include <optional>
 #include <string>
 #include <string_view>
@@ -15,12 +17,31 @@ namespace tortilla
 std::vector<std::string> remote_names(const std::string& workdir);
 // A config value, trimmed; "" if unset.
 std::string config_value(const std::string& workdir, const std::string& key);
+// A boolean config value as git --type=bool reads it (true/yes/on/1, an
+// empty value or the bare key true); nullopt if unset or not a boolean.
+std::optional<bool> config_bool(const std::string& workdir, const std::string& key);
+// Every value a multi-valued key has, in config order (git config
+// --get-all).
+std::vector<std::string> config_values(const std::string& workdir, const std::string& key);
 // The checked-out branch's short name; "" when HEAD is detached.
 std::string current_branch(const std::string& workdir);
 // Local branches' short names.
 std::vector<std::string> local_branches(const std::string& workdir);
 // A revision's hash; "" if it doesn't resolve.
 std::string resolve(const std::string& workdir, const std::string& rev);
+// Whether the ref `full` (refs/heads/main) exists: git show-ref --verify.
+bool ref_exists(const std::string& workdir, const std::string& full);
+// Whether `name` may name a new branch (git check-ref-format --branch), or
+// `full` a ref (git check-ref-format). No repository needed.
+bool valid_branch_name(const std::string& name);
+bool valid_ref_name(const std::string& full);
+// Whether the index holds any of `paths` (repository-relative, a folder
+// meaning what's under it), as git ls-files -- <paths> finds them;
+// nullopt when libgit2 can't read the index.
+std::optional<bool> any_tracked(const std::string& workdir, const std::vector<std::string>& paths);
+// A blob's bytes as stored (git cat-file blob <hash>), as git_result has
+// them: ok() and the bytes, or not.
+git_result blob_bytes(const std::string& workdir, const std::string& hash);
 // Whether `ancestor` is an ancestor of (or is) `of`.
 bool is_ancestor(const std::string& workdir, const std::string& ancestor, const std::string& of);
 bool is_shallow(const std::string& workdir);

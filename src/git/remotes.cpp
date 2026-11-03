@@ -52,6 +52,26 @@ repo_ptr local_repo(const std::string& workdir)
     return repo_ptr(r, &git_repository_free);
 }
 
+// The repository's config as libgit2 reads it: every file git reads, with
+// include and includeIf gitdir/gitdir/i/onbranch. Not includeIf
+// hasconfig:, which libgit2 skips: then it fails, and git answers.
+int config_snapshot(git_config** out, git_repository* r)
+{
+    if (const int error = git_repository_config_snapshot(out, r); error != 0) return error;
+    git_config_iterator* it = nullptr;
+    bool unknown = false;
+    if (git_config_iterator_glob_new(&it, *out, "^includeif\\.hasconfig:.*\\.path$") == 0)
+    {
+        git_config_entry* e = nullptr;
+        unknown = git_config_next(&e, it) == 0;
+        git_config_iterator_free(it);
+    }
+    if (!unknown) return 0;
+    git_config_free(*out);
+    *out = nullptr;
+    return GIT_ERROR;
+}
+
 // A revision's commit, as hex; nullopt if libgit2 can't resolve it.
 std::optional<std::string> commit_of(git_repository* r, const std::string& rev)
 {
@@ -93,7 +113,7 @@ std::string config_value(const std::string& workdir, const std::string& key)
     if (auto r = local_repo(workdir))
     {
         git_config* config = nullptr;
-        if (git_repository_config_snapshot(&config, r.get()) == 0)
+        if (config_snapshot(&config, r.get()) == 0)
         {
             git_buf value{};
             const int found = git_config_get_string_buf(&value, config, key.c_str());
@@ -104,6 +124,51 @@ std::string config_value(const std::string& workdir, const std::string& key)
         }
     }
     return query(workdir, {"config", "--get", key});
+}
+
+std::optional<bool> config_bool(const std::string& workdir, const std::string& key)
+{
+    if (auto r = local_repo(workdir))
+    {
+        git_config* config = nullptr;
+        if (config_snapshot(&config, r.get()) == 0)
+        {
+            int value = 0;
+            const int found = git_config_get_bool(&value, config, key.c_str());
+            git_config_free(config);
+            if (found == 0) return value != 0;
+            return std::nullopt;
+        }
+    }
+    const std::string v = query(workdir, {"config", "--type=bool", "--get", key});
+    if (v == "true") return true;
+    if (v == "false") return false;
+    return std::nullopt;
+}
+
+std::vector<std::string> config_values(const std::string& workdir, const std::string& key)
+{
+    if (auto r = local_repo(workdir))
+    {
+        git_config* config = nullptr;
+        if (config_snapshot(&config, r.get()) == 0)
+        {
+            std::vector<std::string> out;
+            git_config_get_multivar_foreach(
+                config, key.c_str(), nullptr,
+                [](const git_config_entry* e, void* out)
+                {
+                    static_cast<std::vector<std::string>*>(out)->emplace_back(e->value ? e->value
+                                                                                       : "");
+                    return 0;
+                },
+                &out);
+            git_config_free(config);
+            return out;
+        }
+    }
+    const git_result r = run_git(workdir, {"config", "--get-all", key}, git_output::stdout_only);
+    return r.ok() ? lines(r.output) : std::vector<std::string>{};
 }
 
 std::string current_branch(const std::string& workdir)
@@ -158,6 +223,82 @@ std::string resolve(const std::string& workdir, const std::string& rev)
         if (auto id = commit_of(r.get(), rev)) return *id;
     // Revision syntax libgit2 doesn't know (":/message", say): git's.
     return query(workdir, {"rev-parse", "-q", "--verify", "--end-of-options", rev + "^{commit}"});
+}
+
+bool ref_exists(const std::string& workdir, const std::string& full)
+{
+    if (auto r = local_repo(workdir))
+    {
+        // show-ref takes refs/ names and HEAD, a symbolic one by its target.
+        git_reference* ref = nullptr;
+        git_reference* resolved = nullptr;
+        bool found = (std::string_view(full).starts_with("refs/") || full == "HEAD") &&
+                     git_reference_lookup(&ref, r.get(), full.c_str()) == 0 &&
+                     git_reference_resolve(&resolved, ref) == 0;
+        git_reference_free(resolved);
+        git_reference_free(ref);
+        return found;
+    }
+    return run_git(workdir, {"show-ref", "--verify", "--quiet", full}, git_output::stdout_only)
+        .ok();
+}
+
+std::optional<bool> any_tracked(const std::string& workdir, const std::vector<std::string>& paths)
+{
+    auto r = local_repo(workdir);
+    if (!r) return std::nullopt;
+    git_index* index = nullptr;
+    if (git_repository_index(&index, r.get()) != 0) return std::nullopt;
+    bool found = false;
+    for (const std::string& p : paths)
+    {
+        size_t at = 0;
+        if (git_index_find_prefix(&at, index, p.c_str()) != 0) continue;
+        for (; at < git_index_entrycount(index) && !found; ++at)
+        {
+            const std::string_view e = git_index_get_byindex(index, at)->path;
+            if (!e.starts_with(p)) break;
+            found = e.size() == p.size() || e[p.size()] == '/' || p.ends_with('/');
+        }
+        if (found) break;
+    }
+    git_index_free(index);
+    return found;
+}
+
+git_result blob_bytes(const std::string& workdir, const std::string& hash)
+{
+    if (auto r = local_repo(workdir))
+    {
+        git_oid id;
+        git_blob* blob = nullptr;
+        if (git_oid_fromstr(&id, hash.c_str()) == 0 && git_blob_lookup(&blob, r.get(), &id) == 0)
+        {
+            git_result out{.exit_code = 0};
+            out.output.assign(static_cast<const char*>(git_blob_rawcontent(blob)),
+                              size_t(git_blob_rawsize(blob)));
+            git_blob_free(blob);
+            return out;
+        }
+    }
+    return run_git(workdir, {"cat-file", "blob", hash}, git_output::stdout_only);
+}
+
+bool valid_branch_name(const std::string& name)
+{
+    static const int init = git_libgit2_init();
+    (void)init;
+    int valid = 0;
+    return git_branch_name_is_valid(&valid, name.c_str()) == 0 && valid &&
+           git_reference_name_is_valid(&valid, ("refs/heads/" + name).c_str()) == 0 && valid;
+}
+
+bool valid_ref_name(const std::string& full)
+{
+    static const int init = git_libgit2_init();
+    (void)init;
+    int valid = 0;
+    return git_reference_name_is_valid(&valid, full.c_str()) == 0 && valid;
 }
 
 bool is_ancestor(const std::string& workdir, const std::string& ancestor, const std::string& of)
