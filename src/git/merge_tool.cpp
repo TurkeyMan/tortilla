@@ -68,6 +68,15 @@ std::vector<detected_merge_tool> detect_merge_tools()
          {"bcomp"},
          "%mine %theirs %base %merged -lefttitle=%yname -righttitle=%tname"},
         {"P4Merge", {"p4merge"}, "%base %theirs %mine %merged"},
+        {"Diffuse", {"diffuse"}, "%mine %merged %theirs %base"},
+        {"tkdiff", {"tkdiff"}, "-a %base -o %merged %mine %theirs"},
+        {"xxdiff", {"xxdiff"}, "-X --show-merged-pane --merged-file %merged %mine %base %theirs"},
+        {"DeltaWalker", {"DeltaWalker"}, "%mine %theirs %base -merged=%merged"},
+        {"DiffMerge", {"diffmerge"}, "--merge --result=%merged %mine %base %theirs"},
+        {"ECMerge", {"ecmerge"}, "%base %mine %theirs --default --mode=merge3 --to=%merged"},
+        {"Guiffy", {"guiffy"}, "-s %mine %theirs %base %merged"},
+        // The result below the three sides, as git's gvimdiff lays it out.
+        {"gVim", {"gvim"}, "-f -d -c \"wincmd J\" %merged %mine %base %theirs"},
         {"Visual Studio Code", {"code"}, "--wait --merge %theirs %mine %base %merged"},
         {"Sublime Merge", {"smerge"}, "mergetool %base %mine %theirs -o %merged"},
     };

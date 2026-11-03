@@ -309,6 +309,11 @@ std::vector<detected_tool> detect_diff_tools()
         {"DeltaWalker", {"DeltaWalker"}, "-mi -title1=%bname -title2=%yname %base %mine"},
         {"Diffuse", {"diffuse"}, "-L %bname %base -L %yname %mine", false},
         {"P4Merge", {"p4merge"}, "%base %mine", false},
+        {"DiffMerge", {"diffmerge"}, "--title1=%bname --title2=%yname %base %mine"},
+        {"ECMerge", {"ecmerge"}, "--default --mode=diff2 %base %mine", false},
+        {"Guiffy", {"guiffy"}, "%base %mine", false},
+        // -f: in the foreground, so the comparison is waited for.
+        {"gVim", {"gvim"}, "-f -d %base %mine", false},
         {"Visual Studio Code", {"code"}, "--wait --diff %base %mine", false},
     };
 #endif
