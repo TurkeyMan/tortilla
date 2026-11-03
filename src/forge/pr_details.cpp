@@ -2,6 +2,7 @@
 
 #include "forge/forge_detail.h"
 #include "git/command.h"
+#include "git/repo.h"
 #include "i18n.h"
 #include "util/json.h"
 
@@ -197,11 +198,20 @@ std::vector<std::string> pull_request_commits(const std::string& workdir,
                                               const std::string& head_ref,
                                               const std::string& base_ref, size_t limit)
 {
+    std::vector<std::string> out;
+    // In process, newest first as rev-list gives them; git when libgit2
+    // can't open the repository.
+    if (auto r = repo::open(workdir))
+    {
+        const auto head = r->resolve(head_ref), base = r->resolve(base_ref);
+        if (!head || !base) return out;
+        for (const oid& id : r->rev_list({*head}, {*base}, limit)) out.push_back(id.hex());
+        return out;
+    }
     const git_result r = run_git(
         workdir,
         {"rev-list", "--max-count=" + std::to_string(limit), head_ref, "^" + base_ref, "--"},
         git_output::stdout_only);
-    std::vector<std::string> out;
     if (!r.ok()) return out;
     for (std::string_view rest = r.output; !rest.empty();)
     {
@@ -217,6 +227,18 @@ const forge_remote* remote_with_commit(const std::string& workdir, std::string_v
                                        const std::vector<forge_remote>& remotes)
 {
     if (remotes.empty() || sha.empty()) return nullptr;
+    // In process (the forge panel asks as the log opens): the first remote
+    // with a branch whose history holds it, as for-each-ref --contains.
+    if (auto r = repo::open(workdir))
+    {
+        const auto id = r->resolve(std::string(sha));
+        if (!id) return nullptr;
+        for (const forge_remote& f : remotes)
+            if (const auto refs = r->refs_under({"refs/remotes/" + f.name + "/"}))
+                for (const repo::listed_ref& l : *refs)
+                    if (r->is_ancestor(*id, l.target)) return &f;
+        return nullptr;
+    }
     std::vector<std::string> args{"for-each-ref", "--format=%(refname)", "--contains",
                                   std::string(sha)};
     for (const forge_remote& r : remotes) args.push_back("refs/remotes/" + r.name + "/");

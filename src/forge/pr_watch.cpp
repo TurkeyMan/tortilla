@@ -2,6 +2,7 @@
 
 #include "git/command.h"
 #include "git/remotes.h"
+#include "git/repo.h"
 #include "i18n.h"
 
 #include <algorithm>
@@ -72,25 +73,39 @@ std::vector<forge_remote> leading_remotes(const std::string& workdir,
 {
     if (remotes.empty()) return remotes;
     constexpr std::array<std::string_view, 3> defaults{"/HEAD", "/main", "/master"};
-    // Every candidate in one git run: for-each-ref follows <remote>/HEAD to
-    // its branch.
-    std::vector<std::string> args{"for-each-ref", "--format=%(refname) %(committerdate:unix)"};
-    for (const forge_remote& r : remotes)
-        for (std::string_view b : defaults)
-            args.push_back("refs/remotes/" + r.name + std::string(b));
-    const git_result listed = run_git(workdir, args, git_output::stdout_only);
-    std::map<std::string_view, std::int64_t, std::less<>> tips;  // views `listed`
-    for (std::string_view rest = listed.output; !rest.empty();)
+    // Each candidate's commit time, by its full name; <remote>/HEAD as the
+    // branch it names. In process (the log asks as it opens); git, in one
+    // run, when libgit2 can't open the repository.
+    std::map<std::string, std::int64_t, std::less<>> tips;
+    if (auto local = repo::open(workdir))
     {
-        const size_t end = rest.find('\n');
-        const std::string_view line = rest.substr(0, end);
-        rest.remove_prefix(end == std::string_view::npos ? rest.size() : end + 1);
-        const size_t space = line.rfind(' ');
-        if (space == std::string_view::npos) continue;
-        std::int64_t when = 0;
-        const std::string_view time = line.substr(space + 1);
-        std::from_chars(time.data(), time.data() + time.size(), when);
-        tips.emplace(line.substr(0, space), when);
+        for (const forge_remote& r : remotes)
+            for (std::string_view b : defaults)
+            {
+                const std::string name = "refs/remotes/" + r.name + std::string(b);
+                if (const auto id = local->resolve(name))
+                    if (const auto c = local->lookup(*id)) tips.emplace(name, c->commit_time);
+            }
+    }
+    else
+    {
+        std::vector<std::string> args{"for-each-ref", "--format=%(refname) %(committerdate:unix)"};
+        for (const forge_remote& r : remotes)
+            for (std::string_view b : defaults)
+                args.push_back("refs/remotes/" + r.name + std::string(b));
+        const git_result listed = run_git(workdir, args, git_output::stdout_only);
+        for (std::string_view rest = listed.output; !rest.empty();)
+        {
+            const size_t end = rest.find('\n');
+            const std::string_view line = rest.substr(0, end);
+            rest.remove_prefix(end == std::string_view::npos ? rest.size() : end + 1);
+            const size_t space = line.rfind(' ');
+            if (space == std::string_view::npos) continue;
+            std::int64_t when = 0;
+            const std::string_view time = line.substr(space + 1);
+            std::from_chars(time.data(), time.data() + time.size(), when);
+            tips.emplace(line.substr(0, space), when);
+        }
     }
     auto tip = [&](const forge_remote& r)
     {

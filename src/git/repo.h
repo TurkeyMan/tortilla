@@ -12,6 +12,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 struct git_repository;
@@ -180,6 +181,9 @@ public:
     std::string common_dir() const;
     std::string head_name() const;  // branch short name, or "HEAD" when detached
     ref_map refs() const;           // labels sorted by full ref name, as TortoiseGit shows them
+    // The same through git for-each-ref: what refs() falls back to when
+    // libgit2 can't read the refs (and what the tests hold it to).
+    ref_map refs_by_git() const;
     std::optional<oid> head_id() const;
     bool bare() const;
 
@@ -226,8 +230,44 @@ public:
     std::vector<std::string> branch_names(bool local, bool remote, bool tags) const;
     // A branch, tag or hash, peeled to its commit.
     std::optional<oid> resolve(const std::string& rev) const;
+    // Whether `rev` names a commit, or with ".." or "..." in it, a range of
+    // two that resolve (git rev-parse --verify rev^{commit}, rev-parse
+    // a..b). False for syntax libgit2 doesn't know (git may).
+    bool revision_exists(const std::string& rev) const;
     // Short name of a local branch's upstream ("origin/main"), if any.
     std::string upstream_of(const std::string& branch) const;
+    // The same as a full name (refs/remotes/origin/main), as for-each-ref's
+    // %(upstream) gives it: branch.<b>.merge through branch.<b>.remote's
+    // fetch refspecs, whether or not that ref exists; "" for none.
+    std::string upstream_ref(std::string_view branch) const;
+
+    // The refs whose full names start with one of `prefixes` (every ref
+    // when it's empty), in name order, as git for-each-ref <prefix>/ lists
+    // them: a symbolic ref by what it resolves to, `symref` naming it, and
+    // a dangling one left out. nullopt when the refs can't be read.
+    struct listed_ref
+    {
+        std::string full_name;
+        oid target;
+        std::string symref;
+    };
+    std::optional<std::vector<listed_ref>>
+    refs_under(const std::vector<std::string>& prefixes) const;
+    // The ref `name` means, as git rev-parse --symbolic-full-name has it
+    // (main -> refs/heads/main, HEAD -> the branch it's on); "" when it's
+    // no ref (a hash, HEAD~1).
+    std::string full_ref_name(const std::string& name) const;
+    // A ref's short name as for-each-ref's %(refname:short) gives it: main,
+    // origin/main, v1; heads/v1 when a tag v1 would take "v1".
+    std::string short_ref_name(const std::string& full) const;
+    // git rev-list <include> ^<exclude> --max-count=<limit>: newest first by
+    // commit time (0: no limit); empty when a commit can't be read.
+    std::vector<oid> rev_list(const std::vector<oid>& include, const std::vector<oid>& exclude,
+                              size_t limit = 0) const;
+    // Commits in `local` but not `upstream`, and the other way round (git
+    // rev-list --left-right --count local...upstream).
+    std::optional<std::pair<size_t, size_t>> ahead_behind(const oid& local,
+                                                          const oid& upstream) const;
     // Commits in branch but not in upstream, newest first (topological).
     std::expected<std::vector<commit>, std::string> range(const oid& upstream, const oid& branch,
                                                           bool include_merges) const;
@@ -235,6 +275,29 @@ public:
     // One commit's fields, as a walk gives them; nullopt when it isn't here.
     std::optional<commit> lookup(const oid&) const;
 
+    // The stashes, newest first, as git stash list has them: stash@{n}, the
+    // stash commit, its first parent (the commit it was made on) and its
+    // reflog subject (%gs: "WIP on main: 1a2b3c4 subject").
+    struct stash_entry
+    {
+        std::string selector;
+        oid id;
+        std::optional<oid> base;
+        std::string subject;
+    };
+    std::vector<stash_entry> stashes() const;
+    // A commit's hash abbreviated as git's %h does: core.abbrev long, or
+    // longer where that's ambiguous.
+    std::string short_id(const oid&) const;
+    // An annotated tag's message (for-each-ref's %(contents)); nullopt for
+    // a lightweight tag or none.
+    std::optional<std::string> tag_message(const std::string& tag) const;
+    // git branch -a --contains <id>'s lines: "* main", "  topic",
+    // "  remotes/origin/main", "  remotes/origin/HEAD -> origin/main".
+    std::string branches_containing(const oid&) const;
+    // Their best common ancestor (git merge-base a b); nullopt for
+    // unrelated histories.
+    std::optional<oid> merge_base(const oid& a, const oid& b) const;
     // True when `descendant` has `ancestor` in its history.
     bool is_ancestor(const oid& ancestor, const oid& descendant) const;
     // Cheap summary of changes() (no line counts): a mask of Action bits.
@@ -253,5 +316,9 @@ private:
 };
 
 std::string last_git_error();
+
+// A commit message's body, as git's %b: what follows the subject's
+// paragraph and the blank lines after it.
+std::string commit_body(std::string_view message);
 
 }  // namespace tortilla
