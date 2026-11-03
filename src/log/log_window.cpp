@@ -1934,7 +1934,7 @@ void log_window::open_dates()
                          {_("To"),
                           date_picker{}.bind(to_).on_changed([this](a::date) { dates_changed(); })},
                      },
-                     buttons{reset(_("C_lear")), close}}}}
+                     buttons{reset(_("C_lear")), rap::layout::close()}}}}
             .modeless()
             .resizable(false),
         window_.get());
