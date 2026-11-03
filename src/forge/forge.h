@@ -68,7 +68,8 @@ std::vector<forge_account> accounts();
 void set_gh_account_off(const forge_account&, bool off);
 // A web host, "host" or "host:port", as its origin: https://host:port, the
 // host in lower case and the port spelt out (443 when none is given), so
-// forge.example and forge.example:443 are one, forge.example:8443 another.
+// forge.example and forge.example:443 are one, forge.example:8443 another
+// (rap::sys::url_origin's rules); "" for what isn't a host, matching none.
 std::string web_origin(std::string_view host);
 // The account for a remote's URL (https or ssh, scp-style too), by the web
 // origin its repository is asked at (repo_of_url's host): an https URL's

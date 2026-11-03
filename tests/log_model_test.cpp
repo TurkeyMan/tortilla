@@ -2008,6 +2008,22 @@ int main(int argc, char** argv)
                       tortilla::web_origin("forge.example") !=
                           tortilla::web_origin("forge.example:8443"),
                   "forge: the default port and :443 are one origin");
+            // Origins are rapport's (rap::sys::url_origin): a host that
+            // isn't one has none, and matches no account, not even another
+            // like it.
+            {
+                const std::vector<forge_account> odd{
+                    {.kind = forge_kind::gitea, .host = "bad host", .login = "ada"},
+                    {.kind = forge_kind::gitea, .host = "a..b", .login = "ada"}};
+                check(tortilla::web_origin("bad host").empty() &&
+                          tortilla::web_origin("a..b").empty() &&
+                          tortilla::web_origin("forge.example.") ==
+                              tortilla::web_origin("forge.example") &&
+                          tortilla::web_origin("[::1]:8443") == "https://[::1]:8443" &&
+                          !tortilla::account_for_url("https://a..b/o/r.git", odd) &&
+                          !tortilla::account_for_url("git@a..b:o/r.git", odd),
+                      "forge: a host that isn't one has no origin and no account");
+            }
             // The request gate, with the network faked: the sentinel token,
             // given for forge.example, goes there and nowhere else.
             namespace fd = tortilla::forge_detail;
