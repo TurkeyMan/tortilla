@@ -57,9 +57,12 @@ struct state
     rap::entry* diff_command = nullptr;
     rap::widget* custom_help = nullptr;
     std::vector<detected_tool> tools;
-    // Comparing images: with the text tool, IfritView, or Custom.
+    // Comparing images: with the text tool, IfritView, each image-capable
+    // tool found, or Custom.
     rap::drop_down* image_select = nullptr;
     rap::entry* image_command = nullptr;
+    std::vector<detected_tool> image_tools;
+    int image_custom_index() const { return 2 + int(image_tools.size()); }
     // Resolving conflicts: each merge tool found, then Custom.
     rap::drop_down* merge_select = nullptr;
     rap::entry* merge_command = nullptr;
@@ -440,11 +443,31 @@ rap::node diff_viewer_page(std::shared_ptr<state> st)
     };
     // Comparing images: IfritView recommended, and where to get it when
     // it isn't installed.
+    // A custom command that's a detected tool's shows as that tool.
     const bool ifritview = !find_ifritview().empty();
-    const int image_current = int(saved_image_mode());
+    st->image_tools = image_tools(st->tools);
+    std::vector<std::string> image_choices{_("The diff tool above"),
+                                           ifritview ? std::string("IfritView")
+                                                     : std::string(_("IfritView (not installed)"))};
+    for (const detected_tool& t : st->image_tools) image_choices.push_back(t.name);
+    image_choices.push_back(_("Custom..."));
+    int image_current = int(saved_image_mode());
+    if (image_current == int(image_mode::custom))
+    {
+        image_current = st->image_custom_index();
+        for (size_t i = 0; i < st->image_tools.size(); ++i)
+            if (st->image_tools[i].command == image_command()) image_current = 2 + int(i);
+    }
+    const bool image_custom = image_current == st->image_custom_index();
     auto image_chosen = [weak](int choice)
     {
-        if (auto s = weak.lock(); s && s->image_command) s->image_command->set_visible(choice == 2);
+        auto s = weak.lock();
+        if (!s || !s->image_command) return;
+        const bool custom = choice == s->image_custom_index();
+        s->image_command->set_visible(custom);
+        // Custom starts from the last tool picked, to adjust.
+        if (choice >= 2 && !custom)
+            s->image_command->set_text(s->image_tools[size_t(choice - 2)].command);
     };
     return vbox{
         group{
@@ -470,18 +493,13 @@ rap::node diff_viewer_page(std::shared_ptr<state> st)
         group{_("Comparing images"),
               vbox{
                   form{
-                      {_("Compare with"),
-                       drop_down{{_("The diff tool above"),
-                                  ifritview ? std::string("IfritView")
-                                            : std::string(_("IfritView (not installed)")),
-                                  _("Custom...")},
-                                 image_current}
-                           .bind(st->image_select)
-                           .on_changed(image_chosen)},
+                      {_("Compare with"), drop_down{image_choices, image_current}
+                                              .bind(st->image_select)
+                                              .on_changed(image_chosen)},
                       {_("Command"), entry{image_command()}
                                          .bind(st->image_command)
                                          .placeholder(_("program %base %mine"))
-                                         .visible(image_current == 2)},
+                                         .visible(image_custom)},
                   }
                       .align_group("diff"),
                   label{_("IfritView: a fast image viewer that compares two images side by side, "
@@ -794,8 +812,17 @@ void show_settings(rap::ui& ui, rap::window* parent, const std::string& repo_dir
                                            keep->diff_command->text());
                 }
                 if (keep->image_select)
-                    save_image_settings(image_mode(std::max(keep->image_select->current(), 0)),
-                                        keep->image_command->text());
+                {
+                    // A detected tool is saved as the custom command it stands for.
+                    const int choice = keep->image_select->current();
+                    if (choice >= 2 && choice < keep->image_custom_index())
+                        save_image_settings(image_mode::custom,
+                                            keep->image_tools[size_t(choice - 2)].command);
+                    else
+                        save_image_settings(choice >= 2 ? image_mode::custom
+                                                        : image_mode(std::max(choice, 0)),
+                                            keep->image_command->text());
+                }
                 if (keep->merge_select)
                 {
                     const int choice = keep->merge_select->current();

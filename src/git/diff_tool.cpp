@@ -17,6 +17,7 @@
 #include <windows.h>
 #endif
 
+#include <algorithm>
 #include <cctype>
 #include <filesystem>
 #include <fstream>
@@ -246,6 +247,17 @@ std::vector<std::string> custom_difftool_args(const std::string& command,
         args.insert(args.end(), paths.begin(), paths.end());
     }
     return args;
+}
+
+std::vector<detected_tool> image_tools(const std::vector<detected_tool>& diff_tools)
+{
+    static constexpr std::string_view k_image_capable[] = {"P4Merge", "Beyond Compare", "WinMerge"};
+    std::vector<detected_tool> out;
+    for (const detected_tool& t : diff_tools)
+        if (std::ranges::find(k_image_capable, std::string_view(t.name)) !=
+            std::end(k_image_capable))
+            out.push_back({t.name, t.command, false});
+    return out;
 }
 
 std::vector<detected_tool> detect_diff_tools()
