@@ -1114,7 +1114,11 @@ void libgit2_parity_tests(const std::string& root)
     // includeIf on this repository's folder: an address only it has.
     const std::string extra = root + "/parity-extra.cfg";
     sh("printf '[user]\\n\\temail = included@example.com\\n' > '" + extra + "'");
-    sh(g + "config --add 'includeIf.gitdir:" + dir + "/.path' '" + extra + "' && " + g +
+    // The folder as git spells its git dir (C:/x/y on Windows, not C:\x\y),
+    // which is what a gitdir: pattern is matched against.
+    std::string git_dir = git_out(dir, {"rev-parse", "--absolute-git-dir"});
+    git_dir.erase(git_dir.rfind('/') + 1);  // parity/.git -> parity/
+    sh(g + "config --add 'includeIf.gitdir:" + git_dir + ".path' '" + extra + "' && " + g +
        "config remote.origin.skipfetchall false && " + g + "remote add other '" + up + "' && " + g +
        "config remote.other.skipfetchall yes");
     sh("git init -q -b fresh '" + empty + "'");
@@ -1188,12 +1192,24 @@ void libgit2_parity_tests(const std::string& root)
     check(r->resolve("v1")->hex() == git_out(dir, {"rev-parse", "v1^{commit}"}),
           "parity: an annotated tag resolves to its commit");
 
-    // Config: includeIf, multi-valued keys, booleans.
-    check(config_values(dir, "user.email") ==
-                  std::vector<std::string>{"t@example.com", "included@example.com"} &&
-              git_out(dir, {"config", "--get-all", "user.email"}) ==
-                  "t@example.com\nincluded@example.com",
+    // Config: includeIf, multi-valued keys, booleans. (Global and system
+    // addresses come first where the machine has them, a CI runner's say:
+    // the same list as git's, ending in the repository's and the included.)
+    const std::vector<std::string> emails = config_values(dir, "user.email");
+    const std::vector<std::string> git_emails =
+        lines_of(git_out(dir, {"config", "--get-all", "user.email"}));
+    check(emails == git_emails && emails.size() >= 2 &&
+              emails[emails.size() - 2] == "t@example.com" &&
+              emails.back() == "included@example.com",
           "parity: an includeIf gitdir config, as git config --get-all reads it");
+    if (emails != git_emails || emails.empty() || emails.back() != "included@example.com")
+    {
+        std::string ours, theirs;
+        for (const std::string& e : emails) ours += e + ' ';
+        for (const std::string& e : git_emails) theirs += e + ' ';
+        std::printf("  includeIf gitdir:%s: libgit2 [%s], git [%s]\n", git_dir.c_str(),
+                    ours.c_str(), theirs.c_str());
+    }
     check(fetch_all_remotes(dir) == std::vector<std::string>{"origin"} &&
               git_out(dir, {"remote"}) == "origin\nother",
           "parity: remotes to fetch, skipFetchAll yes left out");
@@ -1266,7 +1282,8 @@ void libgit2_parity_tests(const std::string& root)
     {
         const std::string lfs = root + "/parity-lfs";
         const std::string l = "git -C '" + lfs + "' ";
-        sh("git init -q -b main '" + lfs + "' && mkdir -p '" + lfs +
+        sh("git init -q -b main '" + lfs + "' && " + l +
+           "config core.autocrlf false && mkdir -p '" + lfs +
            "/sub' && printf '*.bin filter=lfs\\n' > '" + lfs +
            "/sub/.gitattributes' && printf 'x' > '" + lfs + "/sub/a.bin' && " + l + "add -A");
         check(uses_lfs(lfs) && !git_out(lfs, {"ls-files", "--", ":(attr:filter=lfs)"}).empty(),
@@ -1284,7 +1301,7 @@ void libgit2_parity_tests(const std::string& root)
         check(!recheck_git(), "no git: git isn't found with PATH stripped of it");
         check(labels_text(r->refs()) == labels, "no git: the log's labels");
         check(current_against_upstream(dir).behind == 2 && fetch_all_remotes(dir).size() == 1 &&
-                  config_values(dir, "user.email").size() == 2,
+                  config_values(dir, "user.email") == emails,
               "no git: the branch hint, remotes and config");
         check(fast_forward_targets(dir).empty() &&
                   local_tips(dir, {"origin"}).at("origin").size() == 3,
@@ -1371,7 +1388,9 @@ void libgit2_dialog_parity_tests(const std::string& root)
 
     // Short names (a branch and a tag both v1.2), full names, version order.
     std::string ours, theirs = git_out(dir, {"for-each-ref", "--format=%(refname:short)"});
-    for (const repo::listed_ref& l : *r->refs_under({}))
+    // (Held: a range-for over *temporary() dangles before C++23 on GCC 14.)
+    const auto all_refs = r->refs_under({});
+    for (const repo::listed_ref& l : all_refs.value_or(std::vector<repo::listed_ref>{}))
         ours += (ours.empty() ? "" : "\n") + r->short_ref_name(l.full_name);
     check(ours == theirs, "dialog parity: short names, as %(refname:short)");
     if (ours != theirs) std::printf("libgit2:\n%s\ngit:\n%s\n", ours.c_str(), theirs.c_str());
@@ -1381,7 +1400,8 @@ void libgit2_dialog_parity_tests(const std::string& root)
     check(r->full_ref_name(r->head_id()->hex()).empty(), "dialog parity: a hash is no ref");
     {
         std::vector<std::string> tags;
-        for (const repo::listed_ref& l : *r->refs_under({"refs/tags/"}))
+        for (const repo::listed_ref& l :
+             r->refs_under({"refs/tags/"}).value_or(std::vector<repo::listed_ref>{}))
             tags.push_back(l.full_name);
         std::ranges::stable_sort(tags, version_less);
         std::string sorted;
@@ -1469,7 +1489,7 @@ void libgit2_dialog_parity_tests(const std::string& root)
     // A tree's files, the index, a worktree's exclude file.
     {
         std::string files;
-        for (const std::string& f : *tree_files(*r, first))
+        for (const std::string& f : tree_files(*r, first).value_or(std::vector<std::string>{}))
             files += (files.empty() ? "" : "\n") + f;
         check(files == git_out(dir, {"ls-tree", "-r", "--name-only", "--full-tree", first.hex()}),
               "dialog parity: a tree's files, as ls-tree -r");

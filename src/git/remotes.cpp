@@ -66,6 +66,18 @@ int config_snapshot(git_config** out, git_repository* r)
         unknown = git_config_next(&e, it) == 0;
         git_config_iterator_free(it);
     }
+#ifdef _WIN32
+    // A gitdir: pattern written with backslashes (C:\x\): git for Windows
+    // and libgit2 may read the \ differently (an escape, or a separator).
+    if (!unknown && git_config_iterator_glob_new(&it, *out, "^includeif\\.gitdir.*\\.path$") == 0)
+    {
+        git_config_entry* e = nullptr;
+        while (!unknown && git_config_next(&e, it) == 0)
+            unknown =
+                e && e->name && std::string_view(e->name).find('\\') != std::string_view::npos;
+        git_config_iterator_free(it);
+    }
+#endif
     if (!unknown) return 0;
     git_config_free(*out);
     *out = nullptr;

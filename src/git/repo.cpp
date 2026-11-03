@@ -20,6 +20,13 @@ namespace tortilla
 namespace
 {
 
+// A name libgit2 gave, or "" for none: a reference's name or target is
+// never null in the versions tested, but a std::string from null is a crash.
+const char* or_empty(const char* s)
+{
+    return s ? s : "";
+}
+
 void init_libgit2()
 {
     static const int once = git_libgit2_init();
@@ -394,7 +401,7 @@ bool libgit2_labels(const repo& r, ref_map& out, remote_head_map& remote_heads)
         owned_ref h;
         if (git_reference_lookup(&h.p, raw, "HEAD") == 0 &&
             git_reference_type(h.p) == GIT_REFERENCE_SYMBOLIC)
-            head = git_reference_symbolic_target(h.p);
+            head = or_empty(git_reference_symbolic_target(h.p));
     }
     std::unordered_map<std::string, std::string> elsewhere;  // full branch name -> worktree
     if (auto trees = list_worktrees(r))
@@ -414,13 +421,13 @@ bool libgit2_labels(const repo& r, ref_map& out, remote_head_map& remote_heads)
         const int next = git_reference_next(&ref.p, it.p);
         if (next == GIT_ITEROVER) break;
         if (next != 0) return false;
-        const std::string_view full = git_reference_name(ref.p);
+        const std::string_view full = or_empty(git_reference_name(ref.p));
         std::string symref;
         owned_ref resolved;
         const git_reference* direct = ref.p;
         if (git_reference_type(ref.p) == GIT_REFERENCE_SYMBOLIC)
         {
-            symref = git_reference_symbolic_target(ref.p);
+            symref = or_empty(git_reference_symbolic_target(ref.p));
             // Dangling (origin/HEAD naming a branch that's gone): left
             // out, as for-each-ref does.
             if (git_reference_resolve(&resolved.p, ref.p) != 0) continue;
@@ -1097,7 +1104,7 @@ std::string repo::branches_containing(const oid& id) const
         owned_ref h;
         if (git_reference_lookup(&h.p, repo_, "HEAD") == 0 &&
             git_reference_type(h.p) == GIT_REFERENCE_SYMBOLIC)
-            current = git_reference_symbolic_target(h.p);
+            current = or_empty(git_reference_symbolic_target(h.p));
     }
     for (const char* prefix : {"refs/heads/", "refs/remotes/"})
         if (const auto refs = refs_under({prefix}))
@@ -1221,7 +1228,7 @@ repo::refs_under(const std::vector<std::string>& prefixes) const
             const int next = git_reference_next(&ref.p, it.p);
             if (next == GIT_ITEROVER) return true;
             if (next != 0) return false;
-            listed_ref l{.full_name = git_reference_name(ref.p)};
+            listed_ref l{.full_name = or_empty(git_reference_name(ref.p))};
             // (A glob's * crosses slashes; the prefix must still hold.)
             if (glob && !std::string_view(l.full_name)
                              .starts_with(std::string_view(glob, std::strlen(glob) - 1)))
@@ -1230,7 +1237,7 @@ repo::refs_under(const std::vector<std::string>& prefixes) const
             const git_reference* direct = ref.p;
             if (git_reference_type(ref.p) == GIT_REFERENCE_SYMBOLIC)
             {
-                l.symref = git_reference_symbolic_target(ref.p);
+                l.symref = or_empty(git_reference_symbolic_target(ref.p));
                 if (git_reference_resolve(&resolved.p, ref.p) != 0) continue;
                 direct = resolved.p;
             }
@@ -1257,10 +1264,12 @@ std::string repo::full_ref_name(const std::string& name) const
 {
     owned_ref ref, resolved;
     if (git_reference_dwim(&ref.p, repo_, name.c_str()) != 0) return {};
-    if (git_reference_type(ref.p) != GIT_REFERENCE_SYMBOLIC) return git_reference_name(ref.p);
+    if (git_reference_type(ref.p) != GIT_REFERENCE_SYMBOLIC)
+        return or_empty(git_reference_name(ref.p));
     // HEAD and other symbolic refs: what they end at, even unborn.
-    std::string target = git_reference_symbolic_target(ref.p);
-    if (git_reference_resolve(&resolved.p, ref.p) == 0) target = git_reference_name(resolved.p);
+    std::string target = or_empty(git_reference_symbolic_target(ref.p));
+    if (git_reference_resolve(&resolved.p, ref.p) == 0)
+        target = or_empty(git_reference_name(resolved.p));
     return target;
 }
 
