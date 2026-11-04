@@ -1,6 +1,7 @@
 #include "branch_filter.h"
 
 #include "git/command.h"
+#include "git/remotes.h"
 #include "util/strings.h"
 
 #include <git2.h>
@@ -134,14 +135,12 @@ std::vector<std::string> remote_defaults(const repo& repo)
 identity::identity(const repo& repo, const std::vector<forge_account>& accounts)
 {
     git_mailmap_from_repository(&mailmap_, repo.raw());
-    // Every scope's (git sees includeIf's too, as libgit2 may not).
-    const git_result r = run_git(repo.workdir().empty() ? repo.git_dir() : repo.workdir(),
-                                 {"config", "--get-all", "user.email"}, git_output::stdout_only);
-    for (std::string_view rest = r.output; !rest.empty();)
+    // Every scope's, includeIf's too (config_values asks git for the forms
+    // libgit2 doesn't know).
+    const std::vector<std::string> all =
+        config_values(repo.workdir().empty() ? repo.git_dir() : repo.workdir(), "user.email");
+    for (std::string_view line : all)
     {
-        const size_t end = rest.find('\n');
-        std::string_view line = rest.substr(0, end);
-        rest.remove_prefix(end == std::string_view::npos ? rest.size() : end + 1);
         while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.remove_suffix(1);
         if (line.empty()) continue;
         emails_.push_back(ascii_lower(line));

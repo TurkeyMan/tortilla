@@ -2,6 +2,7 @@
 
 #include "git/pathspec_file.h"
 #include "git/remotes.h"
+#include "git/repo.h"
 #include "git/temp_files.h"
 #include "i18n.h"
 #include "settings.h"
@@ -372,11 +373,22 @@ void commit_window::amend_toggled(bool on)
     if (on)
     {
         pre_amend_message_ = message_->text();
-        git_result m = run_git(workdir_, {"log", "-1", "--format=%B"}, git_output::stdout_only);
-        if (m.ok()) message_->set_text(trimmed(m.output) + "\n");
-        git_result a =
-            run_git(workdir_, {"log", "-1", "--format=%an <%ae>"}, git_output::stdout_only);
-        if (a.ok()) author_->set_text(trimmed(a.output));
+        // HEAD's message and author, in process (the box waits for them).
+        auto r = repo::open(workdir_);
+        const auto head = r ? r->head_id() : std::nullopt;
+        if (const auto c = head ? r->lookup(*head) : std::nullopt)
+        {
+            message_->set_text(trimmed(c->message) + "\n");
+            author_->set_text(c->author + " <" + c->email + ">");
+        }
+        else if (!r)
+        {
+            git_result m = run_git(workdir_, {"log", "-1", "--format=%B"}, git_output::stdout_only);
+            if (m.ok()) message_->set_text(trimmed(m.output) + "\n");
+            git_result a =
+                run_git(workdir_, {"log", "-1", "--format=%an <%ae>"}, git_output::stdout_only);
+            if (a.ok()) author_->set_text(trimmed(a.output));
+        }
     }
     else
     {
@@ -420,7 +432,7 @@ void commit_window::commit()
     if (new_branch_->checked())
     {
         branch = trimmed(branch_->text());
-        if (branch.empty() || !run_git(workdir_, {"check-ref-format", "--branch", branch}).ok())
+        if (branch.empty() || !valid_branch_name(branch))
         {
             ui_.message(window_.get(), {.icon = rap::message_spec::icon::warning,
                                         .title = _("Commit"),
@@ -605,8 +617,7 @@ std::vector<std::string> commit_window::restore(const std::vector<std::string>& 
     {
         auto it = restore_.find(p);
         if (it == restore_.end()) continue;
-        const git_result r =
-            run_git(workdir_, {"cat-file", "blob", it->second}, git_output::stdout_only);
+        const git_result r = blob_bytes(workdir_, it->second);
         const fs::path file = rap::sys::path_from_utf8(workdir_) / rap::sys::path_from_utf8(p);
         std::error_code ec;
         fs::create_directories(file.parent_path(), ec);

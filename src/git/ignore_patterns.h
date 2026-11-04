@@ -31,8 +31,17 @@ enum class ignore_target
 std::vector<std::pair<std::string, std::vector<std::string>>>
 ignore_patterns(const std::vector<ignore_item>&, bool by_extension, bool everywhere, ignore_target);
 
+// Repository-relative paths ("sub/x.txt", a folder's "out/") as items.
+std::vector<ignore_item> ignore_items(const std::vector<std::string>& paths);
+
+// The file lists' "Add to ignore list" menu: the lines for the repository's
+// .gitignore, by name only where each item is, or by extension in every
+// folder (as the Ignore dialog's defaults plan them).
+std::vector<std::string> ignore_menu_lines(const std::vector<ignore_item>&, bool by_extension);
+
 // A name as a literal pattern: wildcards, a leading # or ! and trailing
-// spaces escaped.
+// spaces escaped. Any of git's wildmatch patterns takes it as that one name
+// (git apply --include's too): a \ before any character is that character.
 std::string literal_pattern(const std::string& name);
 
 // Appends the lines `file` doesn't already have (creating it and its

@@ -28,11 +28,15 @@ public:
     ~changed_files_window();
     void show() { window_->show(); }
     void on_closed(std::function<void()> f) { closed_ = std::move(f); }
+    // After its menu changed the working tree (Revert to this revision, an
+    // ignore list, a conflict resolved): not when it only looked.
+    void on_done(std::function<void()> f) { done_ = std::move(f); }
 
 private:
     changed_files_window(rap::ui&, std::string workdir, std::string from, std::string to);
     void build();
     void load();
+    void changed();  // the files again, and done_
     void update_status();
 
     rap::ui& ui_;
@@ -40,7 +44,7 @@ private:
     changes_view files_;
     std::unique_ptr<rap::window> window_;
     rap::label* status_ = nullptr;
-    std::function<void()> closed_;
+    std::function<void()> closed_, done_;
     // Last: its results touch the list, so it goes first.
     std::unique_ptr<repo_worker> worker_;
 };

@@ -1,6 +1,8 @@
 #include "history_edit.h"
 
 #include "git/command.h"
+#include "git/libgit2_oid.h"
+#include "git/svn.h"
 #include "git/worktrees.h"
 #include "i18n.h"
 
@@ -14,20 +16,6 @@ namespace tortilla
 {
 namespace
 {
-
-oid to_oid(const git_oid* o)
-{
-    oid out;
-    std::memcpy(out.bytes.data(), o->id, out.bytes.size());
-    return out;
-}
-
-git_oid to_git(const oid& o)
-{
-    git_oid out{};
-    std::memcpy(out.id, o.bytes.data(), o.bytes.size());
-    return out;
-}
 
 template <class t, void (*Free)(t*)>
 struct owned
@@ -172,6 +160,7 @@ load_branch_history(const repo& repository, const std::string& branch, const std
         owned_commit c;
         if (git_commit_lookup(&c.p, r, &id) != 0) return std::unexpected(last_git_error());
         if (git_commit_parentcount(c.p) > 1) h.merges.push_back(h.line.size());
+        if (const char* m = git_commit_message(c.p); m && in_svn(m)) h.svn.push_back(h.line.size());
         h.line.push_back(o);
         expected = git_commit_parentcount(c.p) ? std::optional(to_oid(git_commit_parent_id(c.p, 0)))
                                                : std::nullopt;
@@ -215,6 +204,19 @@ branch_holding(const repo& repository, const std::vector<oid>& commits, const st
     if (!current.empty())
         if (auto h = load_branch_history(repository, current, mainline); h && holds(*h)) return h;
 
+    // Every other branch's line stops at the mainline, so a commit already on
+    // it can only be the mainline's own (a local main): one ancestry check
+    // answers the commonest right-click, an old commit, instead of one per branch.
+    const auto main_tip = mainline.empty() ? std::nullopt : resolve_ref(r, mainline);
+    if (main_tip && std::ranges::any_of(commits, [&](const oid& c)
+                                        { return repository.is_ancestor(c, *main_tip); }))
+    {
+        if (mainline.starts_with("refs/heads/") && mainline != current)
+            if (auto h = load_branch_history(repository, mainline, mainline); h && holds(*h))
+                return h;
+        return std::unexpected(std::string(_("merged")));
+    }
+
     std::vector<branch_history> found;
     git_branch_iterator* it = nullptr;
     if (git_branch_iterator_new(&it, r, GIT_BRANCH_LOCAL) == 0)
@@ -236,10 +238,6 @@ branch_holding(const repo& repository, const std::vector<oid>& commits, const st
     }
     if (found.size() == 1) return std::move(found.front());
     if (found.size() > 1) return std::unexpected(std::string(_("on several branches")));
-    if (const auto main_tip = mainline.empty() ? std::nullopt : resolve_ref(r, mainline))
-        for (const oid& c : commits)
-            if (repository.is_ancestor(c, *main_tip))
-                return std::unexpected(std::string(_("merged")));
     return std::unexpected(std::string(_("not on a local branch")));
 }
 
@@ -254,6 +252,9 @@ std::optional<std::string> why_not_editable(const branch_history& h,
         if (h.is_merge(*i)) return std::string(_("a merge"));
         oldest = std::max(oldest, *i);
     }
+    // Rewriting from the oldest up rewrites everything above it too.
+    for (size_t s : h.svn)
+        if (s <= oldest) return std::string(_("in SVN"));
     if (!h.worktree.empty()) return std::string(_("in another worktree"));
     if (replays)
         for (size_t m : h.merges)
@@ -302,6 +303,17 @@ std::expected<oid, replay_failure> replay(const repo& repository, const edit_pla
         return std::unexpected(
             replay_failure{.conflict = false, .commit = at, .message = std::move(message)});
     };
+
+    // Nothing in SVN is rewritten, before anything's made: a conflict
+    // further down mustn't offer the rebase window instead.
+    for (const edit_step& step : plan.steps)
+    {
+        git_oid cid = to_git(step.commit);
+        owned_commit c;
+        if (git_commit_lookup(&c.p, r, &cid) != 0) return fail(last_git_error(), step.commit);
+        if (const char* m = git_commit_message(c.p); m && in_svn(m))
+            return fail(_("in SVN"), step.commit);
+    }
 
     owned_signature committer;
     if (git_signature_default(&committer.p, r) != 0) return fail(no_identity());
@@ -500,20 +512,10 @@ std::expected<void, std::string> move_refs(git_repository* r, const history_edit
     return {};
 }
 
-std::string stash_index(const std::string& workdir, const std::string& sha)
+std::string stash_index(const repo& repository, const std::string& sha)
 {
-    const git_result list =
-        run_git(workdir, {"stash", "list", "--format=%H"}, git_output::stdout_only);
-    size_t n = 0, start = 0;
-    while (start < list.output.size())
-    {
-        size_t end = list.output.find('\n', start);
-        if (end == std::string::npos) end = list.output.size();
-        if (std::string_view(list.output).substr(start, end - start) == sha)
-            return "stash@{" + std::to_string(n) + "}";
-        ++n;
-        start = end + 1;
-    }
+    for (const repo::stash_entry& s : repository.stashes())
+        if (s.id.hex() == sha) return s.selector;
     return {};
 }
 
@@ -529,10 +531,39 @@ tree_effect effect_of(const repo& repository, const history_edit& e)
     return has_local_changes(r) ? tree_effect::stash : tree_effect::follow;
 }
 
+namespace
+{
+
+// A commit in SVN that a move leaves behind (on `from`, not on `to`), if
+// any: moving past it would rewrite SVN's history.
+std::optional<oid> svn_left_behind(git_repository* r, const ref_move& m)
+{
+    if (!m.from || !m.to) return std::nullopt;  // made or deleted: nothing rewritten
+    owned_walk walk;
+    git_oid from = to_git(*m.from), to = to_git(*m.to);
+    if (git_revwalk_new(&walk.p, r) != 0 || git_revwalk_push(walk.p, &from) != 0)
+        return std::nullopt;
+    git_revwalk_hide(walk.p, &to);
+    git_oid id;
+    for (size_t n = 0; n < history_limit && git_revwalk_next(&id, walk.p) == 0; ++n)
+    {
+        owned_commit c;
+        if (git_commit_lookup(&c.p, r, &id) != 0) continue;
+        if (const char* msg = git_commit_message(c.p); msg && in_svn(msg)) return to_oid(&id);
+    }
+    return std::nullopt;
+}
+
+}  // namespace
+
 std::expected<std::string, std::string> apply_edit(const repo& repository, const history_edit& e,
                                                    bool stash)
 {
     git_repository* r = repository.raw();
+    for (const ref_move& m : e.moves)
+        if (const auto at = svn_left_behind(r, m))
+            return std::unexpected(rap::i18n::format(
+                _("{0} is in SVN: SVN's history can't be rewritten."), at->hex(8)));
     const tree_effect effect = effect_of(repository, e);
     if (effect == tree_effect::stash && !stash)
         return std::unexpected(std::string(_("The working tree has local changes.")));
@@ -549,7 +580,7 @@ std::expected<std::string, std::string> apply_edit(const repo& repository, const
             return rap::i18n::format(_("Your local changes didn't go back cleanly; they're kept in "
                                        "the stash ({0}).\n{1}"),
                                      stashed.substr(0, 8), applied.output);
-        if (const std::string at = stash_index(workdir, stashed); !at.empty())
+        if (const std::string at = stash_index(repository, stashed); !at.empty())
             run_git(workdir, {"stash", "drop", "-q", at});
         return {};
     };
@@ -557,10 +588,8 @@ std::expected<std::string, std::string> apply_edit(const repo& repository, const
     {
         const git_result pushed = run_git(workdir, {"stash", "push", "-m", e.reflog});
         if (!pushed.ok()) return std::unexpected(pushed.output);
-        stashed = run_git(workdir, {"rev-parse", "--verify", "refs/stash"}, git_output::stdout_only)
-                      .output;
-        while (!stashed.empty() && (stashed.back() == '\n' || stashed.back() == '\r'))
-            stashed.pop_back();
+        // The stash just made, in process.
+        if (const auto made = repository.resolve("refs/stash")) stashed = made->hex();
     }
 
     if (auto moved = move_refs(r, e); !moved)
@@ -822,6 +851,7 @@ history_edit edit_from(const repo& repository, const branch_history& h, const ed
     }
     if (!above && !h.line.empty() && (!p.base || p.base == h.below)) above = h.line.size() - 1;
     e.pushed = above && rewrites_pushed(repository, h, h.line[*above]);
+    if (e.pushed) e.lease = h.upstream_tip;
     return e;
 }
 
@@ -874,7 +904,98 @@ move_commits(const repo& repository, const branch_history& from, const std::vect
     return e;
 }
 
-std::vector<std::string> force_push_args(const repo& repository, const std::string& branch)
+std::expected<drop_place, std::string> drop_place_of(const repo& repository, const oid& row,
+                                                     const std::vector<ref>& refs,
+                                                     const std::string& mainline)
+{
+    std::vector<const ref*> tips;
+    bool remote = false;
+    for (const ref& r : refs)
+    {
+        if (r.kind == ref_kind::local_branch) tips.push_back(&r);
+        remote = remote || r.kind == ref_kind::remote_branch;
+    }
+    std::ranges::stable_partition(tips, [](const ref* r) { return r->current; });
+    if (tips.size() > 1 && !tips.front()->current)
+        return std::unexpected(std::string(_("several branches end there")));
+    if (!tips.empty())
+    {
+        auto h = load_branch_history(repository, tips.front()->full_name, mainline);
+        if (!h) return std::unexpected(h.error());
+        return drop_place{.onto = std::move(*h)};
+    }
+    auto h = branch_holding(repository, {row}, mainline);
+    // The mainline's own, or a remote's: not a branch of ours to change.
+    if (!h) return std::unexpected(remote ? std::string(_("not a local branch")) : h.error());
+    const size_t place = *h->index_of(row);
+    return drop_place{.onto = std::move(*h), .place = place};
+}
+
+std::expected<edit_plan, std::string> plan_insert(const repo& repository,
+                                                  const branch_history& onto,
+                                                  const std::vector<oid>& commits, size_t place)
+{
+    if (commits.empty()) return std::unexpected(std::string(_("no commits")));
+    if (place > onto.line.size())
+        return std::unexpected(rap::i18n::format(_("not on {0}"), onto.name()));
+    if (!onto.worktree.empty()) return std::unexpected(std::string(_("in another worktree")));
+    // Where they go: on line[place], or, at the bottom, where the line
+    // leaves the mainline (an empty line: its tip).
+    const std::optional<oid> base =
+        place < onto.line.size() ? std::optional(onto.line[place]) : onto.below;
+    for (const oid& c : commits)
+    {
+        const auto commit = repository.lookup(c);
+        if (!commit) return std::unexpected(rap::i18n::format(_("{0} not found"), c.hex(8)));
+        if (commit->parents.size() > 1) return std::unexpected(std::string(_("a merge")));
+        if (onto.index_of(c) || (base && repository.is_ancestor(c, *base)))
+            return std::unexpected(rap::i18n::format(_("on {0} already"), onto.name()));
+    }
+    // The commits above are replayed onto changed trees.
+    if (place > 0)
+        if (auto why = why_not_editable(
+                onto, std::vector<oid>(onto.line.begin(), onto.line.begin() + place), true))
+            return std::unexpected(*why);
+    edit_plan p{.branch = onto.branch, .old_tip = onto.tip, .base = base};
+    for (const oid& c : commits) p.steps.push_back({.commit = c});
+    pick_above(onto, place, p.steps);
+    return p;
+}
+
+std::expected<history_edit, replay_failure>
+transplant_commits(const repo& repository, const branch_history& onto, size_t place,
+                   const std::vector<oid>& commits, const branch_history* from, std::string reflog)
+{
+    auto refuse = [](std::string why) -> std::unexpected<replay_failure>
+    { return std::unexpected(replay_failure{.message = std::move(why)}); };
+    if (from && from->branch == onto.branch) return refuse(_("the same branch"));
+    auto plan = plan_insert(repository, onto, commits, place);
+    if (!plan) return refuse(plan.error());
+    auto tip = replay(repository, *plan);
+    if (!tip) return std::unexpected(tip.error());
+    history_edit target = edit_from(repository, onto, *plan, *tip, reflog);
+    if (!from) return target;
+
+    auto left = plan_drop(*from, commits);
+    if (!left) return refuse(left.error());
+    auto source = replay(repository, *left);
+    if (!source) return std::unexpected(source.error());
+    history_edit e = edit_from(repository, *from, *left, *source, std::move(reflog));
+    // The pushed branch first: it's the one offered a force push, leasing
+    // on its upstream.
+    if (target.pushed && !e.pushed)
+    {
+        e.moves.insert(e.moves.begin(), target.moves.front());
+        e.lease = target.lease;
+    }
+    else
+        e.moves.push_back(target.moves.front());
+    e.pushed = e.pushed || target.pushed;
+    return e;
+}
+
+std::vector<std::string> force_push_args(const repo& repository, const std::string& branch,
+                                         const oid& expected, const oid& tip)
 {
     git_repository* r = repository.raw();
     git_buf remote{}, merge{};
@@ -882,8 +1003,11 @@ std::vector<std::string> force_push_args(const repo& repository, const std::stri
     if (git_branch_upstream_remote(&remote, r, branch.c_str()) == 0 &&
         git_branch_upstream_merge(&merge, r, branch.c_str()) == 0 && remote.size &&
         std::string_view(remote.ptr, remote.size) != ".")
-        out = {"push", "--force-with-lease", std::string(remote.ptr, remote.size),
-               branch + ":" + std::string(merge.ptr, merge.size)};
+    {
+        const std::string there(merge.ptr, merge.size);
+        out = {"push", "--force-with-lease=" + there + ":" + expected.hex(),
+               std::string(remote.ptr, remote.size), tip.hex() + ":" + there};
+    }
     git_buf_dispose(&remote);
     git_buf_dispose(&merge);
     return out;
@@ -896,12 +1020,15 @@ std::expected<history_edit, std::string> undo_last_commit(const repo& repository
     if (h.line.empty()) return std::unexpected(std::string(_("merged")));
     if (h.is_merge(0)) return std::unexpected(std::string(_("a merge")));
     if (!h.worktree.empty()) return std::unexpected(std::string(_("in another worktree")));
+    if (!h.svn.empty() && h.svn.front() == 0) return std::unexpected(std::string(_("in SVN")));
     const auto parent = h.parent_of(0);
     if (!parent) return std::unexpected(std::string(_("the first commit")));
+    const bool pushed = rewrites_pushed(repository, h, h.tip);
     return history_edit{.reflog = "tortilla: undo last commit",
                         .moves = {{h.branch, h.tip, *parent}},
                         .keep_index = true,
-                        .pushed = rewrites_pushed(repository, h, h.tip)};
+                        .pushed = pushed,
+                        .lease = pushed ? h.upstream_tip : std::nullopt};
 }
 
 }  // namespace tortilla

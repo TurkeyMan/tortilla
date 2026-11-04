@@ -1,10 +1,16 @@
 // tortilla's user settings: a key=value file in the platform config directory
 // (~/.config/tortilla/settings on Linux), read once and written on change.
+//
+// Any thread may read and write them (workers read the forge accounts and
+// sync's choices while the UI changes them): each call is whole, behind a
+// lock, and hands back a copy.
 #pragma once
 
 #include <rapport/rapport.h>
 
+#include <filesystem>
 #include <map>
+#include <shared_mutex>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -38,12 +44,29 @@ public:
     void save_window(const std::string& prefix, const rap::window&);
     void restore_window(const std::string& prefix, rap::window&) const;
 
+    // For the tests: the settings read from, and written to, `file` instead
+    // of the user's.
+    void use_file(const std::filesystem::path& file);
+
 private:
     settings();
+    void load();
+    // With the lock held.
+    std::string value_locked(const std::string& key, const std::string& fallback) const;
+    void set_locked(const std::string& key, const std::string& value);
     void save() const;
 
+    mutable std::shared_mutex mutex_;
+    std::filesystem::path file_;
     std::map<std::string, std::string> values_;
 };
+
+// Appearance [Settings > General]: "light", "dark", or as the desktop has
+// it (no value). Applied when the toolkit loads, and live from Settings.
+inline constexpr const char* k_appearance_setting = "appearance";
+rap::color_scheme appearance();
+rap::color_scheme appearance_from(std::string_view stored);
+std::string_view appearance_value(rap::color_scheme);
 
 // The history format on its own, for the tests: a stored value's entries,
 // and the value with `entry` added.

@@ -1,6 +1,8 @@
 #include "repo.h"
 
 #include "command.h"
+#include "libgit2_oid.h"
+#include "worktrees.h"
 
 #include <git2.h>
 #include <rapport/sys.h>
@@ -8,6 +10,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <memory>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -17,24 +20,17 @@ namespace tortilla
 namespace
 {
 
+// A name libgit2 gave, or "" for none: a reference's name or target is
+// never null in the versions tested, but a std::string from null is a crash.
+const char* or_empty(const char* s)
+{
+    return s ? s : "";
+}
+
 void init_libgit2()
 {
     static const int once = git_libgit2_init();
     (void)once;
-}
-
-oid to_oid(const git_oid* o)
-{
-    oid out;
-    std::memcpy(out.bytes.data(), o->id, out.bytes.size());
-    return out;
-}
-
-git_oid to_git(const oid& o)
-{
-    git_oid out{};
-    std::memcpy(out.id, o.bytes.data(), o.bytes.size());
-    return out;
 }
 
 template <class t, void (*Free)(t*)>
@@ -173,6 +169,26 @@ std::string last_git_error()
     return e && e->message ? e->message : "unknown libgit2 error";
 }
 
+std::string commit_body(std::string_view message)
+{
+    // Line by line: blank ones (only spaces) end the subject's paragraph,
+    // and those after it are skipped too.
+    auto blank = [](std::string_view line)
+    { return line.find_first_not_of(" \t\r") == std::string_view::npos; };
+    auto next_line = [&](std::string_view& rest)
+    {
+        const size_t nl = rest.find('\n');
+        const std::string_view line = rest.substr(0, nl);
+        rest.remove_prefix(nl == std::string_view::npos ? rest.size() : nl + 1);
+        return line;
+    };
+    std::string_view rest = message;
+    while (!rest.empty() && blank(rest.substr(0, rest.find('\n')))) next_line(rest);
+    while (!rest.empty() && !blank(rest.substr(0, rest.find('\n')))) next_line(rest);
+    while (!rest.empty() && blank(rest.substr(0, rest.find('\n')))) next_line(rest);
+    return std::string(rest);
+}
+
 std::expected<repo, std::string> repo::open(const std::string& path)
 {
     init_libgit2();
@@ -222,27 +238,75 @@ std::string repo::head_name() const
     return "HEAD";
 }
 
-// One `git for-each-ref` gives every label with its commit, annotated-ness,
-// upstream and the checked-out branch. It is ~2x faster than libgit2's ref
-// iteration on slow filesystems, and replaces a config parse per branch
-// for upstreams (together ~750 ms -> ~170 ms on a 250-ref repo over WSL).
-ref_map repo::refs() const
+namespace
 {
-    ref_map out;
-    // "refs/remotes/origin" -> what origin/HEAD names.
-    std::unordered_map<std::string, std::string> remote_heads;
-    git_result r = run_git(workdir(),
-                           {"for-each-ref",
-                            "--format=%(objectname)%09%(objecttype)%09%(*objectname)%09"
-                            "%(refname)%09%(upstream)%09%(HEAD)%09%(worktreepath)%09%(symref)"},
-                           git_output::stdout_only);
-    if (!r.ok()) return out;
 
-    for (size_t at = 0; at < r.output.size();)
+using remote_head_map = std::unordered_map<std::string, std::string>;
+
+// One ref as a label: `commit` is what it shows on (an annotated tag's
+// commit), null for refs to trees or blobs, which aren't shown.
+void add_label(ref_map& out, remote_head_map& remote_heads, std::string_view full,
+               std::string_view symref, const git_oid* commit, bool annotated,
+               std::string_view upstream, bool current, std::string_view worktree)
+{
+    ref ref;
+    ref.full_name = full;
+    ref.kind = ref_kind::other;
+    auto strip = [&](std::string_view prefix) { return std::string(full.substr(prefix.size())); };
+    if (full.starts_with("refs/heads/"))
     {
-        size_t nl = r.output.find('\n', at);
-        if (nl == std::string::npos) nl = r.output.size();
-        std::string_view line(r.output.data() + at, nl - at);
+        ref.kind = ref_kind::local_branch;
+        ref.name = strip("refs/heads/");
+    }
+    else if (full.starts_with("refs/remotes/"))
+    {
+        // <remote>/HEAD isn't a label: it says which is the default.
+        if (full.ends_with("/HEAD"))
+        {
+            if (!symref.empty())
+                remote_heads.emplace(std::string(full.substr(0, full.size() - 5)),
+                                     std::string(symref));
+            return;
+        }
+        ref.kind = ref_kind::remote_branch;
+        ref.name = strip("refs/remotes/");
+    }
+    else if (full.starts_with("refs/tags/"))
+    {
+        ref.kind = ref_kind::tag;
+        ref.name = strip("refs/tags/");
+    }
+    else if (full == "refs/stash")
+    {
+        ref.kind = ref_kind::stash;
+        ref.name = "stash";
+    }
+    else if (is_prefetch_ref(full))
+        return;
+    else
+        ref.name = full.starts_with("refs/") ? strip("refs/") : std::string(full);
+    if (!commit) return;
+    ref.upstream = upstream;
+    ref.current = current;
+    ref.annotated = annotated;
+    if (ref.kind == ref_kind::local_branch && !current) ref.worktree = worktree;
+    out[to_oid(commit)].push_back(std::move(ref));
+}
+
+// Every label through git for-each-ref, when libgit2 can't list them.
+bool git_labels(const repo& r, ref_map& out, remote_head_map& remote_heads)
+{
+    git_result listed = run_git(
+        r.workdir(),
+        {"for-each-ref", "--format=%(objectname)%09%(objecttype)%09%(*objectname)%09"
+                         "%(refname)%09%(upstream)%09%(HEAD)%09%(worktreepath)%09%(symref)"},
+        git_output::stdout_only);
+    if (!listed.ok()) return false;
+    for (size_t at = 0; at < listed.output.size();)
+    {
+        size_t nl = listed.output.find('\n', at);
+        if (nl == std::string::npos) nl = listed.output.size();
+        std::string_view line(listed.output.data() + at, nl - at);
         at = nl + 1;
 
         std::vector<std::string_view> f;
@@ -255,64 +319,165 @@ ref_map repo::refs() const
             p = tab + 1;
         }
         if (f.size() < 8) continue;
-        std::string_view object = f[0], type = f[1], peeled = f[2], full = f[3];
-
-        ref ref;
-        ref.full_name = full;
-        ref.kind = ref_kind::other;
-        auto strip = [&](std::string_view prefix)
-        { return std::string(full.substr(prefix.size())); };
-        if (full.starts_with("refs/heads/"))
-        {
-            ref.kind = ref_kind::local_branch;
-            ref.name = strip("refs/heads/");
-        }
-        else if (full.starts_with("refs/remotes/"))
-        {
-            // <remote>/HEAD isn't a label: it says which is the default.
-            if (full.ends_with("/HEAD"))
-            {
-                if (!f[7].empty())
-                    remote_heads.emplace(std::string(full.substr(0, full.size() - 5)),
-                                         std::string(f[7]));
-                continue;
-            }
-            ref.kind = ref_kind::remote_branch;
-            ref.name = strip("refs/remotes/");
-        }
-        else if (full.starts_with("refs/tags/"))
-        {
-            ref.kind = ref_kind::tag;
-            ref.name = strip("refs/tags/");
-        }
-        else if (full == "refs/stash")
-        {
-            ref.kind = ref_kind::stash;
-            ref.name = "stash";
-        }
-        else if (is_prefetch_ref(full))
-            continue;
-        else
-            ref.name = full.starts_with("refs/") ? strip("refs/") : std::string(full);
-        ref.upstream = f[4];
-        ref.current = f[5] == "*";
-        if (ref.kind == ref_kind::local_branch && !ref.current) ref.worktree = f[6];
-
-        // Annotated tags label the commit underneath; refs to trees or
-        // blobs aren't shown.
-        std::string_view commit = object;
-        if (type == "tag")
-        {
-            ref.annotated = true;
-            commit = peeled;
-        }
-        else if (type != "commit")
-            continue;
+        const std::string_view type = f[1];
+        // Annotated tags label the commit underneath.
+        const std::string_view commit = type == "tag" ? f[2] : f[0];
         git_oid id;
-        if (git_oid_fromstrn(&id, commit.data(), commit.size()) != 0) continue;
-        out[to_oid(&id)].push_back(std::move(ref));
+        const bool shown = (type == "tag" || type == "commit") &&
+                           git_oid_fromstrn(&id, commit.data(), commit.size()) == 0;
+        add_label(out, remote_heads, f[3], f[7], shown ? &id : nullptr, type == "tag", f[4],
+                  f[5] == "*", f[6]);
+    }
+    return true;
+}
+
+// A local branch's upstream, as for-each-ref's %(upstream) has it: its
+// branch.<b>.merge through branch.<b>.remote's fetch refspecs (or as is,
+// for the remote "."); "" when it has none or no refspec maps it.
+class upstreams
+{
+public:
+    explicit upstreams(git_repository* r)
+    {
+        if (git_repository_config_snapshot(&config_.p, r) != 0) config_.p = nullptr;
     }
 
+    std::string of(std::string_view branch)
+    {
+        if (!config_.p) return {};
+        const std::string key = "branch." + std::string(branch);
+        const std::string remote = get(key + ".remote"), merge = get(key + ".merge");
+        if (remote.empty() || merge.empty()) return {};
+        if (remote == ".") return merge;
+        auto [it, added] = specs_.try_emplace(remote);
+        if (added)
+            git_config_get_multivar_foreach(
+                config_.p, ("remote." + remote + ".fetch").c_str(), nullptr,
+                [](const git_config_entry* e, void* specs)
+                {
+                    git_refspec* spec = nullptr;
+                    if (e->value && git_refspec_parse(&spec, e->value, true) == 0)
+                        static_cast<std::vector<owned_spec>*>(specs)->emplace_back(
+                            spec, git_refspec_free);
+                    return 0;
+                },
+                &it->second);
+        for (const owned_spec& s : it->second)
+        {
+            if (!git_refspec_src_matches(s.get(), merge.c_str())) continue;
+            git_buf out = GIT_BUF_INIT;
+            std::string name;
+            if (git_refspec_transform(&out, s.get(), merge.c_str()) == 0 && out.ptr) name = out.ptr;
+            git_buf_dispose(&out);
+            if (!name.empty()) return name;
+        }
+        return {};
+    }
+
+private:
+    std::string get(const std::string& key) const
+    {
+        git_buf value = GIT_BUF_INIT;
+        std::string out;
+        if (git_config_get_string_buf(&value, config_.p, key.c_str()) == 0 && value.ptr)
+            out = value.ptr;
+        git_buf_dispose(&value);
+        return out;
+    }
+
+    using owned_spec = std::unique_ptr<git_refspec, decltype(&git_refspec_free)>;
+    owned<git_config, git_config_free> config_;
+    std::unordered_map<std::string, std::vector<owned_spec>> specs_;
+};
+
+// Every label through libgit2, as git_labels has them; false when the refs
+// can't be read (git answers then).
+bool libgit2_labels(const repo& r, ref_map& out, remote_head_map& remote_heads)
+{
+    git_repository* raw = r.raw();
+    // The branch HEAD names here, and those other worktrees have out.
+    std::string head;
+    {
+        owned_ref h;
+        if (git_reference_lookup(&h.p, raw, "HEAD") == 0 &&
+            git_reference_type(h.p) == GIT_REFERENCE_SYMBOLIC)
+            head = or_empty(git_reference_symbolic_target(h.p));
+    }
+    std::unordered_map<std::string, std::string> elsewhere;  // full branch name -> worktree
+    if (auto trees = list_worktrees(r))
+        for (const worktree_info& w : *trees)
+            if (!w.branch.empty())
+                elsewhere.emplace(
+                    w.branch.starts_with("refs/") ? w.branch : "refs/heads/" + w.branch, w.path);
+    upstreams upstream(raw);
+    owned<git_odb, git_odb_free> odb;
+    if (git_repository_odb(&odb.p, raw) != 0) return false;
+
+    owned_iter it;
+    if (git_reference_iterator_new(&it.p, raw) != 0) return false;
+    for (;;)
+    {
+        owned_ref ref;
+        const int next = git_reference_next(&ref.p, it.p);
+        if (next == GIT_ITEROVER) break;
+        if (next != 0) return false;
+        const std::string_view full = or_empty(git_reference_name(ref.p));
+        std::string symref;
+        owned_ref resolved;
+        const git_reference* direct = ref.p;
+        if (git_reference_type(ref.p) == GIT_REFERENCE_SYMBOLIC)
+        {
+            symref = or_empty(git_reference_symbolic_target(ref.p));
+            // Dangling (origin/HEAD naming a branch that's gone): left
+            // out, as for-each-ref does.
+            if (git_reference_resolve(&resolved.p, ref.p) != 0) continue;
+            direct = resolved.p;
+        }
+        const git_oid* target = git_reference_target(direct);
+        if (!target) continue;
+        // Branches hold commits; a tag may be annotated (a tag object over
+        // its commit), and other refs may hold anything.
+        git_oid commit = *target;
+        bool annotated = false, shown = true;
+        if (!full.starts_with("refs/heads/") && !full.starts_with("refs/remotes/"))
+        {
+            if (const git_oid* peeled = git_reference_target_peel(direct))
+            {
+                annotated = true;  // packed-refs knows it's a tag, and its commit
+                commit = *peeled;
+            }
+            else
+            {
+                size_t size = 0;
+                git_object_t type = GIT_OBJECT_INVALID;
+                if (git_odb_read_header(&size, &type, odb.p, target) != 0) continue;
+                if (type == GIT_OBJECT_TAG)
+                {
+                    annotated = true;
+                    owned_object peeled_object;
+                    owned_object tag;
+                    if (git_object_lookup(&tag.p, raw, target, GIT_OBJECT_TAG) != 0 ||
+                        git_object_peel(&peeled_object.p, tag.p, GIT_OBJECT_COMMIT) != 0)
+                        shown = false;
+                    else
+                        commit = *git_object_id(peeled_object.p);
+                }
+                else
+                    shown = type == GIT_OBJECT_COMMIT;
+            }
+        }
+        const bool branch = full.starts_with("refs/heads/");
+        const auto there = branch ? elsewhere.find(std::string(full)) : elsewhere.end();
+        add_label(out, remote_heads, full, symref, shown ? &commit : nullptr, annotated,
+                  branch ? upstream.of(full.substr(11)) : std::string(), branch && full == head,
+                  there != elsewhere.end() ? std::string_view(there->second) : std::string_view());
+    }
+    return true;
+}
+
+// The labels as listed, with a detached HEAD and each remote's default.
+ref_map with_heads(git_repository* repo_, ref_map out, const remote_head_map& remote_heads)
+{
     // A detached HEAD shows as a label too.
     git_oid head;
     if (git_repository_head_detached(repo_) == 1 &&
@@ -347,6 +512,29 @@ ref_map repo::refs() const
 
     for (auto& [id, refs] : out) std::ranges::sort(refs, {}, &ref::full_name);
     return out;
+}
+
+}  // namespace
+
+// Every label with its commit, annotated-ness, upstream and the checked-out
+// branch, through libgit2: one ref listing and one config snapshot, where
+// git for-each-ref costs a process (tens of ms on Windows); git when libgit2
+// can't read the refs.
+ref_map repo::refs() const
+{
+    ref_map out;
+    // "refs/remotes/origin" -> what origin/HEAD names.
+    remote_head_map remote_heads;
+    if (!libgit2_labels(*this, out, remote_heads)) return refs_by_git();
+    return with_heads(repo_, std::move(out), remote_heads);
+}
+
+ref_map repo::refs_by_git() const
+{
+    ref_map out;
+    remote_head_map remote_heads;
+    if (!git_labels(*this, out, remote_heads)) return {};
+    return with_heads(repo_, std::move(out), remote_heads);
 }
 
 std::optional<oid> repo::head_id() const
@@ -858,6 +1046,89 @@ std::string repo::note(const oid& id) const
     return text;
 }
 
+std::vector<repo::stash_entry> repo::stashes() const
+{
+    std::vector<stash_entry> out;
+    git_reflog* log = nullptr;
+    if (git_reflog_read(&log, repo_, "refs/stash") != 0) return out;
+    for (size_t i = 0, n = git_reflog_entrycount(log); i < n; ++i)
+    {
+        const git_reflog_entry* e = git_reflog_entry_byindex(log, i);  // 0: the newest
+        stash_entry s{.selector = "stash@{" + std::to_string(i) + "}",
+                      .id = to_oid(git_reflog_entry_id_new(e))};
+        if (const char* m = git_reflog_entry_message(e)) s.subject = m;
+        while (!s.subject.empty() && (s.subject.back() == '\n' || s.subject.back() == '\r'))
+            s.subject.pop_back();
+        owned_commit c;
+        const git_oid id = to_git(s.id);
+        if (git_commit_lookup(&c.p, repo_, &id) == 0 && git_commit_parentcount(c.p) > 0)
+            s.base = to_oid(git_commit_parent_id(c.p, 0));
+        out.push_back(std::move(s));
+    }
+    git_reflog_free(log);
+    return out;
+}
+
+std::string repo::short_id(const oid& id) const
+{
+    const git_oid g = to_git(id);
+    owned_object obj;
+    git_buf buf = GIT_BUF_INIT;
+    std::string out;
+    if (git_object_lookup(&obj.p, repo_, &g, GIT_OBJECT_ANY) == 0 &&
+        git_object_short_id(&buf, obj.p) == 0 && buf.ptr)
+        out = buf.ptr;
+    git_buf_dispose(&buf);
+    return out.empty() ? id.hex(7) : out;
+}
+
+std::optional<std::string> repo::tag_message(const std::string& tag) const
+{
+    git_oid id;
+    if (git_reference_name_to_id(&id, repo_, ("refs/tags/" + tag).c_str()) != 0)
+        return std::nullopt;
+    owned<git_tag, git_tag_free> t;
+    if (git_tag_lookup(&t.p, repo_, &id) != 0) return std::nullopt;
+    const char* m = git_tag_message(t.p);
+    return std::string(m ? m : "");
+}
+
+std::string repo::branches_containing(const oid& id) const
+{
+    std::string out;
+    if (git_repository_head_detached(repo_) == 1)
+        if (const auto head = head_id(); head && is_ancestor(id, *head))
+            out += "* (HEAD detached at " + short_id(*head) + ")\n";
+    std::string current;
+    {
+        owned_ref h;
+        if (git_reference_lookup(&h.p, repo_, "HEAD") == 0 &&
+            git_reference_type(h.p) == GIT_REFERENCE_SYMBOLIC)
+            current = or_empty(git_reference_symbolic_target(h.p));
+    }
+    for (const char* prefix : {"refs/heads/", "refs/remotes/"})
+        if (const auto refs = refs_under({prefix}))
+            for (const listed_ref& l : *refs)
+            {
+                if (!is_ancestor(id, l.target)) continue;
+                const bool local = std::string_view(prefix) == "refs/heads/";
+                out += l.full_name == current ? "* " : "  ";
+                out += local ? l.full_name.substr(11) : l.full_name.substr(5);
+                if (!local && !l.symref.empty())
+                    out += " -> " +
+                           (l.symref.starts_with("refs/remotes/") ? l.symref.substr(13) : l.symref);
+                out += '\n';
+            }
+    return out;
+}
+
+std::optional<oid> repo::merge_base(const oid& a, const oid& b) const
+{
+    git_oid x = to_git(a), y = to_git(b), base;
+    if (git_merge_base(&base, repo_, &x, &y) != 0) return std::nullopt;
+    return to_oid(&base);
+}
+
 bool repo::is_ancestor(const oid& ancestor, const oid& descendant) const
 {
     git_oid a = to_git(ancestor), d = to_git(descendant);
@@ -924,6 +1195,158 @@ std::string repo::upstream_of(const std::string& branch) const
     }
     git_buf_dispose(&up);
     return out;
+}
+
+bool repo::revision_exists(const std::string& rev) const
+{
+    if (rev.find("..") == std::string::npos) return resolve(rev).has_value();
+    git_revspec spec{};
+    if (git_revparse(&spec, repo_, rev.c_str()) != 0) return false;
+    git_object_free(spec.from);
+    git_object_free(spec.to);
+    return true;
+}
+
+std::string repo::upstream_ref(std::string_view branch) const
+{
+    return upstreams(repo_).of(branch);
+}
+
+std::optional<std::vector<repo::listed_ref>>
+repo::refs_under(const std::vector<std::string>& prefixes) const
+{
+    std::vector<listed_ref> out;
+    auto list = [&](const char* glob) -> bool
+    {
+        owned_iter it;
+        if ((glob ? git_reference_iterator_glob_new(&it.p, repo_, glob)
+                  : git_reference_iterator_new(&it.p, repo_)) != 0)
+            return false;
+        for (;;)
+        {
+            owned_ref ref;
+            const int next = git_reference_next(&ref.p, it.p);
+            if (next == GIT_ITEROVER) return true;
+            if (next != 0) return false;
+            listed_ref l{.full_name = or_empty(git_reference_name(ref.p))};
+            // (A glob's * crosses slashes; the prefix must still hold.)
+            if (glob && !std::string_view(l.full_name)
+                             .starts_with(std::string_view(glob, std::strlen(glob) - 1)))
+                continue;
+            owned_ref resolved;
+            const git_reference* direct = ref.p;
+            if (git_reference_type(ref.p) == GIT_REFERENCE_SYMBOLIC)
+            {
+                l.symref = or_empty(git_reference_symbolic_target(ref.p));
+                if (git_reference_resolve(&resolved.p, ref.p) != 0) continue;
+                direct = resolved.p;
+            }
+            const git_oid* target = git_reference_target(direct);
+            if (!target) continue;
+            l.target = to_oid(target);
+            out.push_back(std::move(l));
+        }
+    };
+    if (prefixes.empty())
+    {
+        if (!list(nullptr)) return std::nullopt;
+    }
+    else
+        for (const std::string& p : prefixes)
+            if (!list((p + "*").c_str())) return std::nullopt;
+    std::ranges::sort(out, {}, &listed_ref::full_name);
+    // Prefixes that overlap list a ref once.
+    out.erase(std::ranges::unique(out, {}, &listed_ref::full_name).begin(), out.end());
+    return out;
+}
+
+std::string repo::full_ref_name(const std::string& name) const
+{
+    owned_ref ref, resolved;
+    if (git_reference_dwim(&ref.p, repo_, name.c_str()) != 0) return {};
+    if (git_reference_type(ref.p) != GIT_REFERENCE_SYMBOLIC)
+        return or_empty(git_reference_name(ref.p));
+    // HEAD and other symbolic refs: what they end at, even unborn.
+    std::string target = or_empty(git_reference_symbolic_target(ref.p));
+    if (git_reference_resolve(&resolved.p, ref.p) == 0)
+        target = or_empty(git_reference_name(resolved.p));
+    return target;
+}
+
+std::string repo::short_ref_name(const std::string& full) const
+{
+    // git's shorten_unambiguous_ref: the shortest form by its rules that
+    // no rule before it would take for another ref.
+    static constexpr std::pair<std::string_view, std::string_view> rules[] = {
+        {"", ""},
+        {"refs/", ""},
+        {"refs/tags/", ""},
+        {"refs/heads/", ""},
+        {"refs/remotes/", ""},
+        {"refs/remotes/", "/HEAD"},
+    };
+    auto exists = [&](const std::string& name)
+    {
+        // A name outside refs/ is a root ref (HEAD, ORIG_HEAD): capitals.
+        if (!name.starts_with("refs/") &&
+            !std::ranges::all_of(name, [](char c) { return (c >= 'A' && c <= 'Z') || c == '_'; }))
+            return false;
+        owned_ref ref, resolved;
+        return git_reference_lookup(&ref.p, repo_, name.c_str()) == 0 &&
+               git_reference_resolve(&resolved.p, ref.p) == 0;
+    };
+    const std::string_view name = full;
+    bool strict = true;
+    {
+        owned<git_config, git_config_free> config;
+        int value = 1;
+        if (git_repository_config_snapshot(&config.p, repo_) == 0 &&
+            git_config_get_bool(&value, config.p, "core.warnambiguousrefs") == 0)
+            strict = value != 0;
+    }
+    for (size_t i = std::size(rules) - 1; i > 0; --i)
+    {
+        const auto [prefix, suffix] = rules[i];
+        if (name.size() <= prefix.size() + suffix.size() || !name.starts_with(prefix) ||
+            !name.ends_with(suffix))
+            continue;
+        const std::string shortened(
+            name.substr(prefix.size(), name.size() - prefix.size() - suffix.size()));
+        // With core.warnAmbiguousRefs (on unless turned off) no other rule
+        // may take it; without, only those before it.
+        bool taken = false;
+        for (size_t j = 0; j < (strict ? std::size(rules) : i) && !taken; ++j)
+            taken = j != i &&
+                    exists(std::string(rules[j].first) + shortened + std::string(rules[j].second));
+        if (!taken) return shortened;
+    }
+    return full;
+}
+
+std::vector<oid> repo::rev_list(const std::vector<oid>& include, const std::vector<oid>& exclude,
+                                size_t limit) const
+{
+    owned_walk w;
+    if (git_revwalk_new(&w.p, repo_) != 0) return {};
+    git_revwalk_sorting(w.p, GIT_SORT_TIME);
+    for (const oid& o : include)
+        if (git_oid id = to_git(o); git_revwalk_push(w.p, &id) != 0) return {};
+    for (const oid& o : exclude)
+        if (git_oid id = to_git(o); git_revwalk_hide(w.p, &id) != 0) return {};
+    std::vector<oid> out;
+    git_oid id;
+    while ((limit == 0 || out.size() < limit) && git_revwalk_next(&id, w.p) == 0)
+        out.push_back(to_oid(&id));
+    return out;
+}
+
+std::optional<std::pair<size_t, size_t>> repo::ahead_behind(const oid& local,
+                                                            const oid& upstream) const
+{
+    git_oid l = to_git(local), u = to_git(upstream);
+    size_t ahead = 0, behind = 0;
+    if (git_graph_ahead_behind(&ahead, &behind, repo_, &l, &u) != 0) return std::nullopt;
+    return std::pair{ahead, behind};
 }
 
 std::expected<std::vector<commit>, std::string> repo::range(const oid& upstream, const oid& branch,

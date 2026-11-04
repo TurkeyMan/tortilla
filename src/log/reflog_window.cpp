@@ -176,6 +176,12 @@ void reflog_window::build()
     list_->focus();
 }
 
+void reflog_window::acted(size_t select)
+{
+    reload(select);
+    if (done_) done_();
+}
+
 void reflog_window::reload(size_t select)
 {
     const std::string chosen = refs_.empty() ? initial_ref_ : ref();
@@ -365,15 +371,26 @@ void reflog_window::difftool(std::vector<std::string> revisions)
 
 void reflog_window::reset(const reflog_entry& e)
 {
-    const git_result subject =
-        run_git(workdir_, {"log", "-1", "--format=%s", e.id}, git_output::stdout_only);
-    std::string summary = subject.ok() ? subject.output : std::string();
+    // Its subject in process (the reset waits for it); git's when libgit2
+    // can't open the repository.
+    std::string summary;
+    auto r = repo::open(workdir_);
+    if (const auto id = r ? r->resolve(e.id) : std::nullopt)
+    {
+        if (const auto c = r->lookup(*id)) summary = c->summary;
+    }
+    else if (!r)
+    {
+        const git_result subject =
+            run_git(workdir_, {"log", "-1", "--format=%s", e.id}, git_output::stdout_only);
+        summary = subject.ok() ? subject.output : std::string();
+    }
     while (!summary.empty() && (summary.back() == '\n' || summary.back() == '\r'))
         summary.pop_back();
     tortilla::reset_to(ui_, window_.get(), workdir_, current_branch(workdir_), e.id, summary,
                        [this, alive = std::weak_ptr<bool>(alive_)](bool)
                        {
-                           if (alive.lock()) reload();
+                           if (alive.lock()) acted();
                        });
 }
 
@@ -419,7 +436,7 @@ void reflog_window::delete_entries(std::vector<size_t> sel)
                                                         .text = r.output});
                             break;
                         }
-                    reload(first);
+                    acted(first);
                 });
 }
 
@@ -428,9 +445,14 @@ void reflog_window::delete_entries(std::vector<size_t> sel)
 // count on the button, and no default button for Enter to press by habit.
 void reflog_window::clear_stash()
 {
-    const git_result listed =
-        run_git(workdir_, {"stash", "list", "--format=%gd  %s"}, git_output::stdout_only);
-    std::string stashes = listed.output;
+    // In process, as git stash list --format="%gd  %s" has them.
+    std::string stashes;
+    if (auto r = repo::open(workdir_))
+        for (const repo::stash_entry& s : r->stashes())
+        {
+            const auto c = r->lookup(s.id);
+            stashes += s.selector + "  " + (c ? c->summary : std::string()) + "\n";
+        }
     while (!stashes.empty() && stashes.back() == '\n') stashes.pop_back();
     const size_t n = stashes.empty() ? 0 : size_t(std::ranges::count(stashes, '\n')) + 1;
     if (n == 0) return;
@@ -465,7 +487,7 @@ void reflog_window::clear_stash()
                                                        {.icon = rap::message_spec::icon::error,
                                                         .title = "Tortilla",
                                                         .text = r.output});
-                                       reload();
+                                       acted();
                                    }),
                            dialog_button{rap::dialog_role::cancel, ""}.on_click(
                                [this] { confirm_->close(); })},
@@ -483,7 +505,7 @@ void reflog_window::run(const std::string& title, std::vector<std::vector<std::s
     run_progress_dialog(ui_, window_.get(), title, workdir_, std::move(c),
                         [this, alive = std::weak_ptr<bool>(alive_)](bool)
                         {
-                            if (alive.lock()) reload(list_->current().value_or(0));
+                            if (alive.lock()) acted(list_->current().value_or(0));
                         });
 }
 
@@ -502,7 +524,7 @@ void reflog_window::open_dialog(std::expected<std::unique_ptr<D>, std::string> d
     (*dialog)->on_done(
         [this, alive = std::weak_ptr<bool>(alive_)]
         {
-            if (alive.lock()) reload(list_->current().value_or(0));
+            if (alive.lock()) acted(list_->current().value_or(0));
         });
     windows::keep(std::move(*dialog));
 }

@@ -3,7 +3,11 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
+#include <map>
+#include <set>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace tortilla
@@ -47,6 +51,25 @@ std::string strip_ref_name(const std::string& full);
 // The folders the refs make: "refs", then each path but the last segment
 // ("refs/heads", "refs/heads/feature"), in order.
 std::vector<std::string> ref_folders(const std::vector<ref_entry>&);
+
+// Browse References checking branches (the log's Show > Pick...): each
+// branch's box, and each folder's for what's in it, nested folders too.
+// `checked` holds full names.
+enum class folder_check
+{
+    unchecked,  // none of its branches (or it has none)
+    mixed,      // some
+    checked,    // all
+};
+using checked_refs = std::set<std::string, std::less<>>;
+// Every folder ref_folders gives, by its branches (local and remote).
+std::map<std::string, folder_check, std::less<>> folder_checks(const std::vector<ref_entry>&,
+                                                               const checked_refs&);
+// A folder's box clicked: its branches all unchecked when they were all
+// checked, else all checked.
+void toggle_folder(const std::vector<ref_entry>&, checked_refs&, std::string_view folder);
+// The branches checked that are still there, in `refs`' order (full names).
+std::vector<std::string> checked_branches(const std::vector<ref_entry>&, const checked_refs&);
 
 // Whether `text` (fields joined by '\n') matches a filter in the log's
 // simple syntax: space-separated terms all present, -term absent, "quoted

@@ -44,6 +44,11 @@ std::expected<tree_revision, std::string> resolve_tree(const repo&, const std::s
 // own folders; the top ("") isn't listed.
 std::vector<std::string> tree_folders(const repo&, const oid& tree);
 
+// Every file (and submodule) path in a commit's or tree's tree, at every
+// depth, as git ls-tree -r --name-only lists them; nullopt if it can't be
+// read.
+std::optional<std::vector<std::string>> tree_files(const repo&, const oid& commit_or_tree);
+
 // The entries of the folder at `path` in `tree` ("" the top), in the tree's
 // order; an error if there's no such folder.
 std::expected<std::vector<tree_entry>, std::string> tree_entries(const repo&, const oid& tree,

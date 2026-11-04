@@ -39,4 +39,21 @@ W* keep(std::unique_ptr<W> window, std::function<void()> closed = {})
     return raw;
 }
 
+// The same for a window whose on_closed says whether it changed anything
+// (the Commit dialog's `committed`): `closed` gets that.
+template <class W>
+W* keep(std::unique_ptr<W> window, std::function<void(bool)> closed)
+{
+    W* raw = window.get();
+    const size_t id = hold(std::shared_ptr<W>(std::move(window)));
+    raw->on_closed(
+        [id, closed](bool changed)
+        {
+            if (closed) closed(changed);
+            release(id);
+        });
+    raw->show();
+    return raw;
+}
+
 }  // namespace tortilla::windows

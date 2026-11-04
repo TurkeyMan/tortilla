@@ -1,13 +1,12 @@
 // The log's history editing [git/history_edit.h]: a commit's menu combines,
 // rewords, drops, folds and moves commits of its branch in place, without a
 // rebase, and dragging commits reorders them. The edit is made on a worker
-// and applied there; the status bar offers Undo for a while after.
+// and applied there, and goes in the window's journal for Undo and Redo.
 #include "log_window.h"
 
 #include "log/branch_filter.h"
 #include "log/history_dialogs.h"
 
-#include "git/svn.h"
 #include "i18n.h"
 #include "ui/menu_items.h"
 #include "ui/menu_text.h"
@@ -64,6 +63,21 @@ std::string commit_label(const repo& r, const oid& id)
     return id.hex(8) + " " + (c ? c->summary : std::string());
 }
 
+// Why the checked-out branch can't be rewritten now: a merge, a rebase
+// and the like under way.
+std::optional<std::string> busy(const repo& r)
+{
+    switch (r.state())
+    {
+    case repo::repo_state::merge: return _("merging");
+    case repo::repo_state::rebase:
+    case repo::repo_state::apply_mailbox: return _("rebasing");
+    case repo::repo_state::cherry_pick: return _("cherry-picking");
+    case repo::repo_state::revert: return _("reverting");
+    default: return std::nullopt;
+    }
+}
+
 }  // namespace
 
 std::string log_window::mainline_ref() const
@@ -99,30 +113,12 @@ void log_window::history_items(menu& m, const std::vector<size_t>& sel)
     if (!found)
         why = found.error();
     else if (found->checked_out)
-        switch (repo_.state())
-        {
-        case repo::repo_state::merge: why = _("merging"); break;
-        case repo::repo_state::rebase:
-        case repo::repo_state::apply_mailbox: why = _("rebasing"); break;
-        case repo::repo_state::cherry_pick: why = _("cherry-picking"); break;
-        case repo::repo_state::revert: why = _("reverting"); break;
-        default: break;
-        }
-    // A commit already in SVN (git svn's) can't be rewritten: the next
-    // dcommit or rebase would break.
-    auto in_svn_any = [&](const std::vector<oid>& which)
-    {
-        return std::ranges::any_of(which,
-                                   [&](const oid& id)
-                                   {
-                                       const auto c = repo_.lookup(id);
-                                       return c && in_svn(c->message);
-                                   });
-    };
+        why = busy(repo_);
+    // The edits' own rule (a commit in SVN, a merge, another worktree...),
+    // shown: each plan checks it again, whichever way it's asked for.
     auto why_not = [&](const std::vector<oid>& which, bool replays) -> std::optional<std::string>
     {
         if (why) return why;
-        if (in_svn_any(which)) return std::string(_("in SVN"));
         return why_not_editable(*found, which, replays);
     };
     const branch_history h = found ? *found : branch_history{};
@@ -156,8 +152,10 @@ void log_window::history_items(menu& m, const std::vector<size_t>& sel)
                                                {.icon = rap::message_spec::icon::error,
                                                 .title = _("Reword"),
                                                 .text = _("A commit needs a message.")});
-                        start_history_edit(_("Reword"), from_plan(h, plan_reword(h, c, text),
-                                                                  "tortilla: reword " + hash));
+                        start_history_edit(
+                            _("Reword"),
+                            from_plan(h, plan_reword(h, c, text), "tortilla: reword " + hash), {},
+                            rap::i18n::format(_("Reword {0}"), hash));
                     });
             }));
 
@@ -183,9 +181,11 @@ void log_window::history_items(menu& m, const std::vector<size_t>& sel)
                                                {.icon = rap::message_spec::icon::error,
                                                 .title = _("Squash"),
                                                 .text = _("A commit needs a message.")});
-                        start_history_edit(_("Squash"), from_plan(h, plan_fold(h, c, into, text),
-                                                                  "tortilla: squash " + c.hex(8) +
-                                                                      " into " + into.hex(8)));
+                        start_history_edit(
+                            _("Squash"),
+                            from_plan(h, plan_fold(h, c, into, text),
+                                      "tortilla: squash " + c.hex(8) + " into " + into.hex(8)),
+                            {}, rap::i18n::format(_("Squash {0}"), c.hex(8)));
                     });
             }));
 
@@ -206,16 +206,18 @@ void log_window::history_items(menu& m, const std::vector<size_t>& sel)
                           [this, h, c, into, warning]
                           {
                               const auto plan = plan_fold(h, c, into);
-                              confirm_history_edit(_("Fixup"), {}, !warning.empty(), h,
-                                                   [this, h, c, into, plan]
-                                                   {
-                                                       start_history_edit(
-                                                           _("Fixup"),
-                                                           from_plan(h, plan,
-                                                                     "tortilla: fixup " + c.hex(8) +
-                                                                         " into " + into.hex(8)),
-                                                           fallback_of(plan));
-                                                   });
+                              confirm_history_edit(
+                                  _("Fixup"), {}, !warning.empty(), h,
+                                  [this, h, c, into, plan]
+                                  {
+                                      start_history_edit(
+                                          _("Fixup"),
+                                          from_plan(h, plan,
+                                                    "tortilla: fixup " + c.hex(8) + " into " +
+                                                        into.hex(8)),
+                                          fallback_of(plan),
+                                          rap::i18n::format(_("Fixup {0}"), c.hex(8)));
+                                  });
                           });
                 fixup.children.push_back(std::move(child));
             }
@@ -260,7 +262,8 @@ void log_window::history_items(menu& m, const std::vector<size_t>& sel)
                                               "tortilla: amend " + hash + " with staged changes");
                                 e.keep_index = true;
                                 return e;
-                            });
+                            },
+                            {}, rap::i18n::format(_("Amend {0}"), hash));
                     });
             }));
     }
@@ -299,7 +302,10 @@ void log_window::history_items(menu& m, const std::vector<size_t>& sel)
                               start_history_edit(
                                   _("Combine to One Commit"),
                                   from_plan(h, plan_combine(h, commits, text),
-                                            "tortilla: combine " + std::to_string(n) + " commits"));
+                                            "tortilla: combine " + std::to_string(n) + " commits"),
+                                  {},
+                                  rap::i18n::format(
+                                      N_("Combine {0} commit", "Combine {0} commits", n), n));
                           });
                   }));
     }
@@ -326,11 +332,15 @@ void log_window::history_items(menu& m, const std::vector<size_t>& sel)
                         {
                             if (r != rap::dialog_role::yes) return;
                             const auto plan = plan_drop(h, commits);
-                            start_history_edit(_("Drop"),
-                                               from_plan(h, plan,
-                                                         "tortilla: drop " + std::to_string(n) +
-                                                             (n == 1 ? " commit" : " commits")),
-                                               fallback_of(plan));
+                            start_history_edit(
+                                _("Drop"),
+                                from_plan(h, plan,
+                                          "tortilla: drop " + std::to_string(n) +
+                                              (n == 1 ? " commit" : " commits")),
+                                fallback_of(plan),
+                                n == 1 ? rap::i18n::format(_("Drop {0}"), commits.front().hex(8))
+                                       : rap::i18n::format(
+                                             N_("Drop {0} commit", "Drop {0} commits", n), n));
                         });
         }));
 
@@ -362,13 +372,17 @@ void log_window::history_items(menu& m, const std::vector<size_t>& sel)
                         const std::string reflog = "tortilla: move " + std::to_string(n) +
                                                    (n == 1 ? " commit" : " commits") + " to " +
                                                    t.branch;
-                        start_history_edit(_("Move Commits to Branch"),
-                                           [h, commits, t, reflog](const repo& r)
-                                           {
-                                               return move_commits(r, h, commits,
-                                                                   "refs/heads/" + t.branch,
-                                                                   t.create, reflog);
-                                           });
+                        start_history_edit(
+                            _("Move Commits to Branch"),
+                            [h, commits, t, reflog](const repo& r)
+                            {
+                                return move_commits(r, h, commits, "refs/heads/" + t.branch,
+                                                    t.create, reflog);
+                            },
+                            {},
+                            rap::i18n::format(
+                                N_("Move {0} commit to {1}", "Move {0} commits to {1}", n), n,
+                                t.branch));
                     });
             }));
     }
@@ -377,7 +391,6 @@ void log_window::history_items(menu& m, const std::vector<size_t>& sel)
     if (n == 1 && found && h.checked_out && !h.line.empty() && h.line.front() == commits.front())
     {
         std::optional<std::string> undo_why = why;
-        if (!undo_why && in_svn_any({commits.front()})) undo_why = _("in SVN");
         if (!undo_why)
             if (auto e = undo_last_commit(repo_, h); !e) undo_why = e.error();
         m.push_back(maybe(
@@ -397,7 +410,8 @@ void log_window::history_items(menu& m, const std::vector<size_t>& sel)
                                 if (!e)
                                     return std::unexpected(replay_failure{.message = e.error()});
                                 return *e;
-                            });
+                            },
+                            {}, rap::i18n::format(_("Uncommit {0}"), h.line.front().hex(8)));
                     });
             }));
     }
@@ -422,34 +436,45 @@ void log_window::confirm_history_edit(const std::string& title, const std::strin
         });
 }
 
-bool log_window::reorder_rows(const std::vector<size_t>& rows, size_t destination)
+bool log_window::reorder_rows(const std::vector<size_t>& rows, size_t destination,
+                              rap::drop_action action)
 {
     if (picked_ || repo_.bare() || rows.empty()) return false;
+    // Newest first, as the rows run.
+    std::vector<size_t> sorted = rows;
+    std::ranges::sort(sorted);
     std::vector<oid> commits;
-    for (size_t row : rows)
+    for (size_t row : sorted)
     {
         const commit* c = log_.commit(row);
         if (!c) return false;
         commits.push_back(c->id);
     }
+    const bool copy = action == rap::drop_action::copy;
     auto found = branch_holding(repo_, commits, mainline_ref());
-    if (!found)
-    {
-        set_sync_notice(rap::i18n::format(_("Can't reorder: {0}"), found.error()), false);
-        return false;
-    }
-    const branch_history h = std::move(*found);
     // Where they go, as a place in the branch's line: in front of the row
     // dropped on (the working tree row is above the tip).
     std::optional<size_t> place;
-    if (destination < log_.row_count())
+    if (found && destination < log_.row_count())
     {
         if (const commit* c = log_.commit(destination))
-            place = c->id == h.below ? std::optional(h.line.size()) : h.index_of(c->id);
+            place =
+                c->id == found->below ? std::optional(found->line.size()) : found->index_of(c->id);
         else
             place = 0;
     }
-    if (!place) return false;
+    // Anywhere else: onto another branch.
+    if (!place || copy)
+    {
+        if (destination < log_.row_count() && log_.commit(destination))
+            transplant_rows(commits, found, destination, copy);
+        else if (!found)
+            set_sync_notice(rap::i18n::format(_("Can't reorder: {0}"), found.error()), false);
+        else if (copy)
+            set_sync_notice(rap::i18n::format(_("Can't copy: {0}"), _("the same branch")), false);
+        return false;
+    }
+    const branch_history h = std::move(*found);
     const auto plan = plan_reorder(h, commits, *place);
     if (!plan)
     {
@@ -471,34 +496,123 @@ bool log_window::reorder_rows(const std::vector<size_t>& rows, size_t destinatio
         h,
         [this, h, plan, n]
         {
-            start_history_edit(_("Reorder"),
-                               from_plan(h, plan,
-                                         "tortilla: reorder " + std::to_string(n) +
-                                             (n == 1 ? " commit" : " commits")),
-                               fallback_of(plan));
+            start_history_edit(
+                _("Reorder"),
+                from_plan(h, plan,
+                          "tortilla: reorder " + std::to_string(n) +
+                              (n == 1 ? " commit" : " commits")),
+                fallback_of(plan),
+                rap::i18n::format(N_("Reorder {0} commit", "Reorder {0} commits", n), n));
         });
     return false;  // the reload shows the new order
 }
 
+void log_window::transplant_rows(const std::vector<oid>& commits,
+                                 const std::expected<branch_history, std::string>& source,
+                                 size_t destination, bool copy)
+{
+    auto refuse = [&](const std::string& why)
+    {
+        set_sync_notice(rap::i18n::format(copy ? _("Can't copy: {0}") : _("Can't move: {0}"), why),
+                        false);
+    };
+    const commit* dropped_on = log_.commit(destination);
+    if (!dropped_on) return;
+    const std::string mainline = mainline_ref();
+
+    // A move takes them off their branch, so that's rewritten as a drop is.
+    if (!copy)
+    {
+        if (!source) return refuse(source.error());
+        if (source->checked_out)
+            if (auto why = busy(repo_)) return refuse(*why);
+        if (auto why = why_not_editable(*source, commits, true)) return refuse(*why);
+    }
+
+    // The branch dropped on, and where on it.
+    static const std::vector<ref> no_refs;
+    const std::vector<ref>* refs = log_.refs_of(destination);
+    auto target = drop_place_of(repo_, dropped_on->id, refs ? *refs : no_refs, mainline);
+    if (!target) return refuse(target.error());
+    const size_t place = target->place;
+    const branch_history to = std::move(target->onto);
+    if (source && source->branch == to.branch)
+        return refuse(copy ? _("the same branch") : _("nothing moves"));
+    if (to.checked_out)
+        if (auto why = busy(repo_)) return refuse(*why);
+    // Oldest first, as the rows run bottom up.
+    std::vector<oid> oldest_first(commits.rbegin(), commits.rend());
+    if (source)
+        std::ranges::sort(oldest_first, std::greater{},
+                          [&](const oid& c) { return source->index_of(c).value_or(0); });
+    const auto plan = plan_insert(repo_, to, oldest_first, place);
+    if (!plan) return refuse(plan.error());
+
+    const size_t n = commits.size();
+    const std::string where =
+        place == 0 ? rap::i18n::format(_("onto {0}"), to.name())
+                   : rap::i18n::format(_("above {0} on {1}"), commit_label(repo_, to.line[place]),
+                                       to.name());
+    std::string question;
+    if (copy)
+        question = source ? rap::i18n::format(N_("Copy {0} commit from {1} {2}?",
+                                                 "Copy {0} commits from {1} {2}?", n),
+                                              n, source->name(), where)
+                          : rap::i18n::format(
+                                N_("Copy {0} commit {1}?", "Copy {0} commits {1}?", n), n, where);
+    else
+        question = rap::i18n::format(
+            N_("Move {0} commit from {1} {2}?", "Move {0} commits from {1} {2}?", n), n,
+            source->name(), where);
+    // Rewritten and on an upstream already: the source above the oldest
+    // moved, the target above the place.
+    size_t oldest = 0;
+    if (!copy)
+        for (const oid& c : commits) oldest = std::max(oldest, source->index_of(c).value_or(0));
+    const bool source_pushed = !copy && rewrites_pushed(repo_, *source, source->line[oldest]);
+    const bool target_pushed = place > 0 && rewrites_pushed(repo_, to, to.line[place - 1]);
+    if (source_pushed && target_pushed) question += "\n\n" + pushed_warning(to);
+    const std::string title = copy ? _("Copy Commits") : _("Move Commits");
+    const std::string reflog = std::string(copy ? "tortilla: copy " : "tortilla: move ") +
+                               std::to_string(n) + (n == 1 ? " commit" : " commits") + " to " +
+                               to.name();
+    std::optional<branch_history> from;
+    if (!copy) from = *source;
+    confirm_history_edit(
+        title, question, source_pushed || target_pushed, source_pushed ? *source : to,
+        [this, title, to, place, oldest_first, from, reflog]
+        {
+            start_history_edit(title,
+                               [to, place, oldest_first, from, reflog](const repo& r)
+                               {
+                                   return transplant_commits(r, to, place, oldest_first,
+                                                             from ? &*from : nullptr, reflog);
+                               });
+        });
+}
+
 void log_window::start_history_edit(const std::string& title, edit_maker make,
-                                    std::optional<rebase_todo> fallback, bool undoing)
+                                    std::optional<rebase_todo> fallback, std::string label,
+                                    journal_use use)
 {
     if (!edit_worker_) edit_worker_ = std::make_unique<repo_worker>(ui_, repo_.workdir());
     status_->set_text(rap::i18n::format(_("{0}..."), title));
+    if (label.empty()) label = title;
     edit_worker_->submit(
-        [this, title, make = std::move(make), fallback = std::move(fallback),
-         undoing](repo& r, const repo_worker::progress&) -> std::function<void()>
+        [this, title, make = std::move(make), fallback = std::move(fallback), label,
+         use](repo& r, const repo_worker::progress&) -> std::function<void()>
         {
             auto e = make(r);
             const tree_effect effect = e ? effect_of(r, *e) : tree_effect::none;
-            return [this, title, e = std::move(e), effect, fallback, undoing]
-            { history_replayed(title, e, effect, fallback, undoing); };
+            return [this, title, e = std::move(e), effect, fallback, label, use]
+            { history_replayed(title, e, effect, fallback, label, use); };
         });
 }
 
 void log_window::history_replayed(const std::string& title,
                                   std::expected<history_edit, replay_failure> e, tree_effect effect,
-                                  std::optional<rebase_todo> fallback, bool undoing)
+                                  std::optional<rebase_todo> fallback, std::string label,
+                                  journal_use use)
 {
     update_status();
     if (!e)
@@ -523,21 +637,21 @@ void log_window::history_replayed(const std::string& title,
                       {{_("_Stash them and go on"),
                         _("Your changes are put aside, the files follow the branch, and your "
                           "changes come back."),
-                        [this, title, edit = *e, undoing]
-                        { apply_history_edit(title, edit, true, undoing); }}});
-    apply_history_edit(title, std::move(*e), false, undoing);
+                        [this, title, edit = *e, label, use]
+                        { apply_history_edit(title, edit, true, label, use); }}});
+    apply_history_edit(title, std::move(*e), false, std::move(label), use);
 }
 
 void log_window::apply_history_edit(const std::string& title, history_edit e, bool stash,
-                                    bool undoing)
+                                    std::string label, journal_use use)
 {
     if (!edit_worker_) edit_worker_ = std::make_unique<repo_worker>(ui_, repo_.workdir());
     edit_worker_->submit(
-        [this, title, e = std::move(e), stash,
-         undoing](repo& r, const repo_worker::progress&) -> std::function<void()>
+        [this, title, e = std::move(e), stash, label = std::move(label),
+         use](repo& r, const repo_worker::progress&) -> std::function<void()>
         {
             auto applied = apply_edit(r, e, stash);
-            return [this, title, e, applied = std::move(applied), undoing]
+            return [this, title, e, applied = std::move(applied), label, use]
             {
                 if (!applied)
                 {
@@ -552,42 +666,99 @@ void log_window::apply_history_edit(const std::string& title, history_edit e, bo
                     ui_.message(window_.get(), {.icon = rap::message_spec::icon::warning,
                                                 .title = title,
                                                 .text = *applied});
-                if (undoing)
+                switch (use)
                 {
-                    last_edit_.reset();
-                    undo_->set_visible(false);
+                case journal_use::record: journal_.record(label, e); break;
+                case journal_use::undo: journal_.undone(); break;
+                case journal_use::redo: journal_.redone(); break;
                 }
-                else
-                {
-                    last_edit_ = e;
-                    undo_->set_tooltip(rap::i18n::format(_("Undo: {0}"), title));
-                    undo_->set_visible(true);
-                    undo_timer_ = ui_.timer(60000, false,
-                                            [this]
-                                            {
-                                                undo_->set_visible(false);
-                                                last_edit_.reset();
-                                            });
-                    set_sync_notice(rap::i18n::format(_("{0}: done"), title), false);
-                }
+                update_undo_buttons();
+                set_sync_notice(rap::i18n::format(_("{0}: done"), title), false);
                 reload();
-                if (e.pushed && !undoing) offer_force_push(e);
+                if (e.pushed && use != journal_use::undo) offer_force_push(e);
             };
         });
+}
+
+// -- Undo and Redo ----------------------------------------------------------
+
+// The next step undone or redone, through the history edit's own path (the
+// working tree asked about when a checked-out branch's files change), and
+// only if its refs are where the step left them: anything that moved them
+// since is never overwritten; the step is dropped instead.
+void log_window::step_journal(bool redo)
+{
+    const journal_step* step = redo ? journal_.next_redo() : journal_.next_undo();
+    if (!step || picked_) return;
+    const std::optional<history_edit> e = redo ? journal_.redo_edit() : journal_.undo_edit();
+    const std::string title = rap::i18n::format(redo ? _("Redo {0}") : _("Undo {0}"), step->label);
+    if (const auto why = why_stale(repo_, *e))
+    {
+        if (redo)
+            journal_.forget_redo();
+        else
+            journal_.forget_undo();
+        update_undo_buttons();
+        return ui_.message(
+            window_.get(),
+            {.icon = rap::message_spec::icon::warning,
+             .title = redo ? _("Redo") : _("Undo"),
+             .text = rap::i18n::format(_("{0} can't be done: {1}"), title, *why),
+             .detail = _("Nothing was changed. Something else moved the refs since, so this "
+                         "step is left out of Undo and Redo.")});
+    }
+    start_history_edit(
+        title, [e = *e](const repo&) -> std::expected<history_edit, replay_failure> { return e; },
+        {}, step->label, redo ? journal_use::redo : journal_use::undo);
+}
+
+void log_window::update_undo_buttons()
+{
+    if (!undo_ || !redo_) return;
+    const journal_step* u = journal_.next_undo();
+    const journal_step* r = journal_.next_redo();
+    undo_->set_enabled(u && !picked_);
+    redo_->set_enabled(r && !picked_);
+    undo_->set_tooltip(u ? rap::i18n::format(_("Undo {0} (Ctrl+Z)"), u->label)
+                         : std::string(_("Nothing to undo")));
+    redo_->set_tooltip(r ? rap::i18n::format(_("Redo {0} (Ctrl+Y)"), r->label)
+                         : std::string(_("Nothing to redo")));
+}
+
+// The desktop's undo and redo arrows, else drawn: a hooked arrow in the
+// text colour, turning back (undo) or forward (redo).
+rap::icon log_window::undo_icon(bool redo)
+{
+    rap::icon icon = rap::icon::drawn(
+        [redo](rap::painter& p, rap::size_f s)
+        {
+            const float w = s.w, h = s.h;
+            const float line = std::max(1.5f, w / 10);
+            const rap::paint ink{rap::theme_color::window_text};
+            auto x = [&](float f) { return redo ? w * (1 - f) : w * f; };
+            // From the arrow head, round a curve down to the tail.
+            p.curve({x(0.22f), h * 0.4f}, {x(0.62f), h * 0.4f}, {x(0.86f), h * 0.46f},
+                    {x(0.82f), h * 0.82f}, ink, line);
+            p.polygon({{x(0.08f), h * 0.4f}, {x(0.34f), h * 0.18f}, {x(0.34f), h * 0.62f}}, ink,
+                      std::nullopt);
+        });
+    icon.name = redo ? "edit-redo-symbolic" : "edit-undo-symbolic";
+    return icon;
 }
 
 void log_window::offer_force_push(const history_edit& e)
 {
     const std::string branch = e.moves.front().ref;
-    auto args = force_push_args(repo_, branch);
+    if (!e.lease || !e.moves.front().to) return;
+    auto args = force_push_args(repo_, branch, *e.lease, *e.moves.front().to);
     if (args.empty()) return;
     ui_.message(window_.get(),
                 {.icon = rap::message_spec::icon::question,
                  .title = _("Force Push"),
                  .text = rap::i18n::format(
                      _("{0} has been rewritten. Force-push it to {1}, if no one else has pushed "
-                       "there since?"),
-                     short_branch(branch), args[2]),
+                       "there since it was at {2}?"),
+                     short_branch(branch), args[2], e.lease->hex(8)),
                  .detail = command_line(args),
                  .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
                 [this, args](rap::dialog_role r)

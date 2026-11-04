@@ -5,7 +5,6 @@
 
 #include <algorithm>
 #include <memory>
-#include <unordered_set>
 
 namespace tortilla
 {
@@ -35,56 +34,6 @@ std::vector<std::string> branch_names(const ref_map& refs)
     return local;
 }
 
-// Pick...'s rows: the branches the filter box lets through, ticked or not.
-class branch_rows : public rap::list_model
-{
-public:
-    explicit branch_rows(std::vector<std::string> names, const std::vector<std::string>& ticked)
-        : names_(std::move(names))
-        , ticked_(ticked.begin(), ticked.end())
-    {
-        filter("");
-    }
-    void filter(std::string_view text)
-    {
-        shown_.clear();
-        for (size_t i = 0; i < names_.size(); ++i)
-            if (text.empty() || short_name(names_[i]).find(text) != std::string::npos)
-                shown_.push_back(i);
-        notify_reset();
-    }
-    std::vector<std::string> ticked() const
-    {
-        std::vector<std::string> out;
-        for (const std::string& n : names_)
-            if (ticked_.contains(n)) out.push_back(n);
-        return out;
-    }
-    size_t row_count() const override { return shown_.size(); }
-    std::string text(size_t row, size_t column) const override
-    {
-        const std::string& full = names_[shown_[row]];
-        if (column == 0) return short_name(full);
-        return full.starts_with("refs/heads/") ? _("Local") : _("Remote");
-    }
-    rap::check_state checked(size_t row) const override
-    {
-        return ticked_.contains(names_[shown_[row]]) ? rap::check_state::checked
-                                                     : rap::check_state::unchecked;
-    }
-    void toggle_checked(size_t row) override
-    {
-        const std::string& n = names_[shown_[row]];
-        if (!ticked_.erase(n)) ticked_.insert(n);
-        notify_changed(row, 1);
-    }
-
-private:
-    std::vector<std::string> names_;
-    std::unordered_set<std::string> ticked_;
-    std::vector<size_t> shown_;
-};
-
 // A list of words: the pins (by short name), or the hide patterns.
 class word_rows : public rap::list_model
 {
@@ -101,47 +50,6 @@ public:
 };
 
 }  // namespace
-
-void pick_branches_dialog(rap::ui& ui, rap::window* parent, const ref_map& refs,
-                          const std::vector<std::string>& checked,
-                          std::function<void(std::vector<std::string>)> chosen)
-{
-    struct state
-    {
-        std::unique_ptr<rap::window> window;
-        branch_rows rows;
-        rap::entry* filter = nullptr;
-    };
-    auto st = std::make_shared<state>(state{.rows = branch_rows(branch_names(refs), checked)});
-    using namespace rap::layout;
-    using namespace rap::literals;
-    state* s = st.get();
-    st->window = create_window(
-        ui,
-        dialog{_("Pick Branches"),
-               {vbox{label{_("The log shows the branches ticked, until another choice in Show.")},
-                     entry{}
-                         .bind(s->filter)
-                         .placeholder(_("Filter branches"))
-                         .on_changed([s](const std::string& t) { s->rows.filter(t); }),
-                     list{{{_("Branch"), 40_ch, true}, {_("Kind"), 10_ch}}, &s->rows}
-                         .checkboxes()
-                         .compact()
-                         .height(16_lines)
-                         .stretch(),
-                     buttons{ok, cancel}}}}
-            .size(64_ch, 28_lines),
-        parent);
-    st->window->on_finished(
-        [&ui, st, chosen = std::move(chosen)](rap::dialog_role role)
-        {
-            std::vector<std::string> ticked = st->rows.ticked();
-            ui.post([st] {});  // the window goes after this returns
-            if (role == rap::dialog_role::ok && !ticked.empty()) chosen(std::move(ticked));
-        });
-    st->window->show();
-    st->filter->focus();
-}
 
 void pins_hidden_dialog(rap::ui& ui, rap::window* parent, const ref_map& refs,
                         pins_and_hidden current, std::vector<std::string> defaults,

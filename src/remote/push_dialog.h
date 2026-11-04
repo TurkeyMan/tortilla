@@ -22,6 +22,9 @@ public:
     open(rap::ui&, const std::string& path, const std::string& local = {});
     void show() { window_->show(); }
     void on_closed(std::function<void()> f) { closed_ = std::move(f); }
+    // Once a push it started has run (the remote branches moved), even with
+    // the dialog gone: not when it was cancelled.
+    void on_done(std::function<void()> f) { done_ = std::move(f); }
 
 private:
     push_dialog(rap::ui&, std::string workdir);
@@ -40,7 +43,7 @@ private:
     std::string workdir_;
     std::vector<std::string> remotes_;
     std::unique_ptr<rap::window> window_;
-    std::function<void()> closed_;
+    std::function<void()> closed_, done_;
 
     rap::check* all_branches_ = nullptr;
     rap::combo* local_ = nullptr;

@@ -68,6 +68,7 @@ add_library(tortilla_git STATIC
     src/git/status.cpp
     src/git/repo_worker.cpp
     src/git/diff_tool.cpp
+    src/git/diff_sides.cpp
     src/git/ssh_client.cpp
     src/git/askpass_env.cpp
     src/git/remotes.cpp
@@ -78,6 +79,7 @@ add_library(tortilla_git STATIC
     src/git/repo_operation.cpp
     src/util/programs.cpp
     src/util/repo_path.cpp
+    src/util/entry_path.cpp
     src/util/search_query.cpp
     src/util/sha256.cpp
     src/util/json.cpp
@@ -91,6 +93,8 @@ add_library(tortilla_git STATIC
     src/git/ref_list.cpp
     src/git/reflog.cpp
     src/git/worktrees.cpp
+    src/git/git_install.cpp
+    src/git/patch_text.cpp
     src/git/lfs.cpp
     src/git/clean.cpp
     src/git/blame.cpp
@@ -99,6 +103,7 @@ add_library(tortilla_git STATIC
     src/git/badges.cpp
     src/git/sync.cpp
     src/git/history_edit.cpp
+    src/git/ref_journal.cpp
     src/cache/badge_cache.cpp
     src/cache/badge_changes.cpp
     src/cache/cache_main.cpp
@@ -144,6 +149,7 @@ add_executable(tortilla
     src/ui/repo_browser.cpp
     src/rebase/rebase_window.cpp
     src/ui/compare.cpp
+    src/ui/busy_pointer.cpp
     src/ui/progress_dialog.cpp
     src/ui/diff_window.cpp
     src/ui/settings_dialog.cpp
@@ -168,6 +174,7 @@ add_executable(tortilla
     src/branch/merge_dialog.cpp
     src/branch/browse_refs.cpp
     src/ui/create_repo_dialog.cpp
+    src/ui/git_missing.cpp
     src/ui/trust_repository.cpp
     src/changes/rename_dialog.cpp)
 target_link_libraries(tortilla PRIVATE rapport::rapport tortilla_git)

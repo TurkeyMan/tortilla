@@ -9,19 +9,6 @@
 
 namespace tortilla
 {
-namespace
-{
-
-std::string format_date(int64_t time, int offset_minutes)
-{
-    std::time_t t = time + int64_t(offset_minutes) * 60;
-    std::tm tm = utc_calendar(t);
-    char buf[32];
-    std::strftime(buf, sizeof buf, "%Y-%m-%d %H:%M", &tm);
-    return buf;
-}
-
-}  // namespace
 
 const char* action_name(rebase_action a)
 {
@@ -210,20 +197,30 @@ std::string rebase_model::text(size_t row, size_t column) const
     case hash: return r.commit.id.hex();
     case message: return r.commit.summary;
     case author: return r.commit.author;
-    case date: return format_date(r.commit.time, r.commit.offset_minutes);
+    case date: return commit_date_text(r.commit.time, r.commit.offset_minutes);
     }
     return {};
 }
 
 // Squash rows grey, edit rows khaki, skipped and done rows grey text, the
-// row being applied bold [spec 2.4].
+// row being applied bold [spec 2.4]. The grey is the theme's (an unfocused
+// selection's) and the grey text its disabled text's, so both read on dark
+// themes; khaki has no role and keeps black text on it.
 rap::text_style rebase_model::style(size_t row, size_t) const
 {
     const rebase_row& r = rows_[row];
     rap::text_style s;
-    if (r.action == rebase_action::squash) s.bg = rap::color{156, 156, 156};
-    if (r.action == rebase_action::edit) s.bg = rap::color{200, 200, 128};
-    if (r.action == rebase_action::skip || r.done) s.fg = rap::color{128, 128, 128};
+    if (r.action == rebase_action::squash)
+    {
+        s.bg = rap::theme_color::highlight_inactive;
+        s.fg = rap::theme_color::highlight_inactive_text;
+    }
+    if (r.action == rebase_action::edit)
+    {
+        s.bg = rap::color{200, 200, 128};
+        s.fg = rap::color{0, 0, 0};
+    }
+    if (r.action == rebase_action::skip || r.done) s.fg = rap::theme_color::disabled_text;
     s.bold = r.current;
     return s;
 }

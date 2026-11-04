@@ -1,5 +1,6 @@
 #include "avatars.h"
 
+#include "forge/forge_detail.h"
 #include "util/sha256.h"
 
 #include <rapport/sys.h>
@@ -133,7 +134,7 @@ std::optional<std::string> avatars::fetch(const job& j, bool& failed)
                                          .cancelled = &cancelled_};
     auto get = [&](const std::string& url) -> std::optional<std::string>
     {
-        auto r = rap::sys::http_get(url, options);
+        auto r = forge_detail::http_get(url, options);
         if (r.status == 200 && !r.body.empty()) return std::move(r.body);
         if (r.status != 404) failed = true;
         return std::nullopt;

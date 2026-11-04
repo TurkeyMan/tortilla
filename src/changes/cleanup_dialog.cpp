@@ -43,7 +43,8 @@ void clean_up(rap::ui& ui, rap::window* parent, std::vector<std::string> paths,
         if (!rel) continue;  // not inside it
         if (rel->empty()) *rel = ".";
         std::error_code ec;
-        (fs::is_directory(rap::sys::path_from_utf8(p), ec) ? folders : files).push_back(*rel);
+        (fs::is_directory(fs::symlink_status(rap::sys::path_from_utf8(p), ec)) ? folders : files)
+            .push_back(*rel);
     }
     if (folders.empty() && files.empty())
         return fail(_("Only something inside the repository can be cleaned up."));

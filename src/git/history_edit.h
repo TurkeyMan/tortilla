@@ -30,6 +30,10 @@ struct branch_history
     oid tip;
     std::vector<oid> line;       // newest first
     std::vector<size_t> merges;  // indexes into `line` of merge commits
+    // Indexes into `line` of commits in SVN (git svn's git-svn-id line):
+    // SVN's history can't be rewritten, so neither they nor anything below
+    // them is (the next dcommit or rebase would break).
+    std::vector<size_t> svn;
     // The first parent of the line's oldest commit: where the line leaves
     // the mainline; nullopt when that commit is a root.
     std::optional<oid> below;
@@ -96,6 +100,10 @@ struct history_edit
     // and Amend with staged changes (the index is what the new tip has).
     bool keep_index = false;
     bool pushed = false;  // rewritten commits were on the upstream already
+    // The upstream's remote-tracking tip the edit was made from (the
+    // branch_history's): what a force push afterwards leases on, so a push
+    // by someone else, fetched since, is never overwritten.
+    std::optional<oid> lease;
 
     history_edit undo() const;
 };
@@ -108,7 +116,8 @@ struct replay_failure
     std::string message;
 };
 
-// The commits replayed, nothing moved yet: the new tip.
+// The commits replayed, nothing moved yet: the new tip. A step's commit in
+// SVN is refused ("in SVN"), whatever made the plan.
 std::expected<oid, replay_failure> replay(const repo&, const edit_plan&);
 
 // What applying does to this working tree.
@@ -126,7 +135,8 @@ tree_effect effect_of(const repo&, const history_edit&);
 // `stash`: local changes are stashed first and restored after; if they
 // don't restore cleanly they're left in the stash, and the error says so.
 // Returns a warning that doesn't undo the edit, if any (changes left in the
-// stash).
+// stash). A move that leaves a commit in SVN behind isn't made: SVN's
+// history stays as it is, whatever made the edit.
 std::expected<std::string, std::string> apply_edit(const repo&, const history_edit&,
                                                    bool stash = false);
 
@@ -174,8 +184,10 @@ std::optional<std::string> why_nothing_staged(const repo&);
 bool same_tree(const repo&, const oid&, const oid&);
 
 // Each of these checks the line first: why not, or nullopt when it can.
-// `replays`: commits above are replayed onto changed trees, so a merge
-// among them can't be.
+// Every plan goes through it, whichever way in (a menu, a drag), with all
+// the commits it rewrites: from the oldest of `commits` up to the tip, so
+// none may be in SVN ("in SVN"). `replays`: commits above are replayed onto
+// changed trees, so a merge among them can't be.
 std::optional<std::string> why_not_editable(const branch_history&, const std::vector<oid>& commits,
                                             bool replays);
 // Whether rewriting from `oldest` up rewrites commits on the upstream.
@@ -205,10 +217,39 @@ std::expected<history_edit, replay_failure> move_commits(const repo&, const bran
                                                          const std::string& onto, bool new_branch,
                                                          std::string reflog);
 
-// After rewriting pushed commits: git push --force-with-lease of `branch`
-// (full name) to its upstream, the lease being the remote-tracking ref as
-// last fetched; empty when it has no upstream on a remote.
-std::vector<std::string> force_push_args(const repo&, const std::string& branch);
+// Where commits dropped on a log row go: on top of the local branch whose
+// tip it is (of the row's `refs`, the checked-out one first), else in front
+// of it on the branch whose own line holds it. Why not: a remote's branch,
+// the mainline ("merged"), several branches' tips.
+struct drop_place
+{
+    branch_history onto;
+    size_t place = 0;  // in onto.line
+};
+std::expected<drop_place, std::string> drop_place_of(const repo&, const oid& row,
+                                                     const std::vector<ref>& refs,
+                                                     const std::string& mainline);
+
+// Dragging commits onto another branch, a rebase shorthand: `commits`
+// (oldest first, no merges, none on `onto` already) put in front of
+// `onto`'s line index `place` (0: on its tip), the commits above that
+// replayed on them. The plan of `onto`'s rewrite, or why not.
+std::expected<edit_plan, std::string> plan_insert(const repo&, const branch_history& onto,
+                                                  const std::vector<oid>& commits, size_t place);
+// The edit: plan_insert's replayed and, given `from`, the commits dropped
+// from it (a move; without, a copy, a cherry-pick). Both refs move, or
+// neither.
+std::expected<history_edit, replay_failure>
+transplant_commits(const repo&, const branch_history& onto, size_t place,
+                   const std::vector<oid>& commits, const branch_history* from, std::string reflog);
+
+// After rewriting pushed commits: git push of `tip` to `branch`'s (full
+// name) upstream branch, only if that is still at `expected` there
+// (--force-with-lease=<its ref>:<expected>, the edit's lease, not the
+// remote-tracking ref as it is when the push runs, which a fetch since may
+// have moved); empty when it has no upstream on a remote.
+std::vector<std::string> force_push_args(const repo&, const std::string& branch,
+                                         const oid& expected, const oid& tip);
 
 // Undo last commit: the checked-out branch back to its tip's parent, the
 // index and files as they are (git reset --soft HEAD~1).

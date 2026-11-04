@@ -2,6 +2,7 @@
 
 #include "forge/forge_detail.h"
 #include "git/command.h"
+#include "git/repo.h"
 #include "i18n.h"
 #include "util/json.h"
 
@@ -25,13 +26,14 @@ std::expected<pull_request, std::string> github_rest_details(const forge_repo& r
     const std::string root =
         repo_api(forge_kind::github, r) + "/pulls/" + std::to_string(pr.number);
     const auto headers = api_headers(forge_kind::github, {});
-    const auto one = rap::sys::http_get(root, {.headers = headers});
+    const auto one = forge_detail::http_get(root, {.headers = headers});
     note_budget(one);
     const auto j = json::parse(one.body);
     if (one.status != 200 || !j) return std::unexpected(failure(one, j));
     pr.body = (*j)["body"].str();
     pr.body_known = true;
-    const auto reviews = rap::sys::http_get(root + "/reviews?per_page=50", {.headers = headers});
+    const auto reviews =
+        forge_detail::http_get(root + "/reviews?per_page=50", {.headers = headers});
     note_budget(reviews);
     pr.reviews.clear();
     // Oldest first: the summary keeps each reviewer's latest say.
@@ -69,7 +71,7 @@ std::expected<pull_request, std::string> github_details(const forge_repo& r, pul
     auto headers = api_headers(forge_kind::github, token);
     headers.push_back({"Content-Type", "application/json"});
     const auto reply =
-        rap::sys::http_request("POST", graphql_url(r.host), body, {.headers = headers});
+        forge_detail::http_request("POST", graphql_url(r.host), body, {.headers = headers});
     const auto j = json::parse(reply.body);
     if (reply.status != 200 || !j) return std::unexpected(failure(reply, j));
     if (const json::value errors = (*j)["errors"]; errors.kind() == json::value::type::array)
@@ -104,9 +106,9 @@ std::expected<pull_request, std::string> github_details(const forge_repo& r, pul
 std::expected<pull_request, std::string> gitlab_details(const forge_repo& r, pull_request pr,
                                                         std::string_view token)
 {
-    const auto reply = rap::sys::http_get(repo_api(forge_kind::gitlab, r) + "/merge_requests/" +
-                                              std::to_string(pr.number) + "/approvals",
-                                          {.headers = api_headers(forge_kind::gitlab, token)});
+    const auto reply = forge_detail::http_get(repo_api(forge_kind::gitlab, r) + "/merge_requests/" +
+                                                  std::to_string(pr.number) + "/approvals",
+                                              {.headers = api_headers(forge_kind::gitlab, token)});
     const auto j = json::parse(reply.body);
     if (reply.status != 200 || !j) return std::unexpected(failure(reply, j));
     // Approvals come after the reviewers asked: the summary lets them win.
@@ -120,9 +122,9 @@ std::expected<pull_request, std::string> gitlab_details(const forge_repo& r, pul
 std::expected<pull_request, std::string> gitea_details(const forge_repo& r, pull_request pr,
                                                        std::string_view token)
 {
-    const auto reply = rap::sys::http_get(repo_api(forge_kind::gitea, r) + "/pulls/" +
-                                              std::to_string(pr.number) + "/reviews?limit=50",
-                                          {.headers = api_headers(forge_kind::gitea, token)});
+    const auto reply = forge_detail::http_get(repo_api(forge_kind::gitea, r) + "/pulls/" +
+                                                  std::to_string(pr.number) + "/reviews?limit=50",
+                                              {.headers = api_headers(forge_kind::gitea, token)});
     const auto j = json::parse(reply.body);
     if (reply.status != 200 || !j) return std::unexpected(failure(reply, j));
     // Oldest first: the summary keeps each reviewer's latest say. The ones
@@ -196,11 +198,20 @@ std::vector<std::string> pull_request_commits(const std::string& workdir,
                                               const std::string& head_ref,
                                               const std::string& base_ref, size_t limit)
 {
+    std::vector<std::string> out;
+    // In process, newest first as rev-list gives them; git when libgit2
+    // can't open the repository.
+    if (auto r = repo::open(workdir))
+    {
+        const auto head = r->resolve(head_ref), base = r->resolve(base_ref);
+        if (!head || !base) return out;
+        for (const oid& id : r->rev_list({*head}, {*base}, limit)) out.push_back(id.hex());
+        return out;
+    }
     const git_result r = run_git(
         workdir,
         {"rev-list", "--max-count=" + std::to_string(limit), head_ref, "^" + base_ref, "--"},
         git_output::stdout_only);
-    std::vector<std::string> out;
     if (!r.ok()) return out;
     for (std::string_view rest = r.output; !rest.empty();)
     {
@@ -216,6 +227,18 @@ const forge_remote* remote_with_commit(const std::string& workdir, std::string_v
                                        const std::vector<forge_remote>& remotes)
 {
     if (remotes.empty() || sha.empty()) return nullptr;
+    // In process (the forge panel asks as the log opens): the first remote
+    // with a branch whose history holds it, as for-each-ref --contains.
+    if (auto r = repo::open(workdir))
+    {
+        const auto id = r->resolve(std::string(sha));
+        if (!id) return nullptr;
+        for (const forge_remote& f : remotes)
+            if (const auto refs = r->refs_under({"refs/remotes/" + f.name + "/"}))
+                for (const repo::listed_ref& l : *refs)
+                    if (r->is_ancestor(*id, l.target)) return &f;
+        return nullptr;
+    }
     std::vector<std::string> args{"for-each-ref", "--format=%(refname)", "--contains",
                                   std::string(sha)};
     for (const forge_remote& r : remotes) args.push_back("refs/remotes/" + r.name + "/");

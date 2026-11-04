@@ -108,7 +108,7 @@ struct add_state
         if (branch->checked())
         {
             o.branch = branch_name->text();
-            if (!run_git(".", {"check-ref-format", "--branch", o.branch}).ok())
+            if (!valid_branch_name(o.branch))
                 return refuse(rap::i18n::format(_("“{0}” isn't a valid branch name."), o.branch));
         }
         remember_url(o.url);

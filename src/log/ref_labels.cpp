@@ -3,6 +3,7 @@
 #include "i18n.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace tortilla
 {
@@ -84,18 +85,56 @@ std::string block_text(merge_block b, const pull_request& pr)
     return {};
 }
 
-// A small pushpin, `size` tall, from `x` across the middle of a label `h`
-// tall: a round head and its needle, in the label's own dark shade.
+// A small pushpin, `size` across, from `x` in the middle of a label `h`
+// tall, in the label's own dark shade: the 📌's shape, tilted 45 degrees
+// with its head up and right (a round head, a flared collar under it and a
+// long needle), drawn upright in a unit square, then turned about its middle.
 void paint_pin(rap::painter& p, float x, float h, float size, color fill)
 {
-    const color ink = is_dark(fill) ? color{255, 255, 255, 200} : darken(fill, 150);
-    const float r = size * 0.24f, top = (h - size) / 2;
-    const rap::point_f head{x + size * 0.62f, top + r + 0.5f};
-    p.line(head, {x + size * 0.2f, top + size}, paint{ink}, std::max(1.f, size / 9),
-           rap::line_cap::round);
-    p.line({head.x - r * 1.3f, head.y + r * 1.1f}, {head.x + r * 1.1f, head.y - r * 1.3f},
-           paint{ink}, std::max(1.2f, size / 7), rap::line_cap::round);
-    p.circle(head, r, paint{ink}, std::nullopt);
+    // The 📌 emoji's shape, traced from Segoe UI Emoji: a round-cornered cap, a waist, a plate
+    // that flares toward the point, and the needle, along an axis tilted 45 degrees with the
+    // head up and right. Across is a (0 on the axis), along is t (0 the point, 1 the head).
+    const color ink = is_dark(fill) ? color{255, 255, 255, 220} : darken(fill, 160);
+    const float k = size * 1.2f;  // the axis's length
+    const float cx = x + size / 2, cy = h / 2;
+    const float c = 0.70710678f;  // cos 45 = sin 45
+    auto at = [&](float a, float t)
+    {
+        const float da = a * k, dt = (t - 0.5f) * k;
+        return rap::point_f{cx + (da + dt) * c, cy + (da - dt) * c};
+    };
+    // A quad with its corners rounded by r, as quadratic curves through each corner.
+    auto rounded = [&](std::initializer_list<rap::point_f> quad, float r)
+    {
+        const std::vector<rap::point_f> q(quad);
+        std::vector<rap::point_f> out;
+        for (std::size_t i = 0; i < q.size(); ++i)
+        {
+            const rap::point_f prev = q[(i + q.size() - 1) % q.size()], v = q[i],
+                               next = q[(i + 1) % q.size()];
+            auto toward = [&](rap::point_f o)
+            {
+                const float dx = o.x - v.x, dy = o.y - v.y, l = std::hypot(dx, dy);
+                const float f = std::min(r / l, 0.5f);
+                return rap::point_f{v.x + dx * f, v.y + dy * f};
+            };
+            const rap::point_f s = toward(prev), e = toward(next);
+            for (int j = 0; j <= 4; ++j)
+            {
+                const float u = j / 4.0f, w = 1 - u;
+                out.push_back({w * w * s.x + 2 * w * u * v.x + u * u * e.x,
+                               w * w * s.y + 2 * w * u * v.y + u * u * e.y});
+            }
+        }
+        p.polygon(out, paint{ink}, std::nullopt);
+    };
+    p.line(at(0, 0.03f), at(0, 0.45f), paint{ink}, std::max(1.1f, k * 0.07f),
+           rap::line_cap::round);                                           // the needle
+    p.polygon({at(-0.19f, 0.6f), at(0.19f, 0.6f), at(0.19f, 0.82f), at(-0.19f, 0.82f)}, paint{ink},
+              std::nullopt);                                                // the waist
+    const float r = k * 0.06f;
+    rounded({at(-0.31f, 0.38f), at(0.31f, 0.38f), at(0.22f, 0.63f), at(-0.22f, 0.63f)}, r);  // the plate
+    rounded({at(-0.27f, 0.79f), at(0.27f, 0.79f), at(0.27f, 1.0f), at(-0.27f, 1.0f)}, r);    // the cap
 }
 
 }  // namespace
@@ -237,50 +276,66 @@ std::string check_duration(std::int64_t seconds, bool to_the_minute)
     return duration_text(seconds, to_the_minute);
 }
 
+// White or black on a status colour, whichever reads: the desktop's
+// success and warning colours may be light (GNOME's dark ones are).
+color ink_on(color fill)
+{
+    auto lin = [](uint8_t v)
+    {
+        const float s = v / 255.f;
+        return s <= 0.04045f ? s / 12.92f : std::pow((s + 0.055f) / 1.055f, 2.4f);
+    };
+    const float l = 0.2126f * lin(fill.r) + 0.7152f * lin(fill.g) + 0.0722f * lin(fill.b);
+    // White wherever it reaches 3:1, as desktops put white on their mid
+    // colours.
+    return 1.05f / (l + 0.05f) >= 3 ? color{255, 255, 255} : color{0, 0, 0};
+}
+
 void paint_check_mark(rap::painter& p, rap::point_f c, float d, check_state s, mergeable m)
 {
     const float r = d / 2;
     const color white{255, 255, 255};
-    const color grey{110, 119, 129}, yellow{232, 178, 0};
+    // The desktop's status colours: success, the warning (pending, or held
+    // by the forge's rules) and error; neutral for conflicts.
+    const paint grey{rap::theme_color::neutral}, yellow{rap::theme_color::warning};
+    auto disc = [&](const paint& fill)
+    {
+        p.circle(c, r, fill, paint{white});
+        return paint{ink_on(p.resolve(fill))};
+    };
     // No checks, but it can't be merged: a "!", grey for conflicts, yellow
     // for the forge's rules.
     if (s == check_state::none && m != mergeable::yes)
     {
-        p.circle(c, r, paint{m == mergeable::conflicts ? grey : yellow}, paint{white});
+        const paint ink = disc(m == mergeable::conflicts ? grey : yellow);
         const float w = std::max(1.5f, d / 7);
-        p.line({c.x, c.y - r * 0.5f}, {c.x, c.y + r * 0.12f}, paint{white}, w,
-               rap::line_cap::round);
-        p.circle({c.x, c.y + r * 0.45f}, w * 0.6f, paint{white}, std::nullopt);
+        p.line({c.x, c.y - r * 0.5f}, {c.x, c.y + r * 0.12f}, ink, w, rap::line_cap::round);
+        p.circle({c.x, c.y + r * 0.45f}, w * 0.6f, ink, std::nullopt);
         return;
     }
     switch (s)
     {
     case check_state::success:
-        p.circle(c, r,
-                 paint{m == mergeable::conflicts ? grey
-                       : m == mergeable::not_yet ? yellow
-                                                 : color{26, 127, 55}},
-                 paint{white});
-        {
-            const float w = std::max(1.5f, d / 8);
-            const rap::point_f a{c.x - r * 0.45f, c.y + r * 0.02f},
-                b{c.x - r * 0.12f, c.y + r * 0.36f}, e{c.x + r * 0.48f, c.y - r * 0.33f};
-            p.line(a, b, paint{white}, w, rap::line_cap::round);
-            p.line(b, e, paint{white}, w, rap::line_cap::round);
-            break;
-        }
-    case check_state::failure:
     {
-        p.circle(c, r, paint{color{207, 34, 46}}, paint{white});
-        const float a = r * 0.36f, w = std::max(1.5f, d / 8);
-        p.line({c.x - a, c.y - a}, {c.x + a, c.y + a}, paint{white}, w);
-        p.line({c.x - a, c.y + a}, {c.x + a, c.y - a}, paint{white}, w);
+        const paint ink = disc(m == mergeable::conflicts ? grey
+                               : m == mergeable::not_yet ? yellow
+                                                         : paint{rap::theme_color::positive});
+        const float w = std::max(1.5f, d / 8);
+        const rap::point_f a{c.x - r * 0.45f, c.y + r * 0.02f}, b{c.x - r * 0.12f, c.y + r * 0.36f},
+            e{c.x + r * 0.48f, c.y - r * 0.33f};
+        p.line(a, b, ink, w, rap::line_cap::round);
+        p.line(b, e, ink, w, rap::line_cap::round);
         break;
     }
-    case check_state::pending:
-        p.circle(c, r, paint{color{191, 135, 0}}, paint{white});
-        p.circle(c, r * 0.3f, paint{white}, std::nullopt);
+    case check_state::failure:
+    {
+        const paint ink = disc(paint{rap::theme_color::negative});
+        const float a = r * 0.36f, w = std::max(1.5f, d / 8);
+        p.line({c.x - a, c.y - a}, {c.x + a, c.y + a}, ink, w);
+        p.line({c.x - a, c.y + a}, {c.x + a, c.y - a}, ink, w);
         break;
+    }
+    case check_state::pending: p.circle(c, r * 0.3f, disc(yellow), std::nullopt); break;
     case check_state::none: break;
     }
 }
@@ -298,19 +353,36 @@ float paint_ref_labels(rap::painter& p, const std::vector<ref>& refs, float x, f
     if (boxes) boxes->clear();
     auto visible = [&](const ref& r) { return !show || show(r); };
 
-    // Upstream labels move next to their tracking branch.
+    // Upstream labels move next to their tracking branch, once: several
+    // branches started from github/master all track it, and it follows the
+    // one of its own name (master), else the first.
+    auto follows = [&](const ref& up) -> const ref*
+    {
+        const ref* first = nullptr;
+        for (const ref& r : refs)
+        {
+            if (r.kind != ref_kind::local_branch || r.upstream != up.full_name || !visible(r))
+                continue;
+            if (up.name.ends_with("/" + r.name)) return &r;
+            if (!first) first = &r;
+        }
+        return first;
+    };
     std::vector<std::pair<const ref*, bool>> order;  // ref, rounded
     std::vector<const ref*> placed;
     for (const ref& r : refs)
     {
         if (!visible(r) || std::ranges::find(placed, &r) != placed.end()) continue;
+        if (r.kind == ref_kind::remote_branch && follows(r)) continue;  // placed after its branch
         bool tracking = r.kind == ref_kind::local_branch && !r.upstream.empty();
         order.push_back({&r, tracking});
         placed.push_back(&r);
         if (!tracking) continue;
         for (const ref& up : refs)
         {
-            if (up.full_name != r.upstream || !visible(up)) continue;
+            if (up.full_name != r.upstream || !visible(up) || follows(up) != &r ||
+                std::ranges::find(placed, &up) != placed.end())
+                continue;
             order.push_back({&up, true});
             placed.push_back(&up);
         }

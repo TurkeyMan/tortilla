@@ -30,7 +30,7 @@ std::vector<std::string> archive_args(archive_format, const std::string& rev,
 std::string export_name(const std::string& workdir, const std::string& rev);
 
 // An entry's name in an archive as a path under the folder unpacked into;
-// nothing if it would land outside it (absolute, a drive, or a "..").
+// nothing if it would land outside it or be another name there: entry_path().
 std::optional<std::filesystem::path> archive_entry_path(std::string_view name);
 
 struct extract_result

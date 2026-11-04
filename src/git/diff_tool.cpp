@@ -17,6 +17,7 @@
 #include <windows.h>
 #endif
 
+#include <algorithm>
 #include <cctype>
 #include <filesystem>
 #include <fstream>
@@ -248,6 +249,17 @@ std::vector<std::string> custom_difftool_args(const std::string& command,
     return args;
 }
 
+std::vector<detected_tool> image_tools(const std::vector<detected_tool>& diff_tools)
+{
+    static constexpr std::string_view k_image_capable[] = {"P4Merge", "Beyond Compare", "WinMerge"};
+    std::vector<detected_tool> out;
+    for (const detected_tool& t : diff_tools)
+        if (std::ranges::find(k_image_capable, std::string_view(t.name)) !=
+            std::end(k_image_capable))
+            out.push_back({t.name, t.command, false});
+    return out;
+}
+
 std::vector<detected_tool> detect_diff_tools()
 {
     // Command lines from each tool's own documentation (and git's mergetools
@@ -309,6 +321,11 @@ std::vector<detected_tool> detect_diff_tools()
         {"DeltaWalker", {"DeltaWalker"}, "-mi -title1=%bname -title2=%yname %base %mine"},
         {"Diffuse", {"diffuse"}, "-L %bname %base -L %yname %mine", false},
         {"P4Merge", {"p4merge"}, "%base %mine", false},
+        {"DiffMerge", {"diffmerge"}, "--title1=%bname --title2=%yname %base %mine"},
+        {"ECMerge", {"ecmerge"}, "--default --mode=diff2 %base %mine", false},
+        {"Guiffy", {"guiffy"}, "%base %mine", false},
+        // -f: in the foreground, so the comparison is waited for.
+        {"gVim", {"gvim"}, "-f -d %base %mine", false},
         {"Visual Studio Code", {"code"}, "--wait --diff %base %mine", false},
     };
 #endif

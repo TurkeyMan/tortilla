@@ -165,6 +165,12 @@ public:
     // Which branches the next load walks (the Show menu), and what the last
     // made of it. Pins and hide patterns apply to the labels at once.
     void set_branches(branch_request);
+    // Whether the walk takes `r` whatever its pins: the preset's, or every
+    // ref's, and not hidden. Pinning it then only changes its label.
+    bool walked_without_pin(const ref& r) const;
+    // The pins changed with the walk the same: only the rows wearing
+    // `full_name`'s label are drawn again.
+    void set_pins(std::vector<std::string> pins, const std::string& full_name);
     const branch_request& branches() const { return branches_; }
     const branch_outcome& outcome() const { return outcome_; }
     bool pinned(const ref& r) const { return is_pinned(r, branches_.filter.pins); }
@@ -173,6 +179,10 @@ public:
     bool is_working_tree(size_t row) const { return working_tree_ && row == 0; }
     const tortilla::commit* commit(size_t row) const;
     std::optional<size_t> row_of(const oid&) const;
+    // The rows showing `ids`, ascending, and the working tree row first with
+    // `working_tree`; those not shown (filtered out, gone) are left out. A
+    // selection kept across a filter or a reload.
+    std::vector<size_t> rows_of(const std::vector<oid>& ids, bool working_tree = false) const;
     size_t commit_rows() const { return row_count() - (working_tree_ ? 1 : 0); }
     const std::vector<file_change>& working_tree_files() const { return wt_files_; }
     // The working-tree status arrives after the history (it can take many

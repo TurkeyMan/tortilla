@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <mutex>
 
 namespace tortilla
 {
@@ -18,6 +19,23 @@ std::filesystem::path settings_file()
 
 }  // namespace
 
+rap::color_scheme appearance_from(std::string_view stored)
+{
+    return stored == "light"  ? rap::color_scheme::light
+           : stored == "dark" ? rap::color_scheme::dark
+                              : rap::color_scheme::system;
+}
+
+std::string_view appearance_value(rap::color_scheme s)
+{
+    return s == rap::color_scheme::light ? "light" : s == rap::color_scheme::dark ? "dark" : "";
+}
+
+rap::color_scheme appearance()
+{
+    return appearance_from(settings::get().value(k_appearance_setting));
+}
+
 settings& settings::get()
 {
     static settings s;
@@ -25,8 +43,22 @@ settings& settings::get()
 }
 
 settings::settings()
+    : file_(settings_file())
 {
-    std::FILE* f = rap::sys::fopen(settings_file(), "r");
+    load();
+}
+
+void settings::use_file(const std::filesystem::path& file)
+{
+    std::unique_lock lock(mutex_);
+    file_ = file;
+    values_.clear();
+    load();
+}
+
+void settings::load()
+{
+    std::FILE* f = rap::sys::fopen(file_, "r");
     if (!f) return;
     char line[4096];
     while (std::fgets(line, sizeof line, f))
@@ -42,11 +74,23 @@ settings::settings()
 
 std::string settings::value(const std::string& key, const std::string& fallback) const
 {
+    std::shared_lock lock(mutex_);
+    return value_locked(key, fallback);
+}
+
+std::string settings::value_locked(const std::string& key, const std::string& fallback) const
+{
     auto it = values_.find(key);
     return it == values_.end() ? fallback : it->second;
 }
 
 void settings::set(const std::string& key, const std::string& value)
+{
+    std::unique_lock lock(mutex_);
+    set_locked(key, value);
+}
+
+void settings::set_locked(const std::string& key, const std::string& value)
 {
     if (values_[key] == value) return;
     values_[key] = value;
@@ -55,6 +99,7 @@ void settings::set(const std::string& key, const std::string& value)
 
 void settings::remove(const std::string& key)
 {
+    std::unique_lock lock(mutex_);
     if (values_.erase(key)) save();
 }
 
@@ -89,12 +134,13 @@ std::vector<std::string> settings::history(const std::string& key) const
 
 void settings::add_to_history(const std::string& key, const std::string& entry, size_t keep)
 {
-    set(key, history_with(value(key), entry, keep));
+    std::unique_lock lock(mutex_);  // read and written as one
+    set_locked(key, history_with(value_locked(key, {}), entry, keep));
 }
 
 void settings::save() const
 {
-    std::FILE* f = rap::sys::fopen(settings_file(), "w");
+    std::FILE* f = rap::sys::fopen(file_, "w");
     if (!f) return;
     for (auto& [k, v] : values_) std::fprintf(f, "%s=%s\n", k.c_str(), v.c_str());
     std::fclose(f);

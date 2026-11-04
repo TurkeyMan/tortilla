@@ -7,6 +7,7 @@
 #include "forge/pr_watch.h"
 #include "git/command.h"
 #include "git/history_edit.h"
+#include "git/ref_journal.h"
 #include "git/repo_worker.h"
 #include "git/sync.h"
 #include "log/forge_panel.h"
@@ -92,7 +93,12 @@ private:
     void schedule_filter();
     void apply_filter();
     void jump(bool up);
+    // The date range [spec 1.9.3]: a button in the filter box's end, held
+    // down while the dates limit the log, and its pop-up with the pickers.
     void dates_changed();
+    void open_dates();
+    void update_dates_button();
+    static rap::icon calendar_icon();
     void save_layout();
     // The window closing: its layout kept, and View Patch's window closed
     // with it (on for next time).
@@ -104,7 +110,9 @@ private:
     void run_git_commands(const std::string& title, std::vector<std::vector<std::string>> commands);
     // Local branch/tag changes: no progress dialog, git's output only if
     // a command fails, and the labels refreshed instead of a full reload.
-    void run_ref_commands(const std::string& title, std::vector<std::vector<std::string>> commands);
+    // With a `label`, the refs they change go in the journal as a step.
+    void run_ref_commands(const std::string& title, std::vector<std::vector<std::string>> commands,
+                          std::string label = {});
     // git commands with no progress dialog; `after` gets whether all
     // succeeded and their output. A failure is shown unless `show_failure`
     // is false (the caller handles it). `prompts`: never, for what runs
@@ -220,7 +228,7 @@ private:
     void apply_follow();
     void difftool(std::vector<std::string> revisions, std::vector<std::string> paths = {});
     void confirm_then_run(const std::string& question, const std::string& title,
-                          std::vector<std::vector<std::string>> commands);
+                          std::vector<std::vector<std::string>> commands, std::string label = {});
     void create_branch(const commit&, const std::string& name = {}, bool switch_to = false,
                        const std::string& start_point = {});
     void create_tag(const commit&);
@@ -310,6 +318,9 @@ private:
     log_model log_;
     std::unique_ptr<repo_worker> files_worker_;  // the selected commit's files
     changes_view files_;  // the selected commit's (or the working tree's) files
+    // Before window_, so it goes after it: the window's lists use the panel's
+    // models, and a list tells its model it's going as it goes.
+    std::unique_ptr<forge_panel> forge_panel_;
     std::unique_ptr<rap::window> window_;
     std::function<void()> closed_;
     std::function<void(std::vector<commit>)> picked_;
@@ -320,8 +331,12 @@ private:
 
     // Widgets
     rap::menu_button* ref_button_ = nullptr;
+    rap::entry_action* dates_ = nullptr;
+    // The date pop-up, while open, and its pickers.
+    std::unique_ptr<rap::window> dates_popup_;
     rap::date_picker* from_ = nullptr;
     rap::date_picker* to_ = nullptr;
+    rap::date loaded_from_, loaded_to_;  // the dates loaded, without limits
     rap::entry* search_ = nullptr;
     rap::drop_down* jump_type_ = nullptr;
     rap::list* commit_list_ = nullptr;
@@ -342,7 +357,6 @@ private:
     // beside both, a column of its own (shown when it has something to say).
     rap::splitter* details_splitter_ = nullptr;
     rap::splitter* forge_splitter_ = nullptr;
-    std::unique_ptr<forge_panel> forge_panel_;  // after window_: goes first
     std::vector<float> forge_sizes_;            // as last shown, for showing it again
     bool forge_panel_visible_ = false;
     void forge_panel_shown(bool);
@@ -378,26 +392,47 @@ private:
     void history_items(rap::menu&, const std::vector<size_t>& sel);
     // The leading remote's default branch, which edits never rewrite.
     std::string mainline_ref() const;
-    // Dragging commits within the log: reordered on their branch.
-    bool reorder_rows(const std::vector<size_t>& rows, size_t destination);
+    // Dragging commits within the log: reordered on their branch, or, on
+    // another branch's row, moved there (copied, with the copy key held).
+    bool reorder_rows(const std::vector<size_t>& rows, size_t destination, rap::drop_action);
+    // The drop onto another branch: a rebase shorthand (history_actions.cpp).
+    void transplant_rows(const std::vector<oid>& commits,
+                         const std::expected<branch_history, std::string>& source,
+                         size_t destination, bool copy);
     using edit_maker = std::function<std::expected<history_edit, replay_failure>(const repo&)>;
     // The edit made on a worker, then the working tree asked about, then
     // applied there too; a conflict offers the rebase window with `fallback`.
+    // `label` names it in the journal ("Reword 1a2b3c4d"; the title when
+    // empty); `use`: a new step, or the journal's own undoing or redoing.
+    enum class journal_use
+    {
+        record,
+        undo,
+        redo,
+    };
     void start_history_edit(const std::string& title, edit_maker,
-                            std::optional<rebase_todo> fallback = {}, bool undoing = false);
+                            std::optional<rebase_todo> fallback = {}, std::string label = {},
+                            journal_use use = journal_use::record);
     void history_replayed(const std::string& title, std::expected<history_edit, replay_failure>,
-                          tree_effect, std::optional<rebase_todo> fallback, bool undoing);
-    void apply_history_edit(const std::string& title, history_edit, bool stash, bool undoing);
+                          tree_effect, std::optional<rebase_todo> fallback, std::string label,
+                          journal_use);
+    void apply_history_edit(const std::string& title, history_edit, bool stash, std::string label,
+                            journal_use);
     // A question first when the commits are on the upstream already.
     void confirm_history_edit(const std::string& title, const std::string& question, bool pushed,
                               const branch_history&, std::function<void()> go);
     std::string pushed_warning(const branch_history&) const;
     void offer_force_push(const history_edit&);
     std::unique_ptr<repo_worker> edit_worker_;
-    // The last edit, for the status bar's Undo while it shows.
-    std::optional<history_edit> last_edit_;
-    rap::button* undo_ = nullptr;
-    rap::subscription undo_timer_;
+    // -- Undo and Redo: what this window did to the refs (history edits,
+    // labels dragged, branches and tags deleted), the buttons top left and
+    // Ctrl+Z / Ctrl+Y in the commit list.
+    ref_journal journal_;
+    rap::tool_button* undo_ = nullptr;
+    rap::tool_button* redo_ = nullptr;
+    void step_journal(bool redo);
+    void update_undo_buttons();
+    static rap::icon undo_icon(bool redo);
     std::vector<oid> history_;  // selection history, for the "Selection History" jump
     // The selected commit's author, top right of the details [spec 1.2].
     void show_avatar(const commit*);
@@ -411,8 +446,14 @@ private:
         std::vector<oid> commits;
         bool working_tree = false;
         std::optional<oid> current;  // nullopt with working_tree: that row
+        std::optional<float> offset;  // the current row's place in the view, if shown
     };
     std::optional<kept_selection> kept_;
+    // One rule wherever the rows are repopulated (a filter, a reload): the
+    // selection kept, and the current row left where it was on screen, or
+    // centred when it can't be.
+    std::optional<kept_selection> keep_selection() const;
+    void put_back(const kept_selection&);
     size_t history_pos_ = 0;
     bool navigating_ = false;
 };

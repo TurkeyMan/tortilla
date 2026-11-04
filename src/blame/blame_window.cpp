@@ -165,7 +165,8 @@ blame_window::open(rap::ui& ui, const std::string& path, const std::string& revi
     if (repo->bare()) return std::unexpected(std::string(_("This needs a working tree.")));
     std::error_code ec;
     std::optional<std::string> rel = repo_relative(repo->workdir(), path);
-    if (!rel || rel->empty() || fs::is_directory(rap::sys::path_from_utf8(path), ec))
+    if (!rel || rel->empty() ||
+        fs::is_directory(fs::symlink_status(rap::sys::path_from_utf8(path), ec)))
         return std::unexpected(std::string(_("Blame needs a file in a repository.")));
     std::unique_ptr<blame_window> w(
         new blame_window(ui, repo->workdir(), std::move(*rel), revision));

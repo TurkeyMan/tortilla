@@ -4,7 +4,9 @@
 
 #include "git/command.h"
 #include "git/remotes.h"
+#include "git/repo.h"
 #include "i18n.h"
+#include "util/version_order.h"
 
 #include <algorithm>
 
@@ -31,9 +33,28 @@ std::vector<std::string> refs(const std::string& workdir, std::vector<std::strin
     return out;
 }
 
-bool exists(const std::string& workdir, const std::string& ref)
+// The chooser's lists in process (the dialog waits for them as it opens):
+// local branches and remote ones as remotes/<r>/<b>, sorted, and tags in
+// version order, as git's for-each-refs below list them. False when
+// libgit2 can't, or versionsort.suffix asks for git's own order.
+bool listed_in_process(const std::string& workdir, std::vector<std::string>& branches,
+                       std::vector<std::string>& tags)
 {
-    return run_git(workdir, {"show-ref", "--verify", "--quiet", ref}, git_output::stdout_only).ok();
+    auto r = repo::open(workdir);
+    if (!r || !config_values(workdir, "versionsort.suffix").empty() ||
+        !config_values(workdir, "versionsort.prereleasesuffix").empty())
+        return false;
+    const auto heads = r->refs_under({"refs/heads/"}), remotes = r->refs_under({"refs/remotes/"}),
+               tagged = r->refs_under({"refs/tags/"});
+    if (!heads || !remotes || !tagged) return false;
+    for (const repo::listed_ref& l : *heads) branches.push_back(r->short_ref_name(l.full_name));
+    for (const repo::listed_ref& l : *remotes)
+        if (!l.full_name.ends_with("/HEAD")) branches.push_back(l.full_name.substr(5));
+    std::vector<std::string> full;
+    for (const repo::listed_ref& l : *tagged) full.push_back(l.full_name);
+    std::ranges::stable_sort(full, version_less);
+    for (const std::string& f : full) tags.push_back(r->short_ref_name(f));
+    return true;
 }
 
 }  // namespace
@@ -61,12 +82,18 @@ rap::node ref_chooser::layout(const options& o)
     current_ = tortilla::current_branch(workdir_);
     // Branches: local first, then remote-tracking ones as remotes/<r>/<b>
     // (not <r>/HEAD); both in git's (sorted) order [spec 8.1].
-    branches_ = refs(workdir_, {"for-each-ref", "--format=%(refname:short)", "refs/heads"});
-    for (std::string& r : refs(workdir_, {"for-each-ref", "--format=%(refname)", "refs/remotes"}))
-        if (!r.ends_with("/HEAD")) branches_.push_back(r.substr(5));  // "remotes/<r>/<b>"
+    branches_.clear();
+    tags_.clear();
+    if (!listed_in_process(workdir_, branches_, tags_))
+    {
+        branches_ = refs(workdir_, {"for-each-ref", "--format=%(refname:short)", "refs/heads"});
+        for (std::string& r :
+             refs(workdir_, {"for-each-ref", "--format=%(refname)", "refs/remotes"}))
+            if (!r.ends_with("/HEAD")) branches_.push_back(r.substr(5));  // "remotes/<r>/<b>"
+        tags_ = refs(workdir_, {"for-each-ref", "--format=%(refname:short)",
+                                "--sort=version:refname", "refs/tags"});
+    }
     if (o.skip_current) std::erase(branches_, current_);
-    tags_ = refs(workdir_, {"for-each-ref", "--format=%(refname:short)", "--sort=version:refname",
-                            "refs/tags"});
 
     std::vector<std::string> kinds;
     if (o.head) kinds.push_back("HEAD");
@@ -138,11 +165,20 @@ void ref_chooser::select(const std::string& initial)
     std::string value;
     if (!initial.empty())
     {
-        const git_result r =
-            run_git(workdir_,
-                    {"rev-parse", "--symbolic-full-name", "--verify", "--end-of-options", initial},
-                    git_output::stdout_only);
-        std::string full = r.ok() ? r.output : "";
+        // The ref it names, in process (the dialog waits); git for @{...}
+        // forms libgit2 doesn't name refs by.
+        std::string full;
+        auto r = repo::open(workdir_);
+        if (r && initial.find("@{") == std::string::npos)
+            full = r->full_ref_name(initial);
+        else
+        {
+            const git_result named = run_git(
+                workdir_,
+                {"rev-parse", "--symbolic-full-name", "--verify", "--end-of-options", initial},
+                git_output::stdout_only);
+            full = named.ok() ? named.output : "";
+        }
         while (!full.empty() && (full.back() == '\n' || full.back() == '\r')) full.pop_back();
         if (full.empty()) full = initial;
         if (full.starts_with("refs/")) full.erase(0, 5);
@@ -178,7 +214,7 @@ std::string ref_chooser::revision() const
     const kind k = chosen();
     // A branch and a tag of one name: say which [spec 8.1].
     if ((k == kind::branch || k == kind::tag) && !n.starts_with("remotes/") &&
-        exists(workdir_, "refs/heads/" + n) && exists(workdir_, "refs/tags/" + n))
+        ref_exists(workdir_, "refs/heads/" + n) && ref_exists(workdir_, "refs/tags/" + n))
         return (k == kind::branch ? "refs/heads/" : "refs/tags/") + n;
     return n;
 }

@@ -449,10 +449,12 @@ rap::node forge_panel::layout()
                                    {
                                        background(p, size);
                                        if (!picture_) return;
-                                       p.image(*picture_,
-                                               {0, 0, float(picture_->width()),
-                                                float(picture_->height())},
-                                               {0, 0, size.w, size.h});
+                                       // Whole and in shape if laid out
+                                       // smaller than asked.
+                                       const float iw = float(picture_->width()),
+                                                   ih = float(picture_->height());
+                                       p.image(*picture_, {0, 0, iw, ih},
+                                               rap::fit_inside({0, 0, size.w, size.h}, iw, ih));
                                    })
                                .width(rap::extent{k_picture_size, rap::extent::unit::px})
                                .height(rap::extent{k_picture_size, rap::extent::unit::px})
@@ -479,12 +481,21 @@ rap::node forge_panel::layout()
                            label{}.wrap().bind(pr_checks_).stretch(),
                        },
                        label{}.wrap().selectable().bind(pr_reviews_),
-                       label{}.wrap().selectable().bind(pr_body_),
+                       // The description in a view of its own, which scrolls: as
+                       // a label, a long one widened the column past the window.
+                       text_view{}.read_only().compact().bind(pr_body_).height(5_lines),
+                       text_view{}
+                           .read_only()
+                           .compact()
+                           .visible(false)
+                           .bind(pr_body_all_)
+                           .height(16_lines),
                        label{_("More...")}
                            .link(
                                [this]
                                {
-                                   pr_body_->set_text(pr_body_text_);
+                                   pr_body_->set_visible(false);
+                                   pr_body_all_->set_visible(true);
                                    pr_more_->set_visible(false);
                                })
                            .bind(pr_more_),
@@ -570,7 +581,7 @@ rap::node forge_panel::layout()
                            .height(10_lines),
                        // Why the selected job failed.
                        vbox{
-                           label{}.wrap().selectable().bind(failure_title_),
+                           text_view{}.read_only().compact().bind(failure_title_).height(3_lines),
                            list{annotation_model::columns(), annotation_list_.get()}
                                .headers(false)
                                .compact()
@@ -628,7 +639,7 @@ rap::node forge_panel::layout()
                }}
             .stretch(),
     }
-        .width(60_ch)
+        .width(30_ch)
         .visible(false)
         .handle(root_);
 }
@@ -752,10 +763,13 @@ const forge_panel::pr_entry* forge_panel::pull_request_of(const std::string& sha
 
 // -- what's shown -------------------------------------------------------------
 
-void forge_panel::show_commit(std::optional<std::string> sha)
+void forge_panel::show_commit(std::optional<std::string> sha, std::string author_name,
+                              std::string author_email)
 {
     if (sha == sha_) return;
     sha_ = std::move(sha);
+    author_name_ = std::move(author_name);
+    author_email_ = std::move(author_email);
     failed_job_.reset();
     if (!sha_ || *sha_ != matrix_sha_)
     {
@@ -864,6 +878,10 @@ void forge_panel::update_pull_request()
             picture_ = shown_picture;
             pr_avatar_->invalidate();
         }
+        // The commit's own picture is beside its text already: the PR's
+        // author's only when that's someone else.
+        pr_avatar_->set_visible(
+            !author_is(pr.author, author_name_, author_email_, e->pr.into.account));
 
         // Whether it can be merged, coloured as the label's tick is.
         std::string merge = merge_text(pr);
@@ -925,15 +943,24 @@ void forge_panel::update_pull_request()
         if (!pr.body_known)
         {
             pr_body_->set_text(_("Asking for its description..."));
+            pr_body_->set_visible(true);
+            pr_body_all_->set_visible(false);
             pr_more_->set_visible(false);
         }
         else if (pr_url_ != pr.url + pr.head_sha || pr_body_text_ != clean_body(pr.body))
         {
             pr_body_text_ = clean_body(pr.body);
+            // All of it, scrolling in the short view; More... shows the tall
+            // one when it's likely longer than the short one shows.
             bool cut = false;
-            const std::string start = first_lines(pr_body_text_, 4, cut);
-            pr_body_->set_text(start.empty() ? std::string(_("No description.")) : start);
-            pr_more_->set_visible(cut);
+            first_lines(pr_body_text_, 5, cut);
+            const std::string text =
+                pr_body_text_.empty() ? std::string(_("No description.")) : pr_body_text_;
+            pr_body_->set_text(text);
+            pr_body_all_->set_text(text);
+            pr_body_->set_visible(true);
+            pr_body_all_->set_visible(false);
+            pr_more_->set_visible(cut || pr_body_text_.size() > 5 * 50);
         }
         pr_url_ = pr.url + pr.head_sha;
 

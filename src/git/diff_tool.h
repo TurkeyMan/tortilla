@@ -64,6 +64,10 @@ struct detected_tool
     bool folders = true;  // compares folders, so a commit opens as one comparison
 };
 std::vector<detected_tool> detect_diff_tools();
+// The tools in `diff_tools` that compare images too (P4Merge, Beyond
+// Compare; WinMerge on Windows), offered for Comparing images with the same
+// command line, which opens each one's own image view for image files.
+std::vector<detected_tool> image_tools(const std::vector<detected_tool>& diff_tools);
 
 // An empty file, the side a custom tool gets for one that doesn't exist (a
 // file's first revision or its deletion); a platform path, "" if it can't

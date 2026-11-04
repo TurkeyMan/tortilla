@@ -79,12 +79,23 @@ public:
     start(rap::ui&, const std::string& dir, std::vector<std::string> args,
           std::function<void(const std::string&)> output, std::function<void(int exit_code)> done,
           git_output = git_output::all, git_prompts = git_prompts::ask);
+    // Any other program the same way, in `dir` (`program` found on PATH
+    // unless it's a path): a diff tool started directly, not through git.
+    static std::shared_ptr<git_process>
+    start_program(rap::ui&, const std::string& dir, const std::string& program,
+                  std::vector<std::string> args, std::function<void(const std::string&)> output,
+                  std::function<void(int exit_code)> done);
     ~git_process();
     void kill();
 
 private:
     struct state;
     std::shared_ptr<state> state_;
+    static std::shared_ptr<git_process> launch(rap::ui&, const std::string& program,
+                                               const std::vector<std::string>& args,
+                                               const rap::sys::process::options&,
+                                               std::function<void(const std::string&)> output,
+                                               std::function<void(int)> done);
 };
 
 // "git reset --hard abc123", for showing what is about to run.

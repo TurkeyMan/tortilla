@@ -3,6 +3,7 @@
 #include "git/command.h"
 #include "git/ignore_patterns.h"
 #include "git/pathspec_file.h"
+#include "git/remotes.h"
 #include "git/repo.h"
 #include "i18n.h"
 #include "settings.h"
@@ -111,12 +112,9 @@ void show_ignore_dialog(rap::ui& ui, std::vector<std::string> paths, bool by_ext
     st->by_extension = by_extension;
     st->untrack = untrack;
     st->done = std::move(done);
-    const fs::path root = rap::sys::path_from_utf8(st->workdir);
-    const git_result git_path = run_git(st->workdir, {"rev-parse", "--git-path", "info/exclude"},
-                                        git_output::stdout_only);
-    std::string exclude = git_path.output;
-    while (!exclude.empty() && (exclude.back() == '\n' || exclude.back() == '\r')) exclude.pop_back();
-    st->exclude_file = fs::absolute(root / rap::sys::path_from_utf8(exclude));
+    // git rev-parse --git-path info/exclude: the shared one in a linked
+    // worktree's main repository.
+    st->exclude_file = rap::sys::path_from_utf8(repo->common_dir()) / "info" / "exclude";
     for (const std::string& p : paths)
     {
         auto rel = repo_relative(st->workdir, p);
@@ -124,17 +122,24 @@ void show_ignore_dialog(rap::ui& ui, std::vector<std::string> paths, bool by_ext
         std::string& r = *rel;
         std::error_code ec;
         const size_t slash = r.rfind('/');
-        st->items.push_back({slash == std::string::npos ? "" : r.substr(0, slash),
-                             slash == std::string::npos ? r : r.substr(slash + 1),
-                             fs::is_directory(rap::sys::path_from_utf8(p), ec)});
+        st->items.push_back(
+            {slash == std::string::npos ? "" : r.substr(0, slash),
+             slash == std::string::npos ? r : r.substr(slash + 1),
+             fs::is_directory(fs::symlink_status(rap::sys::path_from_utf8(p), ec))});
         st->relative.push_back(std::move(r));
     }
     // Which of them git tracks: those it can stop tracking.
-    std::vector<std::string> ls{"ls-files", "--"};
-    ls.insert(ls.end(), st->relative.begin(), st->relative.end());
-    const bool some_tracked =
-        !st->relative.empty() &&
-        !run_git(st->workdir, literal_paths(ls), git_output::stdout_only).output.empty();
+    // In the index, in process (the dialog waits); git when libgit2 can't
+    // read it.
+    std::optional<bool> tracked =
+        st->relative.empty() ? std::optional(false) : any_tracked(st->workdir, st->relative);
+    if (!tracked)
+    {
+        std::vector<std::string> ls{"ls-files", "--"};
+        ls.insert(ls.end(), st->relative.begin(), st->relative.end());
+        tracked = !run_git(st->workdir, literal_paths(ls), git_output::stdout_only).output.empty();
+    }
+    const bool some_tracked = *tracked;
     if (st->items.empty())
     {
         st->keep_alive.reset();

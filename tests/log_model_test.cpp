@@ -12,6 +12,7 @@
 #include "forge/ci.h"
 #include "forge/ci_poll.h"
 #include "forge/forge.h"
+#include "forge/forge_detail.h"
 #include "forge/pr_details.h"
 #include "forge/pr_watch.h"
 #include "forge/remote_sign_in.h"
@@ -20,7 +21,9 @@
 #include "git/blame.h"
 #include "git/clean.h"
 #include "git/command.h"
+#include "git/diff_sides.h"
 #include "git/diff_tool.h"
+#include "git/git_install.h"
 #include "git/history_edit.h"
 #include "git/ignore_patterns.h"
 #include "git/lfs.h"
@@ -28,6 +31,7 @@
 #include "git/patch_serial.h"
 #include "git/pathspec_file.h"
 #include "git/porcelain.h"
+#include "git/ref_journal.h"
 #include "git/ref_list.h"
 #include "git/reflog.h"
 #include "git/remotes.h"
@@ -43,17 +47,23 @@
 #include "git/worktrees.h"
 #include "i18n.h"
 #include "log/log_model.h"
+#include "log/ref_labels.h"
 #include "raw_client.h"
 #include "settings.h"
 #include "shell.h"
 #include "ui/menu_items.h"
+#include "util/check_rows.h"
+#include "util/entry_path.h"
 #include "util/json.h"
+#include "util/programs.h"
 #include "util/repo_path.h"
 #include "util/search_query.h"
 #include "util/sha256.h"
 #include "util/strings.h"
+#include "util/version_order.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <chrono>
 #include <cstdio>
@@ -136,6 +146,180 @@ void make_conflict(const std::string& dir, const std::vector<std::string>& files
 std::string read_bytes(const std::string& path)
 {
     return slurp(rap::sys::path_from_utf8(path));
+}
+
+// A diff tool's sides written here, not by git difftool (git/diff_sides.h):
+// the bytes a checkout would write for a modified, renamed, added and
+// deleted file, line endings and filters honoured; the working tree's file
+// itself; the tool's words; and no git started for any of it.
+void diff_sides_tests(rap::ui& ui, const std::string& root)
+{
+    using namespace tortilla;
+    namespace fs = std::filesystem;
+    const std::string dir = root + "/sides";
+    const std::string g = "git -C '" + dir + "' -c user.name=Ada -c user.email=ada@example.com ";
+    // Written as given, whatever the system's core.autocrlf.
+    sh("git init -q -b main '" + dir + "' && git -C '" + dir + "' config core.autocrlf false");
+    const std::string renamed = "d\xc3\xafr/n\xc3\xa4me \xe2\x9c\x93.txt";  // non-ASCII, a space
+    const std::string lines = "one\\ntwo\\nthree\\nfour\\nfive\\nsix\\n";
+    sh("cd '" + dir + "' && printf 'a\\nb\\n' > mod.txt && printf 'bye\\n' > gone.txt && printf '" +
+       lines + "' > 'old name.txt' && printf 'w\\nx\\n' > win.txt && printf 'u\\n' > up.up && " +
+       "printf 'win.txt text eol=crlf\\n*.up filter=upper\\n' > .gitattributes");
+    sh(g + "add -A && " + g + "commit -qm one");
+    sh("cd '" + dir + "' && mkdir -p 'd\xc3\xafr' && git mv 'old name.txt' '" + renamed +
+       "' && printf 'a\\nB\\n' > mod.txt && git rm -q gone.txt && printf 'new\\n' > added.txt && " +
+       "printf 'w\\nX\\n' > win.txt && printf 'u2\\n' > up.up");
+    sh(g + "add -A && " + g + "commit -qm two");
+    const std::string one =
+        run_git(dir, {"rev-parse", "HEAD~1"}, git_output::stdout_only).output.substr(0, 40);
+    const std::string two =
+        run_git(dir, {"rev-parse", "HEAD"}, git_output::stdout_only).output.substr(0, 40);
+    const std::vector<std::string> both{one, two};
+
+    // Everything below without git: PATH leads nowhere while it runs.
+    const std::string path = rap::sys::env("PATH").value_or("");
+    set_env("PATH", root + "/no-git-here");
+    auto bytes = [](const std::string& p) { return read_bytes(p); };
+    auto one_diff = [&](const std::vector<std::string>& revs, const std::vector<std::string>& paths)
+    {
+        auto d = diff_files(dir, revs, paths);
+        return d && d->size() == 1 ? std::optional(d->front()) : std::nullopt;
+    };
+    const std::string empty =
+        rap::sys::path_to_utf8(rap::sys::path_from_utf8(empty_file()).make_preferred());
+
+    const auto mod = one_diff(both, {"mod.txt"});
+    auto sides = mod ? write_diff_sides(dir, both, *mod) : std::unexpected(std::string("no diff"));
+    check(mod && mod->status == 'M' && sides && bytes(sides->base) == "a\nb\n" &&
+              bytes(sides->mine) == "a\nB\n" && sides->written.size() == 2 &&
+              sides->base.ends_with("mod.txt") && sides->base != sides->mine,
+          "diff sides: a modified file's two revisions, byte for byte");
+    if (sides)
+    {
+        remove_diff_sides(*sides);
+        check(!fs::exists(sides->written[0]) && !fs::exists(sides->written[1]),
+              "diff sides: removed once the tool is done");
+    }
+
+    // A rename: one file, its old name and content on the base side.
+    const auto ren = one_diff(both, {renamed, "old name.txt"});
+    sides = ren ? write_diff_sides(dir, both, *ren) : std::unexpected(std::string("no diff"));
+    check(ren && ren->status == 'R' && ren->old_path == "old name.txt" && ren->path == renamed &&
+              sides && sides->base.ends_with("old name.txt") &&
+              sides->mine.ends_with(
+                  rap::sys::path_to_utf8(rap::sys::path_from_utf8(renamed).filename())) &&
+              bytes(sides->base) == "one\ntwo\nthree\nfour\nfive\nsix\n" &&
+              bytes(sides->mine) == bytes(sides->base),
+          "diff sides: a rename is one file, the base under its old name");
+    if (sides) remove_diff_sides(*sides);
+
+    const auto add = one_diff(both, {"added.txt"});
+    sides = add ? write_diff_sides(dir, both, *add) : std::unexpected(std::string("no diff"));
+    check(add && add->status == 'A' && sides && sides->base == empty &&
+              bytes(sides->mine) == "new\n" && sides->written.size() == 1,
+          "diff sides: an added file against the empty file");
+    if (sides) remove_diff_sides(*sides);
+    const auto del = one_diff(both, {"gone.txt"});
+    sides = del ? write_diff_sides(dir, both, *del) : std::unexpected(std::string("no diff"));
+    check(del && del->status == 'D' && sides && bytes(sides->base) == "bye\n" &&
+              sides->mine == empty,
+          "diff sides: a deleted file against the empty file");
+    if (sides) remove_diff_sides(*sides);
+
+    // Line endings as a checkout writes them: eol=crlf, and core.autocrlf.
+    const auto win = one_diff(both, {"win.txt"});
+    sides = win ? write_diff_sides(dir, both, *win) : std::unexpected(std::string("no diff"));
+    check(sides && bytes(sides->base) == "w\r\nx\r\n" && bytes(sides->mine) == "w\r\nX\r\n",
+          "diff sides: eol=crlf honoured");
+    if (sides) remove_diff_sides(*sides);
+    {
+        // Set in the config file itself: PATH has no git.
+        std::FILE* f = rap::sys::fopen(rap::sys::path_from_utf8(dir + "/.git/config"), "ab");
+        if (f)
+        {
+            std::fputs("[core]\n\tautocrlf = true\n", f);
+            std::fclose(f);
+        }
+    }
+    sides = mod ? write_diff_sides(dir, both, *mod) : std::unexpected(std::string("no diff"));
+    check(sides && bytes(sides->base) == "a\r\nb\r\n" && bytes(sides->mine) == "a\r\nB\r\n",
+          "diff sides: core.autocrlf true honoured");
+    if (sides) remove_diff_sides(*sides);
+
+    // Against the working tree: that side is the file itself, no copy.
+    const auto clean = diff_files(dir, {two}, {"mod.txt"});
+    check(clean && clean->empty(), "diff sides: no changes, said without git");
+    set_env("PATH", path);
+    sh("cd '" + dir +
+       "' && git config --replace-all core.autocrlf false && printf 'a\\nC\\n' > mod.txt");
+    set_env("PATH", root + "/no-git-here");
+    const auto wt = one_diff({two}, {"mod.txt"});
+    sides = wt ? write_diff_sides(dir, {two}, *wt) : std::unexpected(std::string("no diff"));
+    check(sides && bytes(sides->base) == "a\nB\n" && sides->written.size() == 1 &&
+              rap::sys::path_from_utf8(sides->mine) ==
+                  rap::sys::path_from_utf8(sides->mine).make_preferred() &&
+              fs::equivalent(rap::sys::path_from_utf8(sides->mine),
+                             rap::sys::path_from_utf8(dir) / "mod.txt"),
+          "diff sides: the working tree's side is its file");
+    if (sides) remove_diff_sides(*sides);
+    set_env("PATH", path);
+
+    // A filter driver of git's config (as Git LFS's smudge) goes through
+    // git, which runs it.
+    sh(g + "config filter.upper.smudge 'tr a-z A-Z' && " + g + "config filter.upper.clean cat");
+    const auto up = one_diff(both, {"up.up"});
+    sides = up ? write_diff_sides(dir, both, *up) : std::unexpected(std::string("no diff"));
+    check(sides && bytes(sides->base) == "U\n" && bytes(sides->mine) == "U2\n",
+          "diff sides: a filter driver's smudge applied, as git difftool would");
+    if (sides) remove_diff_sides(*sides);
+
+    // The tool's words: placeholders replaced within words, no quoting
+    // needed for spaces, quotes or non-ASCII; sh's syntax left to git.
+    const std::string program = find_program("git");
+    const std::string a = dir + "/a b/\xc3\xbc.txt", b = dir + "/%mine x.txt";
+    using words = std::vector<std::string>;
+    check(diff_tool_words("git --label=%bname %base %mine -L %yname", a, b, "x : abc12345",
+                          "it's $y") ==
+              words{program, "--label=x : abc12345", a, b, "-L", "it's $y"},
+          "diff tool words: placeholders replaced, values whole");
+    check(diff_tool_words("\"git\" \"/base:%base\" '/mine:%mine' /t1=\"%bname\"", a, b, "n", "m") ==
+              words{program, "/base:" + a, "/mine:" + b, "/t1=n"},
+          "diff tool words: quotes honoured and dropped");
+    check(diff_tool_words("git /x", a, b, "n", "m") == words{program, "/x", a, b},
+          "diff tool words: without placeholders the files go last");
+    check(diff_tool_words("git %mine%base", b, a, "n", "m") == words{program, a + b},
+          "diff tool words: a value holding a placeholder stays as it is");
+    check(!diff_tool_words("git %base | cat", a, b, "", "") &&
+              !diff_tool_words("$HOME/tool %base %mine", a, b, "", "") &&
+              !diff_tool_words("X=1 git %base", a, b, "", "") &&
+              !diff_tool_words("git \"$x\" %base", a, b, "", "") &&
+              !diff_tool_words("no-such-tool-here %base %mine", a, b, "", ""),
+          "diff tool words: sh's syntax or an unknown program left to git difftool");
+
+    // Started directly: the tool gets the paths as they are.
+    fs::create_directories(rap::sys::path_from_utf8(dir + "/a b"));
+    write_file(rap::sys::path_from_utf8(a), "one\n");
+    write_file(rap::sys::path_from_utf8(b), "two\n");
+    const std::string expected =
+        run_git(dir, {"hash-object", "--", a, b}, git_output::stdout_only).output;
+    auto w = diff_tool_words("git hash-object -- %base %mine", a, b, "", "");
+    std::string said;
+    int code = -2;
+    std::shared_ptr<git_process> tool;
+    if (w)
+    {
+        const std::string p = w->front();
+        w->erase(w->begin());
+        tool = git_process::start_program(
+            ui, dir, p, *w, [&](const std::string& s) { said += s; }, [&](int c) { code = c; });
+    }
+    for (int i = 0; i < 400 && code == -2; ++i)
+    {
+        ui.run();
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    check(code == 0 && !expected.empty() && said == expected,
+          "diff tool: started directly with paths beyond ASCII and with spaces and quotes");
 }
 
 // History editing (git/history_edit.h) on throwaway repositories: each
@@ -467,6 +651,119 @@ void history_edit_tests(const std::string& root)
         sh("cd '" + dir + "' && git checkout -q feature && git stash pop -q --index");
     }
 
+    // Dragging commits onto another branch: moved off their own, or copied;
+    // on the branch's tip, or inserted lower down with the rest replayed.
+    {
+        sh("cd '" + dir +
+           "' && git stash push -q -m history-test6 && git checkout -q -b drag main");
+        commit("d1.txt", "d1\n", "drag one");
+        commit("d2.txt", "d2\n", "drag two");
+        commit("d3.txt", "d3\n", "drag three");
+        sh(g + "checkout -q feature");
+        auto from = load_branch_history(*r, "refs/heads/drag", mainline);
+        auto onto = load_branch_history(*r, "refs/heads/topic", mainline);
+        check(from && onto && from->line.size() == 3 && onto->line.size() == 1,
+              "history: (fixture) two branches to drag between");
+        if (from && onto)
+        {
+            // Onto topic's tip: a row with its label.
+            const std::vector<ref> tip_refs{
+                {.name = "topic", .full_name = "refs/heads/topic", .kind = ref_kind::local_branch}};
+            auto at = drop_place_of(*r, onto->tip, tip_refs, mainline);
+            check(at && at->onto.branch == "refs/heads/topic" && at->place == 0,
+                  "history: dropped on a branch's tip, they go on top of it");
+            auto plan = plan_insert(*r, *onto, {from->line[0]}, 0);
+            check(plan && plan->base == onto->tip && plan->steps.size() == 1,
+                  "history: the plan: the commit picked on the tip");
+            auto moved = transplant_commits(*r, *onto, 0, {from->line[0]}, &*from,
+                                            "tortilla: move 1 commit to topic");
+            check(moved && moved->moves.size() == 2 && !moved->pushed &&
+                      effect_of(*r, *moved) == tree_effect::none && apply_edit(*r, *moved) &&
+                      subject("topic") == "drag three" &&
+                      git({"rev-parse", "topic~1"}) == onto->tip.hex() &&
+                      subject("drag") == "drag two",
+                  "history: moved onto another branch's tip, and off its own");
+            check(moved && apply_edit(*r, moved->undo()) &&
+                      git({"rev-parse", "drag"}) == from->tip.hex() &&
+                      git({"rev-parse", "topic"}) == onto->tip.hex(),
+                  "history: undoing the move puts both branches back");
+            if (moved) apply_edit(*r, *moved);
+
+            // Into topic below its tip: inserted, the commit above replayed.
+            from = load_branch_history(*r, "refs/heads/drag", mainline);
+            onto = load_branch_history(*r, "refs/heads/topic", mainline);
+            at = drop_place_of(*r, onto->line[1], {}, mainline);
+            check(at && at->onto.branch == "refs/heads/topic" && at->place == 1,
+                  "history: dropped on a commit in a branch, they go in front of it");
+            const std::string drag_tip = git({"rev-parse", "drag"});
+            auto copied = transplant_commits(*r, *onto, 1, {from->line[1]}, nullptr,
+                                             "tortilla: copy 1 commit to topic");
+            check(copied && copied->moves.size() == 1 && apply_edit(*r, *copied) &&
+                      subject("topic") == "drag three" && subject("topic~1") == "drag one" &&
+                      subject("topic~2") == "oops one" && git({"show", "topic:d1.txt"}) == "d1" &&
+                      git({"rev-parse", "drag"}) == drag_tip,
+                  "history: copied into the middle of a branch, the source untouched");
+            check(git({"reflog", "-1", "--format=%gs", "topic"}) ==
+                      "tortilla: copy 1 commit to topic",
+                  "history: the copy's reflog");
+
+            // Two moved from topic into the middle of drag, oldest first, the
+            // newest of drag replayed above them.
+            onto = load_branch_history(*r, "refs/heads/topic", mainline);
+            from = load_branch_history(*r, "refs/heads/drag", mainline);
+            auto two = transplant_commits(*r, *from, 1, {onto->line[1], onto->line[0]}, &*onto,
+                                          "tortilla: move 2 commits to drag");
+            check(two && apply_edit(*r, *two) && subject("drag") == "drag two" &&
+                      subject("drag~1") == "drag three" && subject("drag~2") == "drag one" &&
+                      subject("drag~3") == "drag one" && subject("topic") == "oops one",
+                  "history: two moved into the middle of a branch, oldest first");
+
+            // Refusals.
+            onto = load_branch_history(*r, "refs/heads/topic", mainline);
+            from = load_branch_history(*r, "refs/heads/drag", mainline);
+            check(plan_insert(*r, *onto, {onto->line[0]}, 0).error() ==
+                      rap::i18n::format(_("on {0} already"), "topic"),
+                  "history: refused: on the branch already");
+            check(plan_insert(*r, *from, {*r->resolve("main")}, 0).error() ==
+                      rap::i18n::format(_("on {0} already"), "drag"),
+                  "history: refused: below the place already");
+            check(plan_insert(*r, *onto, {from->line[0]}, 5).error() ==
+                      rap::i18n::format(_("not on {0}"), "topic"),
+                  "history: refused: past the branch's line");
+            check(!transplant_commits(*r, *from, 0, {from->line[0]}, &*from, "x") &&
+                      transplant_commits(*r, *from, 0, {from->line[0]}, &*from, "x")
+                              .error()
+                              .message == _("the same branch"),
+                  "history: refused: onto its own branch");
+            auto wm = load_branch_history(*r, "refs/heads/withmerge", mainline);
+            check(wm && plan_insert(*r, *onto, {wm->line[1]}, 0).error() == _("a merge"),
+                  "history: refused: a merge");
+            check(wm && plan_insert(*r, *wm, {from->line[0]}, 2).error() == _("a merge"),
+                  "history: refused: a merge to replay above the place");
+            auto side = load_branch_history(*r, "refs/heads/side", mainline);
+            check(side && plan_insert(*r, *side, {from->line[0]}, 0).error() ==
+                              _("in another worktree"),
+                  "history: refused: a branch checked out in another worktree");
+            const std::vector<ref> remote_refs{{.name = "origin/main",
+                                                .full_name = "refs/remotes/origin/main",
+                                                .kind = ref_kind::remote_branch}};
+            auto remote = drop_place_of(*r, *r->resolve("origin/main"), remote_refs, mainline);
+            check(!remote && remote.error() == _("not a local branch"),
+                  "history: refused: dropped on a remote's branch");
+            auto mainline_tip = drop_place_of(*r, *r->resolve("origin/main"), {}, mainline);
+            check(!mainline_tip && mainline_tip.error() == _("merged"),
+                  "history: refused: on the mainline");
+            const std::vector<ref> two_tips{
+                {.name = "a", .full_name = "refs/heads/a", .kind = ref_kind::local_branch},
+                {.name = "b", .full_name = "refs/heads/b", .kind = ref_kind::local_branch}};
+            auto both = drop_place_of(*r, onto->tip, two_tips, mainline);
+            check(!both && both.error() == _("several branches end there"),
+                  "history: refused: several branches end on the row");
+        }
+        sh("cd '" + dir + "' && git stash pop -q --index");
+        check(snapshot() == dirty, "history: (fixture) local changes back after dragging");
+    }
+
     // Pushed commits: allowed, with a warning.
     {
         sh(g + "push -q -u origin feature");
@@ -476,12 +773,16 @@ void history_edit_tests(const std::string& root)
               "history: pushed commits are known");
         auto plan = plan_reword(*h, h->line[1], "pushed\n");
         auto tip = plan ? replay(*r, *plan) : std::unexpected(replay_failure{});
-        check(tip && edit_from(*r, *h, *plan, *tip, "x").pushed, "history: rewriting them says so");
-        check(force_push_args(*r, "refs/heads/feature") ==
-                      std::vector<std::string>{"push", "--force-with-lease", "origin",
-                                               "refs/heads/feature:refs/heads/feature"} &&
-                  force_push_args(*r, "refs/heads/main").empty(),
-              "history: the force push, with a lease, to the upstream only");
+        const auto edited = tip ? std::optional(edit_from(*r, *h, *plan, *tip, "x")) : std::nullopt;
+        check(edited && edited->pushed && edited->lease == h->upstream_tip,
+              "history: rewriting them says so, and what the upstream was");
+        const oid at = *h->upstream_tip, to = tip ? *tip : oid{};
+        check(force_push_args(*r, "refs/heads/feature", at, to) ==
+                      std::vector<std::string>{"push",
+                                               "--force-with-lease=refs/heads/feature:" + at.hex(),
+                                               "origin", to.hex() + ":refs/heads/feature"} &&
+                  force_push_args(*r, "refs/heads/main", at, to).empty(),
+              "history: the force push, leased on that, to the upstream only");
     }
 
     // Names beyond ASCII.
@@ -510,9 +811,740 @@ void history_edit_tests(const std::string& root)
               "history: drop with non-ASCII names");
         sh("cd '" + dir + "' && git stash pop -q --index");
     }
+
+    // The force push after an edit is leased on the upstream the edit was
+    // made from, not on whatever was fetched since: Bob's push, fetched by
+    // Alice after her rewrite, is still not overwritten.
+    {
+        const std::string remote = root + "/lease-origin.git", alice = root + "/lease-alice",
+                          bob = root + "/lease-bob";
+        const std::string ag = "git -C '" + alice + "' ", bg = "git -C '" + bob + "' ";
+        auto setup = [&](const std::string& who, const std::string& name)
+        {
+            const std::string w = "git -C '" + who + "' ";
+            sh(w + "config user.name " + name + " && " + w + "config user.email " + name +
+               "@example.com && " + w + "config core.autocrlf false");
+        };
+        sh("git init -q --bare -b main '" + remote + "' && git clone -q '" + remote + "' '" +
+           alice + "' 2>&1");
+        setup(alice, "Alice");
+        sh("cd '" + alice +
+           "' && printf 'a\\n' > a.txt && git add a.txt && git commit -q -m a && " +
+           "printf 'b\\n' > b.txt && git add b.txt && git commit -q -m b && git push -q -u origin "
+           "main");
+        sh("git clone -q '" + remote + "' '" + bob + "' 2>&1");
+        setup(bob, "Bob");
+        auto ar = repo::open(alice);
+        auto h =
+            ar ? load_branch_history(*ar, "refs/heads/main", "") : std::unexpected(std::string());
+        auto plan =
+            h ? plan_reword(*h, h->line[0], "b, reworded\n") : std::unexpected(std::string());
+        auto tip = plan ? replay(*ar, *plan) : std::unexpected(replay_failure{});
+        std::optional<history_edit> e;
+        if (tip) e = edit_from(*ar, *h, *plan, *tip, "tortilla: reword");
+        check(e && e->pushed && apply_edit(*ar, *e),
+              "history lease: Alice rewrites a pushed commit");
+        sh("cd '" + bob +
+           "' && printf 'c\\n' > c.txt && git add c.txt && git commit -q -m c && "
+           "git push -q origin main");
+        const std::string bobs =
+            run_git(bob, {"rev-parse", "HEAD"}, git_output::stdout_only).output;
+        sh(ag + "fetch -q origin");
+        if (e)
+        {
+            const auto args =
+                force_push_args(*ar, e->moves.front().ref, *e->lease, *e->moves.front().to);
+            const git_result pushed = run_git(alice, args);
+            const std::string there =
+                run_git(remote, {"rev-parse", "refs/heads/main"}, git_output::stdout_only).output;
+            check(!args.empty() && !pushed.ok() && there == bobs,
+                  "history lease: a push fetched since the edit isn't overwritten");
+        }
+        // An edit made after that fetch leases on Bob's commit, seen: it goes.
+        auto seen =
+            ar ? load_branch_history(*ar, "refs/heads/main", "") : std::unexpected(std::string());
+        auto again = seen ? plan_reword(*seen, seen->line.back(), "a, reworded\n")
+                          : std::unexpected(std::string());
+        auto again_tip = again ? replay(*ar, *again) : std::unexpected(replay_failure{});
+        if (again_tip)
+        {
+            const history_edit e2 = edit_from(*ar, *seen, *again, *again_tip, "tortilla: reword");
+            const bool applied = e2.pushed && e2.lease && apply_edit(*ar, e2).has_value();
+            const bool pushed =
+                applied &&
+                run_git(alice, force_push_args(*ar, "refs/heads/main", *e2.lease, *again_tip)).ok();
+            const std::string there =
+                run_git(remote, {"rev-parse", "refs/heads/main"}, git_output::stdout_only).output;
+            check(pushed && there == again_tip->hex() + "\n",
+                  "history lease: the push goes when the upstream is as the edit saw it");
+        }
+        else
+            check(false, "history lease: the second edit replays");
+    }
+
+    // A commit in SVN (git svn's git-svn-id line) is never rewritten, by any
+    // way in: a menu's plan, a drag's reorder, a replay or an edit applied.
+    {
+        const std::string sd = root + "/history-svn";
+        const std::string sg = "git -C '" + sd + "' ";
+        sh("git init -q -b main '" + sd + "' && " + sg + "config user.name Tester && " + sg +
+           "config user.email t@example.com && " + sg + "config core.autocrlf false");
+        // A commit of `file`, its message's paragraphs a -m each.
+        auto svn_commit = [&](const std::string& file, const std::string& paragraphs)
+        {
+            sh("cd '" + sd + "' && printf '%s' '" + file + "' > '" + file + "' && git add -- '" +
+               file + "' && git commit -q " + paragraphs);
+        };
+        svn_commit("zero.txt", "-m zero");
+        svn_commit("svn.txt", "-m 'in svn' -m 'git-svn-id: https://svn.example/trunk@1 "
+                              "0b9d2c1e-0000-0000-0000-000000000000'");
+        svn_commit("a.txt", "-m 'local a'");
+        svn_commit("b.txt", "-m 'local b'");
+        auto sr = repo::open(sd);
+        auto h = sr ? load_branch_history(*sr, "refs/heads/main", "")
+                    : std::unexpected(std::string("no repository"));
+        check(h && h->line.size() == 4, "history svn: the line");
+        if (sr && h && h->line.size() == 4)
+        {
+            const oid b = h->line[0], a = h->line[1], in = h->line[2], zero = h->line[3];
+            auto refused = [](const auto& plan)
+            { return !plan && plan.error() == std::string(_("in SVN")); };
+            // Dragging b below the SVN commit replays it: refused. Above a,
+            // it rewrites local commits only: fine.
+            check(refused(plan_reorder(*h, {b}, 3)) && refused(plan_reorder(*h, {zero}, 0)),
+                  "history svn: a reorder that rewrites it is refused");
+            check(plan_reorder(*h, {b}, 2).has_value(), "history svn: one above it is not");
+            check(refused(plan_reword(*h, in, "x\n")) && refused(plan_drop(*h, {in})) &&
+                      refused(plan_fold(*h, a, in)) && refused(plan_combine(*h, {a, in}, "x\n")) &&
+                      refused(plan_reword(*h, zero, "x\n")),
+                  "history svn: reword, drop, fold and combine refuse it and what's below");
+            check(plan_reword(*h, a, "x\n").has_value() && plan_drop(*h, {b}).has_value(),
+                  "history svn: the commits above it can be edited");
+            auto moved = move_commits(*sr, *h, {in}, "refs/heads/elsewhere", true, "x");
+            check(!moved && moved.error().message == _("in SVN"),
+                  "history svn: moving it to another branch is refused");
+            // A plan made by hand, past the checks: replay won't make it.
+            edit_plan by_hand{.branch = h->branch, .old_tip = h->tip, .base = zero};
+            by_hand.steps = {{.commit = in, .message = std::string("rewritten\n")},
+                             {.commit = a},
+                             {.commit = b}};
+            auto tip = replay(*sr, by_hand);
+            check(!tip && !tip.error().conflict && tip.error().message == _("in SVN"),
+                  "history svn: replay refuses to rewrite it");
+            // Nor does applying an edit that leaves it behind, the branch
+            // moved below it.
+            const history_edit back{.reflog = "x", .moves = {{h->branch, h->tip, zero}}};
+            auto applied = apply_edit(*sr, back);
+            check(!applied && sr->resolve("main") == b,
+                  "history svn: an edit that leaves it behind isn't applied");
+            // Undo last commit, with the SVN commit on top.
+            sh(sg + "reset -q --hard HEAD~2");
+            auto top = load_branch_history(*sr, "refs/heads/main", "");
+            auto undo =
+                top ? undo_last_commit(*sr, *top) : std::unexpected(std::string("no history"));
+            check(!undo && undo.error() == _("in SVN"), "history svn: undo last commit refuses it");
+        }
+    }
+}
+
+// The log's Undo and Redo (git/ref_journal.h): steps undone and redone in
+// order, a new step dropping what was undone, the limit, and a step whose
+// refs moved since refused without touching anything.
+void ref_journal_tests(const std::string& root)
+{
+    using namespace tortilla;
+    const std::string dir = root + "/journal";
+    const std::string g = "git -C '" + dir + "' ";
+    sh("git init -q -b main '" + dir + "' && " + g + "config user.name Tester && " + g +
+       "config user.email t@example.com && " + g + "config core.autocrlf false && " + g +
+       "commit -q --allow-empty -m one && " + g + "commit -q --allow-empty -m two && " + g +
+       "commit -q --allow-empty -m three && " + g + "branch topic HEAD~2 && " + g +
+       "tag -a -m release v1 HEAD~1");
+    auto r = repo::open(dir);
+    check(r.has_value(), "journal: the repository opens");
+    if (!r) return;
+    const oid one = *r->resolve("HEAD~2"), two = *r->resolve("HEAD~1"), three = *r->resolve("HEAD");
+    auto at = [&](const std::string& ref) { return ref_target(*r, ref); };
+    const std::optional<oid> tag_object = at("refs/tags/v1");
+    check(tag_object && *tag_object != two, "journal: a ref's own value, not peeled");
+
+    ref_journal j(3);
+    check(!j.next_undo() && !j.next_redo() && !j.undo_edit(), "journal: empty at first");
+    // A branch moved (as a label dropped on another commit), then deleted.
+    history_edit move{.reflog = "tortilla: move topic",
+                      .moves = {{"refs/heads/topic", one, three}}};
+    check(apply_edit(*r, move).has_value(), "journal: the move applies");
+    j.record("Move topic", move);
+    history_edit drop{.reflog = "tortilla: delete topic",
+                      .moves = {{"refs/heads/topic", three, std::nullopt}}};
+    check(apply_edit(*r, drop).has_value() && !at("refs/heads/topic"),
+          "journal: the delete applies");
+    j.record("Delete topic", drop);
+    check(j.next_undo() && j.next_undo()->label == "Delete topic" && j.undo_count() == 2,
+          "journal: the newest step is undone first");
+
+    // Undo both, newest first.
+    auto u = j.undo_edit();
+    check(u && !why_stale(*r, *u) && apply_edit(*r, *u) && at("refs/heads/topic") == three,
+          "journal: undoing a delete makes the branch again");
+    j.undone();
+    u = j.undo_edit();
+    check(u && apply_edit(*r, *u) && at("refs/heads/topic") == one, "journal: and the move");
+    j.undone();
+    check(!j.next_undo() && j.next_redo() && j.next_redo()->label == "Move topic",
+          "journal: redo has them, the first first");
+
+    // Redo the move only; a new step then drops the delete's redo.
+    auto d = j.redo_edit();
+    check(d && !why_stale(*r, *d) && apply_edit(*r, *d) && at("refs/heads/topic") == three,
+          "journal: redo moves it again");
+    j.redone();
+    history_edit retag{.reflog = "tortilla: move v1", .moves = {{"refs/tags/v1", tag_object, one}}};
+    check(apply_edit(*r, retag).has_value(), "journal: a tag moves");
+    j.record("Move v1", retag);
+    check(!j.next_redo() && j.undo_count() == 2, "journal: a new step drops what was undone");
+    u = j.undo_edit();
+    check(u && apply_edit(*r, *u) && at("refs/tags/v1") == tag_object,
+          "journal: undoing puts the annotated tag's own object back");
+    j.undone();
+
+    // Something else moved the branch: undoing the move under it is refused,
+    // and nothing changes.
+    sh(g + "branch -f topic HEAD~1");
+    u = j.undo_edit();
+    const auto stale = u ? why_stale(*r, *u) : std::nullopt;
+    check(stale && stale->find("topic") != std::string::npos,
+          "journal: a branch moved since is noticed");
+    check(u && !apply_edit(*r, *u) && at("refs/heads/topic") == two,
+          "journal: and never overwritten");
+    j.forget_undo();
+    check(!j.next_undo() && j.next_redo(), "journal: the stale step is forgotten, alone");
+
+    // A redo whose branch was made again meanwhile is refused too.
+    history_edit make{.reflog = "x", .moves = {{"refs/heads/fresh", std::nullopt, one}}};
+    check(apply_edit(*r, make).has_value(), "journal: a branch made");
+    j.record("Create fresh", make);
+    u = j.undo_edit();
+    check(u && apply_edit(*r, *u) && !at("refs/heads/fresh"), "journal: undoing it deletes it");
+    j.undone();
+    sh(g + "branch fresh HEAD");
+    d = j.redo_edit();
+    check(d && why_stale(*r, *d) && !apply_edit(*r, *d) && at("refs/heads/fresh") == three,
+          "journal: a redo over a branch made since is refused");
+
+    // The limit: the oldest steps go.
+    ref_journal small(2);
+    for (int i = 0; i < 4; ++i) small.record("step " + std::to_string(i), move);
+    check(small.undo_count() == 2 && small.next_undo()->label == "step 3",
+          "journal: only the newest steps are kept");
+}
+
+// What libgit2 answers in process against what git itself says, on
+// repositories with the cases that differ most: packed and loose refs, refs
+// with slashes and beyond ASCII, a branch named like a hash, annotated and
+// lightweight tags, upstreams (gone ones too), a linked worktree, a
+// detached HEAD, an unborn branch and an includeIf config. Then the same
+// reads with git off PATH: they must not need it.
+std::string labels_text(const tortilla::ref_map& refs)
+{
+    std::vector<std::string> lines;
+    for (const auto& [id, labels] : refs)
+        for (const tortilla::ref& r : labels)
+            lines.push_back(id.hex() + ' ' + r.full_name + ' ' + r.name + ' ' +
+                            std::to_string(int(r.kind)) + (r.current ? " current" : "") +
+                            (r.annotated ? " annotated" : "") + " up=" + r.upstream +
+                            " wt=" + r.worktree + (r.remote_default ? " default" : ""));
+    std::ranges::sort(lines);
+    std::string out;
+    for (const std::string& l : lines) out += l + '\n';
+    return out;
+}
+
+std::string git_out(const std::string& dir, const std::vector<std::string>& args)
+{
+    const tortilla::git_result r = tortilla::run_git(dir, args, tortilla::git_output::stdout_only);
+    std::string out = r.ok() ? r.output : "";
+    while (!out.empty() && (out.back() == '\n' || out.back() == '\r')) out.pop_back();
+    return out;
+}
+
+std::vector<std::string> lines_of(const std::string& text)
+{
+    std::vector<std::string> out;
+    for (std::string_view rest = text; !rest.empty();)
+    {
+        const size_t nl = rest.find('\n');
+        out.emplace_back(rest.substr(0, nl));
+        rest.remove_prefix(nl == std::string_view::npos ? rest.size() : nl + 1);
+    }
+    return out;
+}
+
+void libgit2_parity_tests(const std::string& root)
+{
+    using namespace tortilla;
+    namespace fs = std::filesystem;
+    const std::string up = root + "/parity-upstream.git", dir = root + "/parity",
+                      wt = root + "/parity-wt", empty = root + "/parity-unborn";
+    const std::string g = "git -C '" + dir + "' ";
+    sh("git init -q --bare -b main '" + up + "'");
+    sh("git init -q -b main '" + dir + "' && " + g + "config user.name Tester && " + g +
+       "config user.email t@example.com && " + g + "config core.autocrlf false");
+    sh(g + "commit -q --allow-empty -m one && " + g + "commit -q --allow-empty -m two && " + g +
+       "commit -q --allow-empty -m three");
+    sh(g + "remote add origin '" + up + "' && " + g + "push -q origin main 2>/dev/null");
+    // origin: main two ahead of ours (as fetched), a feature branch with
+    // slashes, one beyond ASCII, and HEAD naming main.
+    sh(g + "branch -q 'feature/deep/x' HEAD~1 && " + g + "branch -q 'café' HEAD~2 && " + g +
+       "push -q origin 'feature/deep/x' 'café' 2>/dev/null && " + g + "fetch -q origin && " + g +
+       "remote set-head origin main");
+    sh(g + "branch -q --set-upstream-to=origin/feature/deep/x 'feature/deep/x' && " + g +
+       "branch -q --set-upstream-to=origin/café 'café' && " + g +
+       "branch -q --set-upstream-to=origin/main main && " + g + "reset -q --hard HEAD~2");
+    // Ahead too, and a branch whose upstream is gone.
+    sh(g + "commit -q --allow-empty -m ahead && " + g + "branch -q gone && " + g +
+       "config branch.gone.remote origin && " + g + "config branch.gone.merge refs/heads/gone");
+    // Tags: annotated and lightweight; then everything packed, and more refs
+    // loose on top, one a branch named like a commit's short hash.
+    const std::string one = git_out(dir, {"rev-parse", "HEAD~1"});
+    sh(g + "tag -a -m release v1 HEAD~1 && " + g + "tag v2 HEAD && " + g + "pack-refs --all && " +
+       g + "tag -a -m later v3 HEAD && " + g + "branch -q " + one.substr(0, 7) + " HEAD && " + g +
+       "branch -q local-only HEAD~1");
+    sh(g + "worktree add -q '" + wt + "' 'feature/deep/x' 2>/dev/null");
+    // includeIf on this repository's folder: an address only it has.
+    const std::string extra = root + "/parity-extra.cfg";
+    sh("printf '[user]\\n\\temail = included@example.com\\n' > '" + extra + "'");
+    // The folder as git spells its git dir (C:/x/y on Windows, not C:\x\y),
+    // which is what a gitdir: pattern is matched against.
+    std::string git_dir = git_out(dir, {"rev-parse", "--absolute-git-dir"});
+    git_dir.erase(git_dir.rfind('/') + 1);  // parity/.git -> parity/
+    sh(g + "config --add 'includeIf.gitdir:" + git_dir + ".path' '" + extra + "' && " + g +
+       "config remote.origin.skipfetchall false && " + g + "remote add other '" + up + "' && " + g +
+       "config remote.other.skipfetchall yes");
+    sh("git init -q -b fresh '" + empty + "'");
+
+    auto r = repo::open(dir);
+    check(r.has_value(), "parity: the repository opens");
+    if (!r) return;
+
+    // The log's labels: every field as for-each-ref gave them.
+    const std::string labels = labels_text(r->refs());
+    check(!labels.empty() && labels == labels_text(r->refs_by_git()),
+          "parity: the log's labels through libgit2 are git's");
+    check(labels.find("wt=" + fs::weakly_canonical(fs::path(wt)).generic_string()) !=
+                  std::string::npos ||
+              labels.find("wt=" + wt) != std::string::npos,
+          "parity: a branch checked out in a linked worktree says where");
+    if (labels != labels_text(r->refs_by_git()))
+        std::printf("libgit2:\n%sgit:\n%s", labels.c_str(), labels_text(r->refs_by_git()).c_str());
+
+    // for-each-ref <prefixes>.
+    auto listed = [&](const repo& in, const std::vector<std::string>& prefixes)
+    {
+        std::string out;
+        if (auto refs = in.refs_under(prefixes))
+            for (const repo::listed_ref& l : *refs)
+                out += l.target.hex() + ' ' + l.full_name + ' ' + l.symref + '\n';
+        return out;
+    };
+    for (const std::vector<std::string>& prefixes :
+         {std::vector<std::string>{"refs/remotes/origin/"},
+          std::vector<std::string>{"refs/heads/", "refs/remotes/"}, std::vector<std::string>{}})
+    {
+        std::vector<std::string> args{"for-each-ref",
+                                      "--format=%(objectname) %(refname) %(symref)"};
+        args.insert(args.end(), prefixes.begin(), prefixes.end());
+        const std::string theirs = git_out(dir, args) + '\n';
+        const std::string ours = listed(*r, prefixes);
+        check(ours == theirs, "parity: refs under a prefix, as for-each-ref lists them");
+        if (ours != theirs) std::printf("libgit2:\n%sgit:\n%s", ours.c_str(), theirs.c_str());
+    }
+
+    // Upstreams, ahead/behind, the branch hint.
+    for (const char* b : {"main", "feature/deep/x", "café", "gone", "local-only"})
+        check(r->upstream_ref(b) == git_out(dir, {"for-each-ref", "--format=%(upstream)",
+                                                  std::string("refs/heads/") + b}),
+              (std::string("parity: %(upstream) of ") + b).c_str());
+    {
+        const auto counts = r->ahead_behind(*r->resolve("main"), *r->resolve("origin/main"));
+        check(counts &&
+                  std::to_string(counts->first) + '\t' + std::to_string(counts->second) ==
+                      git_out(dir, {"rev-list", "--left-right", "--count", "main...origin/main"}),
+              "parity: ahead and behind, as rev-list --left-right --count");
+        const current_state s = current_against_upstream(dir);
+        check(s.branch == git_out(dir, {"symbolic-ref", "-q", "--short", "HEAD"}) &&
+                  s.upstream ==
+                      git_out(dir, {"rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"}) &&
+                  s.ahead == 1 && s.behind == 2,
+              "parity: the branch hint (branch, upstream, ahead 1, behind 2)");
+    }
+
+    // Revisions: a range, a hash-like branch (the branch, as git takes it),
+    // ancestry, and what doesn't resolve.
+    check(r->revision_exists("HEAD~1") && r->revision_exists("origin/main..main") &&
+              r->revision_exists("main...origin/main") && !r->revision_exists("no-such-thing") &&
+              !r->revision_exists("main..no-such-thing"),
+          "parity: revisions and ranges that resolve, and those that don't");
+    check(r->resolve(one.substr(0, 7)) &&
+              r->resolve(one.substr(0, 7))->hex() ==
+                  git_out(dir, {"rev-parse", one.substr(0, 7) + "^{commit}"}),
+          "parity: a branch named like a short hash is the branch, as git takes it");
+    check(r->resolve("v1")->hex() == git_out(dir, {"rev-parse", "v1^{commit}"}),
+          "parity: an annotated tag resolves to its commit");
+
+    // Config: includeIf, multi-valued keys, booleans. (Global and system
+    // addresses come first where the machine has them, a CI runner's say:
+    // the same list as git's, ending in the repository's and the included.)
+    const std::vector<std::string> emails = config_values(dir, "user.email");
+    const std::vector<std::string> git_emails =
+        lines_of(git_out(dir, {"config", "--get-all", "user.email"}));
+    check(emails == git_emails && emails.size() >= 2 &&
+              emails[emails.size() - 2] == "t@example.com" &&
+              emails.back() == "included@example.com",
+          "parity: an includeIf gitdir config, as git config --get-all reads it");
+    if (emails != git_emails || emails.empty() || emails.back() != "included@example.com")
+    {
+        std::string ours, theirs;
+        for (const std::string& e : emails) ours += e + ' ';
+        for (const std::string& e : git_emails) theirs += e + ' ';
+        std::printf("  includeIf gitdir:%s: libgit2 [%s], git [%s]\n", git_dir.c_str(),
+                    ours.c_str(), theirs.c_str());
+    }
+    check(fetch_all_remotes(dir) == std::vector<std::string>{"origin"} &&
+              git_out(dir, {"remote"}) == "origin\nother",
+          "parity: remotes to fetch, skipFetchAll yes left out");
+    check(config_bool(dir, "remote.other.skipfetchall") == true &&
+              config_bool(dir, "remote.origin.skipfetchall") == false &&
+              !config_bool(dir, "remote.none.skipfetchall"),
+          "parity: boolean config values");
+
+    // The sync check's tips, the forge's commit lists.
+    {
+        const auto tips = local_tips(dir, {"origin"});
+        std::string ours;
+        for (const branch_tip& t : tips.at("origin")) ours += t.sha + ' ' + t.name + '\n';
+        std::string theirs;
+        for (const std::string& line :
+             lines_of(git_out(dir, {"for-each-ref", "--format=%(objectname) %(refname:lstrip=3)",
+                                    "refs/remotes/origin/"})))
+            if (!line.ends_with(" HEAD")) theirs += line + '\n';
+        check(ours == theirs, "parity: the sync check's remote tips");
+        const auto commits = pull_request_commits(dir, "origin/main", "main", 10);
+        std::string joined;
+        for (const std::string& c : commits) joined += (joined.empty() ? "" : "\n") + c;
+        check(commits.size() == 2 && joined == git_out(dir, {"rev-list", "--max-count=10",
+                                                             "origin/main", "^main", "--"}),
+              "parity: a pull request's commits, as rev-list");
+        std::vector<forge_remote> remotes{{.name = "origin"}};
+        check(remote_with_commit(dir, git_out(dir, {"rev-parse", "café"}), remotes) ==
+                      &remotes[0] &&
+                  !remote_with_commit(dir, git_out(dir, {"rev-parse", "HEAD"}), remotes),
+              "parity: the remote holding a commit, as for-each-ref --contains");
+    }
+    {
+        // feature/deep/x is checked out in the worktree: it stays.
+        sh(g + "branch -q behind origin/café && " + g +
+           "branch -q --set-upstream-to=origin/main behind");
+        sh(g + "update-ref refs/remotes/origin/behind \"$(" + g + "rev-parse origin/main)\" && " +
+           g + "branch -q --set-upstream-to=origin/behind behind");
+        const auto ff = fast_forward_targets(dir);
+        check(ff.size() == 1 && ff[0].branch == "behind" &&
+                  ff[0].to == git_out(dir, {"rev-parse", "origin/main"}),
+              "parity: the branches sync may fast-forward");
+        sh(g + "branch -q -D behind && " + g + "update-ref -d refs/remotes/origin/behind");
+    }
+
+    // A linked worktree: its common directory, its own HEAD.
+    {
+        auto w = repo::open(wt);
+        check(w && fs::equivalent(fs::path(w->common_dir()),
+                                  fs::path(git_out(wt, {"rev-parse", "--path-format=absolute",
+                                                        "--git-common-dir"}))),
+              "parity: a linked worktree's common directory");
+        check(w && labels_text(w->refs()) == labels_text(w->refs_by_git()),
+              "parity: the labels seen from a linked worktree");
+        check(current_against_upstream(wt).branch == "feature/deep/x",
+              "parity: a linked worktree's branch");
+    }
+    // Detached, then unborn.
+    sh(g + "checkout -q --detach HEAD~1");
+    check(labels_text(r->refs()) == labels_text(r->refs_by_git()) &&
+              current_against_upstream(dir).branch.empty(),
+          "parity: a detached HEAD's labels and branch hint");
+    sh(g + "checkout -q main");
+    if (auto e = repo::open(empty))
+        check(e->refs().empty() && e->refs_by_git().empty() &&
+                  current_against_upstream(empty).branch == "fresh" &&
+                  current_against_upstream(empty).upstream.empty(),
+              "parity: an unborn branch has no labels, and is the branch");
+
+    // LFS: said by a .gitattributes in the index, as the attr pathspec has it.
+    {
+        const std::string lfs = root + "/parity-lfs";
+        const std::string l = "git -C '" + lfs + "' ";
+        sh("git init -q -b main '" + lfs + "' && " + l +
+           "config core.autocrlf false && mkdir -p '" + lfs +
+           "/sub' && printf '*.bin filter=lfs\\n' > '" + lfs +
+           "/sub/.gitattributes' && printf 'x' > '" + lfs + "/sub/a.bin' && " + l + "add -A");
+        check(uses_lfs(lfs) && !git_out(lfs, {"ls-files", "--", ":(attr:filter=lfs)"}).empty(),
+              "parity: a repository using LFS, from a nested .gitattributes");
+        check(!uses_lfs(dir) && git_out(dir, {"ls-files", "--", ":(attr:filter=lfs)"}).empty(),
+              "parity: a repository not using LFS");
+    }
+
+    // Without git: the same answers, nothing run.
+    {
+        const std::string path = rap::sys::env("PATH").value_or("");
+        const std::string nowhere = root + "/parity-no-git";
+        fs::create_directories(rap::sys::path_from_utf8(nowhere));
+        set_env("PATH", nowhere);
+        check(!recheck_git(), "no git: git isn't found with PATH stripped of it");
+        check(labels_text(r->refs()) == labels, "no git: the log's labels");
+        check(current_against_upstream(dir).behind == 2 && fetch_all_remotes(dir).size() == 1 &&
+                  config_values(dir, "user.email") == emails,
+              "no git: the branch hint, remotes and config");
+        check(fast_forward_targets(dir).empty() &&
+                  local_tips(dir, {"origin"}).at("origin").size() == 3,
+              "no git: the sync check's reads");
+        set_env("PATH", path);
+        check(recheck_git(), "no git: found again with PATH back");
+    }
+
+    // How to install git, by distribution.
+    auto help = [](std::string_view os_release)
+    { return linux_git_install_help(os_release).command; };
+    check(help("ID=ubuntu\nID_LIKE=debian\n") == "sudo apt install git" &&
+              help("ID=linuxmint\nID_LIKE=\"ubuntu debian\"\n") == "sudo apt install git" &&
+              help("ID=\"fedora\"\n") == "sudo dnf install git" &&
+              help("ID=\"centos\"\nVERSION_ID=\"7\"\n") == "sudo yum install git" &&
+              help("ID=\"rhel\"\nVERSION_ID=\"9.2\"\n") == "sudo dnf install git" &&
+              help("ID=\"rocky\"\nID_LIKE=\"rhel centos fedora\"\nVERSION_ID=\"9.3\"\n") ==
+                  "sudo dnf install git" &&
+              help("ID=arch\n") == "sudo pacman -S git" &&
+              help("ID=endeavouros\nID_LIKE=arch\n") == "sudo pacman -S git" &&
+              help("ID=manjaro\nID_LIKE=arch\n") == "sudo pacman -S git" &&
+              help("ID=\"opensuse-tumbleweed\"\nID_LIKE=\"opensuse suse\"\n") ==
+                  "sudo zypper install git" &&
+              help("ID=alpine\n") == "sudo apk add git" &&
+              help("ID=void\n") == "sudo xbps-install git" &&
+              help("ID=gentoo\n") == "sudo emerge dev-vcs/git",
+          "git install help: the command for each distribution");
+    check(help("ID=nixos\n").empty() &&
+              linux_git_install_help("ID=nixos\n").text.find("configuration.nix") !=
+                  std::string::npos &&
+              help("ID=weird\n").empty() && !linux_git_install_help("").text.empty(),
+          "git install help: NixOS's note, and a generic line for the rest");
+}
+
+// The dialogs' reads in process against git's: ref names and their checks,
+// short names, version order, merge bases, stashes, tag messages, commit
+// bodies, Browse References' list, a tree's files and the index.
+void libgit2_dialog_parity_tests(const std::string& root)
+{
+    using namespace tortilla;
+    namespace fs = std::filesystem;
+    const std::string dir = root + "/parity-dialogs", wt = root + "/parity-dialogs-wt";
+    const std::string g = "git -C '" + dir + "' ";
+    sh("git init -q -b main '" + dir + "' && " + g + "config user.name Tester && " + g +
+       "config user.email t@example.com && " + g + "config core.autocrlf false");
+    sh("mkdir -p '" + dir + "/src/deep' && printf 'a\\n' > '" + dir +
+       "/src/deep/a.txt' && printf 'b\\n' > '" + dir + "/b.txt' && " + g + "add -A && " + g +
+       "commit -qm 'First line\nof the subject\n\n\nBody one\n\nBody two'");
+    sh(g + "commit -q --allow-empty -m second && " + g +
+       "tag -a -m 'Release notes\n\nMore' v1.9 HEAD~1 && " + g + "tag v1.10 HEAD && " + g +
+       "tag v1.2 HEAD && " + g + "branch -q v1.2 HEAD~1 && " + g + "branch -q 'ünï/cödé' HEAD && " +
+       g + "branch -q side HEAD~1 && " + g + "checkout -q side && " + g +
+       "commit -q --allow-empty -m on-side && " + g + "checkout -q main");
+    sh(g + "config branch.side.description 'Side work\nsecond line'");
+    auto r = repo::open(dir);
+    check(r.has_value(), "dialog parity: the repository opens");
+    if (!r) return;
+
+    // Names: valid or not, as check-ref-format says.
+    bool names_agree = true;
+    for (const char* n :
+         {"main", "feature/x", "a..b", "a.lock", "-dash", "HEAD",    "x/",  "/x",
+          "a b",  "a~b",       "a^b",  "a:b",    "a?b",   "a*b",     "a[b", "a\\b",
+          "@",    "a@{b",      "ünï",  "a/.b",   "a//b",  ".hidden", "x.",  "ok-1.2_3"})
+    {
+        const bool git_branch = run_git(dir, {"check-ref-format", "--branch", n}).ok();
+        const bool git_ref =
+            run_git(dir, {"check-ref-format", std::string("refs/heads/") + n}).ok();
+        if (valid_branch_name(n) != git_branch ||
+            valid_ref_name(std::string("refs/heads/") + n) != git_ref)
+        {
+            names_agree = false;
+            std::printf("  name %s: libgit2 %d/%d git %d/%d\n", n, valid_branch_name(n),
+                        valid_ref_name(std::string("refs/heads/") + n), git_branch, git_ref);
+        }
+    }
+    check(names_agree, "dialog parity: branch and ref names, as check-ref-format");
+    for (const char* full :
+         {"refs/heads/main", "refs/heads/nope", "refs/tags/v1.9", "main", "HEAD"})
+        check(ref_exists(dir, full) ==
+                  run_git(dir, {"show-ref", "--verify", "--quiet", full}, git_output::stdout_only)
+                      .ok(),
+              (std::string("dialog parity: show-ref --verify ") + full).c_str());
+
+    // Short names (a branch and a tag both v1.2), full names, version order.
+    std::string ours, theirs = git_out(dir, {"for-each-ref", "--format=%(refname:short)"});
+    // (Held: a range-for over *temporary() dangles before C++23 on GCC 14.)
+    const auto all_refs = r->refs_under({});
+    for (const repo::listed_ref& l : all_refs.value_or(std::vector<repo::listed_ref>{}))
+        ours += (ours.empty() ? "" : "\n") + r->short_ref_name(l.full_name);
+    check(ours == theirs, "dialog parity: short names, as %(refname:short)");
+    if (ours != theirs) std::printf("libgit2:\n%s\ngit:\n%s\n", ours.c_str(), theirs.c_str());
+    for (const char* n : {"main", "HEAD", "v1.9", "side", "ünï/cödé"})
+        check(r->full_ref_name(n) == git_out(dir, {"rev-parse", "--symbolic-full-name", n}),
+              (std::string("dialog parity: rev-parse --symbolic-full-name ") + n).c_str());
+    check(r->full_ref_name(r->head_id()->hex()).empty(), "dialog parity: a hash is no ref");
+    {
+        std::vector<std::string> tags;
+        for (const repo::listed_ref& l :
+             r->refs_under({"refs/tags/"}).value_or(std::vector<repo::listed_ref>{}))
+            tags.push_back(l.full_name);
+        std::ranges::stable_sort(tags, version_less);
+        std::string sorted;
+        for (const std::string& t : tags) sorted += (sorted.empty() ? "" : "\n") + t;
+        check(sorted == git_out(dir, {"for-each-ref", "--sort=version:refname",
+                                      "--format=%(refname)", "refs/tags"}),
+              "dialog parity: tags in version order");
+        check(version_less("v1.9", "v1.10") && version_less("1.01", "1.1") &&
+                  version_less("a", "b") && !version_less("v2", "v2") && version_less("x9", "x10"),
+              "version order: numbers by value, fractions first");
+    }
+
+    // Ancestry, commit text, tags, stashes.
+    const oid head = *r->head_id(), side = *r->resolve("side");
+    check(r->merge_base(head, side)->hex() == git_out(dir, {"merge-base", "main", "side"}),
+          "dialog parity: merge-base");
+    check(r->short_id(head) == git_out(dir, {"log", "-1", "--format=%h"}), "dialog parity: %h");
+    const oid first = *r->resolve("HEAD~1");
+    check(trimmed(commit_body(r->lookup(first)->message)) ==
+                  git_out(dir, {"log", "-1", "--format=%b", "HEAD~1"}) &&
+              r->lookup(first)->summary == git_out(dir, {"log", "-1", "--format=%s", "HEAD~1"}),
+          "dialog parity: a commit's subject and body, as %s and %b");
+    check(r->tag_message("v1.9") &&
+              trimmed(*r->tag_message("v1.9")) ==
+                  git_out(dir, {"tag", "-l", "--format=%(contents)", "v1.9"}) &&
+              !r->tag_message("v1.10"),
+          "dialog parity: an annotated tag's message, none for a lightweight one");
+    check(trimmed(r->branches_containing(first)) ==
+              git_out(dir, {"branch", "-a", "--contains", first.hex()}),
+          "dialog parity: branches containing a commit, as git branch -a --contains");
+    sh("printf 'changed\\n' > '" + dir + "/b.txt' && " + g +
+       "stash push -q -m 'first stash' && printf 'again\\n' > '" + dir + "/b.txt' && " + g +
+       "stash push -q");
+    {
+        std::string listed;
+        for (const repo::stash_entry& s : r->stashes())
+            listed += (listed.empty() ? "" : "\n") + s.selector + '\t' + s.id.hex() + '\t' +
+                      s.subject + '\t' + (s.base ? s.base->hex() : "");
+        // %P's first parent: the commit it was made on.
+        std::string expected;
+        for (const std::string& line :
+             lines_of(git_out(dir, {"stash", "list", "--format=%gd%x09%H%x09%gs%x09%P"})))
+            expected += (expected.empty() ? "" : "\n") + line.substr(0, line.rfind('\t') + 41);
+        check(listed == expected && r->stashes().size() == 2, "dialog parity: the stash list");
+    }
+
+    // Browse References: every field, and the merged filters.
+    auto entries = [](const ref_list_result& l)
+    {
+        std::string out;
+        for (const ref_entry& e : l.refs)
+            out += e.full + '|' + e.hash + '|' + e.type + '|' + e.upstream + '|' + e.subject + '|' +
+                   e.author + '|' + std::to_string(e.author_date) + '|' + e.committer + '|' +
+                   std::to_string(e.commit_date) + '|' + e.description + '\n';
+        return out;
+    };
+    const std::string listed = entries(list_refs(dir));
+    std::string expected;
+    for (std::string line : lines_of(git_out(
+             dir,
+             {"for-each-ref",
+              "--format=%(refname)|%(objectname)|%(objecttype)||%(subject)|"
+              "%(if)%(authorname)%(then)%(authorname)|%(authordate:unix)|%(committername)|%("
+              "committerdate:unix)"
+              "%(else)%(taggername)|%(taggerdate:unix)|%(taggername)|%(taggerdate:unix)%(end)|"})))
+    {
+        if (line.starts_with("refs/heads/side|")) line += "Side work second line";
+        expected += line + '\n';
+    }
+    check(listed == expected, "dialog parity: Browse References' refs, as for-each-ref");
+    if (listed != expected) std::printf("libgit2:\n%sgit:\n%s", listed.c_str(), expected.c_str());
+    auto names = [](const ref_list_result& l)
+    {
+        std::string out;
+        for (const ref_entry& e : l.refs) out += e.full + '\n';
+        return out;
+    };
+    check(
+        names(list_refs(dir, merged_filter::merged)) ==
+                git_out(dir, {"for-each-ref", "--merged", "HEAD", "--format=%(refname)"}) + '\n' &&
+            names(list_refs(dir, merged_filter::unmerged)) ==
+                git_out(dir, {"for-each-ref", "--no-merged", "HEAD", "--format=%(refname)"}) + '\n',
+        "dialog parity: merged and unmerged refs, as --merged/--no-merged HEAD");
+
+    // A tree's files, the index, a worktree's exclude file.
+    {
+        std::string files;
+        for (const std::string& f : tree_files(*r, first).value_or(std::vector<std::string>{}))
+            files += (files.empty() ? "" : "\n") + f;
+        check(files == git_out(dir, {"ls-tree", "-r", "--name-only", "--full-tree", first.hex()}),
+              "dialog parity: a tree's files, as ls-tree -r");
+        check(any_tracked(dir, {"src"}) == true && any_tracked(dir, {"src/deep/a.txt"}) == true &&
+                  any_tracked(dir, {"sr"}) == false &&
+                  any_tracked(dir, {"nope", "b.txt"}) == true &&
+                  git_out(dir, {"ls-files", "--", "sr"}).empty(),
+              "dialog parity: tracked paths, as ls-files");
+        sh(g + "worktree add -q '" + wt + "' side 2>/dev/null");
+        auto w = repo::open(wt);
+        check(w && fs::equivalent(fs::path(w->common_dir()) / "info",
+                                  fs::path(git_out(wt, {"rev-parse", "--path-format=absolute",
+                                                        "--git-path", "info/exclude"}))
+                                      .parent_path()),
+              "dialog parity: a worktree's info/exclude is the main one's");
+    }
+
+    // includeIf hasconfig: libgit2 skips it, so git is asked.
+    const std::string extra = root + "/parity-hasconfig.cfg";
+    sh("printf '[user]\\n\\temail = hasconfig@example.com\\n' > '" + extra + "' && " + g +
+       "remote add origin https://example.com/x.git && " + g +
+       "config 'includeIf.hasconfig:remote.*.url:https://example.com/**.path' '" + extra + "'");
+    std::string all;
+    for (const std::string& e : config_values(dir, "user.email"))
+        all += (all.empty() ? "" : "\n") + e;
+    check(all == git_out(dir, {"config", "--get-all", "user.email"}) &&
+              all.find("hasconfig@") != std::string::npos,
+          "dialog parity: an includeIf hasconfig config, through git");
 }
 
 }  // namespace
+
+// Draws nothing; text is 7 px a character, for label layout.
+class null_painter : public rap::painter
+{
+public:
+    rap::color resolve(const rap::paint&) const override { return {}; }
+    void line(rap::point_f, rap::point_f, const rap::paint&, float, rap::line_cap) override {}
+    void curve(rap::point_f, rap::point_f, rap::point_f, rap::point_f, const rap::paint&,
+               float) override {}
+    void circle(rap::point_f, float, std::optional<rap::paint>, std::optional<rap::paint>) override {}
+    void rect(rap::rect_f, float, std::optional<rap::paint>, std::optional<rap::paint>) override {}
+    void polygon(const std::vector<rap::point_f>&, std::optional<rap::paint>,
+                 std::optional<rap::paint>, float) override {}
+    void arc(rap::point_f, float, float, float, const rap::paint&, float, rap::line_cap) override {}
+    void image(const rap::image&, rap::rect_f, rap::rect_f, rap::filter, float) override {}
+    float device_scale() const override { return 1; }
+    void push_clip(rap::rect_f) override {}
+    void pop_clip() override {}
+    void text(rap::point_f, const std::string&, const rap::text_style&) override {}
+    rap::size_f measure(const std::string& s, const rap::text_style&) const override
+    {
+        return {7.0f * s.size(), 14};
+    }
+};
 
 int main(int argc, char** argv)
 {
@@ -521,6 +1553,70 @@ int main(int argc, char** argv)
         std::fprintf(stderr, "usage: %s <empty scratch dir>\n", argv[0]);
         return 2;
     }
+    // The settings the tests read and write: their own, never the user's.
+    tortilla::settings::get().use_file(rap::sys::path_from_utf8(argv[1]) / "tortilla-settings");
+
+    // Settings read on workers (the forge accounts, sync's choices) while
+    // the UI thread writes them: each read whole, never torn or half-made.
+    {
+        auto& st = tortilla::settings::get();
+        const std::string a(200, 'a'), b(300, 'b');
+        std::atomic<bool> stop{false};
+        std::atomic<int> torn{0};
+        std::vector<std::thread> readers;
+        for (int t = 0; t < 4; ++t)
+            readers.emplace_back(
+                [&]
+                {
+                    while (!stop)
+                    {
+                        const std::string v = st.value("test.race");
+                        if (!v.empty() && v != a && v != b) ++torn;
+                        for (const std::string& e : st.history("test.list"))
+                            if (e.empty()) ++torn;
+                        (void)tortilla::saved_accounts();
+                    }
+                });
+        for (int i = 0; i < 300; ++i)
+        {
+            st.set("test.race", i % 2 ? a : b);
+            st.set("test.key" + std::to_string(i % 20), std::to_string(i));
+            if (i % 3 == 0) st.remove("test.race");
+            st.add_to_history("test.list", std::to_string(i), 5);
+        }
+        stop = true;
+        for (std::thread& t : readers) t.join();
+        check(torn == 0 && st.history("test.list").size() == 5 &&
+                  st.history("test.list").front() == "299",
+              "settings: read on workers while written");
+        for (int i = 0; i < 20; ++i) st.remove("test.key" + std::to_string(i));
+        st.remove("test.race");
+        st.remove("test.list");
+    }
+
+    // Several branches started from github/master all track it: its label
+    // shows once, after the branch of its own name, not after each of them.
+    {
+        using tortilla::ref, tortilla::ref_kind;
+        auto local = [](std::string n, std::string up)
+        {
+            return ref{.name = n, .full_name = "refs/heads/" + n, .kind = ref_kind::local_branch,
+                       .upstream = std::move(up)};
+        };
+        const std::string up = "refs/remotes/github/master";
+        const std::vector<ref> refs{
+            local("bss", up),
+            ref{.name = "github/master", .full_name = up, .kind = ref_kind::remote_branch},
+            local("light", up), local("master", up), local("print", up)};
+        null_painter p;
+        std::vector<tortilla::label_box> boxes;
+        tortilla::paint_ref_labels(p, refs, 0, 20, {}, &boxes, {}, {});
+        std::vector<std::string> names;
+        for (const auto& b : boxes) names.push_back(b.ref.name);
+        check(names == std::vector<std::string>{"bss", "light", "master", "github/master", "print"},
+              "a shared upstream's label: once, after the branch of its name");
+    }
+
     // FIPS 180-4's examples, and a message over one block's padding room.
     check(tortilla::sha256_hex("") ==
               "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -546,9 +1642,78 @@ int main(int argc, char** argv)
         check(tortilla::revision_temp_path("origin/main", "a.txt") ==
                   root / "origin_main" / "a.txt",
               "revision temp path: a ref name is one folder");
-        check(tortilla::revision_temp_path(hash, "../x/./y") == root / "01234567" / "x" / "y",
-              "revision temp path: stays under the revision's folder");
-        check(tortilla::write_file(a, "one") && tortilla::write_file(b, "two"),
+        // A name that could land anywhere else is refused, not trimmed into
+        // another file's name.
+        check(tortilla::revision_temp_path(hash, "../x/./y").empty() &&
+                  tortilla::revision_temp_path(hash, "x/../../y").empty() &&
+                  tortilla::revision_temp_path(hash, "/etc/y").empty() &&
+                  tortilla::revision_temp_path(hash, "a//b").empty() &&
+                  tortilla::revision_temp_path(hash, "").empty(),
+              "revision temp path: none for a name outside the revision's folder");
+#ifdef _WIN32
+        // Legal in a git tree, a drive and a root here: once it replaced the
+        // whole temporary folder.
+        check(tortilla::revision_temp_path("deadbeef", "C:\\audit-escape.txt").empty() &&
+                  tortilla::revision_temp_path("deadbeef", "C:audit.txt").empty() &&
+                  tortilla::revision_temp_path("deadbeef", "a\\..\\..\\x.txt").empty() &&
+                  tortilla::revision_temp_path("deadbeef", "a.txt:stream").empty() &&
+                  tortilla::revision_temp_path("deadbeef", "sub/nul.txt").empty(),
+              "revision temp path: no drive, \\, stream or device name on Windows");
+#endif
+        // The rules themselves, either system's, wherever the tests run.
+        using tortilla::entry_path;
+        using tortilla::path_rules;
+        const auto win = path_rules::windows, posix = path_rules::posix;
+        check(!entry_path("C:\\audit-escape.txt", win) && !entry_path("C:x", win) &&
+                  !entry_path("\\\\server\\share\\x", win) && !entry_path("a\\b", win) &&
+                  !entry_path("a.txt:s", win) && !entry_path("CON", win) &&
+                  !entry_path("sub/Nul.txt", win) && !entry_path("com1.log", win) &&
+                  !entry_path("lpt9", win) && !entry_path("a./b", win) && !entry_path("b ", win) &&
+                  !entry_path("a*b", win) && !entry_path("a\x01", win),
+              "entry path: Windows' drives, \\, streams, devices, dropped dots and spaces refused");
+#ifndef _WIN32
+        check(entry_path("C:\\x.txt", posix) == fs::path("C:\\x.txt") &&
+                  entry_path("a:b/con", posix) == fs::path("a:b") / "con",
+              "entry path: elsewhere \\, : and device names are just characters");
+#endif
+        for (const auto rules : {win, posix})
+            check(!entry_path("", rules) && !entry_path("/x", rules) && !entry_path("..", rules) &&
+                      !entry_path("a/../b", rules) && !entry_path("./a", rules) &&
+                      !entry_path("a//b", rules) && !entry_path("a/.", rules) &&
+                      entry_path("a/b.txt", rules) == fs::path("a") / "b.txt" &&
+                      entry_path("a/b/", rules) == fs::path("a") / "b" &&
+                      entry_path("console.txt", rules) == fs::path("console.txt"),
+                  "entry path: roots, .., . and empty parts refused, a folder's / kept");
+
+        // Writing a revision's file follows no link already in the
+        // temporary tree: one planted there can't send it elsewhere.
+        {
+            const fs::path victim = fs::path(rap::sys::path_from_utf8(argv[1])) / "victim";
+            fs::create_directories(victim);
+            std::error_code lec;
+            fs::create_directories(root / "feedface", lec);
+            fs::create_directory_symlink(victim, root / "feedface" / "dir", lec);
+            fs::create_symlink(victim / "file.txt", root / "feedface" / "file.txt", lec);
+            if (!lec)
+            {
+                check(!tortilla::write_temp_file(root / "feedface" / "dir" / "f.txt", "x") &&
+                          !fs::exists(victim / "f.txt"),
+                      "temp file: not written through a linked folder");
+                check(tortilla::write_temp_file(root / "feedface" / "file.txt", "x") &&
+                          !fs::exists(victim / "file.txt") &&
+                          !fs::is_symlink(fs::symlink_status(root / "feedface" / "file.txt")),
+                      "temp file: a link where it goes is replaced, its target untouched");
+            }
+            else
+                std::printf("skip symbolic links: %s\n", lec.message().c_str());
+            check(!tortilla::write_temp_file(
+                      fs::path(rap::sys::path_from_utf8(argv[1])) / "out.txt", "x") &&
+                      !tortilla::write_temp_file(root / ".." / "tortilla-escape-test.txt", "x") &&
+                      !fs::exists(fs::path(rap::sys::path_from_utf8(argv[1])) / "out.txt"),
+                  "temp file: nowhere outside the temporary folder");
+            fs::remove_all(root / "feedface", lec);
+        }
+        check(tortilla::write_temp_file(a, "one") && tortilla::write_temp_file(b, "two"),
               "revision temp files written, folders made");
         auto read = [](const fs::path& p)
         {
@@ -562,6 +1727,23 @@ int main(int argc, char** argv)
         // Two names asked for at once are two files.
         check(tortilla::unique_temp_path("x", ".txt") != tortilla::unique_temp_path("x", ".txt"),
               "unique temp paths differ");
+
+        // A scratch folder of its own, made new, and gone with its owner
+        // (Review Patch's previews): whatever was written in it too.
+        {
+            fs::path kept;
+            {
+                tortilla::temp_dir one("scratch-test"), two("scratch-test");
+                kept = one.path();
+                check(!one.path().empty() && one.path() != two.path() &&
+                          fs::is_directory(one.path()) && fs::is_empty(one.path()) &&
+                          one.path().parent_path() == root,
+                      "temp dir: a new, empty folder of its own in the temporary folder");
+                fs::create_directories(one.path() / "sub");
+                tortilla::write_temp_file(one.path() / "sub" / "f.txt", "x");
+            }
+            check(!kept.empty() && !fs::exists(kept), "temp dir: removed with its owner");
+        }
 
         // A pathspec file holds the paths NUL-separated, git reads them back
         // (names with spaces and outside ASCII too), and it goes with the
@@ -622,6 +1804,62 @@ int main(int argc, char** argv)
         check(!tortilla::repo_relative(wt, std::string(argv[1])).has_value() &&
                   !tortilla::repo_relative(wt, wt + "/../elsewhere").has_value(),
               "repo relative: outside the working tree is none");
+
+        // A selected link is the link, wherever it points (or doesn't): its
+        // folders are resolved, never the entry itself. Skipped where the
+        // system won't make links (Windows without the privilege).
+        const std::string lt = std::string(argv[1]) + "/links";
+        sh("git init -q -b main '" + lt + "' && git -C '" + lt +
+           "' config core.autocrlf false && mkdir -p '" + lt + "/sub' && echo t > '" + lt +
+           "/target.txt' && echo x > '" + lt + "/sub/x.txt' && echo o > '" + argv[1] +
+           "/outside.txt'");
+        std::error_code lec;
+        const fs::path lp = rap::sys::path_from_utf8(lt);
+        fs::create_symlink("target.txt", lp / "link.txt", lec);
+        if (!lec)
+        {
+            fs::create_symlink(fs::path(rap::sys::path_from_utf8(argv[1])) / "outside.txt",
+                               lp / "ext.txt", lec);
+            fs::create_symlink("nowhere.txt", lp / "dangling.txt", lec);
+            fs::create_directory_symlink("sub", lp / "dirlink", lec);
+            fs::create_directory_symlink(".", lp / "self", lec);
+            fs::create_directory_symlink(lp, fs::path(rap::sys::path_from_utf8(argv[1])) / "alias",
+                                         lec);
+            const std::string alias = std::string(argv[1]) + "/alias";
+            check(!lec && tortilla::repo_relative(lt, lt + "/link.txt") == std::string("link.txt"),
+                  "repo relative: a link to a file is the link, not its target");
+            check(tortilla::repo_relative(lt, lt + "/ext.txt") == std::string("ext.txt") &&
+                      tortilla::repo_relative(lt, lt + "/dangling.txt") ==
+                          std::string("dangling.txt"),
+                  "repo relative: links outside and to nothing are the links");
+            check(tortilla::repo_relative(lt, lt + "/dirlink") == std::string("dirlink") &&
+                      tortilla::repo_relative(lt, lt + "/dirlink/") == std::string("dirlink") &&
+                      tortilla::repo_relative(lt, lt + "/self") == std::string("self"),
+                  "repo relative: a link to a folder is the link");
+            check(tortilla::repo_relative(lt, lt + "/dirlink/x.txt") == std::string("sub/x.txt"),
+                  "repo relative: through a linked folder, the file it reaches");
+            check(tortilla::repo_relative(lt, alias) == std::string() &&
+                      tortilla::repo_relative(lt, alias + "/sub/x.txt") ==
+                          std::string("sub/x.txt") &&
+                      tortilla::repo_relative(alias, lt + "/link.txt") == std::string("link.txt"),
+                  "repo relative: the working tree by another name");
+
+            // Remove's git half (git rm --cached, keep local) on the
+            // selected link: the link leaves the index, its target stays.
+            const std::string g = "git -C '" + lt + "' -c user.name=Ada -c user.email=ada@x ";
+            sh(g + "add target.txt link.txt sub && " + g + "commit -qm links");
+            const auto rel = tortilla::repo_relative(lt, lt + "/link.txt");
+            tortilla::run_git(
+                lt, tortilla::literal_paths({"rm", "-r", "-q", "--cached", "--ignore-unmatch", "--",
+                                             rel.value_or("link.txt")}));
+            check(tortilla::run_git(lt, {"ls-files"}, tortilla::git_output::stdout_only).output ==
+                          "sub/x.txt\ntarget.txt\n" &&
+                      read_bytes(lt + "/target.txt") == "t\n" &&
+                      fs::is_symlink(fs::symlink_status(lp / "link.txt")),
+                  "repo relative: Remove (keep local) stops tracking the link, not its target");
+        }
+        else
+            std::printf("skip symbolic links: %s\n", lec.message().c_str());
     }
 
     // trimmed() takes strings and views alike.
@@ -637,6 +1875,24 @@ int main(int argc, char** argv)
         std::string r = "%base %bname %base";
         tortilla::replace_all(r, "%base", "%base%base");
         check(r == "%base%base %bname %base%base", "replace_all doesn't rescan what it put in");
+    }
+
+    // A checkbox clicked (or Space) in Browse References or the Commit
+    // list: the selection takes the row's new state, from that row alone;
+    // outside the selection, the row alone changes.
+    {
+        const auto in = tortilla::box_clicked({1, 3, 4}, 3, false);
+        check(in.rows == std::vector<size_t>{1, 3, 4} && in.on,
+              "box in the selection: all of it, checked");
+        const auto mixed = tortilla::box_clicked({1, 3, 4}, 4, true);
+        check(mixed.rows == std::vector<size_t>{1, 3, 4} && !mixed.on,
+              "box in a mixed selection: the clicked row's state decides (cleared)");
+        const auto out = tortilla::box_clicked({1, 3}, 2, false);
+        check(out.rows == std::vector<size_t>{2} && out.on,
+              "box outside the selection: that row alone");
+        const auto none = tortilla::box_clicked({}, 0, true);
+        check(none.rows == std::vector<size_t>{0} && !none.on,
+              "box with nothing selected: that row");
     }
 
     // The log's and Browse References' search syntax.
@@ -666,6 +1922,16 @@ int main(int argc, char** argv)
         check(tortilla::history_with("a\tb\tc", "d", 3) == "d\ta\tb",
               "history: the oldest dropped");
         check(tortilla::history_with("", "x", 25) == "x", "history: the first entry");
+        // Appearance's stored values, both ways.
+        check(tortilla::appearance_from("") == rap::color_scheme::system &&
+                  tortilla::appearance_from("light") == rap::color_scheme::light &&
+                  tortilla::appearance_from("dark") == rap::color_scheme::dark &&
+                  tortilla::appearance_from("purple") == rap::color_scheme::system,
+              "appearance: stored values read");
+        check(tortilla::appearance_value(rap::color_scheme::dark) == "dark" &&
+                  tortilla::appearance_value(rap::color_scheme::light) == "light" &&
+                  tortilla::appearance_value(rap::color_scheme::system).empty(),
+              "appearance: values stored");
     }
     check(tortilla::sha256_hex(std::string(1000, 'a')) ==
               "41edece42d63e8d9bf515a9ba6932e1c20cbc9f5a5d134645adb5db1b9737ea3",
@@ -734,10 +2000,90 @@ int main(int argc, char** argv)
                   login("https://ada:tok@github.com:443/x") == "ada",
               "forge: https, scp-style and ssh URLs find the account");
         check(login("https://git.example.org:3000/x/y") == "bob" &&
-                  login("ssh://git@git.example.org:2222/x/y") == "bob",
-              "forge: a host with a port, by its name");
+                  login("https://GIT.example.org:3000/x/y") == "bob",
+              "forge: a host with a port, by its name and port");
+        // An ssh remote's port is ssh's: its forge is the web's default port,
+        // so not the account at :3000.
+        check(login("ssh://git@git.example.org:2222/x/y") == "-" &&
+                  tortilla::repo_of_url("ssh://git@git.example.org:2222/x/y")->host ==
+                      "git.example.org",
+              "forge: an ssh port isn't the web's");
         check(login("https://gitlab.com/x/y") == "-" && login("/srv/repo.git") == "-",
               "forge: no account for another host or a path");
+        // A sign-in is for its web origin: forge.example (port 443) isn't
+        // forge.example:8443, a different server; its token never goes there.
+        {
+            const std::vector<forge_account> on_443{
+                {.kind = forge_kind::gitea, .host = "forge.example", .login = "ada"}};
+            const std::vector<forge_account> said_443{
+                {.kind = forge_kind::gitea, .host = "Forge.Example:443", .login = "ada"}};
+            check(!tortilla::account_for_url("https://forge.example:8443/o/r.git", on_443) &&
+                      !tortilla::account_for_url("https://forge.example:8443/o/r.git", said_443),
+                  "forge: an account on :443 isn't one on :8443");
+            check(tortilla::account_for_url("https://forge.example:443/o/r.git", on_443) &&
+                      tortilla::account_for_url("https://forge.example/o/r.git", said_443) &&
+                      tortilla::account_for_url("git@forge.example:o/r.git", said_443) &&
+                      tortilla::web_origin("forge.example") ==
+                          tortilla::web_origin("FORGE.example:443") &&
+                      tortilla::web_origin("forge.example") !=
+                          tortilla::web_origin("forge.example:8443"),
+                  "forge: the default port and :443 are one origin");
+            // Origins are rapport's (rap::sys::url_origin): a host that
+            // isn't one has none, and matches no account, not even another
+            // like it.
+            {
+                const std::vector<forge_account> odd{
+                    {.kind = forge_kind::gitea, .host = "bad host", .login = "ada"},
+                    {.kind = forge_kind::gitea, .host = "a..b", .login = "ada"}};
+                check(tortilla::web_origin("bad host").empty() &&
+                          tortilla::web_origin("a..b").empty() &&
+                          tortilla::web_origin("forge.example.") ==
+                              tortilla::web_origin("forge.example") &&
+                          tortilla::web_origin("[::1]:8443") == "https://[::1]:8443" &&
+                          !tortilla::account_for_url("https://a..b/o/r.git", odd) &&
+                          !tortilla::account_for_url("git@a..b:o/r.git", odd),
+                      "forge: a host that isn't one has no origin and no account");
+            }
+            // The request gate, with the network faked: the sentinel token,
+            // given for forge.example, goes there and nowhere else.
+            namespace fd = tortilla::forge_detail;
+            std::vector<std::pair<std::string, bool>> asked;  // url, with the token
+            fd::set_transport(
+                [&](std::string_view, const std::string& url, std::string_view,
+                    const rap::sys::http_options& o)
+                {
+                    bool token = false;
+                    for (const auto& [name, value] : o.headers)
+                        token |= value.find("AUDIT-SENTINEL") != std::string::npos;
+                    asked.emplace_back(url, token);
+                    return rap::sys::http_response{.status = 200, .body = "[]"};
+                });
+            fd::bind_token("AUDIT-SENTINEL", "forge.example");
+            const auto there = tortilla::repo_of_url("https://forge.example:8443/o/r.git");
+            const auto reply = tortilla::open_pull_requests(forge_kind::gitea, *there,
+                                                            "AUDIT-SENTINEL", true, true);
+            check(asked.empty() && !reply, "forge: a token isn't sent to another port");
+            asked.clear();
+            const auto home = tortilla::repo_of_url("https://forge.example:443/o/r.git");
+            tortilla::open_pull_requests(forge_kind::gitea, *home, "AUDIT-SENTINEL", false, false);
+            check(!asked.empty() &&
+                      asked.front().first.starts_with("https://forge.example:443/api/v1/") &&
+                      std::ranges::all_of(asked, [](const auto& a) { return a.second; }),
+                  "forge: a token is sent to its own origin");
+            asked.clear();
+            tortilla::open_pull_requests(forge_kind::gitea, *home, "UNBOUND-TOKEN", false, false);
+            check(asked.empty(), "forge: a token given for nowhere is sent nowhere");
+            asked.clear();
+            check(fd::token_allowed("AUDIT-SENTINEL", "https://forge.example/api/v1/x") &&
+                      !fd::token_allowed("AUDIT-SENTINEL", "http://forge.example/api/v1/x") &&
+                      !fd::token_allowed("AUDIT-SENTINEL", "https://forge.example.evil/x"),
+                  "forge: the gate compares scheme, host and port");
+            fd::bind_token("GH-SENTINEL", "github.com");
+            check(fd::token_allowed("GH-SENTINEL", "https://api.github.com/graphql") &&
+                      !fd::token_allowed("GH-SENTINEL", "https://uploads.github.com/x"),
+                  "forge: github.com's token goes to its API host");
+            fd::set_transport({});
+        }
         check(tortilla::api_root(forge_kind::github, "github.com") == "https://api.github.com" &&
                   tortilla::api_root(forge_kind::github, "ghe.corp") == "https://ghe.corp/api/v3" &&
                   tortilla::api_root(forge_kind::gitlab, "gitlab.com") ==
@@ -815,6 +2161,20 @@ int main(int argc, char** argv)
             check(heads.size() == 2 && heads.at("refs/remotes/origin/fix").pr.number == 7 &&
                       heads.at("refs/remotes/upstream/feat/x").pr.number == 8,
                   "forge: pull requests' head branches, remote ones only");
+        }
+        // A commit's author is a PR's, as far as can be told without the forge.
+        {
+            using tortilla::author_is;
+            const tortilla::forge_account me{.login = "TurkeyMan", .name = "Manu Evans"};
+            check(author_is("TurkeyMan", "Manu Evans", "turkeyman@gmail.com", {}) &&
+                      author_is("ada", "Ada L", "12345+Ada@users.noreply.github.com", {}) &&
+                      author_is("ada", "ada", "a@example.org", {}) &&
+                      author_is("TurkeyMan", " manu evans ", "manu@work.example", me),
+                  "forge: a commit's author is the PR's author");
+            check(!author_is("TurkeyMan", "Ada L", "ada@example.org", me) &&
+                      !author_is("ada", "Manu Evans", "manu@work.example", me) &&
+                      !author_is("", "", "", {}) && !author_is("ada", "", "ada", {}),
+                  "forge: a commit's author isn't the PR's author");
         }
         // GitHub's noreply addresses name the account: its picture without the API.
         {
@@ -1409,6 +2769,37 @@ int main(int argc, char** argv)
         std::ifstream in(file, std::ios::binary);
         const std::string got((std::istreambuf_iterator<char>(in)), {});
         check(got == "keep\n*.log\nnew/\n", "existing lines kept once, a newline added before new ones");
+
+        // The file lists' "Add to ignore list" menu goes through the same
+        // planner and writer: names literal, after a last line without its
+        // newline, and only what it names ignored.
+        const std::string ig = std::string(argv[1]) + "/ignore-menu";
+        sh("git init -q -b main '" + ig + "' && git -C '" + ig +
+           "' config core.autocrlf false && mkdir -p '" + ig + "/sub' '" + ig + "/out'");
+        for (const char* n : {"a.txt", "b.txt", "[ab].txt", "x.log", "sub/notes.txt", "out/o.bin"})
+            sh("echo x > '" + ig + "/" + n + "'");
+        sh("printf '*.log' > '" + ig + "/.gitignore'");  // no final newline
+        const auto menu_items = tortilla::ignore_items({"[ab].txt", "sub/notes.txt", "out/"});
+        check(menu_items.size() == 3 && menu_items[0].dir.empty() &&
+                  menu_items[0].name == "[ab].txt" && !menu_items[0].folder &&
+                  menu_items[1].dir == "sub" && menu_items[1].name == "notes.txt" &&
+                  menu_items[2].name == "out" && menu_items[2].folder,
+              "ignore menu: repository paths as items, a folder's by its /");
+        const auto by_name = tortilla::ignore_menu_lines(menu_items, false);
+        const auto by_ext = tortilla::ignore_menu_lines(menu_items, true);
+        check(by_name == std::vector<std::string>{"/\\[ab].txt", "/sub/notes.txt", "/out/"} &&
+                  by_ext == std::vector<std::string>{"*.txt"},
+              "ignore menu: by name anchored and escaped, by extension everywhere");
+        check(tortilla::append_ignore_lines(rap::sys::path_from_utf8(ig) / ".gitignore", by_name)
+                  .empty(),
+              "ignore menu: written");
+        auto ignored = [&](const std::string& p)
+        { return tortilla::run_git(ig, {"check-ignore", "-q", "--no-index", "--", p}).ok(); };
+        check(ignored("[ab].txt") && !ignored("a.txt") && !ignored("b.txt"),
+              "ignore menu: [ab].txt ignores that file, not a.txt and b.txt");
+        check(ignored("x.log") && ignored("sub/notes.txt") && ignored("out/o.bin") &&
+                  read_bytes(ig + "/.gitignore") == "*.log\n/\\[ab].txt\n/sub/notes.txt\n/out/\n",
+              "ignore menu: the last line kept whole, the new ones after it");
     }
 
     std::string repo = std::string(argv[1]) + "/repo";
@@ -1702,6 +3093,21 @@ int main(int argc, char** argv)
     check(!log.set_filter({.text = "(", .regex = true}).empty(), "invalid regex reported");
     log.set_filter({});
     check(log.commit_rows() == 5, "cleared");
+    // A selection kept across filtering: the rows still shown, then all again.
+    {
+        const std::vector<tortilla::oid> picked{log.commit(1)->id, log.commit(3)->id};
+        const std::string kept = log.commit(1)->summary;
+        log.set_filter({.text = kept, .fields = text});
+        const auto shown = log.rows_of(picked, true);
+        const bool second = log.row_of(picked[1]).has_value();
+        check(log.commit_rows() < 5 && shown.size() == (second ? 3u : 2u) && shown[0] == 0 &&
+                  std::ranges::contains(shown, log.row_of(picked[0]).value_or(0)) &&
+                  std::ranges::is_sorted(shown),
+              "rows_of: the selection the filter still shows, and the working tree row");
+        log.set_filter({});
+        const auto all = log.rows_of(picked);
+        check(all.size() == 2 && all[0] == 1 && all[1] == 3, "rows_of: all of it once cleared");
+    }
 
     // Commit order is git's --topo-order, for one branch and for --all.
     {
@@ -1814,6 +3220,50 @@ int main(int argc, char** argv)
         check(std::ranges::none_of(merged.refs, [](auto& e) { return e.full == "refs/heads/feature/x"; }) &&
                   std::ranges::any_of(merged.refs, [](auto& e) { return e.full == "refs/heads/main"; }),
               "list_refs: merged into HEAD");
+        // Checking branches (Show > Pick...): folders' boxes from their
+        // branches, nested folders and the remotes' too; tags aren't counted.
+        {
+            using tortilla::folder_check;
+            std::vector<tortilla::ref_entry> refs;
+            for (const char* f :
+                 {"refs/heads/main", "refs/heads/feature/a", "refs/heads/feature/b",
+                  "refs/heads/feature/deep/c", "refs/remotes/origin/main",
+                  "refs/remotes/origin/dev", "refs/remotes/fork/main", "refs/tags/v1"})
+                refs.push_back({.full = f});
+            tortilla::checked_refs checked{"refs/heads/feature/a", "refs/remotes/origin/main",
+                                           "refs/remotes/origin/dev", "refs/heads/gone"};
+            auto states = tortilla::folder_checks(refs, checked);
+            check(states["refs/heads/feature"] == folder_check::mixed &&
+                      states["refs/heads/feature/deep"] == folder_check::unchecked &&
+                      states["refs/remotes/origin"] == folder_check::checked &&
+                      states["refs/remotes/fork"] == folder_check::unchecked &&
+                      states["refs/remotes"] == folder_check::mixed &&
+                      states["refs"] == folder_check::mixed,
+                  "folder_checks: checked when all are, mixed when some, nested and per remote");
+            check(states["refs/tags"] == folder_check::unchecked &&
+                      states.size() == tortilla::ref_folders(refs).size(),
+                  "folder_checks: every folder, tags never checked");
+            tortilla::toggle_folder(refs, checked, "refs/heads/feature");
+            states = tortilla::folder_checks(refs, checked);
+            check(checked.contains("refs/heads/feature/b") &&
+                      checked.contains("refs/heads/feature/deep/c") &&
+                      states["refs/heads/feature"] == folder_check::checked &&
+                      states["refs/heads"] == folder_check::mixed,
+                  "toggle_folder: a mixed folder checks all its branches, nested ones too");
+            tortilla::toggle_folder(refs, checked, "refs/heads/feature");
+            check(!checked.contains("refs/heads/feature/a") &&
+                      !checked.contains("refs/heads/feature/deep/c") &&
+                      checked.contains("refs/heads/gone"),
+                  "toggle_folder: a checked folder unchecks them all, and only them");
+            tortilla::toggle_folder(refs, checked, "refs/remotes/fork");
+            check(tortilla::checked_branches(refs, checked) ==
+                      std::vector<std::string>{"refs/remotes/origin/main",
+                                               "refs/remotes/origin/dev", "refs/remotes/fork/main"},
+                  "checked_branches: those still there, in the refs' order");
+            tortilla::toggle_folder(refs, checked, "refs/heads/feat");
+            check(!checked.contains("refs/heads/feature/a"),
+                  "toggle_folder: a folder is a whole segment");
+        }
         sh(git + "branch -D -q feature/x gone-up");
         sh(git + "tag -d rel1 >/dev/null");
         sh(git + "config --unset branch.main.description");
@@ -1904,6 +3354,26 @@ int main(int argc, char** argv)
         if (!ran) std::printf("     git exited %d:\n%s\n", r.exit_code, r.output.c_str());
     }
 
+    // Comparing images: the detected tools that compare images too, with
+    // their own command lines, in the order found.
+    {
+        const std::vector<tortilla::detected_tool> found{
+            {"Meld", "meld %base %mine", true},
+            {"Beyond Compare", "bcomp %base %mine -title1=%bname -title2=%yname", true},
+            {"KDiff3", "kdiff3 %base %mine", true},
+            {"P4Merge", "p4merge %base %mine", false},
+            {"WinMerge", "WinMergeU /e /u %base %mine", true},
+        };
+        const auto images = tortilla::image_tools(found);
+        check(images.size() == 3 && images[0].name == "Beyond Compare" &&
+                  images[0].command == found[1].command && images[1].name == "P4Merge" &&
+                  images[1].command == "p4merge %base %mine" && images[2].name == "WinMerge" &&
+                  !images[0].folders,
+              "image tools: P4Merge, Beyond Compare and WinMerge from the diff tools found");
+        check(tortilla::image_tools({{"Meld", "meld %base %mine", true}}).empty(),
+              "image tools: none without an image-capable tool");
+    }
+
     // core.editor as words, for View revision in alternative editor.
     {
         using words = std::vector<std::string>;
@@ -1945,6 +3415,31 @@ int main(int argc, char** argv)
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     check(code != 0, "GitProcess reports failure");
+    // git that can't start: its error posted, and, like any other
+    // callback, not run once the handle is gone.
+    {
+        const std::string path = rap::sys::env("PATH").value_or("");
+        const std::string nowhere = std::string(argv[1]) + "/no-git-here";
+        set_env("PATH", nowhere);
+        std::string said;
+        code = -2;
+        auto kept = tortilla::git_process::start(
+            **ui, repo, {"status"}, [&](const std::string& s) { said += s; },
+            [&](int c) { code = c; });
+        bool dropped_ran = false;
+        tortilla::git_process::start(
+            **ui, repo, {"status"}, [&](const std::string&) { dropped_ran = true; },
+            [&](int) { dropped_ran = true; });  // the handle dropped at once
+        set_env("PATH", path);
+        for (int i = 0; i < 200 && code == -2; ++i)
+        {
+            (*ui)->run();
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        for (int i = 0; i < 5; ++i) (*ui)->run();
+        check(code == -1 && !said.empty(), "GitProcess: a git that can't start says so");
+        check(!dropped_ran, "GitProcess: nothing runs for a dropped handle that couldn't start");
+    }
     check(tortilla::command_line({"commit", "-m", "two words"}) == "git commit -m \"two words\"",
           "commandLine quoting");
 
@@ -2587,12 +4082,20 @@ int main(int argc, char** argv)
         // Review/apply single patch: its files, whether each applies, and
         // applying some of them.
         using namespace std::string_literals;
-        check(tortilla::numstat_paths("1\t0\ta.txt\0"s
-                                      "2\t1\t\0old.txt\0new.txt\0"s
-                                      "-\t-\tbin\0"s) ==
-                      std::vector<std::string>{"a.txt", "new.txt", "bin"} &&
-                  tortilla::numstat_paths("").empty(),
-              "single patch: a patch's files, a rename's new name");
+        auto paths_of = [](const std::vector<tortilla::patch_entry>& entries)
+        {
+            std::vector<std::string> out;
+            for (const auto& e : entries) out.push_back(e.path);
+            return out;
+        };
+        const auto listed = tortilla::patch_entries("1\t0\ta.txt\0"s
+                                                    "2\t1\t\0old.txt\0new.txt\0"s
+                                                    "-\t-\tbin\0"s,
+                                                    "");
+        check(paths_of(listed) == std::vector<std::string>{"a.txt", "new.txt", "bin"} &&
+                  listed[1].old_path == "old.txt" && listed[2].binary && !listed[0].binary &&
+                  tortilla::patch_entries("", "").empty(),
+              "single patch: a patch's files, a rename's old and new names");
         check(tortilla::apply_args("p.diff", {"a", "b"}, true) ==
                   std::vector<std::string>{"apply", "--check", "--include=a", "--include=b", "--",
                                            "p.diff"},
@@ -2604,10 +4107,11 @@ int main(int argc, char** argv)
            "/y.txt' && echo z > '" + one + "/z.txt' && " + in(one) + "add . && " + in(one) +
            "diff --cached > '" + base + "/one.diff' && " + in(one) + "reset -q --hard");
         const std::string diff = base + "/one.diff";
-        const auto touched =
-            tortilla::numstat_paths(tortilla::run_git(one, {"apply", "-z", "--numstat", "--", diff},
+        const auto touched = paths_of(
+            tortilla::patch_entries(tortilla::run_git(one, {"apply", "-z", "--numstat", "--", diff},
                                                       tortilla::git_output::stdout_only)
-                                        .output);
+                                        .output,
+                                    read_bytes(diff)));
         check(touched == std::vector<std::string>{"x.txt", "y.txt", "z.txt"} &&
                   tortilla::run_git(one, tortilla::apply_args(diff, {"x.txt"}, true)).ok(),
               "single patch: the files of a diff, which apply");
@@ -2617,6 +4121,106 @@ int main(int argc, char** argv)
                 tortilla::run_git(one, {"status", "--porcelain"}, tortilla::git_output::stdout_only)
                         .output == " M x.txt\n?? z.txt\n",
             "single patch: the files chosen applied, the rest left");
+
+        // git apply's --include takes a pattern: a chosen name with a
+        // wildcard in it is that one file, never the files it would match.
+        // The check, the preview and Apply selected share the arguments.
+        const std::string wild = base + "/wild";
+        sh("git init -q -b main '" + wild + "' && " + in(wild) + "config core.autocrlf false");
+        for (const char* n : {"a.txt", "b.txt", "[ab].txt"})
+            sh("echo old > '" + wild + "/" + n + "'");
+        sh(in(wild) + "add . && " + in(wild) + "commit -qm base");
+        for (const char* n : {"a.txt", "b.txt", "[ab].txt"})
+            sh("echo new > '" + wild + "/" + n + "'");
+        sh(in(wild) + "diff > '" + base + "/wild.diff' && " + in(wild) + "reset -q --hard");
+        check(tortilla::apply_args("p.diff", {"[ab]*?.txt", "a\\b"}) ==
+                  std::vector<std::string>{"apply", "--include=\\[ab]\\*\\?.txt",
+                                           "--include=a\\\\b", "--", "p.diff"},
+              "single patch: a chosen name's wildcards escaped");
+        const tortilla::git_result wild_applied =
+            tortilla::run_git(wild, tortilla::apply_args(base + "/wild.diff", {"[ab].txt"}));
+        check(wild_applied.ok() && read_bytes(wild + "/[ab].txt") == "new\n" &&
+                  read_bytes(wild + "/a.txt") == "old\n" && read_bytes(wild + "/b.txt") == "old\n",
+              "single patch: Apply selected changes [ab].txt only, a.txt and b.txt untouched");
+        sh(in(wild) + "checkout -q -- .");
+        sh("echo other > '" + wild + "/a.txt'");  // a.txt's part no longer applies
+        check(tortilla::run_git(wild, tortilla::apply_args(base + "/wild.diff", {"[ab].txt"}, true))
+                      .ok() &&
+                  read_bytes(wild + "/a.txt") == "other\n" &&
+                  read_bytes(wild + "/[ab].txt") == "old\n",
+              "single patch: [ab].txt's check isn't a.txt's, and checking writes nothing");
+
+        // Review's preview of each kind of change: a rename starts from its
+        // old file, an addition from nothing, a deletion ends in nothing,
+        // a binary file patched; the working tree untouched throughout.
+        const std::string kinds = base + "/kinds";
+        sh("git init -q -b main '" + kinds + "' && " + in(kinds) + "config core.autocrlf false");
+        sh("printf 'one\\ntwo\\nthree\\nfour\\n' > '" + kinds + "/old.txt' && echo gone > '" +
+           kinds + "/del.txt' && printf '\\000\\001\\002' > '" + kinds + "/bin.dat' && " +
+           in(kinds) + "add . && " + in(kinds) + "commit -qm base");
+        sh(in(kinds) + "mv old.txt new.txt && printf 'one\\ntwo\\nthree\\nFOUR\\n' > '" + kinds +
+           "/new.txt' && " + in(kinds) + "rm -q del.txt && echo added > '" + kinds +
+           "/add.txt' && printf '\\000\\003\\002' > '" + kinds + "/bin.dat' && " + in(kinds) +
+           "add -A && " + in(kinds) + "diff --cached -M --binary > '" + base + "/kinds.diff' && " +
+           in(kinds) + "reset -q --hard");
+        const std::string kinds_diff = base + "/kinds.diff";
+        const auto entries = tortilla::patch_entries(
+            tortilla::run_git(kinds, {"apply", "-z", "--numstat", "--", kinds_diff},
+                              tortilla::git_output::stdout_only)
+                .output,
+            read_bytes(kinds_diff));
+        using change = tortilla::patch_entry::change;
+        auto entry = [&](const std::string& path) -> const tortilla::patch_entry*
+        {
+            for (const auto& e : entries)
+                if (e.path == path) return &e;
+            return nullptr;
+        };
+        const auto *renamed = entry("new.txt"), *added = entry("add.txt"),
+                   *deleted = entry("del.txt"), *binary = entry("bin.dat");
+        check(entries.size() == 4 && renamed && renamed->old_path == "old.txt" &&
+                  renamed->kind == change::renamed && added && added->kind == change::added &&
+                  deleted && deleted->kind == change::deleted && binary && binary->binary &&
+                  binary->kind == change::modified,
+              "single patch: entries keep a rename's old name and each change");
+        const std::string tree_before = read_bytes(kinds + "/old.txt") + "|" +
+                                        read_bytes(kinds + "/del.txt") + "|" +
+                                        read_bytes(kinds + "/bin.dat");
+        auto preview = [&](const tortilla::patch_entry* e)
+        {
+            const fs::path folder = tortilla::unique_temp_path("review-test", "");
+            fs::create_directories(folder);
+            auto p = tortilla::preview_patch_entry(kinds, kinds_diff, *e, folder);
+            return std::pair{p, folder};
+        };
+        if (renamed && added && deleted && binary)
+        {
+            const auto [r, rf] = preview(renamed);
+            check(r.applied.ok() && fs::path(r.base) == fs::path(kinds) / "old.txt" &&
+                      read_bytes(r.mine) == "one\ntwo\nthree\nFOUR\n",
+                  "single patch: a rename previewed, its old file against its new");
+            const auto [a, af] = preview(added);
+            check(a.applied.ok() && a.base == tortilla::empty_file() &&
+                      read_bytes(a.mine) == "added\n",
+                  "single patch: an added file previewed against nothing");
+            const auto [d, df] = preview(deleted);
+            check(d.applied.ok() && read_bytes(d.base) == "gone\n" &&
+                      d.mine == tortilla::empty_file(),
+                  "single patch: a deleted file previewed as nothing");
+            const auto [b, bf] = preview(binary);
+            check(b.applied.ok() && read_bytes(b.mine) == std::string("\0\3\2", 3),
+                  "single patch: a binary file previewed");
+            check(read_bytes(kinds + "/old.txt") + "|" + read_bytes(kinds + "/del.txt") + "|" +
+                              read_bytes(kinds + "/bin.dat") ==
+                          tree_before &&
+                      !fs::exists(kinds + "/new.txt") && !fs::exists(kinds + "/add.txt") &&
+                      tortilla::run_git(kinds, {"status", "--porcelain"},
+                                        tortilla::git_output::stdout_only)
+                          .output.empty(),
+                  "single patch: previews leave the working tree as it was");
+            std::error_code ec;
+            for (const fs::path& f : {rf, af, df, bf}) fs::remove_all(f, ec);
+        }
     }
 
     // Submodules: Add, Update and Sync's arguments, and the list Update
@@ -3335,6 +4939,7 @@ int main(int argc, char** argv)
         sh(c + "branch -q --track feature origin/feature && " + c +
            "branch -q --track stale origin/other && " + c +
            "branch -q --track mine origin/main && " + c +
+           "branch -q --track topic origin/main && " + c +
            "branch -q --track wt origin/feature2 && " + c + "worktree add -q '" + root + "/wt' wt");
         sh(c + "checkout -q mine && " + c + "commit -q --allow-empty -m mine && " + c +
            "checkout -q main");
@@ -3410,7 +5015,8 @@ int main(int argc, char** argv)
         for (const fast_forward& f : targets) names.push_back(f.branch);
         std::ranges::sort(names);
         check(names == std::vector<std::string>{"feature", "stale"},
-              "sync: behind branches move; diverged, current and other worktrees' stay");
+              "sync: behind branches move, under another name too; diverged, current, other "
+              "worktrees' and a feature branch tracking the remote's main stay");
         check(fast_forward_targets(clone, "origin").size() == 2 &&
                   fast_forward_targets(clone, "elsewhere").empty(),
               "sync: a remote's fetch moves only branches tracking it");
@@ -3423,6 +5029,7 @@ int main(int argc, char** argv)
         for (const auto& cmd : fast_forward_commands(targets)) run_git(clone, cmd);
         check(resolve(clone, "feature") == resolve(clone, "origin/feature") &&
                   resolve(clone, "stale") == resolve(clone, "origin/other") &&
+                  resolve(clone, "topic") != remote_main &&
                   resolve(clone, "wt") != resolve(clone, "origin/feature2") &&
                   resolve(clone, "mine") != remote_main,
               "sync: fast-forwarded");
@@ -3632,6 +5239,10 @@ int main(int argc, char** argv)
         check(!called, "refresh: a model gone before its labels came isn't called back");
     }
     history_edit_tests(argv[1]);
+    diff_sides_tests(**ui, argv[1]);
+    ref_journal_tests(argv[1]);
+    libgit2_parity_tests(argv[1]);
+    libgit2_dialog_parity_tests(argv[1]);
 
     std::printf("%s\n", failures ? "FAILED" : "all passed");
     return failures ? 1 : 0;

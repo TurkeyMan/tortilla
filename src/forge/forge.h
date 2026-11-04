@@ -66,8 +66,15 @@ std::vector<forge_account> accounts();
 // Whether Tortilla is told not to use gh's sign-in to that account; signing
 // in through gh again lifts it.
 void set_gh_account_off(const forge_account&, bool off);
-// The account for a remote's URL (https or ssh, scp-style too), by host;
-// the first, if several share it.
+// A web host, "host" or "host:port", as its origin: https://host:port, the
+// host in lower case and the port spelt out (443 when none is given), so
+// forge.example and forge.example:443 are one, forge.example:8443 another
+// (rap::sys::url_origin's rules); "" for what isn't a host, matching none.
+std::string web_origin(std::string_view host);
+// The account for a remote's URL (https or ssh, scp-style too), by the web
+// origin its repository is asked at (repo_of_url's host): an https URL's
+// port is the web's, an ssh one's isn't (ssh://host:2222 is https://host).
+// The first, if several share it.
 std::optional<forge_account> account_for_url(std::string_view url,
                                              const std::vector<forge_account>&);
 
@@ -349,6 +356,13 @@ std::string delete_branch(forge_kind, const forge_repo&, std::string_view branch
 // 12345+login@users.noreply.github.com by its user id, the older
 // login@users.noreply.github.com by its login. "" for any other address.
 std::string noreply_avatar_url(std::string_view email, int px);
+
+// Whether a commit's author (name, email) is the forge user `login`, as far
+// as can be told without asking the forge: their email's user part is the
+// login (a noreply address's too, after its id), their name is, or `account`
+// is that login and has their name. Unsure is no.
+bool author_is(std::string_view login, std::string_view name, std::string_view email,
+               const forge_account& account);
 
 // The forge's picture of a commit's author, `px` square (as near as the
 // forge has it): GitHub's and Gitea's for the user the commit's author is,

@@ -3,7 +3,9 @@
 #include "branch/browse_refs.h"
 
 #include "git/command.h"
+#include "git/git_install.h"
 #include "git/lfs.h"
+#include "git/patch_text.h"
 #include "git/svn.h"
 #include "i18n.h"
 #include "settings.h"
@@ -29,6 +31,12 @@ namespace
 
 // The author's picture, top right of the details, in logical px.
 constexpr int k_avatar_size = 96;
+constexpr float k_avatar_least = 32;  // smaller than this, it isn't drawn
+
+// Held while dragging commits onto another branch, the key that copies
+// them (a cherry-pick) rather than moving them: Ctrl, as Explorer, GNOME
+// and KDE copy files with it.
+constexpr unsigned copy_drag_keys = rap::mod_ctrl;
 
 // Jump combo entries [spec 1.9.6], in order.
 enum jump_type
@@ -199,8 +207,8 @@ std::string log_window::path_text(size_t limit) const
 {
     std::string text = rel_path_;
     std::error_code ec;
-    if (std::filesystem::is_directory(
-            rap::sys::path_from_utf8(repo_.workdir()) / rap::sys::path_from_utf8(rel_path_), ec))
+    if (std::filesystem::is_directory(std::filesystem::symlink_status(
+            rap::sys::path_from_utf8(repo_.workdir()) / rap::sys::path_from_utf8(rel_path_), ec)))
         text += '/';
     if (limit && text.size() > limit)
     {
@@ -247,20 +255,34 @@ void log_window::build()
                         .bind(ref_button_)
                         .on_menu([this] { return show_menu(); })
                         .width(22_ch),
-                    label{_("From:")},
-                    date_picker{}.bind(from_).on_changed([this](a::date) { dates_changed(); }),
-                    label{_("To:")},
-                    date_picker{}.bind(to_).on_changed([this](a::date) { dates_changed(); }),
+                    // What this window did to the refs, undone and redone.
+                    tool_button{undo_icon(false), _("Undo")}.bind(undo_).on_click(
+                        [this] { step_journal(false); }),
+                    tool_button{undo_icon(true), _("Redo")}.bind(redo_).on_click(
+                        [this] { step_journal(true); }),
                     entry{}
                         .bind(search_)
-                        .on_changed([this](const std::string&) { schedule_filter(); })
+                        .clearable()
+                        // Emptied (its clear button), at once.
+                        .on_changed(
+                            [this](const std::string& text)
+                            {
+                                if (text.empty() && !filter_.text.empty())
+                                    apply_filter();
+                                else
+                                    schedule_filter();
+                            })
                         .on_activate([this] { apply_filter(); })
+                        // The dates [spec 1.9.3], rarely limited: a pop-up
+                        // of their own from the box's end, the button held
+                        // down while they are.
+                        .trailing_action(
+                            calendar_icon(), _("Date range"), [this] { open_dates(); }, dates_)
+                        // Which fields the text is looked for in, and how:
+                        // TortoiseGit's magnifier at the box's start.
+                        .leading_menu(rap::icon::named("edit-find-symbolic"), _("Filter options"),
+                                      [this] { return filter_menu(); })
                         .stretch(),
-                    // TODO: TortoiseGit puts this magnifier inside the search box.
-                    menu_button{""}
-                        .icon(rap::icon::named("edit-find-symbolic"))
-                        .on_menu([this] { return filter_menu(); })
-                        .tooltip(_("Filter options")),
                     drop_down{{_("Author Email"), _("Committer Email"), _("Merge Point"),
                                _("Parent 1"), _("Parent 2"), _("Tag"), _("Tag (FF)"), _("Branch"),
                                _("Branch (FF)"), _("Selection History")},
@@ -304,9 +326,12 @@ void log_window::build()
                         .on_header_menu([this](size_t) { return header_menu(); })
                         .on_cell_drag(label_drag())
                         // Commits dragged within the log: reordered on their
-                        // branch (history_actions.cpp).
-                        .on_reorder([this](const std::vector<size_t>& rows, size_t destination)
-                                    { return reorder_rows(rows, destination); })
+                        // branch, or moved or copied onto another one
+                        // (history_actions.cpp).
+                        .on_reorder_or_copy([this](const std::vector<size_t>& rows,
+                                                   size_t destination, rap::drop_action action)
+                                            { return reorder_rows(rows, destination, action); },
+                                            copy_drag_keys)
                         // Commits dragged out, into a rebase's list or anywhere
                         // taking text: their hashes, newest first as the rows run.
                         .on_drag_out({.begin = [this](std::vector<size_t> rows)
@@ -348,10 +373,17 @@ void log_window::build()
                                                        rap::paint{rap::theme_color::window},
                                                        std::nullopt);
                                                 if (!avatar_) return;
-                                                p.image(*avatar_,
-                                                        {0, 0, float(avatar_->width()),
-                                                         float(avatar_->height())},
-                                                        {0, 0, size.w, size.h});
+                                                // Laid out smaller than asked (a
+                                                // short details pane): whole and
+                                                // in shape at its top right, or
+                                                // not at all once too small to
+                                                // make out.
+                                                const float iw = float(avatar_->width()),
+                                                            ih = float(avatar_->height());
+                                                const rap::rect_f at = rap::fit_inside(
+                                                    {0, 0, size.w, size.h}, iw, ih, 1, 0);
+                                                if (std::min(at.w, at.h) < k_avatar_least) return;
+                                                p.image(*avatar_, {0, 0, iw, ih}, at);
                                             })
                                         .width(rap::extent{k_avatar_size, rap::extent::unit::px})
                                         .height(rap::extent{k_avatar_size, rap::extent::unit::px})
@@ -363,6 +395,7 @@ void log_window::build()
                             files_.list("log.files").height(4_lines).stretch(2),
                         }
                             .bind(details_splitter_)
+                            .width(30_ch)  // the least the forge panel's bar leaves it
                             .stretch(3),
                         forge_panel_->layout(),
                     }
@@ -390,19 +423,6 @@ void log_window::build()
                                 return true;
                             }),
                     label{}.selectable().ellipsize().bind(status_).stretch(),
-                    // After a history edit, for a while: put the branch back.
-                    button{_("_Undo")}.bind(undo_).visible(false).on_click(
-                        [this]
-                        {
-                            if (!last_edit_) return;
-                            undo_timer_ = {};
-                            start_history_edit(
-                                _("Undo"),
-                                [e = last_edit_->undo()](
-                                    const repo&) -> std::expected<history_edit, replay_failure>
-                                { return e; },
-                                {}, true);
-                        }),
                 },
                 hbox{
                     vbox{
@@ -489,7 +509,23 @@ void log_window::build()
     window_->on_key(
         [this](const rap::key_event& e)
         {
-            if (!e.press || e.modifiers) return false;
+            if (!e.press) return false;
+            // Undo and Redo in the commit list (text fields keep theirs:
+            // their keys don't come here).
+            if ((e.modifiers & ~rap::mod_shift) == rap::mod_ctrl && commit_list_->has_focus() &&
+                e.key == rap::key::character && (e.codepoint == 'z' || e.codepoint == 'y'))
+            {
+                step_journal(e.codepoint == 'y' || (e.modifiers & rap::mod_shift));
+                return true;
+            }
+            if (e.modifiers) return false;
+            // Escape in the filter box clears it, at once.
+            if (e.key == rap::key::escape && search_->has_focus() && !search_->text().empty())
+            {
+                search_->set_text("");
+                if (!filter_.text.empty()) apply_filter();  // unless hearing it did
+                return true;
+            }
             // Escape in the path filter box clears it [spec 1.11.2].
             if (e.key == rap::key::escape && path_filter_->has_focus() &&
                 !path_filter_->text().empty())
@@ -513,8 +549,9 @@ void log_window::build()
     progress_->set_visible(false);
     cancel_->set_visible(false);  // picking commits only
     // Today until the loaded range replaces it (not 1970 while loading).
-    from_->set_date(local_date(std::time(nullptr)));
-    to_->set_date(local_date(std::time(nullptr)));
+    loaded_from_ = loaded_to_ = local_date(std::time(nullptr));
+    update_dates_button();
+    update_undo_buttons();
     update_ref_button();
     forge_splitter_->on_moved([this] { fit_files(); });
     if (auto saved = settings::get().value("log.actionIcons"); !saved.empty())
@@ -711,16 +748,9 @@ std::string log_window::repository_state() const
 void log_window::watch_repository()
 {
     git_dir_ = rap::sys::path_from_utf8(repo_.git_dir());
-    const git_result common = run_git(repo_.workdir().empty() ? repo_.git_dir() : repo_.workdir(),
-                                      {"rev-parse", "--git-common-dir"}, git_output::stdout_only);
-    std::string dir = common.ok() ? common.output : "";
-    while (!dir.empty() && (dir.back() == '\n' || dir.back() == '\r')) dir.pop_back();
-    // (Relative to where git ran; a worktree's refs are in the main one's.)
-    const std::filesystem::path common_dir = rap::sys::path_from_utf8(dir);
-    const std::string ran_in = repo_.workdir().empty() ? repo_.git_dir() : repo_.workdir();
-    common_dir_ = dir.empty()                ? git_dir_
-                  : common_dir.is_absolute() ? common_dir
-                                             : rap::sys::path_from_utf8(ran_in) / common_dir;
+    // A worktree's refs are in the main one's.
+    const std::string dir = repo_.common_dir();
+    common_dir_ = dir.empty() ? git_dir_ : rap::sys::path_from_utf8(dir);
     state_ = repository_state();
     auto changed = [this, alive = std::weak_ptr<bool>(alive_)](rap::sys::watch_batch)
     {
@@ -748,18 +778,7 @@ void log_window::reload()
     // (The state as this reload sees it: the log's own changes don't reload
     // it twice.)
     if (!git_dir_.empty()) state_ = repository_state();
-    if (log_.row_count())
-    {
-        kept_selection keep;
-        for (size_t row : commit_list_->selection())
-            if (log_.is_working_tree(row))
-                keep.working_tree = true;
-            else if (const commit* c = log_.commit(row))
-                keep.commits.push_back(c->id);
-        if (auto cur = commit_list_->current(); cur && !log_.is_working_tree(*cur))
-            if (const commit* c = log_.commit(*cur)) keep.current = c->id;
-        if (!keep.commits.empty() || keep.working_tree) kept_ = std::move(keep);
-    }
+    if (auto keep = keep_selection()) kept_ = std::move(keep);
     statistics_->set_visible(false);
     walk_->set_visible(false);
     view_->set_visible(false);
@@ -770,7 +789,8 @@ void log_window::reload()
     // A ref picked to start from that has since gone: back to HEAD. (A
     // range, a..b, is no one rev to --verify.)
     const std::string& rev = walk_options_.rev;
-    if (!rev.empty() &&
+    // libgit2 first (every reload asks); git for syntax it doesn't know.
+    if (!rev.empty() && !repo_.revision_exists(rev) &&
         !run_git(repo_.workdir().empty() ? repo_.git_dir() : repo_.workdir(),
                  rev.find("..") != std::string::npos
                      ? std::vector<std::string>{"rev-parse", "-q", rev}
@@ -814,11 +834,30 @@ void log_window::loaded(const std::string& error)
     size_t first = log_.row_count() - log_.commit_rows();
     if (log_.commit_rows() && !since_ && !until_)
     {
-        from_->set_date(local_date(log_.commit(log_.row_count() - 1)->time));
-        to_->set_date(local_date(log_.commit(first)->time));
+        loaded_from_ = local_date(log_.commit(log_.row_count() - 1)->time);
+        loaded_to_ = local_date(log_.commit(first)->time);
+        if (from_ && to_)
+        {
+            from_->set_date(loaded_from_);
+            to_->set_date(loaded_to_);
+        }
     }
     restore_selection();
-    if (log_.row_count() && !commit_list_->current()) commit_list_->set_current(0);
+    // Opened (nothing chosen yet): on the commit checked out, in the middle
+    // of the view, however far down the other branches put it.
+    if (log_.row_count() && !commit_list_->current())
+    {
+        size_t row = 0;
+        for (size_t r = 0; r < log_.row_count(); ++r)
+            if (log_.commit(r) && log_.is_head(r))
+            {
+                row = r;
+                break;
+            }
+        commit_list_->set_current(row);
+        commit_list_->select({row});
+        commit_list_->scroll_to(row, rap::scroll_align::center);
+    }
     update_status();
     update_pull_requests();
     // The refs may have moved: what a sync would bring, and the current
@@ -865,6 +904,15 @@ void log_window::forge_panel_shown(bool on)
     forge_panel_visible_ = on;
     if (on && forge_sizes_.size() == 2 && forge_sizes_[0] > 0 && forge_sizes_[1] > 0)
         forge_splitter_->set_sizes(forge_sizes_);
+    else if (on)
+    {
+        // The first time, a third of the width (about 60 characters at
+        // most); its least is the column's own width, 30 characters.
+        float total = 0;
+        for (float s : forge_splitter_->sizes()) total += s;
+        const float side = std::min(total / 3, 480.f);
+        if (side > 0) forge_splitter_->set_sizes({total - side, side});
+    }
     // The file list's width changes with it, once the layout's done.
     fit_timer_ = ui_.timer(50, false, [this] { fit_files(); });
 }
@@ -893,21 +941,46 @@ void log_window::restore_selection()
     if (!kept_) return;
     kept_selection keep = std::move(*kept_);
     kept_.reset();
-    std::unordered_set<oid, oid_hash> wanted(keep.commits.begin(), keep.commits.end());
-    std::vector<size_t> rows;
-    std::optional<size_t> current;
-    for (size_t row = 0; row < log_.row_count(); ++row)
+    put_back(keep);
+}
+
+std::optional<log_window::kept_selection> log_window::keep_selection() const
+{
+    if (!log_.row_count()) return std::nullopt;
+    kept_selection keep;
+    for (size_t row : commit_list_->selection())
+        if (log_.is_working_tree(row))
+            keep.working_tree = true;
+        else if (const commit* c = log_.commit(row))
+            keep.commits.push_back(c->id);
+    if (auto cur = commit_list_->current())
     {
-        const commit* c = log_.commit(row);
-        if (log_.is_working_tree(row) ? keep.working_tree : c && wanted.contains(c->id))
-            rows.push_back(row);
-        if (c && keep.current && c->id == *keep.current) current = row;
+        if (!log_.is_working_tree(*cur))
+            if (const commit* c = log_.commit(*cur)) keep.current = c->id;
+        keep.offset = commit_list_->row_offset(*cur);
     }
+    if (keep.commits.empty() && !keep.working_tree) return std::nullopt;
+    return keep;
+}
+
+void log_window::put_back(const kept_selection& keep)
+{
+    const std::vector<size_t> rows = log_.rows_of(keep.commits, keep.working_tree);
     if (rows.empty()) return;  // gone (a deleted branch's commits): start at the top
+    std::optional<size_t> current;
+    if (keep.current)
+        current = log_.row_of(*keep.current);
+    else if (keep.working_tree && log_.is_working_tree(0))
+        current = 0;
     if (!current) current = rows.front();
     commit_list_->set_current(*current);
     commit_list_->select(rows);
-    commit_list_->scroll_to(*current);
+    // Where it was on screen, so a refresh that changes nothing moves
+    // nothing; centred when it wasn't in view.
+    if (keep.offset)
+        commit_list_->set_row_offset(*current, *keep.offset);
+    else
+        commit_list_->scroll_to(*current, rap::scroll_align::center);
 }
 
 void log_window::selection_changed()
@@ -1015,7 +1088,7 @@ void log_window::show_commit(size_t row)
     text += "\n" + c.message;
     details_->set_text(text, spans);
     show_avatar(&c);
-    forge_panel_->show_commit(c.id.hex());
+    forge_panel_->show_commit(c.id.hex(), c.author, c.email);
 
     // The file list comes from the worker, so the click (and its highlight)
     // never waits for git: the files as soon as the tree diff has them, then
@@ -1538,6 +1611,9 @@ rap::menu log_window::filter_menu()
                    filter_.case_sensitive = !filter_.case_sensitive;
                    apply_filter();
                }),
+        rap::menu_item::separator(),
+        // The calendar's pop-up, from here too.
+        {.label = _("_Date range..."), .action = [this] { open_dates(); }},
     };
 }
 
@@ -1551,21 +1627,14 @@ void log_window::apply_filter()
 {
     filter_timer_.reset();
     filter_.text = search_->text();
-    std::optional<oid> keep;
-    if (auto c = commit_list_->current(); c && log_.commit(*c)) keep = log_.commit(*c)->id;
-
+    const auto keep = keep_selection();
     std::string error = log_.set_filter(filter_);
     if (!error.empty())
     {
         status_->set_text(rap::i18n::format(_("Invalid regular expression: {0}"), error));
         return;
     }
-    if (keep)
-        if (auto row = log_.row_of(*keep))
-        {
-            commit_list_->set_current(*row);
-            commit_list_->scroll_to(*row);
-        }
+    if (keep) put_back(*keep);
     update_status();
 }
 
@@ -1738,8 +1807,11 @@ void log_window::update_patch()
                 [this, &ui = ui_, gen, title, args, alive = std::weak_ptr<bool>(alive_),
                  dir = repo_.workdir().empty() ? repo_.git_dir() : repo_.workdir()]
                 {
-                    auto r =
-                        std::make_shared<git_result>(run_git(dir, args, git_output::stdout_only));
+                    // libgit2's patch without git.
+                    const auto own = git_installed() ? std::nullopt : patch_in_process(dir, args);
+                    auto r = std::make_shared<git_result>(
+                        own ? git_result{.exit_code = 0, .output = *own}
+                            : run_git(dir, args, git_output::stdout_only));
                     ui.post(
                         [this, gen, title, r, alive]
                         {
@@ -1790,6 +1862,7 @@ rap::menu log_window::header_menu()
 // From is clamped to To and back; changes restart the log [spec 1.9.3].
 void log_window::dates_changed()
 {
+    if (!from_ || !to_) return;
     rap::date from = from_->date(), to = to_->date();
     if (from > to)
     {
@@ -1798,7 +1871,103 @@ void log_window::dates_changed()
     }
     since_ = local_time(from, false);
     until_ = local_time(to, true);
+    update_dates_button();
     reload();
+}
+
+// A calendar page: the desktop's, else drawn in the text colour (Windows).
+rap::icon log_window::calendar_icon()
+{
+    rap::icon icon = rap::icon::drawn(
+        [](rap::painter& p, rap::size_f s)
+        {
+            const float w = s.w, h = s.h;
+            const float line = std::max(1.0f, w / 14);
+            const rap::paint ink{rap::theme_color::window_text};
+            const rap::rect_f page{w * 0.12f, h * 0.2f, w * 0.76f, h * 0.68f};
+            p.rect(page, w * 0.08f, std::nullopt, ink);
+            p.rect({page.x, page.y, page.w, h * 0.16f}, w * 0.06f, ink, std::nullopt);
+            for (float x : {0.32f, 0.68f})
+                p.line({w * x, h * 0.1f}, {w * x, h * 0.28f}, ink, line * 1.4f,
+                       rap::line_cap::round);
+            for (int row = 0; row < 2; ++row)
+                for (int col = 0; col < 3; ++col)
+                    p.rect(
+                        {w * (0.24f + 0.2f * col), h * (0.5f + 0.18f * row), w * 0.12f, h * 0.1f},
+                        0, ink, std::nullopt);
+        });
+    icon.name = "x-office-calendar-symbolic";
+    return icon;
+}
+
+namespace
+{
+std::string date_text(rap::date d)
+{
+    char buf[16];
+    std::snprintf(buf, sizeof buf, "%04d-%02d-%02d", d.year, d.month, d.day);
+    return buf;
+}
+}  // namespace
+
+// Held down while the dates limit the log, the tooltip saying how.
+void log_window::update_dates_button()
+{
+    if (!dates_) return;
+    const bool limited = since_ || until_;
+    dates_->set_checked(limited);
+    if (!limited) return dates_->set_tooltip(_("Date range: all dates"));
+    const rap::date from = local_date(since_.value_or(0)), to = local_date(until_.value_or(0));
+    dates_->set_tooltip(
+        rap::i18n::format(_("Date range: {0} to {1}"), date_text(from), date_text(to)));
+}
+
+// The From and To pickers in a small window of their own, beside the log
+// rather than over it: changes apply as they're made, Clear lifts both.
+void log_window::open_dates()
+{
+    if (dates_popup_)
+    {
+        dates_popup_->show();
+        return;
+    }
+    using namespace rap::layout;
+    using namespace rap::literals;
+    namespace a = rap;
+    dates_popup_ = create_window(
+        ui_,
+        dialog{_("Date Range"),
+               {vbox{form{
+                         {_("From"), date_picker{}.bind(from_).on_changed([this](a::date)
+                                                                          { dates_changed(); })},
+                         {_("To"),
+                          date_picker{}.bind(to_).on_changed([this](a::date) { dates_changed(); })},
+                     },
+                     buttons{reset(_("C_lear")), rap::layout::close()}}}}
+            .modeless()
+            .resizable(false),
+        window_.get());
+    from_->set_date(since_ ? local_date(*since_) : loaded_from_);
+    to_->set_date(until_ ? local_date(*until_) : loaded_to_);
+    dates_popup_->on_finished(
+        [this, alive = std::weak_ptr<bool>(alive_)](rap::dialog_role role)
+        {
+            from_ = to_ = nullptr;
+            if (role == rap::dialog_role::reset && (since_ || until_))
+            {
+                since_.reset();
+                until_.reset();
+                update_dates_button();
+                reload();
+            }
+            // The window goes after this returns.
+            ui_.post(
+                [this, alive]
+                {
+                    if (alive.lock()) dates_popup_.reset();
+                });
+        });
+    dates_popup_->show();
 }
 
 // Up looks toward newer commits for the next row matching the selection

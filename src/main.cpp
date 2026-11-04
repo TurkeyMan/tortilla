@@ -76,6 +76,7 @@
 #include "changes/remove.h"
 #include "changes/rename_dialog.h"
 #include "git/askpass_env.h"
+#include "git/git_install.h"
 #include "git/repo.h"
 #include "git/ssh_client.h"
 #include "i18n.h"
@@ -93,6 +94,7 @@
 #include "ui/create_repo_dialog.h"
 #include "ui/diff_window.h"
 #include "ui/export_dialog.h"
+#include "ui/git_missing.h"
 #include "ui/patch_serial_dialogs.h"
 #include "ui/progress_dialog.h"
 #include "ui/pull_request_dialog.h"
@@ -120,6 +122,8 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <set>
+#include <string>
 
 #ifndef _WIN32
 #include <spawn.h>
@@ -188,7 +192,9 @@ int main(int argc, char** argv)
         if (const char* m = std::getenv(tortilla::k_askpass_marker);
             m && std::strcmp(m, tortilla::k_askpass_never) == 0)
             return 1;
-        auto ui = rap::ui::load(argc, argv, {});
+        rap::load_options askpass;
+        askpass.look.color_scheme = tortilla::appearance();
+        auto ui = rap::ui::load(argc, argv, askpass);
         if (!ui) return 1;
         return tortilla::run_askpass(**ui, argv[1]);
     }
@@ -317,6 +323,13 @@ int main(int argc, char** argv)
     // Explorer's Help [spec 4.2, row 61]: the documentation, online; no window.
     if (command == "help") return tortilla::open_help() ? 0 : 1;
 
+    // Light or dark as Settings says, from the first window.
+    opts.look.color_scheme = tortilla::appearance();
+    // Under libadwaita (GNOME): its message boxes, and settings groups that
+    // map cleanly as boxed lists. Header bars in dialogs wait until each
+    // dialog's buttons have been looked at in one.
+    opts.look.alert_dialogs = true;
+    opts.look.boxed_lists = true;
     auto ui = rap::ui::load(argc, argv, opts);
     if (!ui)
     {
@@ -334,6 +347,22 @@ int main(int argc, char** argv)
 #ifndef _WIN32
     show_toolkit_hint(**ui, opts);
 #endif
+
+    // Without git Tortilla is a viewer: said once a session; a command that
+    // needs git says so rather than failing as it runs.
+    if (!tortilla::git_installed())
+    {
+        static const std::set<std::string, std::less<>> reads{
+            "log",       "settings",    "repostatus", "refbrowse", "reflog",
+            "stashlist", "repobrowser", "worktrees",  "about",     "help"};
+        if (!reads.contains(command))
+        {
+            tortilla::show_git_missing(**ui, nullptr, [&] { (*ui)->quit(); });
+            (*ui)->run();
+            return 1;
+        }
+        tortilla::notice_if_git_missing(**ui);
+    }
 
     // A repository git refuses for its folder's owner (a network share,
     // WSL's files from Windows): offered to trust it first, as TortoiseGit

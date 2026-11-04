@@ -1,5 +1,6 @@
 #include "log_model.h"
 
+#include "git/git_install.h"
 #include "git/status.h"
 #include "i18n.h"
 #include "log/ref_labels.h"
@@ -41,16 +42,6 @@ rap::paint lane_colour(uint16_t lane)
                                     {0x91, 0x41, 0xac}, {0xe0, 0x1b, 0x24}, {0x21, 0x90, 0xa4},
                                     {0xc8, 0x88, 0x00}, {0x86, 0x5e, 0x3c}};
     return colours[lane % 8];
-}
-
-
-std::string format_date(int64_t time, int offset_minutes)
-{
-    std::time_t t = time + int64_t(offset_minutes) * 60;
-    std::tm tm = utc_calendar(t);
-    char buf[32];
-    std::strftime(buf, sizeof buf, "%Y-%m-%d %H:%M", &tm);
-    return buf;
 }
 
 }  // namespace
@@ -134,6 +125,30 @@ void log_model::start_status()
         for (const std::string& p : walk_paths_) args.push_back(":(top)" + p);
         return args;
     };
+    if (!git_installed())
+    {
+        // Without git, libgit2's status on a worker (slower: no fsmonitor
+        // or untracked cache), delivered as git's two would be.
+        auto generation = generation_;
+        const unsigned gen = *generation_;
+        std::thread(
+            [&ui = ui_, dir, status = limited(k_status_args), numstat = limited(k_numstat_args),
+             out, finished, generation, gen]
+            {
+                auto s = status_in_process(dir, status), n = status_in_process(dir, numstat);
+                ui.post(
+                    [=]
+                    {
+                        if (*generation != gen) return;  // reloaded or gone meanwhile
+                        out->first = s && s->ok() ? s->output : "";
+                        out->second = n && n->ok() ? n->output : "";
+                        finished(0);
+                        finished(0);
+                    });
+            })
+            .detach();
+        return;
+    }
     status_[0] = git_process::start(
         ui_, dir, limited(k_status_args), [out](const std::string& c) { out->first += c; },
         finished, git_output::stdout_only);
@@ -621,6 +636,21 @@ bool log_model::walks(const ref& r) const
             !hidden_by(r, branches_.filter.hidden));
 }
 
+bool log_model::walked_without_pin(const ref& r) const
+{
+    // The pins alone are the walk; or only a pin shows a hidden one.
+    if (outcome_.none || hidden_by(r, branches_.filter.hidden)) return false;
+    return walks(r);
+}
+
+void log_model::set_pins(std::vector<std::string> pins, const std::string& full_name)
+{
+    branches_.filter.pins = std::move(pins);
+    for (const auto& [id, here] : refs_)
+        if (std::ranges::any_of(here, [&](const ref& r) { return r.full_name == full_name; }))
+            if (auto row = row_of(id)) notify_changed(*row, 1);
+}
+
 void log_model::set_branches(branch_request request)
 {
     branches_ = std::move(request);
@@ -638,6 +668,17 @@ std::optional<size_t> log_model::row_of(const oid& id) const
     for (size_t row = working_tree_ ? 1 : 0; row < row_count(); ++row)
         if (commits_[index(row)].id == id) return row;
     return std::nullopt;
+}
+
+std::vector<size_t> log_model::rows_of(const std::vector<oid>& ids, bool working_tree) const
+{
+    std::vector<size_t> rows;
+    if (working_tree && working_tree_) rows.push_back(0);
+    if (ids.empty()) return rows;
+    const std::unordered_set<oid, oid_hash> wanted(ids.begin(), ids.end());
+    for (size_t row = working_tree_ ? 1 : 0; row < row_count(); ++row)
+        if (wanted.contains(commits_[index(row)].id)) rows.push_back(row);
+    return rows;
 }
 
 const std::vector<ref>* log_model::refs_of(size_t row) const
@@ -795,12 +836,12 @@ std::string log_model::text(size_t row, size_t column) const
     {
     case message: return c.summary;
     case author: return c.author;
-    case date: return format_date(c.time, c.offset_minutes);
+    case date: return commit_date_text(c.time, c.offset_minutes);
     case hash: return c.id.hex();
     case email: return c.email;
     case commit_name: return c.committer;
     case commit_email: return c.committer_email;
-    case commit_date: return format_date(c.commit_time, c.commit_offset_minutes);
+    case commit_date: return commit_date_text(c.commit_time, c.commit_offset_minutes);
     }
     return {};
 }

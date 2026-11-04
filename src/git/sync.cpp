@@ -1,6 +1,10 @@
 #include "sync.h"
 
 #include "git/command.h"
+#include "git/remotes.h"
+#include "git/repo.h"
+#include "git/status.h"
+#include "git/worktrees.h"
 #include "i18n.h"
 #include "settings.h"
 
@@ -9,6 +13,7 @@
 #include <algorithm>
 #include <cctype>
 #include <charconv>
+#include <cstring>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
@@ -38,6 +43,62 @@ std::pair<std::string_view, std::string_view> at_tab(std::string_view s)
     const size_t tab = s.find('\t');
     if (tab == std::string_view::npos) return {s, {}};
     return {s.substr(0, tab), s.substr(tab + 1)};
+}
+
+// for-each-ref <prefixes> through libgit2; nullopt when it can't open the
+// repository or read its refs, and git answers.
+std::optional<std::vector<repo::listed_ref>> listed_refs(const std::string& workdir,
+                                                         const std::vector<std::string>& prefixes)
+{
+    auto r = repo::open(workdir);
+    if (!r) return std::nullopt;
+    return r->refs_under(prefixes);
+}
+
+// for-each-ref's %(upstream:track): "[ahead 1, behind 2]", "[gone]", or ""
+// when level or there's no upstream.
+std::string upstream_track(const repo& r, const oid& local, const std::string& upstream)
+{
+    if (upstream.empty()) return {};
+    const auto up = r.refs_under({upstream});
+    const auto it = up ? std::ranges::find(*up, upstream, &repo::listed_ref::full_name)
+                       : std::vector<repo::listed_ref>::const_iterator{};
+    if (!up || it == up->end()) return "[gone]";
+    const auto counts = r.ahead_behind(local, it->target);
+    if (!counts || (counts->first == 0 && counts->second == 0)) return {};
+    if (counts->second == 0) return "[ahead " + std::to_string(counts->first) + "]";
+    if (counts->first == 0) return "[behind " + std::to_string(counts->second) + "]";
+    return "[ahead " + std::to_string(counts->first) + ", behind " +
+           std::to_string(counts->second) + "]";
+}
+
+// fast_forward_targets' three reads, as git worktree list --porcelain and
+// its two for-each-refs put them, in process; false when libgit2 can't.
+bool fast_forward_reads(const std::string& workdir, std::string& trees, std::string& tips,
+                        std::string& branches)
+{
+    auto r = repo::open(workdir);
+    if (!r) return false;
+    const auto worktrees = list_worktrees(*r);
+    const auto refs = r->refs_under({"refs/heads/", "refs/remotes/"});
+    if (!worktrees || !refs) return false;
+    for (const worktree_info& w : *worktrees)
+        if (!w.branch.empty())
+            trees += "branch " +
+                     (w.branch.starts_with("refs/") ? w.branch : "refs/heads/" + w.branch) + "\n";
+    std::string head;
+    for (const worktree_info& w : *worktrees)
+        if (w.current && !w.branch.empty())
+            head = w.branch.starts_with("refs/") ? w.branch : "refs/heads/" + w.branch;
+    for (const repo::listed_ref& l : *refs)
+    {
+        tips += l.full_name + '\t' + l.target.hex() + '\t' + l.symref + '\n';
+        if (!l.full_name.starts_with("refs/heads/")) continue;
+        const std::string upstream = r->upstream_ref(std::string_view(l.full_name).substr(11));
+        branches += l.full_name + '\t' + upstream + '\t' + upstream_track(*r, l.target, upstream) +
+                    '\t' + (l.full_name == head ? "*" : " ") + '\n';
+    }
+    return true;
 }
 
 bool is_hash(std::string_view s)
@@ -157,12 +218,22 @@ local_tips(const std::string& workdir, const std::vector<std::string>& remotes,
     std::map<std::string, std::vector<branch_tip>, std::less<>> out;
     if (remotes.empty()) return out;
     std::vector<std::string> args{"for-each-ref", "--format=%(objectname)%09%(refname)"};
+    std::vector<std::string> prefixes;
     for (const std::string& r : remotes)
     {
         out[r];
-        args.push_back(std::string(prefix) + r + "/");
+        prefixes.push_back(std::string(prefix) + r + "/");
     }
-    const git_result listed = run_git(workdir, args, git_output::stdout_only);
+    // In process: the log's sync check asks on every look.
+    std::string text;
+    if (const auto refs = listed_refs(workdir, prefixes))
+        for (const repo::listed_ref& l : *refs) text += l.target.hex() + '\t' + l.full_name + '\n';
+    else
+    {
+        args.insert(args.end(), prefixes.begin(), prefixes.end());
+        text = run_git(workdir, args, git_output::stdout_only).output;
+    }
+    const git_result listed{.exit_code = 0, .output = std::move(text)};
     // A remote's name may hold a slash (team/fork): the longest that fits.
     std::vector<const std::string*> by_length;
     for (const std::string& r : remotes) by_length.push_back(&r);
@@ -247,8 +318,22 @@ std::vector<fast_forward> fast_forward_targets(const std::string& workdir,
     // Branches checked out anywhere stay: moving one would leave that
     // worktree's files behind its HEAD.
     std::unordered_set<std::string> checked_out;
-    const git_result trees =
-        run_git(workdir, {"worktree", "list", "--porcelain"}, git_output::stdout_only);
+    // In process, as git's three commands would put it; git when libgit2
+    // can't read the repository.
+    git_result trees{.exit_code = 0}, tips{.exit_code = 0}, branches{.exit_code = 0};
+    if (!fast_forward_reads(workdir, trees.output, tips.output, branches.output))
+    {
+        trees = run_git(workdir, {"worktree", "list", "--porcelain"}, git_output::stdout_only);
+        tips = run_git(workdir,
+                       {"for-each-ref", "--format=%(refname)%09%(objectname)%09%(symref)",
+                        "refs/heads/", "refs/remotes/"},
+                       git_output::stdout_only);
+        branches = run_git(workdir,
+                           {"for-each-ref",
+                            "--format=%(refname)%09%(upstream)%09%(upstream:track)%09%(HEAD)",
+                            "refs/heads/"},
+                           git_output::stdout_only);
+    }
     each_line(trees.output,
               [&](std::string_view line)
               {
@@ -256,22 +341,16 @@ std::vector<fast_forward> fast_forward_targets(const std::string& workdir,
               });
     // Every branch and remote branch's commit, then each local branch's
     // upstream and how it stands against it.
-    const git_result tips = run_git(
-        workdir,
-        {"for-each-ref", "--format=%(refname)%09%(objectname)", "refs/heads/", "refs/remotes/"},
-        git_output::stdout_only);
     std::unordered_map<std::string_view, std::string_view> sha_of;
+    std::unordered_set<std::string_view> remote_mains;  // what each origin/HEAD points at
     each_line(tips.output,
               [&](std::string_view line)
               {
-                  const auto [full, sha] = at_tab(line);
+                  const auto [full, rest] = at_tab(line);
+                  const auto [sha, symref] = at_tab(rest);
                   sha_of.emplace(full, sha);
+                  if (full.ends_with("/HEAD") && !symref.empty()) remote_mains.insert(symref);
               });
-    const git_result branches =
-        run_git(workdir,
-                {"for-each-ref", "--format=%(refname)%09%(upstream)%09%(upstream:track)%09%(HEAD)",
-                 "refs/heads/"},
-                git_output::stdout_only);
     each_line(branches.output,
               [&](std::string_view line)
               {
@@ -284,7 +363,20 @@ std::vector<fast_forward> fast_forward_targets(const std::string& workdir,
                       return;
                   auto from = sha_of.find(full), to = sha_of.find(upstream);
                   if (from == sha_of.end() || to == sha_of.end()) return;
-                  out.push_back({.branch = std::string(full.substr(11)),
+                  // A feature branch started from origin/main may track it
+                  // (git's and the Track box's old default); once merged, it
+                  // would be dragged up to main's tip on every fetch. So a
+                  // remote's main moves only its namesake; a branch pushed
+                  // under another name still follows that one.
+                  const std::string_view name = full.substr(11);
+                  const bool remote_main = remote_mains.contains(upstream) ||
+                                           upstream.ends_with("/main") ||
+                                           upstream.ends_with("/master");
+                  const bool namesake = upstream.size() > name.size() &&
+                                        upstream.ends_with(name) &&
+                                        upstream[upstream.size() - name.size() - 1] == '/';
+                  if (remote_main && !namesake) return;
+                  out.push_back({.branch = std::string(name),
                                  .upstream = std::string(upstream),
                                  .from = std::string(from->second),
                                  .to = std::string(to->second)});
@@ -309,6 +401,38 @@ current_state current_against_upstream(const std::string& workdir)
         while (!s.empty() && (s.back() == '\n' || s.back() == '\r')) s.pop_back();
         return s;
     };
+    // In process: the log asks as it opens and on every reload.
+    if (auto r = repo::open(workdir))
+    {
+        out.branch = current_branch(workdir);
+        if (out.branch.empty()) return out;
+        // @{u}: the upstream ref must be there.
+        const std::string up = r->upstream_ref(out.branch);
+        const auto refs = up.empty() ? std::nullopt : r->refs_under({up});
+        const auto it = refs ? std::ranges::find(*refs, up, &repo::listed_ref::full_name)
+                             : std::vector<repo::listed_ref>::const_iterator{};
+        if (!refs || it == refs->end()) return out;
+        out.upstream = up;
+        for (const char* prefix : {"refs/remotes/", "refs/heads/"})
+            if (out.upstream.starts_with(prefix))
+            {
+                out.upstream.erase(0, std::strlen(prefix));
+                break;
+            }
+        if (const auto head = r->head_id())
+            if (const auto counts = r->ahead_behind(*head, it->target))
+            {
+                out.ahead = int(counts->first);
+                out.behind = int(counts->second);
+            }
+        if (out.behind > 0)
+        {
+            const git_result status =
+                run_status(workdir, {"status", "--porcelain", "-z", "--untracked-files=no"});
+            out.clean = status.ok() && status.output.empty();
+        }
+        return out;
+    }
     const git_result branch =
         run_git(workdir, {"symbolic-ref", "-q", "--short", "HEAD"}, git_output::stdout_only);
     if (!branch.ok()) return out;
@@ -377,27 +501,11 @@ remote_result classify_failure(std::string_view output)
 
 std::vector<std::string> fetch_all_remotes(const std::string& workdir)
 {
+    // In process: the log's sync check asks on every look.
     std::vector<std::string> out;
-    const git_result names = run_git(workdir, {"remote"}, git_output::stdout_only);
-    const git_result skipped =
-        run_git(workdir, {"config", "--type=bool", "--get-regexp", "^remote\\..*\\.skipfetchall$"},
-                git_output::stdout_only);
-    each_line(names.output,
-              [&](std::string_view name)
-              {
-                  if (name.empty()) return;
-                  bool skip = false;
-                  each_line(skipped.output,
-                            [&](std::string_view line)
-                            {
-                                // remote.<name>.skipfetchall true
-                                const std::string key =
-                                    "remote." + std::string(name) + ".skipfetchall ";
-                                if (line.starts_with(key))
-                                    skip = skip || line.substr(key.size()) == "true";
-                            });
-                  if (!skip) out.emplace_back(name);
-              });
+    for (std::string& name : remote_names(workdir))
+        if (!config_bool(workdir, "remote." + name + ".skipfetchall").value_or(false))
+            out.push_back(std::move(name));
     return out;
 }
 

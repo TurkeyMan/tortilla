@@ -1,6 +1,8 @@
 #include "diff_window.h"
 
 #include "git/command.h"
+#include "git/git_install.h"
+#include "git/patch_text.h"
 #include "i18n.h"
 #include "settings.h"
 #include "ui/repo_icon.h"
@@ -13,6 +15,11 @@
 
 namespace tortilla
 {
+
+// Hunk headers in git's cyan, a teal on light text views and a light cyan
+// on dark ones: the theme's accent may be red (Windows lets users pick
+// it), and then "@@" lines looked like removed ones.
+constexpr rap::scheme_color k_hunk_colour{{0, 120, 140}, {0x5c, 0xc8, 0xdc}};
 
 std::vector<rap::text_view::span> diff_spans(const std::string& text)
 {
@@ -35,7 +42,7 @@ std::vector<rap::text_view::span> diff_spans(const std::string& text)
         else if (line.starts_with("@@"))
         {
             in_header = false;
-            s.fg = rap::theme_color::accent;
+            s.fg = k_hunk_colour;
         }
         else if (in_header)
         {
@@ -191,6 +198,14 @@ public:
             window_->show();
             return;
         }
+        // Without git, libgit2's patch.
+        if (!git_installed())
+            if (auto text = patch_in_process(dir, git_args))
+            {
+                set(title_, std::move(*text), true);
+                window_->show();
+                return;
+            }
         // The window comes up at once and git fills it in: a big commit's
         // diff can take a while. The process dies with the window.
         text_->set_text(_("Loading…"), {});

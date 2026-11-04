@@ -8,6 +8,7 @@
 #include "changes/commit_window.h"
 #include "changes/conflict_editor.h"
 #include "changes/revert.h"
+#include "git/ignore_patterns.h"
 #include "git/merge_tool.h"
 #include "git/remotes.h"
 #include "git/repo_operation.h"
@@ -15,11 +16,14 @@
 #include "i18n.h"
 #include "log/log_window.h"
 #include "settings.h"
+#include "ui/busy_pointer.h"
 #include "ui/compare.h"
 #include "ui/diff_window.h"
 #include "ui/menu_items.h"
 #include "ui/menu_text.h"
 #include "ui/windows.h"
+#include "util/check_rows.h"
+#include "util/entry_path.h"
 
 #include <rapport/sys.h>
 
@@ -90,9 +94,8 @@ rap::layout::list changes_view::list(std::string settings_key, bool checkboxes)
         model_.on_toggle = [this](size_t row)
         {
             // A box in the selection sets the whole selection to its new state.
-            std::vector<size_t> rows = selection();
-            if (std::ranges::find(rows, row) == rows.end()) rows = {row};
-            model_.set_checked(rows, !model_.is_checked(row));
+            const auto [rows, on] = box_clicked(selection(), row, model_.is_checked(row));
+            model_.set_checked(rows, on);
             if (host_.checks_changed) host_.checks_changed();
         };
     return rap::layout::list{file_model::columns(), &model_}
@@ -111,14 +114,31 @@ rap::layout::list changes_view::list(std::string settings_key, bool checkboxes)
                               { return context_menu(row, column); });
 }
 
-// Column widths and order, as the user left them; not Path's, which is what
-// the others leave of the list's width.
+namespace
+{
+
+// Narrower than this a column can't be read or grabbed: a width that small
+// (a list that reported 0) is saved and restored as 0, which leaves the
+// column as it is. Path's is always 0: it takes what the others leave of the
+// list's width.
+constexpr float min_column_width = 16;
+
+void sane_widths(std::vector<float>& widths)
+{
+    for (float& w : widths)
+        if (!(w >= min_column_width)) w = 0;
+    if (file_model::path < widths.size()) widths[file_model::path] = 0;
+}
+
+}  // namespace
+
+// Column widths and order, as the user left them.
 void changes_view::save_layout() const
 {
     if (!list_ || settings_key_.empty()) return;
     settings& st = settings::get();
     std::vector<float> widths = list_->column_widths();
-    if (file_model::path < widths.size()) widths[file_model::path] = 0;
+    sane_widths(widths);
     st.set_numbers(settings_key_ + ".columns", widths);
     std::vector<float> order;
     for (size_t i : list_->column_order()) order.push_back(float(i));
@@ -131,8 +151,8 @@ void changes_view::restore_layout()
     settings& st = settings::get();
     if (auto v = st.numbers(settings_key_ + ".columns"); !v.empty())
     {
-        // A Path width saved before it stretched would fight the stretch.
-        if (file_model::path < v.size()) v[file_model::path] = 0;
+        // (A Path width saved before it stretched would fight the stretch.)
+        sane_widths(v);
         list_->set_column_widths(v);
     }
     // The list ignores an order that doesn't fit its columns.
@@ -554,36 +574,29 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
                          rap::i18n::format(_("Delete {0}? They go to the Recycle Bin."), count),
                          _("Delete"), keep, {plus({"clean", "-f", "-d", "-q", "--"}, paths)});
                  }));
-        // Patterns appended to the repository's top-level .gitignore.
+        // Patterns appended to the repository's top-level .gitignore, as
+        // the Ignore dialog plans and writes them (names literal, the lines
+        // it has once, after a last line without its newline).
         auto ignore = [this](std::vector<std::string> patterns)
         {
             const auto path = rap::sys::path_from_utf8(host_.workdir) / ".gitignore";
-            std::string add;
-            for (const std::string& p : patterns) add += p + "\n";
-            std::FILE* f = rap::sys::fopen(path, "ab");
-            bool ok = f && std::fwrite(add.data(), 1, add.size(), f) == add.size();
-            if (f) ok = std::fclose(f) == 0 && ok;
-            if (!ok)
+            if (const std::string error = append_ignore_lines(path, patterns); !error.empty())
                 host_.ui.message(host_.window(),
                                  {.icon = rap::message_spec::icon::error,
                                   .title = _("Add to ignore list"),
                                   .text = rap::i18n::format(_("Could not write {0}."),
-                                                            rap::sys::path_to_utf8(path))});
+                                                            rap::sys::path_to_utf8(path)),
+                                  .detail = error});
             host_.refresh();
         };
-        std::vector<std::string> by_name, by_extension;
-        for (const file_change& f : files)
-        {
-            by_name.push_back("/" + f.path);
-            const std::string name = file_name(f.path);
-            const auto dot = name.rfind('.');
-            if (dot != std::string::npos && dot > 0 && name.back() != '/')
-                if (std::string ext = "*" + name.substr(dot);
-                    std::ranges::find(by_extension, ext) == by_extension.end())
-                    by_extension.push_back(ext);
-        }
+        std::vector<std::string> paths_chosen;
+        for (const file_change& f : files) paths_chosen.push_back(f.path);
+        const std::vector<ignore_item> items = ignore_items(paths_chosen);
+        const std::vector<std::string> by_name = ignore_menu_lines(items, false);
+        const std::vector<std::string> by_extension = ignore_menu_lines(items, true);
         menu sub;
-        sub.push_back(item(one ? menu_text(by_name.front()) : std::string(_("Ignore item(s) by name")),
+        sub.push_back(item(one && !by_name.empty() ? menu_text(by_name.front())
+                                                   : std::string(_("Ignore item(s) by name")),
                            [ignore, by_name] { ignore(by_name); }));
         if (!by_extension.empty())
         {
@@ -653,14 +666,17 @@ void changes_view::activated(size_t row)
 // with].
 void changes_view::open_file(const file_change& f, bool choose)
 {
+    // The busy pointer while its program comes up (Open with asks first).
+    const std::function<void()> idle = choose ? [] {} : show_busy_pointer(host_.ui);
     std::filesystem::path path =
         rap::sys::path_from_utf8(host_.workdir) / rap::sys::path_from_utf8(f.path);
     if (source_.what == changes_source::revision)
     {
         git_result r = revision_file(host_.workdir, source_.hash, f.path);
         path = revision_temp_path(source_.hash, f.path);
-        if (!r.ok() || !write_file(path, r.output))
+        if (!r.ok() || path.empty() || !write_temp_file(path, r.output))
         {
+            idle();
             host_.ui.message(host_.window(), {.icon = rap::message_spec::icon::error,
                                               .title = _("Open"),
                                               .text = rap::i18n::format(_("Could not get {0} at {1}."),
@@ -670,10 +686,13 @@ void changes_view::open_file(const file_change& f, bool choose)
         }
     }
     if (!(choose ? rap::sys::open_with(path) : rap::sys::open_path(path)))
+    {
+        idle();
         host_.ui.message(host_.window(),
                          {.icon = rap::message_spec::icon::error,
                           .title = _("Open"),
                           .text = rap::i18n::format(_("Could not open {0}."), rap::sys::path_to_utf8(path))});
+    }
 }
 
 // The file as the list shows it: the working file where the list is the
@@ -702,7 +721,7 @@ std::optional<std::filesystem::path> changes_view::file_of(const version& v,
     if (v.rev.empty()) return working;
     git_result r = revision_file(v.workdir, v.rev, v.path);
     const std::filesystem::path path = revision_temp_path(v.rev, v.path);
-    if (r.ok() && write_file(path, r.output)) return path;
+    if (r.ok() && !path.empty() && write_temp_file(path, r.output)) return path;
     host_.ui.message(host_.window(), {.icon = rap::message_spec::icon::error,
                                       .title = title,
                                       .text = rap::i18n::format(_("Could not get {0} at {1}."),
@@ -734,8 +753,9 @@ void changes_view::compare(const version& base, const version& mine, const std::
 void changes_view::view_in_editor(const file_change& f)
 {
     const std::string title = _("View revision in alternative editor");
+    const auto idle = show_busy_pointer(host_.ui);
     const auto path = file_of(version_of(f), title);
-    if (!path) return;
+    if (!path) return idle();
     std::string editor = config_value(host_.workdir, "core.editor");
 #ifdef _WIN32
     if (editor.empty()) editor = "notepad.exe";
@@ -746,26 +766,32 @@ void changes_view::view_in_editor(const file_change& f)
     if (editor.empty())
     {
         if (!rap::sys::open_path(*path))
+        {
+            idle();
             host_.ui.message(host_.window(),
                              {.icon = rap::message_spec::icon::error,
                               .title = title,
                               .text = rap::i18n::format(_("Could not open {0}."),
                                                         rap::sys::path_to_utf8(*path))});
+        }
         return;
     }
 #endif
     std::vector<std::string> args = command_words(editor);
-    if (args.empty()) return;
+    if (args.empty()) return idle();
     const std::string program = args.front();
     args.erase(args.begin());
     args.push_back(rap::sys::path_to_utf8(*path));
     auto p = rap::sys::process::start(program, args);
     if (!p)
+    {
+        idle();
         return host_.ui.message(
             host_.window(),
             {.icon = rap::message_spec::icon::error,
              .title = title,
              .text = rap::i18n::format(_("Could not start {0}: {1}"), program, p.error())});
+    }
     // Not waited for here: the editor stays open as long as the user likes.
     // A thread drains and reaps it, as dropping the process would kill it.
     std::thread(
@@ -877,7 +903,10 @@ void changes_view::save_revisions(const std::string& rev, std::vector<file_chang
             for (const file_change& f : files)
             {
                 git_result r = revision_file(host_.workdir, rev, f.path);
-                if (!r.ok() || !write_file(folder / rap::sys::path_from_utf8(f.path), r.output))
+                // Its path under the folder, which must land there as that
+                // name (not C:\x, .., NUL).
+                const auto rel = entry_path(f.path);
+                if (!r.ok() || !rel || !write_file(folder / *rel, r.output))
                     failed += f.path + "\n";
             }
             if (!failed.empty())

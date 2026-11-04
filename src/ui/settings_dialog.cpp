@@ -1,6 +1,7 @@
 #include "settings_dialog.h"
 
 #include "git/diff_tool.h"
+#include "git/git_install.h"
 #include "git/merge_tool.h"
 #include "git/ssh_client.h"
 #include "git/sync.h"
@@ -11,8 +12,10 @@
 #include "shell/menu_icons.h"
 #include "shell/menu_table.h"
 #include "ui/accounts_page.h"
+#include "ui/git_missing.h"
 #include "ui/remotes_page.h"
 #include "ui/repo_icon.h"
+#include "util/programs.h"
 
 #include <rapport/sys.h>
 
@@ -27,6 +30,10 @@ namespace tortilla
 namespace
 {
 
+// The Appearance choices, in the drop-down's order.
+constexpr rap::color_scheme k_appearance_choices[] = {
+    rap::color_scheme::system, rap::color_scheme::light, rap::color_scheme::dark};
+
 // The Action icons choices, in the drop-down's order.
 constexpr action_icon_style k_icon_styles[] = {action_icon_style::document,
                                                action_icon_style::glyph, action_icon_style::bevel,
@@ -34,7 +41,11 @@ constexpr action_icon_style k_icon_styles[] = {action_icon_style::document,
 
 struct state
 {
+    rap::ui* ui = nullptr;
     std::unique_ptr<rap::window> window;
+    // Appearance, in k_appearance_choices' order; shown live as it's
+    // chosen, and back as saved on Cancel.
+    rap::drop_down* appearance = nullptr;
     std::string repo_dir;
     // Bound when their page is first shown; null until then, and an
     // unvisited page saves nothing.
@@ -49,9 +60,14 @@ struct state
     rap::entry* diff_command = nullptr;
     rap::widget* custom_help = nullptr;
     std::vector<detected_tool> tools;
-    // Comparing images: with the text tool, IfritView, or Custom.
+    // Comparing images: with the text tool, IfritView, each image-capable
+    // tool found, or Custom.
     rap::drop_down* image_select = nullptr;
     rap::entry* image_command = nullptr;
+    std::vector<detected_tool> image_tools;
+    rap::widget* ifritview_help = nullptr;  // what IfritView is, and where to get it
+    rap::widget* ifritview_link = nullptr;
+    int image_custom_index() const { return 2 + int(image_tools.size()); }
     // Resolving conflicts: each merge tool found, then Custom.
     rap::drop_down* merge_select = nullptr;
     rap::entry* merge_command = nullptr;
@@ -137,11 +153,43 @@ rap::node general_page(std::shared_ptr<state> st)
     int current_language = 0;
     for (size_t i = 1; i < st->language_tags.size(); ++i)
         if (st->language_tags[i] == chosen) current_language = int(i);
+    const rap::color_scheme scheme = appearance();
+    const int current_appearance =
+        int(std::find(std::begin(k_appearance_choices), std::end(k_appearance_choices), scheme) -
+            std::begin(k_appearance_choices));
+    // Looked for again as Settings opens: installed meanwhile, say.
+    const bool have_git = recheck_git();
+    const std::string git_path = have_git ? find_program("git") : std::string();
     return vbox{
+        group{_("Git"),
+              form{
+                  {_("Git"), have_git ? rap::node(label{git_path})
+                                      : rap::node(hbox{label{git_missing_reason()},
+                                                       button{_("How to install git...")}.on_click(
+                                                           [weak]
+                                                           {
+                                                               if (auto s = weak.lock(); s && s->ui)
+                                                                   show_git_missing(
+                                                                       *s->ui, s->window.get());
+                                                           })})},
+              }},
         group{_("Language"),
               form{
                   {_("Language"), drop_down{languages, current_language}.bind(st->language)},
                   {"", label{_("Applies the next time Tortilla starts.")}},
+              }},
+        group{_("Appearance"),
+              form{
+                  {_("Appearance"),
+                   drop_down{{_("Follow system"), _("Light"), _("Dark")}, current_appearance}
+                       .bind(st->appearance)
+                       .on_changed(
+                           [weak](int i)
+                           {
+                               auto s = weak.lock();
+                               if (s && s->ui && i >= 0 && i < 3)
+                                   s->ui->set_color_scheme(k_appearance_choices[i]);
+                           })},
               }},
         group{
             _("Log"),
@@ -415,11 +463,36 @@ rap::node diff_viewer_page(std::shared_ptr<state> st)
     };
     // Comparing images: IfritView recommended, and where to get it when
     // it isn't installed.
+    // A custom command that's a detected tool's shows as that tool.
     const bool ifritview = !find_ifritview().empty();
-    const int image_current = int(saved_image_mode());
+    st->image_tools = image_tools(st->tools);
+    std::vector<std::string> image_choices{_("The diff tool above"),
+                                           ifritview ? std::string("IfritView")
+                                                     : std::string(_("IfritView (not installed)"))};
+    for (const detected_tool& t : st->image_tools) image_choices.push_back(t.name);
+    image_choices.push_back(_("Custom..."));
+    int image_current = int(saved_image_mode());
+    if (image_current == int(image_mode::custom))
+    {
+        image_current = st->image_custom_index();
+        for (size_t i = 0; i < st->image_tools.size(); ++i)
+            if (st->image_tools[i].command == image_command()) image_current = 2 + int(i);
+    }
+    const bool image_custom = image_current == st->image_custom_index();
     auto image_chosen = [weak](int choice)
     {
-        if (auto s = weak.lock(); s && s->image_command) s->image_command->set_visible(choice == 2);
+        auto s = weak.lock();
+        if (!s || !s->image_command) return;
+        const bool custom = choice == s->image_custom_index();
+        s->image_command->set_visible(custom);
+        // IfritView's description, only while it's the one chosen.
+        if (s->ifritview_help) s->ifritview_help->set_visible(choice == int(image_mode::ifritview));
+        if (s->ifritview_link)
+            s->ifritview_link->set_visible(choice == int(image_mode::ifritview) &&
+                                           find_ifritview().empty());
+        // Custom starts from the last tool picked, to adjust.
+        if (choice >= 2 && !custom)
+            s->image_command->set_text(s->image_tools[size_t(choice - 2)].command);
     };
     return vbox{
         group{
@@ -445,27 +518,25 @@ rap::node diff_viewer_page(std::shared_ptr<state> st)
         group{_("Comparing images"),
               vbox{
                   form{
-                      {_("Compare with"),
-                       drop_down{{_("The diff tool above"),
-                                  ifritview ? std::string("IfritView")
-                                            : std::string(_("IfritView (not installed)")),
-                                  _("Custom...")},
-                                 image_current}
-                           .bind(st->image_select)
-                           .on_changed(image_chosen)},
+                      {_("Compare with"), drop_down{image_choices, image_current}
+                                              .bind(st->image_select)
+                                              .on_changed(image_chosen)},
                       {_("Command"), entry{image_command()}
                                          .bind(st->image_command)
                                          .placeholder(_("program %base %mine"))
-                                         .visible(image_current == 2)},
+                                         .visible(image_custom)},
                   }
                       .align_group("diff"),
                   label{_("IfritView: a fast image viewer that compares two images side by side, "
                           "by swipe, or "
                           "as their difference, pixel for pixel.")}
-                      .wrap(),
+                      .wrap()
+                      .handle(st->ifritview_help)
+                      .visible(image_current == int(image_mode::ifritview)),
                   label{_("Get IfritView")}
                       .link([] { rap::sys::open_url("https://github.com/TurkeyMan/ifritview"); })
-                      .visible(!ifritview),
+                      .handle(st->ifritview_link)
+                      .visible(image_current == int(image_mode::ifritview) && !ifritview),
               }},
         group{_("Resolving conflicts"),
               vbox{
@@ -608,6 +679,7 @@ void show_settings(rap::ui& ui, rap::window* parent, const std::string& repo_dir
                    settings_page first, std::function<void()> saved, std::function<void()> closed)
 {
     auto st = std::make_shared<state>();
+    st->ui = &ui;
     st->repo_dir = repo_dir;
     std::weak_ptr<state> weak = st;
     auto build = [](const std::weak_ptr<state>& w, rap::node (*page)(std::shared_ptr<state>))
@@ -683,9 +755,20 @@ void show_settings(rap::ui& ui, rap::window* parent, const std::string& repo_dir
         {
             auto keep = std::move(st);
             settings::get().save_window("settings.window", *keep->window);  // however it closed
+            // Appearance was shown live: kept on OK, back as saved otherwise.
+            if (keep->appearance && role != rap::dialog_role::ok) ui.set_color_scheme(appearance());
             if (role == rap::dialog_role::ok)
             {
                 settings& settings = settings::get();
+                if (keep->appearance)
+                {
+                    const int i = std::clamp(keep->appearance->current(), 0, 2);
+                    const std::string_view v = appearance_value(k_appearance_choices[i]);
+                    if (v.empty())
+                        settings.remove(k_appearance_setting);
+                    else
+                        settings.set(k_appearance_setting, std::string(v));
+                }
                 if (keep->language)
                 {
                     const int i = keep->language->current();
@@ -757,8 +840,17 @@ void show_settings(rap::ui& ui, rap::window* parent, const std::string& repo_dir
                                            keep->diff_command->text());
                 }
                 if (keep->image_select)
-                    save_image_settings(image_mode(std::max(keep->image_select->current(), 0)),
-                                        keep->image_command->text());
+                {
+                    // A detected tool is saved as the custom command it stands for.
+                    const int choice = keep->image_select->current();
+                    if (choice >= 2 && choice < keep->image_custom_index())
+                        save_image_settings(image_mode::custom,
+                                            keep->image_tools[size_t(choice - 2)].command);
+                    else
+                        save_image_settings(choice >= 2 ? image_mode::custom
+                                                        : image_mode(std::max(choice, 0)),
+                                            keep->image_command->text());
+                }
                 if (keep->merge_select)
                 {
                     const int choice = keep->merge_select->current();

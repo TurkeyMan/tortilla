@@ -1,5 +1,7 @@
 #include "tree_list.h"
 
+#include "git/libgit2_oid.h"
+
 #include <git2.h>
 
 #include <cstring>
@@ -9,20 +11,6 @@ namespace tortilla
 {
 namespace
 {
-
-oid to_oid(const git_oid* o)
-{
-    oid out;
-    std::memcpy(out.bytes.data(), o->id, out.bytes.size());
-    return out;
-}
-
-git_oid to_git(const oid& o)
-{
-    git_oid out{};
-    std::memcpy(out.id, o.bytes.data(), o.bytes.size());
-    return out;
-}
 
 using object_ptr = std::unique_ptr<git_object, decltype(&git_object_free)>;
 using tree_ptr = std::unique_ptr<git_tree, decltype(&git_tree_free)>;
@@ -78,6 +66,31 @@ std::vector<std::string> tree_folders(const repo& r, const oid& tree)
             return 0;
         },
         &out);
+    return out;
+}
+
+std::optional<std::vector<std::string>> tree_files(const repo& r, const oid& commit_or_tree)
+{
+    const git_oid g = to_git(commit_or_tree);
+    git_object* found = nullptr;
+    if (git_object_lookup(&found, r.raw(), &g, GIT_OBJECT_ANY) != 0) return std::nullopt;
+    object_ptr object(found, &git_object_free);
+    git_object* peeled = nullptr;
+    if (git_object_peel(&peeled, found, GIT_OBJECT_TREE) != 0) return std::nullopt;
+    object_ptr tree(peeled, &git_object_free);
+    std::vector<std::string> out;
+    // In tree order, as ls-tree -r: each folder's entries where it stands.
+    if (git_tree_walk(
+            reinterpret_cast<git_tree*>(peeled), GIT_TREEWALK_PRE,
+            [](const char* root, const git_tree_entry* e, void* payload) -> int
+            {
+                if (git_tree_entry_type(e) != GIT_OBJECT_TREE)
+                    static_cast<std::vector<std::string>*>(payload)->push_back(
+                        std::string(root) + git_tree_entry_name(e));
+                return 0;
+            },
+            &out) != 0)
+        return std::nullopt;
     return out;
 }
 
