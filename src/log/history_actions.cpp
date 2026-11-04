@@ -766,7 +766,7 @@ void log_window::offer_force_push(const history_edit& e)
 {
     const std::string branch = e.moves.front().ref;
     if (!e.lease || !e.moves.front().to) return;
-    auto args = force_push_args(repo_, branch, *e.lease, *e.moves.front().to);
+    auto args = force_push_args(e);
     if (args.empty()) return;
     ui_.message(window_.get(),
                 {.icon = rap::message_spec::icon::question,

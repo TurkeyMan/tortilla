@@ -74,7 +74,7 @@ std::string upstream_track(const repo& r, const oid& local, const std::string& u
 
 // fast_forward_targets' three reads, as git worktree list --porcelain and
 // its two for-each-refs put them, in process; false when libgit2 can't
-// (the refs, or upstreams set in a config it can't read as git does).
+// read the refs, or no one can say the upstreams.
 bool fast_forward_reads(const std::string& workdir, std::string& trees, std::string& tips,
                         std::string& branches)
 {
@@ -87,6 +87,7 @@ bool fast_forward_reads(const std::string& workdir, std::string& trees, std::str
         if (!w.branch.empty())
             trees += "branch " +
                      (w.branch.starts_with("refs/") ? w.branch : "refs/heads/" + w.branch) + "\n";
+    upstream_list upstreams(*r);
     std::string head;
     for (const worktree_info& w : *worktrees)
         if (w.current && !w.branch.empty())
@@ -95,7 +96,7 @@ bool fast_forward_reads(const std::string& workdir, std::string& trees, std::str
     {
         tips += l.full_name + '\t' + l.target.hex() + '\t' + l.symref + '\n';
         if (!l.full_name.starts_with("refs/heads/")) continue;
-        const auto upstream = r->upstream_in_process(std::string_view(l.full_name).substr(11));
+        const auto upstream = upstreams.of(std::string_view(l.full_name).substr(11));
         if (!upstream) return false;
         branches += l.full_name + '\t' + *upstream + '\t' +
                     upstream_track(*r, l.target, *upstream) + '\t' +
@@ -403,9 +404,14 @@ std::vector<fast_forward> fast_forward_targets(const std::string& workdir,
                   else
                   {
                       const std::string_view there = upstream.substr(space->size());
+                      // Without a HEAD, one default: its main, else its master.
                       const auto h = head_of.find(std::string_view(*space));
-                      is_default = h != head_of.end() ? h->second == upstream
-                                                      : there == "main" || there == "master";
+                      if (h != head_of.end())
+                          is_default = h->second == upstream;
+                      else if (sha_of.contains(*space + "main"))
+                          is_default = there == "main";
+                      else
+                          is_default = there == "master";
                       namesake = there == name;
                   }
                   if (is_default && !namesake) return;

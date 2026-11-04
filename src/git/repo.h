@@ -245,6 +245,19 @@ public:
     // upstream_ref through libgit2 alone: nullopt (where "" is none) when
     // it can't read the config as git does, and git must be asked.
     std::optional<std::string> upstream_in_process(std::string_view branch) const;
+    // How a local branch tracks, from one read of its config, as git reads
+    // it: branch.<b>.remote (the last given), branch.<b>.merge (the first
+    // given, which @{u} and %(upstream) take) and how many .merge entries
+    // there are, and the upstream they make. Git's config values when
+    // libgit2 can't read the config as git does.
+    struct tracking
+    {
+        std::string remote;    // "origin"; "." for a local branch; "" for none
+        std::string merge;     // the branch there: refs/heads/main
+        size_t merges = 0;     // .merge entries (git push refuses more than one)
+        std::string upstream;  // refs/remotes/origin/main; "" when none maps
+    };
+    tracking tracking_of(std::string_view branch) const;
 
     // The refs whose full names start with one of `prefixes` (every ref
     // when it's empty), in name order, as git for-each-ref <prefix>/ lists
@@ -323,6 +336,26 @@ private:
 };
 
 std::string last_git_error();
+
+// Every local branch's upstream for a listing (the log's labels, Browse
+// References, the sync): libgit2's, or when it can't read the config as
+// git does, one git for-each-ref for them all. Unknown (nullopt) only when
+// git can't answer either (it isn't installed): then a listing leaves the
+// upstreams out and keeps the rest.
+class upstream_list
+{
+public:
+    explicit upstream_list(const repo&);
+    ~upstream_list();
+    upstream_list(const upstream_list&) = delete;
+    upstream_list& operator=(const upstream_list&) = delete;
+    // "" when the branch (short name) has none.
+    std::optional<std::string> of(std::string_view branch);
+
+private:
+    struct impl;
+    std::unique_ptr<impl> p_;
+};
 
 // The repository's config as git reads it, through libgit2 (a snapshot):
 // nonzero, and *out null, when it holds what libgit2 doesn't evaluate as

@@ -41,6 +41,11 @@ struct branch_history
     std::string mainline;  // the ref it stops at, full name; "" when there's none
     std::string upstream;  // full name of the branch's upstream; "" when it has none
     std::optional<oid> upstream_tip;
+    // Where a force push goes, read with the upstream: its remote and the
+    // branch there (branch.<b>.remote and .merge). Empty when that isn't
+    // one branch on a remote: a local upstream, or several .merge entries,
+    // which git push refuses too.
+    std::string push_remote, push_ref;
     std::string worktree;      // another working tree that has it checked out
     bool checked_out = false;  // this working tree's HEAD is on it
 
@@ -105,6 +110,9 @@ struct history_edit
     // branch_history's): what a force push afterwards leases on, so a push
     // by someone else, fetched since, is never overwritten.
     std::optional<oid> lease;
+    // Where that push goes (the branch_history's push_remote and push_ref,
+    // read with the lease's upstream).
+    std::string push_remote, push_ref;
 
     history_edit undo() const;
 };
@@ -263,13 +271,13 @@ std::expected<history_edit, replay_failure>
 transplant_commits(const repo&, const branch_history& onto, size_t place,
                    const std::vector<oid>& commits, const branch_history* from, std::string reflog);
 
-// After rewriting pushed commits: git push of `tip` to `branch`'s (full
-// name) upstream branch, only if that is still at `expected` there
-// (--force-with-lease=<its ref>:<expected>, the edit's lease, not the
+// After rewriting pushed commits: git push of the edit's first move's new
+// tip to where it pushes (push_remote, push_ref), only if that is still at
+// the edit's lease there (--force-with-lease=<push_ref>:<lease>, not the
 // remote-tracking ref as it is when the push runs, which a fetch since may
-// have moved); empty when it has no upstream on a remote.
-std::vector<std::string> force_push_args(const repo&, const std::string& branch,
-                                         const oid& expected, const oid& tip);
+// have moved); empty when it has no lease or nowhere to push. All three
+// were read together when the edit was planned.
+std::vector<std::string> force_push_args(const history_edit&);
 
 // Undo last commit: the checked-out branch back to its tip's parent, the
 // index and files as they are (git reset --soft HEAD~1).

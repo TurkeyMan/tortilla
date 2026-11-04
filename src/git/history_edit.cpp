@@ -2,7 +2,6 @@
 
 #include "git/command.h"
 #include "git/libgit2_oid.h"
-#include "git/remotes.h"
 #include "git/svn.h"
 #include "git/worktrees.h"
 #include "i18n.h"
@@ -191,8 +190,15 @@ load_branch_history(const repo& repository, const std::string& branch, const std
     }
     h.below = expected;
 
-    h.upstream = repository.upstream_ref(std::string_view(branch).substr(11));
+    // The upstream, the lease's tip and where a push goes, from one read.
+    const repo::tracking t = repository.tracking_of(std::string_view(branch).substr(11));
+    h.upstream = t.upstream;
     if (!h.upstream.empty()) h.upstream_tip = resolve_ref(r, h.upstream);
+    if (t.merges == 1 && !t.remote.empty() && t.remote != ".")
+    {
+        h.push_remote = t.remote;
+        h.push_ref = t.merge;
+    }
 
     owned_ref head;
     if (git_repository_head(&head.p, r) == 0 && git_reference_is_branch(head.p))
@@ -978,7 +984,12 @@ history_edit edit_from(const repo& repository, const branch_history& h, const ed
     }
     if (!above && !h.line.empty() && (!p.base || p.base == h.below)) above = h.line.size() - 1;
     e.pushed = above && rewrites_pushed(repository, h, h.line[*above]);
-    if (e.pushed) e.lease = h.upstream_tip;
+    if (e.pushed)
+    {
+        e.lease = h.upstream_tip;
+        e.push_remote = h.push_remote;
+        e.push_ref = h.push_ref;
+    }
     return e;
 }
 
@@ -1114,6 +1125,8 @@ transplant_commits(const repo& repository, const branch_history& onto, size_t pl
     {
         e.moves.insert(e.moves.begin(), target.moves.front());
         e.lease = target.lease;
+        e.push_remote = target.push_remote;
+        e.push_ref = target.push_ref;
     }
     else
         e.moves.push_back(target.moves.front());
@@ -1121,17 +1134,13 @@ transplant_commits(const repo& repository, const branch_history& onto, size_t pl
     return e;
 }
 
-std::vector<std::string> force_push_args(const repo& repository, const std::string& branch,
-                                         const oid& expected, const oid& tip)
+std::vector<std::string> force_push_args(const history_edit& e)
 {
-    // branch.<b>.remote and .merge, git's when libgit2 can't read the
-    // config as git does.
-    const std::string key = "branch." + short_name(branch);
-    const std::string remote = config_value(repository.workdir(), key + ".remote");
-    const std::string there = config_value(repository.workdir(), key + ".merge");
-    if (remote.empty() || remote == "." || there.empty()) return {};
-    return {"push", "--force-with-lease=" + there + ":" + expected.hex(), remote,
-            tip.hex() + ":" + there};
+    if (!e.lease || e.moves.empty() || !e.moves.front().to || e.push_remote.empty() ||
+        e.push_ref.empty())
+        return {};
+    return {"push", "--force-with-lease=" + e.push_ref + ":" + e.lease->hex(), e.push_remote,
+            e.moves.front().to->hex() + ":" + e.push_ref};
 }
 
 std::expected<history_edit, std::string> undo_last_commit(const repo& repository,
@@ -1149,7 +1158,9 @@ std::expected<history_edit, std::string> undo_last_commit(const repo& repository
                         .moves = {{h.branch, h.tip, *parent}},
                         .keep_index = true,
                         .pushed = pushed,
-                        .lease = pushed ? h.upstream_tip : std::nullopt};
+                        .lease = pushed ? h.upstream_tip : std::nullopt,
+                        .push_remote = pushed ? h.push_remote : std::string(),
+                        .push_ref = pushed ? h.push_ref : std::string()};
 }
 
 }  // namespace tortilla

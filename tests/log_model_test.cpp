@@ -273,6 +273,32 @@ void diff_sides_tests(rap::ui& ui, const std::string& root)
           "diff sides: a filter driver's smudge applied, as git difftool would");
     if (sides) remove_diff_sides(*sides);
 
+    // An attributes file only an includeIf hasconfig: config names
+    // (core.attributesFile): libgit2 can't see it, so git writes the file,
+    // its filter applied.
+    {
+        sh("cd '" + dir + "' && printf 'l\\n' > a.lo && " + g + "add a.lo && " + g +
+           "commit -qm lo && printf 'l2\\n' > a.lo && " + g + "commit -qam lo2");
+        const std::string lo1 =
+            run_git(dir, {"rev-parse", "HEAD~1"}, git_output::stdout_only).output.substr(0, 40);
+        const std::string lo2 =
+            run_git(dir, {"rev-parse", "HEAD"}, git_output::stdout_only).output.substr(0, 40);
+        const std::string attrs = root + "/sides-hasconfig.attrs";
+        const std::string inc = root + "/sides-hasconfig.cfg";
+        sh("printf '*.lo filter=upper\\n' > '" + attrs +
+           "' && printf '[core]\\n\\tattributesFile = " + attrs + "\\n' > '" + inc + "' && " + g +
+           "remote add origin https://example.com/sides.git && " + g +
+           "config 'includeIf.hasconfig:remote.*.url:https://example.com/**.path' '" + inc + "'");
+        const auto lo = one_diff({lo1, lo2}, {"a.lo"});
+        sides =
+            lo ? write_diff_sides(dir, {lo1, lo2}, *lo) : std::unexpected(std::string("no diff"));
+        check(sides && bytes(sides->base) == "L\n" && bytes(sides->mine) == "L2\n",
+              "diff sides: a filter set by an attributes file only git sees (hasconfig) applied");
+        if (sides) remove_diff_sides(*sides);
+        sh(g + "config --unset 'includeIf.hasconfig:remote.*.url:https://example.com/**.path' && " +
+           g + "remote remove origin");
+    }
+
     // The tool's words: placeholders replaced within words, no quoting
     // needed for spaces, quotes or non-ASCII; sh's syntax left to git.
     const std::string program = find_program("git");
@@ -777,11 +803,13 @@ void history_edit_tests(const std::string& root)
         check(edited && edited->pushed && edited->lease == h->upstream_tip,
               "history: rewriting them says so, and what the upstream was");
         const oid at = *h->upstream_tip, to = tip ? *tip : oid{};
-        check(force_push_args(*r, "refs/heads/feature", at, to) ==
+        check(edited &&
+                  force_push_args(*edited) ==
                       std::vector<std::string>{"push",
                                                "--force-with-lease=refs/heads/feature:" + at.hex(),
                                                "origin", to.hex() + ":refs/heads/feature"} &&
-                  force_push_args(*r, "refs/heads/main", at, to).empty(),
+                  force_push_args(history_edit{.moves = {{"refs/heads/main", at, to}}, .lease = at})
+                      .empty(),
               "history: the force push, leased on that, to the upstream only");
     }
 
@@ -852,8 +880,7 @@ void history_edit_tests(const std::string& root)
         sh(ag + "fetch -q origin");
         if (e)
         {
-            const auto args =
-                force_push_args(*ar, e->moves.front().ref, *e->lease, *e->moves.front().to);
+            const auto args = force_push_args(*e);
             const git_result pushed = run_git(alice, args);
             const std::string there =
                 run_git(remote, {"rev-parse", "refs/heads/main"}, git_output::stdout_only).output;
@@ -870,9 +897,7 @@ void history_edit_tests(const std::string& root)
         {
             const history_edit e2 = edit_from(*ar, *seen, *again, *again_tip, "tortilla: reword");
             const bool applied = e2.pushed && e2.lease && apply_edit(*ar, e2).has_value();
-            const bool pushed =
-                applied &&
-                run_git(alice, force_push_args(*ar, "refs/heads/main", *e2.lease, *again_tip)).ok();
+            const bool pushed = applied && run_git(alice, force_push_args(e2)).ok();
             const std::string there =
                 run_git(remote, {"rev-parse", "refs/heads/main"}, git_output::stdout_only).output;
             check(pushed && there == again_tip->hex() + "\n",
@@ -1306,11 +1331,19 @@ void libgit2_parity_tests(const std::string& root)
         if (ours != theirs) std::printf("libgit2:\n%sgit:\n%s", ours.c_str(), theirs.c_str());
     }
 
-    // Upstreams, ahead/behind, the branch hint.
-    for (const char* b : {"main", "feature/deep/x", "café", "gone", "local-only"})
+    // Upstreams, ahead/behind, the branch hint. Two .merge entries: the
+    // first, as git takes it.
+    sh(g + "branch -q --no-track twomerge HEAD && " + g +
+       "config branch.twomerge.remote origin && " + g +
+       "config --add branch.twomerge.merge refs/heads/main && " + g +
+       "config --add branch.twomerge.merge 'refs/heads/feature/deep/x'");
+    check(labels_text(r->refs()) == labels_text(r->refs_by_git()),
+          "parity: the labels with a branch of two .merge entries");
+    for (const char* b : {"main", "feature/deep/x", "café", "gone", "local-only", "twomerge"})
         check(r->upstream_ref(b) == git_out(dir, {"for-each-ref", "--format=%(upstream)",
                                                   std::string("refs/heads/") + b}),
               (std::string("parity: %(upstream) of ") + b).c_str());
+    sh(g + "branch -q -D twomerge");
     {
         const auto counts = r->ahead_behind(*r->resolve("main"), *r->resolve("origin/main"));
         check(counts &&
@@ -1452,10 +1485,13 @@ void libgit2_parity_tests(const std::string& root)
         // origin (never fetched) a commit ahead of main and side.
         sh(h + "remote add origin https://example.com/hasconfig.git && " + h +
            "update-ref refs/remotes/origin/main HEAD && " + h +
-           "update-ref refs/remotes/origin/side HEAD && " + h + "reset -q --hard HEAD~1 && " + h +
+           "update-ref refs/remotes/origin/side HEAD && " + h +
+           "branch -q --no-track split HEAD && " + h + "reset -q --hard HEAD~1 && " + h +
            "branch -q side HEAD");
         sh("printf '[branch \"main\"]\\n\\tremote = origin\\n\\tmerge = refs/heads/main\\n"
            "[branch \"side\"]\\n\\tremote = origin\\n\\tmerge = refs/heads/side\\n"
+           "[branch \"split\"]\\n\\tremote = origin\\n\\tmerge = refs/heads/side\\n"
+           "\\tmerge = refs/heads/main\\n"
            "[user]\\n\\temail = hasconfig-upstream@example.com\\n' > '" +
            inc + "' && " + h +
            "config 'includeIf.hasconfig:remote.*.url:https://example.com/**.path' '" + inc + "'");
@@ -1493,8 +1529,23 @@ void libgit2_parity_tests(const std::string& root)
                   "hasconfig parity: Browse References' upstream");
             const auto history = load_branch_history(*c, "refs/heads/side", "refs/heads/main");
             check(history && history->upstream == "refs/remotes/origin/side" &&
-                      !force_push_args(*c, "refs/heads/side", history->tip, history->tip).empty(),
+                      history->push_remote == "origin" && history->push_ref == "refs/heads/side",
                   "hasconfig parity: a history edit's upstream and force push");
+            // Two .merge entries: the upstream is the first's, as git's @{u};
+            // and no force push, as git push refuses one (the lease's
+            // upstream and the push's branch can't be told apart).
+            const auto split = load_branch_history(*c, "refs/heads/split", "refs/heads/main");
+            check(split &&
+                      split->upstream ==
+                          git_out(hc, {"rev-parse", "--symbolic-full-name", "split@{u}"}) &&
+                      split->upstream == "refs/remotes/origin/side" &&
+                      force_push_args(
+                          history_edit{.moves = {{"refs/heads/split", split->tip, split->tip}},
+                                       .lease = split->upstream_tip,
+                                       .push_remote = split->push_remote,
+                                       .push_ref = split->push_ref})
+                          .empty(),
+                  "hasconfig parity: two .merge entries: @{u}'s upstream, no force push");
             // A commit made in process signs as git would: the included
             // address (or the environment's, which git var takes first).
             const std::string ident = git_out(hc, {"var", "GIT_COMMITTER_IDENT"});
@@ -1506,6 +1557,25 @@ void libgit2_parity_tests(const std::string& root)
             check(made && !email.empty() &&
                       git_out(hc, {"log", "-1", "--format=%ce", made->hex()}) == email,
                   "hasconfig parity: a commit made in process has git's committer");
+
+            // Without git: every label and row still there, the upstreams
+            // that only git could say left out.
+            const std::string path = rap::sys::env("PATH").value_or("");
+            const std::string nowhere = root + "/parity-hasconfig-no-git";
+            fs::create_directories(rap::sys::path_from_utf8(nowhere));
+            set_env("PATH", nowhere);
+            const std::string bare_labels = labels_text(c->refs());
+            const ref_list_result rows = list_refs(hc);
+            set_env("PATH", path);
+            check(bare_labels.find("refs/heads/side side 1 up= ") != std::string::npos &&
+                      bare_labels.find("refs/remotes/origin/main") != std::string::npos,
+                  "hasconfig, no git: the log's labels, without the upstreams");
+            check(rows.error.empty() &&
+                      std::ranges::count_if(rows.refs, [](const ref_entry& e)
+                                            { return e.full.starts_with("refs/heads/"); }) == 3 &&
+                      std::ranges::find(rows.refs, std::string("refs/heads/side"),
+                                        &ref_entry::full) != rows.refs.end(),
+                  "hasconfig, no git: Browse References' rows");
         }
     }
 
@@ -5273,17 +5343,28 @@ int main(int argc, char** argv)
                "branch -q feature origin/main~1 && " + hd + "branch -q -u up/master feature && " +
                hd + "branch -q other origin/main~1 && " + hd + "branch -q -u up/develop other && " +
                hd + "branch -q develop origin/main~1 && " + hd + "branch -q -u up/develop develop");
+            // A remote without a HEAD, with main and master: main is its
+            // default, so a branch tracking its master moves, and one
+            // tracking its main under another name stays.
+            sh(hd + "remote add nohead '" + bare + "' && " + hd + "fetch -q nohead && (" + hd +
+               "update-ref --no-deref -d refs/remotes/nohead/HEAD || true) && " + hd +
+               "branch -q mfollow origin/main~1 && " + hd +
+               "branch -q -u nohead/master mfollow && " + hd +
+               "branch -q mtopic origin/main~1 && " + hd + "branch -q -u nohead/main mtopic");
+            const std::vector<std::string> expected{"develop", "feature", "mfollow"};
             std::vector<std::string> moved;
             for (const fast_forward& f : fast_forward_targets(heads)) moved.push_back(f.branch);
             std::ranges::sort(moved);
-            check(moved == std::vector<std::string>{"develop", "feature"},
+            check(moved == expected,
                   "sync: a remote's default is its HEAD's, matched by full name; main tracking "
                   "origin/team/main stays, a feature tracking a master that isn't up's default "
-                  "moves, up's develop moves only develop");
-            if (moved != std::vector<std::string>{"develop", "feature"})
+                  "moves, up's develop moves only develop; without a HEAD, main is the default "
+                  "and master isn't");
+            if (moved != expected)
                 for (const std::string& m : moved) std::printf("  moved: %s\n", m.c_str());
             check(fast_forward_targets(heads, "up").size() == 2 &&
-                      fast_forward_targets(heads, "origin").empty(),
+                      fast_forward_targets(heads, "origin").empty() &&
+                      fast_forward_targets(heads, "nohead").size() == 1,
                   "sync: per remote, the same");
         }
 

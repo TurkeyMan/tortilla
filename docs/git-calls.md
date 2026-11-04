@@ -56,6 +56,11 @@ upstreams (the log's labels, the branch hint, the sync's fast-forwards,
 Browse References, history edits), branch descriptions, submodules'
 initialized state, filter drivers, core.warnAmbiguousRefs, and the
 committer of a commit made in process (git var GIT_COMMITTER_IDENT).
+Listings (the labels, Browse References, the sync) still read the refs in
+process and ask git only for the upstreams, in one for-each-ref; without
+git those are left out and the rest stays. A branch's upstream takes its
+first branch.<b>.merge, as git's @{u} does, and a history edit offers no
+force push for a branch with several (git push refuses one).
 Remotes themselves can't come from such a file (git refuses remote URLs
 there), so the remote list stays libgit2's. Opened through `git_repository_open_ext`, as the log
 always has been: GIT_DIR and GIT_WORK_TREE in the environment are not

@@ -368,10 +368,34 @@ bool git_labels(const repo& r, ref_map& out, remote_head_map& remote_heads)
     return true;
 }
 
-// A local branch's upstream, as for-each-ref's %(upstream) has it: its
-// branch.<b>.merge through branch.<b>.remote's fetch refspecs (or as is,
-// for the remote "."); "" when it has none or no refspec maps it. Unknown
-// when libgit2 can't read the config as git does: git answers then.
+// branch.<b>.merge through the remote's fetch refspecs (the first that
+// maps it), as git's %(upstream); as is for the remote "."; "" when it has
+// none or no refspec maps it.
+std::string tracked_ref(const std::string& remote, const std::string& merge,
+                        const std::vector<std::string>& specs)
+{
+    if (remote.empty() || merge.empty()) return {};
+    if (remote == ".") return merge;
+    for (const std::string& text : specs)
+    {
+        git_refspec* spec = nullptr;
+        if (git_refspec_parse(&spec, text.c_str(), true) != 0) continue;
+        std::string name;
+        if (git_refspec_src_matches(spec, merge.c_str()))
+        {
+            git_buf out = GIT_BUF_INIT;
+            if (git_refspec_transform(&out, spec, merge.c_str()) == 0 && out.ptr) name = out.ptr;
+            git_buf_dispose(&out);
+        }
+        git_refspec_free(spec);
+        if (!name.empty()) return name;
+    }
+    return {};
+}
+
+// Local branches' tracking from one config snapshot, as repo::tracking_of
+// has it. Unknown when libgit2 can't read the config as git does: git
+// answers then.
 class upstreams
 {
 public:
@@ -383,39 +407,24 @@ public:
     bool known() const { return config_.p != nullptr; }
 
     // Only when known().
-    std::string of(std::string_view branch)
+    repo::tracking of(std::string_view branch)
     {
-        if (!config_.p) return {};
+        repo::tracking t;
+        if (!config_.p) return t;
         const std::string key = "branch." + std::string(branch);
-        const std::string remote = get(key + ".remote"), merge = get(key + ".merge");
-        if (remote.empty() || merge.empty()) return {};
-        if (remote == ".") return merge;
-        auto [it, added] = specs_.try_emplace(remote);
-        if (added)
-            git_config_get_multivar_foreach(
-                config_.p, ("remote." + remote + ".fetch").c_str(), nullptr,
-                [](const git_config_entry* e, void* specs)
-                {
-                    git_refspec* spec = nullptr;
-                    if (e->value && git_refspec_parse(&spec, e->value, true) == 0)
-                        static_cast<std::vector<owned_spec>*>(specs)->emplace_back(
-                            spec, git_refspec_free);
-                    return 0;
-                },
-                &it->second);
-        for (const owned_spec& s : it->second)
-        {
-            if (!git_refspec_src_matches(s.get(), merge.c_str())) continue;
-            git_buf out = GIT_BUF_INIT;
-            std::string name;
-            if (git_refspec_transform(&out, s.get(), merge.c_str()) == 0 && out.ptr) name = out.ptr;
-            git_buf_dispose(&out);
-            if (!name.empty()) return name;
-        }
-        return {};
+        t.remote = get(key + ".remote");
+        const std::vector<std::string> merges = all(key + ".merge");
+        t.merges = merges.size();
+        if (!merges.empty()) t.merge = merges.front();
+        auto [it, added] = specs_.try_emplace(t.remote);
+        if (added && !t.remote.empty() && t.remote != ".")
+            it->second = all("remote." + t.remote + ".fetch");
+        t.upstream = tracked_ref(t.remote, t.merge, it->second);
+        return t;
     }
 
 private:
+    // The last value given, as git config --get.
     std::string get(const std::string& key) const
     {
         git_buf value = GIT_BUF_INIT;
@@ -426,9 +435,24 @@ private:
         return out;
     }
 
-    using owned_spec = std::unique_ptr<git_refspec, decltype(&git_refspec_free)>;
+    // Every value given, in git's order.
+    std::vector<std::string> all(const std::string& key) const
+    {
+        std::vector<std::string> out;
+        git_config_get_multivar_foreach(
+            config_.p, key.c_str(), nullptr,
+            [](const git_config_entry* e, void* values)
+            {
+                if (e->value)
+                    static_cast<std::vector<std::string>*>(values)->emplace_back(e->value);
+                return 0;
+            },
+            &out);
+        return out;
+    }
+
     owned<git_config, git_config_free> config_;
-    std::unordered_map<std::string, std::vector<owned_spec>> specs_;
+    std::unordered_map<std::string, std::vector<std::string>> specs_;  // by remote
 };
 
 // Every label through libgit2, as git_labels has them; false when the refs
@@ -452,8 +476,7 @@ bool libgit2_labels(const repo& r, ref_map& out, remote_head_map& remote_heads)
                     w.branch.starts_with("refs/") ? w.branch : "refs/heads/" + w.branch, w.path);
     // A config libgit2 can't read as git does (includeIf hasconfig:, say,
     // setting branch.<b>.merge): every label from git, upstreams with them.
-    upstreams upstream(raw);
-    if (!upstream.known()) return false;
+    upstream_list upstream(r);
     owned<git_odb, git_odb_free> odb;
     if (git_repository_odb(&odb.p, raw) != 0) return false;
 
@@ -513,7 +536,8 @@ bool libgit2_labels(const repo& r, ref_map& out, remote_head_map& remote_heads)
         const bool branch = full.starts_with("refs/heads/");
         const auto there = branch ? elsewhere.find(std::string(full)) : elsewhere.end();
         add_label(out, remote_heads, full, symref, shown ? &commit : nullptr, annotated,
-                  branch ? upstream.of(full.substr(11)) : std::string(), branch && full == head,
+                  branch ? upstream.of(full.substr(11)).value_or("") : std::string(),
+                  branch && full == head,
                   there != elsewhere.end() ? std::string_view(there->second) : std::string_view());
     }
     return true;
@@ -1253,27 +1277,76 @@ std::optional<std::string> repo::upstream_in_process(std::string_view branch) co
 {
     upstreams up(repo_);
     if (!up.known()) return std::nullopt;
-    return up.of(branch);
+    return up.of(branch).upstream;
 }
 
-std::string repo::upstream_ref(std::string_view branch) const
+repo::tracking repo::tracking_of(std::string_view branch) const
 {
-    if (auto in_process = upstream_in_process(branch)) return std::move(*in_process);
-    // for-each-ref's pattern takes refs/heads/<b>/... too: the line for <b>.
-    const std::string full = "refs/heads/" + std::string(branch);
+    upstreams up(repo_);
+    if (up.known()) return up.of(branch);
+    // git's values (config --get, the last; --get-all, every one), read the
+    // same way.
+    const std::string dir = workdir(), key = "branch." + std::string(branch);
+    tracking t;
+    t.remote = config_value(dir, key + ".remote");
+    const std::vector<std::string> merges = config_values(dir, key + ".merge");
+    t.merges = merges.size();
+    if (!merges.empty()) t.merge = merges.front();
+    std::vector<std::string> specs;
+    if (!t.remote.empty() && t.remote != ".")
+        specs = config_values(dir, "remote." + t.remote + ".fetch");
+    t.upstream = tracked_ref(t.remote, t.merge, specs);
+    return t;
+}
+
+struct upstream_list::impl
+{
+    explicit impl(git_repository* r)
+        : in_process(r)
+    {
+    }
+    upstreams in_process;
+    bool unknown = false;
+    std::unordered_map<std::string, std::string> by_git;  // short name -> upstream
+};
+
+upstream_list::upstream_list(const repo& r)
+    : p_(std::make_unique<impl>(r.raw()))
+{
+    if (p_->in_process.known()) return;
     const git_result listed =
-        run_git(workdir(), {"for-each-ref", "--format=%(refname)%09%(upstream)", full},
+        run_git(r.workdir(), {"for-each-ref", "--format=%(refname)%09%(upstream)", "refs/heads/"},
                 git_output::stdout_only);
-    for (std::string_view rest = listed.ok() ? listed.output : std::string_view(); !rest.empty();)
+    if (!listed.ok())
+    {
+        p_->unknown = true;
+        return;
+    }
+    for (std::string_view rest = listed.output; !rest.empty();)
     {
         const size_t nl = rest.find('\n');
         std::string_view line = rest.substr(0, nl);
         rest.remove_prefix(nl == std::string_view::npos ? rest.size() : nl + 1);
         if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
-        if (line.starts_with(full) && line.size() > full.size() && line[full.size()] == '\t')
-            return std::string(line.substr(full.size() + 1));
+        const size_t tab = line.find('\t');
+        if (tab == std::string_view::npos || !line.starts_with("refs/heads/")) continue;
+        p_->by_git.emplace(line.substr(11, tab - 11), line.substr(tab + 1));
     }
-    return {};
+}
+
+upstream_list::~upstream_list() = default;
+
+std::optional<std::string> upstream_list::of(std::string_view branch)
+{
+    if (p_->in_process.known()) return p_->in_process.of(branch).upstream;
+    if (p_->unknown) return std::nullopt;
+    const auto it = p_->by_git.find(std::string(branch));
+    return it == p_->by_git.end() ? std::string() : it->second;
+}
+
+std::string repo::upstream_ref(std::string_view branch) const
+{
+    return tracking_of(branch).upstream;
 }
 
 std::optional<std::vector<repo::listed_ref>>
