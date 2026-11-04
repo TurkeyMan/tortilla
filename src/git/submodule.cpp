@@ -1,5 +1,7 @@
 #include "submodule.h"
 
+#include "git/remotes.h"
+
 #include <rapport/sys.h>
 
 #include <git2.h>
@@ -30,9 +32,10 @@ std::expected<std::vector<submodule_info>, std::string> list_submodules(const re
     };
     if (git_submodule_foreach(r.raw(), each, &out) != 0) return std::unexpected(last_git_error());
     // Initialized: its URL copied to the repository's config (libgit2's
-    // IN_CONFIG means .gitmodules).
+    // IN_CONFIG means .gitmodules). Git's word when libgit2 can't read the
+    // config as git does.
     git_config* config = nullptr;
-    if (git_repository_config_snapshot(&config, r.raw()) == 0)
+    if (config_snapshot(&config, r.raw()) == 0)
     {
         for (submodule_info& s : out)
         {
@@ -43,6 +46,9 @@ std::expected<std::vector<submodule_info>, std::string> list_submodules(const re
         }
         git_config_free(config);
     }
+    else
+        for (submodule_info& s : out)
+            s.initialized = !config_value(r.workdir(), "submodule." + s.name + ".url").empty();
     std::ranges::sort(out, {}, &submodule_info::path);
     return out;
 }

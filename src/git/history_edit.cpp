@@ -2,6 +2,7 @@
 
 #include "git/command.h"
 #include "git/libgit2_oid.h"
+#include "git/remotes.h"
 #include "git/svn.h"
 #include "git/worktrees.h"
 #include "i18n.h"
@@ -69,6 +70,28 @@ std::optional<oid> tree_of(git_repository* r, const oid& commit)
     owned_commit c;
     if (git_commit_lookup(&c.p, r, &id) != 0) return std::nullopt;
     return to_oid(git_commit_tree_id(c.p));
+}
+
+// Who commits, as git would sign: user.name and user.email through
+// libgit2, or git's own (git var GIT_COMMITTER_IDENT) when libgit2 can't
+// read the config as git does (an includeIf hasconfig: setting the
+// address, say).
+int default_signature(git_signature** out, const repo& repository)
+{
+    git_config* config = nullptr;
+    if (config_snapshot(&config, repository.raw()) == 0)
+    {
+        git_config_free(config);
+        return git_signature_default(out, repository.raw());
+    }
+    const git_result ident =
+        run_git(repository.workdir(), {"var", "GIT_COMMITTER_IDENT"}, git_output::stdout_only);
+    // "Name <email> 1700000000 +0100"
+    const std::string_view line = ident.ok() ? std::string_view(ident.output) : "";
+    const size_t open = line.find(" <"), close = line.find('>', open);
+    if (open == std::string_view::npos || close == std::string_view::npos) return GIT_ERROR;
+    return git_signature_now(out, std::string(line.substr(0, open)).c_str(),
+                             std::string(line.substr(open + 2, close - open - 2)).c_str());
 }
 
 std::string no_identity()
@@ -168,13 +191,8 @@ load_branch_history(const repo& repository, const std::string& branch, const std
     }
     h.below = expected;
 
-    git_buf up{};
-    if (git_branch_upstream_name(&up, r, branch.c_str()) == 0)
-    {
-        h.upstream.assign(up.ptr, up.size);
-        h.upstream_tip = resolve_ref(r, h.upstream);
-    }
-    git_buf_dispose(&up);
+    h.upstream = repository.upstream_ref(std::string_view(branch).substr(11));
+    if (!h.upstream.empty()) h.upstream_tip = resolve_ref(r, h.upstream);
 
     owned_ref head;
     if (git_repository_head(&head.p, r) == 0 && git_reference_is_branch(head.p))
@@ -316,7 +334,7 @@ std::expected<oid, replay_failure> replay(const repo& repository, const edit_pla
     }
 
     owned_signature committer;
-    if (git_signature_default(&committer.p, r) != 0) return fail(no_identity());
+    if (default_signature(&committer.p, repository) != 0) return fail(no_identity());
 
     // Where the replay stands: the last commit made (or kept), and its tree.
     std::optional<oid> cur = plan.base;
@@ -925,7 +943,7 @@ std::expected<oid, std::string> staged_commit(const repo& repository)
     if (tree_of(r, *head) == to_oid(&tree_id))
         return std::unexpected(std::string(_("nothing staged")));
     owned_signature me;
-    if (git_signature_default(&me.p, r) != 0) return std::unexpected(no_identity());
+    if (default_signature(&me.p, repository) != 0) return std::unexpected(no_identity());
     owned_tree tree;
     owned_commit parent;
     git_oid head_id = to_git(*head);
@@ -1106,20 +1124,14 @@ transplant_commits(const repo& repository, const branch_history& onto, size_t pl
 std::vector<std::string> force_push_args(const repo& repository, const std::string& branch,
                                          const oid& expected, const oid& tip)
 {
-    git_repository* r = repository.raw();
-    git_buf remote{}, merge{};
-    std::vector<std::string> out;
-    if (git_branch_upstream_remote(&remote, r, branch.c_str()) == 0 &&
-        git_branch_upstream_merge(&merge, r, branch.c_str()) == 0 && remote.size &&
-        std::string_view(remote.ptr, remote.size) != ".")
-    {
-        const std::string there(merge.ptr, merge.size);
-        out = {"push", "--force-with-lease=" + there + ":" + expected.hex(),
-               std::string(remote.ptr, remote.size), tip.hex() + ":" + there};
-    }
-    git_buf_dispose(&remote);
-    git_buf_dispose(&merge);
-    return out;
+    // branch.<b>.remote and .merge, git's when libgit2 can't read the
+    // config as git does.
+    const std::string key = "branch." + short_name(branch);
+    const std::string remote = config_value(repository.workdir(), key + ".remote");
+    const std::string there = config_value(repository.workdir(), key + ".merge");
+    if (remote.empty() || remote == "." || there.empty()) return {};
+    return {"push", "--force-with-lease=" + there + ":" + expected.hex(), remote,
+            tip.hex() + ":" + there};
 }
 
 std::expected<history_edit, std::string> undo_last_commit(const repo& repository,

@@ -17,6 +17,7 @@
 
 struct git_repository;
 struct git_diff;
+struct git_config;
 
 namespace tortilla
 {
@@ -238,8 +239,12 @@ public:
     std::string upstream_of(const std::string& branch) const;
     // The same as a full name (refs/remotes/origin/main), as for-each-ref's
     // %(upstream) gives it: branch.<b>.merge through branch.<b>.remote's
-    // fetch refspecs, whether or not that ref exists; "" for none.
+    // fetch refspecs, whether or not that ref exists; "" for none. Git
+    // answers when libgit2 can't read the config as git does.
     std::string upstream_ref(std::string_view branch) const;
+    // upstream_ref through libgit2 alone: nullopt (where "" is none) when
+    // it can't read the config as git does, and git must be asked.
+    std::optional<std::string> upstream_in_process(std::string_view branch) const;
 
     // The refs whose full names start with one of `prefixes` (every ref
     // when it's empty), in name order, as git for-each-ref <prefix>/ lists
@@ -313,9 +318,19 @@ private:
     }
 
     git_repository* repo_ = nullptr;
+    // core.warnAmbiguousRefs as git read it, when libgit2 couldn't.
+    mutable std::optional<bool> git_strict_refs_;
 };
 
 std::string last_git_error();
+
+// The repository's config as git reads it, through libgit2 (a snapshot):
+// nonzero, and *out null, when it holds what libgit2 doesn't evaluate as
+// git does: an includeIf hasconfig: (libgit2 skips it, so what it sets
+// reads as unset), or on Windows a gitdir: pattern written with
+// backslashes. Config reads in process go through this, and ask git when
+// it fails.
+int config_snapshot(git_config** out, git_repository* r);
 
 // A commit message's body, as git's %b: what follows the subject's
 // paragraph and the blank lines after it.

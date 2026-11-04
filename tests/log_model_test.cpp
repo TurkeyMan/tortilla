@@ -1189,6 +1189,77 @@ void libgit2_parity_tests(const std::string& root)
               "parity: a repository not using LFS");
     }
 
+    // Upstreams (and an address) set by an includeIf hasconfig: config,
+    // which libgit2 skips: git sees them, and so must the labels, the
+    // branch hint, Browse References, the sync's fast-forwards, history
+    // edits and their commits.
+    {
+        const std::string hc = root + "/parity-hasconfig-upstream";
+        const std::string inc = root + "/parity-hasconfig-upstream.cfg";
+        const std::string h = "git -C '" + hc + "' ";
+        sh("git init -q -b main '" + hc + "' && " + h + "config user.name Tester && " + h +
+           "config user.email t@example.com && " + h + "config core.autocrlf false");
+        sh(h + "commit -q --allow-empty -m one && " + h + "commit -q --allow-empty -m two");
+        // origin (never fetched) a commit ahead of main and side.
+        sh(h + "remote add origin https://example.com/hasconfig.git && " + h +
+           "update-ref refs/remotes/origin/main HEAD && " + h +
+           "update-ref refs/remotes/origin/side HEAD && " + h + "reset -q --hard HEAD~1 && " + h +
+           "branch -q side HEAD");
+        sh("printf '[branch \"main\"]\\n\\tremote = origin\\n\\tmerge = refs/heads/main\\n"
+           "[branch \"side\"]\\n\\tremote = origin\\n\\tmerge = refs/heads/side\\n"
+           "[user]\\n\\temail = hasconfig-upstream@example.com\\n' > '" +
+           inc + "' && " + h +
+           "config 'includeIf.hasconfig:remote.*.url:https://example.com/**.path' '" + inc + "'");
+        check(git_out(hc, {"for-each-ref", "--format=%(upstream)", "refs/heads/main"}) ==
+                  "refs/remotes/origin/main",
+              "hasconfig parity: git sees the upstream an includeIf hasconfig: sets");
+        auto c = repo::open(hc);
+        check(c.has_value(), "hasconfig parity: the repository opens");
+        if (c)
+        {
+            check(!c->upstream_in_process("main") &&
+                      c->upstream_ref("main") == "refs/remotes/origin/main" &&
+                      c->upstream_of("side") == "origin/side" && c->upstream_ref("none").empty(),
+                  "hasconfig parity: upstreams, from git when libgit2 can't read the config");
+            const std::string labels = labels_text(c->refs());
+            check(labels == labels_text(c->refs_by_git()) &&
+                      labels.find("refs/heads/side side 1 up=refs/remotes/origin/side") !=
+                          std::string::npos,
+                  "hasconfig parity: the log's labels carry the upstreams");
+            if (labels != labels_text(c->refs_by_git()))
+                std::printf("ours:\n%sgit:\n%s", labels.c_str(),
+                            labels_text(c->refs_by_git()).c_str());
+            const current_state s = current_against_upstream(hc);
+            check(s.branch == "main" && s.upstream == "origin/main" && s.behind == 1 &&
+                      s.ahead == 0,
+                  "hasconfig parity: the branch hint (upstream origin/main, behind 1)");
+            const auto ff = fast_forward_targets(hc);
+            check(ff.size() == 1 && ff[0].branch == "side" &&
+                      ff[0].upstream == "refs/remotes/origin/side",
+                  "hasconfig parity: the sync fast-forwards a branch tracking through it");
+            const ref_list_result browsed = list_refs(hc);
+            const auto side =
+                std::ranges::find(browsed.refs, std::string("refs/heads/side"), &ref_entry::full);
+            check(side != browsed.refs.end() && side->upstream.find("origin/side") == 0,
+                  "hasconfig parity: Browse References' upstream");
+            const auto history = load_branch_history(*c, "refs/heads/side", "refs/heads/main");
+            check(history && history->upstream == "refs/remotes/origin/side" &&
+                      !force_push_args(*c, "refs/heads/side", history->tip, history->tip).empty(),
+                  "hasconfig parity: a history edit's upstream and force push");
+            // A commit made in process signs as git would: the included
+            // address (or the environment's, which git var takes first).
+            const std::string ident = git_out(hc, {"var", "GIT_COMMITTER_IDENT"});
+            const size_t at = ident.find('<'), end = ident.find('>');
+            const std::string email =
+                at < end && end != std::string::npos ? ident.substr(at + 1, end - at - 1) : "";
+            sh("printf x > '" + hc + "/f.txt' && " + h + "add f.txt");
+            const auto made = staged_commit(*c);
+            check(made && !email.empty() &&
+                      git_out(hc, {"log", "-1", "--format=%ce", made->hex()}) == email,
+                  "hasconfig parity: a commit made in process has git's committer");
+        }
+    }
+
     // Without git: the same answers, nothing run.
     {
         const std::string path = rap::sys::env("PATH").value_or("");
@@ -4941,6 +5012,38 @@ int main(int argc, char** argv)
         check(cur.branch == "main" && cur.upstream == "origin/main" && cur.behind == 1 &&
                   cur.ahead == 0 && cur.clean,
               "sync: the current branch is behind its upstream");
+
+        // Each remote's default is its own HEAD's, and only the branch of
+        // its full name follows it: origin's HEAD naming team/main leaves a
+        // local main tracking it, and a remote whose HEAD names develop
+        // moves a feature branch tracking its master.
+        {
+            const std::string heads = root + "/heads";
+            const std::string hd = "git -C '" + heads + "' " + id;
+            sh(s + "branch -q -f master main && " + s + "branch -q -f develop main && " + s +
+               "branch -q -f team/main main && " + s +
+               "push -q -f origin master develop team/main");
+            sh("git clone -q '" + bare + "' '" + heads + "' && " + hd + "checkout -q --detach && " +
+               hd + "remote set-head origin team/main && " + hd + "remote add up '" + bare +
+               "' && " + hd + "fetch -q up && " + hd + "remote set-head up develop");
+            sh(hd + "branch -q -f main origin/main~1 && " + hd +
+               "branch -q -u origin/team/main main && " + hd +
+               "branch -q feature origin/main~1 && " + hd + "branch -q -u up/master feature && " +
+               hd + "branch -q other origin/main~1 && " + hd + "branch -q -u up/develop other && " +
+               hd + "branch -q develop origin/main~1 && " + hd + "branch -q -u up/develop develop");
+            std::vector<std::string> moved;
+            for (const fast_forward& f : fast_forward_targets(heads)) moved.push_back(f.branch);
+            std::ranges::sort(moved);
+            check(moved == std::vector<std::string>{"develop", "feature"},
+                  "sync: a remote's default is its HEAD's, matched by full name; main tracking "
+                  "origin/team/main stays, a feature tracking a master that isn't up's default "
+                  "moves, up's develop moves only develop");
+            if (moved != std::vector<std::string>{"develop", "feature"})
+                for (const std::string& m : moved) std::printf("  moved: %s\n", m.c_str());
+            check(fast_forward_targets(heads, "up").size() == 2 &&
+                      fast_forward_targets(heads, "origin").empty(),
+                  "sync: per remote, the same");
+        }
 
         // Remotes that can't be fetched fail, not hang.
         sh(c + "remote add nowhere '" + root + "/missing.git' && " + c +

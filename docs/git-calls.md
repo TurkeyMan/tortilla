@@ -49,8 +49,15 @@ and the committer identity check before a rebase stay git's own.
 
 Every in-process read falls back to git when libgit2 can't open the
 repository (an extension it refuses: reftable, sha256) or doesn't know the
-syntax; config reads fall back when a config uses includeIf hasconfig:,
-which libgit2 skips. Opened through `git_repository_open_ext`, as the log
+syntax. Reads that depend on config fall back when a config uses includeIf
+hasconfig:, which libgit2 skips (so what it sets would read as unset), all
+through one check (`config_snapshot` in git/repo.h): config values,
+upstreams (the log's labels, the branch hint, the sync's fast-forwards,
+Browse References, history edits), branch descriptions, submodules'
+initialized state, filter drivers, core.warnAmbiguousRefs, and the
+committer of a commit made in process (git var GIT_COMMITTER_IDENT).
+Remotes themselves can't come from such a file (git refuses remote URLs
+there), so the remote list stays libgit2's. Opened through `git_repository_open_ext`, as the log
 always has been: GIT_DIR and GIT_WORK_TREE in the environment are not
 followed (git's are, where git still runs).
 
