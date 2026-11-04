@@ -73,8 +73,9 @@ std::string subject_of(std::string_view message)
 
 // for-each-ref's lines as list_refs asks for them (fields NUL-separated),
 // through libgit2: Browse References opens on them. nullopt when libgit2
-// can't read the refs, HEAD for the merged filters, or the config as git
-// does (for upstreams).
+// can't read the refs, or HEAD for the merged filters. Upstreams from git
+// when libgit2 can't read the config as git does, left out when git can't
+// answer either.
 std::optional<std::string> refs_in_process(const std::string& workdir, merged_filter filter)
 {
     auto r = repo::open(workdir);
@@ -94,6 +95,7 @@ std::optional<std::string> refs_in_process(const std::string& workdir, merged_fi
         if (!head) return std::nullopt;
         for (const oid& id : r->rev_list({*head}, {})) reached.insert(id);
     }
+    upstream_list upstreams(*r);
     auto when = [](const git_signature* s) { return s ? std::to_string(s->when.time) : ""; };
     auto name = [](const git_signature* s) { return std::string(s && s->name ? s->name : ""); };
     std::string out;
@@ -113,11 +115,7 @@ std::optional<std::string> refs_in_process(const std::string& workdir, merged_fi
         fields[1] = l.target.hex();
         fields[2] = git_object_type2string(type);
         if (l.full_name.starts_with("refs/heads/"))
-        {
-            auto upstream = r->upstream_in_process(std::string_view(l.full_name).substr(11));
-            if (!upstream) return std::nullopt;
-            fields[3] = std::move(*upstream);
-        }
+            fields[3] = upstreams.of(std::string_view(l.full_name).substr(11)).value_or("");
         std::optional<oid> commit;
         if (type == GIT_OBJECT_COMMIT)
         {

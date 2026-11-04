@@ -54,12 +54,17 @@ bool regular_mode(uint32_t mode)
 // smudge), which libgit2 doesn't run: git writes it then.
 bool external_filter(git_repository* repo, const std::string& path)
 {
+    // First the config: one libgit2 can't read as git does may name an
+    // attributes file (core.attributesFile) it would miss. Git knows.
+    git_config* config = nullptr;
+    if (config_snapshot(&config, repo) != 0) return true;
     const char* value = nullptr;
     if (git_attr_get(&value, repo, GIT_ATTR_CHECK_FILE_THEN_INDEX, path.c_str(), "filter") != 0 ||
         git_attr_value(value) != GIT_ATTR_VALUE_STRING)
+    {
+        git_config_free(config);
         return false;
-    git_config* config = nullptr;
-    if (config_snapshot(&config, repo) != 0) return true;  // git knows
+    }
     bool driver = false;
     for (const char* key : {".smudge", ".process"})
     {

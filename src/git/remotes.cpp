@@ -325,8 +325,10 @@ bool has_conflicts(const std::string& workdir)
 upstream upstream_of(const std::string& workdir, const std::string& branch)
 {
     if (branch.empty()) return {};
+    // .remote as given last, .merge as given first: as @{u} takes them.
+    const std::vector<std::string> merges = config_values(workdir, "branch." + branch + ".merge");
     upstream u{config_value(workdir, "branch." + branch + ".remote"),
-               config_value(workdir, "branch." + branch + ".merge")};
+               merges.empty() ? std::string() : merges.front()};
     if (u.branch.starts_with("refs/heads/")) u.branch.erase(0, 11);
     return u;
 }
