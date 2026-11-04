@@ -10,6 +10,17 @@
 #include <iterator>
 #include <system_error>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <fcntl.h>
+#include <sys/file.h>
+#include <unistd.h>
+#endif
+
 namespace fs = std::filesystem;
 
 namespace tortilla
@@ -27,8 +38,7 @@ bool real_folder(const fs::path& p)
 
 // revision_temp_dir()'s folders, and the others sweep_temp_dirs() removes
 // once stale (Review Patch's temp_dir).
-constexpr std::string_view revision_prefix = "rev";
-constexpr std::string_view swept_prefixes[] = {revision_prefix, "review-patch"};
+constexpr std::string_view swept_prefixes[] = {revision_dir_prefix, "review-patch"};
 
 // A name unique_temp_dir(prefix) gives: "<prefix>-<time>-<n>".
 bool unique_name(std::string_view name, std::string_view prefix)
@@ -36,6 +46,70 @@ bool unique_name(std::string_view name, std::string_view prefix)
     return name.size() > prefix.size() + 1 && name.starts_with(prefix) &&
            name[prefix.size()] == '-' &&
            name.find_first_not_of("0123456789-", prefix.size()) == std::string_view::npos;
+}
+
+// A folder's lock: beside it, not in it, where a scratch tree's own file
+// (a repository's ".lock") could be.
+fs::path lock_path(const fs::path& folder)
+{
+    fs::path p = folder;
+    p += ".lock";
+    return p;
+}
+
+constexpr std::intptr_t no_lock = -1;
+
+#ifdef _WIN32
+// Open with no sharing: while the handle lives, no other open of it, in
+// this process or another, succeeds, and it can't be deleted.
+std::intptr_t open_lock(const fs::path& p, bool create)
+{
+    HANDLE h = CreateFileW(p.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
+                           create ? CREATE_NEW : OPEN_EXISTING,
+                           FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+    return h == INVALID_HANDLE_VALUE ? no_lock : reinterpret_cast<std::intptr_t>(h);
+}
+
+void close_lock(std::intptr_t lock)
+{
+    CloseHandle(reinterpret_cast<HANDLE>(lock));
+}
+#else
+// flock: an open file description's, so another open of the file, in this
+// process too, can't take it while this one holds it.
+std::intptr_t open_lock(const fs::path& p, bool create)
+{
+    const int fd =
+        ::open(p.c_str(), O_RDWR | O_CLOEXEC | O_NOFOLLOW | (create ? O_CREAT | O_EXCL : 0), 0600);
+    if (fd < 0) return no_lock;
+    if (::flock(fd, LOCK_EX | LOCK_NB) != 0)
+    {
+        ::close(fd);
+        return no_lock;
+    }
+    return fd;
+}
+
+void close_lock(std::intptr_t lock)
+{
+    ::close(static_cast<int>(lock));
+}
+#endif
+
+// Whether `folder` may be swept: no lock beside it (an Open's), or one no
+// one holds (its owner gone, a crash).
+bool unowned(const fs::path& folder)
+{
+    const fs::path lock = lock_path(folder);
+    std::error_code ec;
+    const fs::file_status s = fs::symlink_status(lock, ec);
+    if (s.type() == fs::file_type::not_found) return true;
+    if (!fs::is_regular_file(s)) return false;  // not ours to judge
+    const std::intptr_t held = open_lock(lock, false);
+    if (held == no_lock) return false;  // its owner's still
+    close_lock(held);
+    fs::remove(lock, ec);
+    return true;
 }
 
 }  // namespace
@@ -75,10 +149,20 @@ fs::path unique_temp_dir(std::string_view prefix)
     return {};
 }
 
+temp_dir::temp_dir(std::string_view prefix)
+    : path_(unique_temp_dir(prefix))
+{
+    // Held from the start: the folder is new, so no sweep takes it before.
+    if (!path_.empty()) lock_ = open_lock(lock_path(path_), true);
+}
+
 temp_dir::~temp_dir()
 {
+    if (path_.empty()) return;
     std::error_code ec;
-    if (!path_.empty()) fs::remove_all(path_, ec);  // links in it go, not what they point at
+    fs::remove_all(path_, ec);  // links in it go, not what they point at
+    if (lock_ != no_lock) close_lock(lock_);
+    fs::remove(lock_path(path_), ec);
 }
 
 fs::path revision_temp_path(const fs::path& dir, std::string_view rev, std::string_view path)
@@ -103,19 +187,14 @@ fs::path revision_temp_path(const fs::path& dir, std::string_view rev, std::stri
 
 fs::path revision_temp_dir()
 {
-    return unique_temp_dir(revision_prefix);
+    return unique_temp_dir(revision_dir_prefix);
 }
 
-fs::path write_revision_file(std::string_view rev, std::string_view path, std::string_view content,
-                             fs::path* folder)
+fs::path write_revision_file(std::string_view rev, std::string_view path, std::string_view content)
 {
     const fs::path dir = revision_temp_dir();
     const fs::path file = revision_temp_path(dir, rev, path);
-    if (!file.empty() && write_temp_file(file, content))
-    {
-        if (folder) *folder = dir;
-        return file;
-    }
+    if (!file.empty() && write_temp_file(file, content)) return file;
     std::error_code ec;
     if (!dir.empty()) fs::remove_all(dir, ec);
     return {};
@@ -131,12 +210,29 @@ void sweep_temp_dirs(std::chrono::hours age)
     {
         // Only the folders unique_temp_dir() named for these, nothing else.
         const std::string name = rap::sys::path_to_utf8(it->path().filename());
+        // A lock whose folder is gone (its owner stopped between the two):
+        // its own name's folder decides.
+        const bool lock = name.ends_with(".lock");
+        const std::string_view stem =
+            lock ? std::string_view(name).substr(0, name.size() - 5) : std::string_view(name);
         bool ours = false;
-        for (std::string_view prefix : swept_prefixes) ours = ours || unique_name(name, prefix);
-        if (!ours || !real_folder(it->path())) continue;
+        for (std::string_view prefix : swept_prefixes) ours = ours || unique_name(stem, prefix);
+        if (!ours) continue;
         std::error_code e;
+        if (lock)
+        {
+            const fs::path folder = it->path().parent_path() / rap::sys::path_from_utf8(stem);
+            const auto written = fs::last_write_time(it->path(), e);
+            if (!e && written < before && !fs::exists(fs::symlink_status(folder, e)))
+                unowned(folder);  // removes the lock if no one holds it
+            continue;
+        }
+        if (!real_folder(it->path())) continue;
         const auto written = fs::last_write_time(it->path(), e);
-        if (!e && written < before) fs::remove_all(it->path(), e);  // a link in it, not its target
+        // However old, one a temp_dir holds is in use (a diff tool left open
+        // for days); the lock is gone with it once it's taken.
+        if (!e && written < before && unowned(it->path()))
+            fs::remove_all(it->path(), e);  // a link in it, not its target
     }
 }
 

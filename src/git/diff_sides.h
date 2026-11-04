@@ -6,12 +6,15 @@
 
 #include <expected>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
 
 namespace tortilla
 {
+
+class temp_dir;  // git/temp_files.h
 
 // One file that differs, as git diff pairs it (renames found).
 struct file_diff
@@ -36,23 +39,24 @@ struct diff_sides
 {
     std::string base, mine;
     std::vector<std::filesystem::path> written;  // the temporary files made for them
-    std::filesystem::path folder;                // theirs alone (revision_temp_dir)
+    // Their folder, theirs alone, held (locked against any sweep) while any
+    // copy of this lives and removed with the last: keep one with the tool.
+    std::shared_ptr<const temp_dir> folder;
 };
 
 // `f`'s sides as files: a revision's written in a temporary folder of this
 // comparison's own (revision_temp_path), so no other comparison or Open,
 // here or in another Tortilla, touches them; through the repository's
-// filters, as git difftool
-// writes them (line endings, ident; an LFS file through git, which runs
-// git-lfs); the working tree's is the file itself; a side that doesn't
-// exist (added, deleted) is the empty file.
+// filters, as git difftool writes them (line endings, ident; an LFS file
+// through git, which runs git-lfs); the working tree's is the file itself;
+// a side that doesn't exist (added, deleted) is the empty file.
 std::expected<diff_sides, std::string> write_diff_sides(const std::string& dir,
                                                         const std::vector<std::string>& revisions,
                                                         const file_diff& f);
 
-// Removes the folder write_diff_sides wrote its files in, once the tool is
-// done with them.
-void remove_diff_sides(const diff_sides&);
+// Lets go of these sides' folder once the tool is done with them: removed
+// unless another copy still holds it.
+void remove_diff_sides(diff_sides&);
 
 // The program and arguments that run `command` (TortoiseGit's
 // placeholders: %base %mine %bname %yname) on two files without a shell:

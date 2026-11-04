@@ -191,11 +191,14 @@ void diff_sides_tests(rap::ui& ui, const std::string& root)
               bytes(sides->mine) == "a\nB\n" && sides->written.size() == 2 &&
               sides->base.ends_with("mod.txt") && sides->base != sides->mine,
           "diff sides: a modified file's two revisions, byte for byte");
+    // A comparison's folder: its own, and gone once its sides are let go.
+    auto folder_of = [](const auto& s) { return s && s->folder ? s->folder->path() : fs::path(); };
     if (sides)
     {
+        const fs::path folder = folder_of(sides);
         remove_diff_sides(*sides);
-        check(!fs::exists(sides->written[0]) && !fs::exists(sides->written[1]) &&
-                  !sides->folder.empty() && !fs::exists(sides->folder),
+        check(!fs::exists(sides->written[0]) && !fs::exists(sides->written[1]) && !folder.empty() &&
+                  !fs::exists(folder),
               "diff sides: removed, their folder too, once the tool is done");
     }
 
@@ -205,23 +208,32 @@ void diff_sides_tests(rap::ui& ui, const std::string& root)
     {
         auto first = mod ? write_diff_sides(dir, both, *mod) : std::unexpected(std::string());
         auto second = mod ? write_diff_sides(dir, both, *mod) : std::unexpected(std::string());
-        fs::path open_dir;
-        const fs::path opened = write_revision_file(two, "mod.txt", "opened\n", &open_dir);
+        const fs::path first_dir = folder_of(first), second_dir = folder_of(second);
+        const fs::path opened = write_revision_file(two, "mod.txt", "opened\n");
+        const fs::path open_dir = opened.parent_path().parent_path();
         const bool apart = first && second && first->base != second->base &&
-                           first->mine != second->mine && first->folder != second->folder &&
-                           !opened.empty() && open_dir != first->folder &&
-                           open_dir != second->folder &&
+                           first->mine != second->mine && !first_dir.empty() &&
+                           first_dir != second_dir && !opened.empty() && open_dir != first_dir &&
+                           open_dir != second_dir &&
                            rap::sys::path_from_utf8(first->mine).filename() == "mod.txt" &&
                            rap::sys::path_from_utf8(second->mine).filename() == "mod.txt";
         check(apart, "diff sides: overlapping comparisons and an Open of one file kept apart");
         if (first) remove_diff_sides(*first);
         check(second && bytes(second->base) == "a\nb\n" && bytes(second->mine) == "a\nB\n" &&
-                  read_bytes(rap::sys::path_to_utf8(opened)) == "opened\n" && first &&
-                  !fs::exists(first->folder),
+                  read_bytes(rap::sys::path_to_utf8(opened)) == "opened\n" && !first_dir.empty() &&
+                  !fs::exists(first_dir),
               "diff sides: one comparison done leaves the other's files, and the Open's");
-        if (second) remove_diff_sides(*second);
-        check(second && !fs::exists(second->folder) && fs::exists(opened),
-              "diff sides: the second's folder gone with it, the Open's kept");
+        // Held by the tool's callback (compare.cpp), which a stopped tool
+        // drops without running: the folder goes all the same.
+        if (second)
+        {
+            std::function<void()> callback =
+                [held = std::make_shared<diff_sides>(std::move(*second))] {};
+            check(fs::exists(second_dir), "diff sides: kept while the tool's callback holds them");
+            callback = nullptr;
+        }
+        check(second && !fs::exists(second_dir) && fs::exists(opened),
+              "diff sides: the second's folder gone with its dropped callback, the Open's kept");
         std::error_code ec;
         fs::remove_all(open_dir, ec);
     }
@@ -1804,10 +1816,12 @@ int main(int argc, char** argv)
         // changed files) has a folder of its own: the same revision's file
         // opened twice is two files, the second never rewriting the first.
         {
-            fs::path one_dir, two_dir;
-            const fs::path one = tortilla::write_revision_file(hash, "src/a.txt", "one", &one_dir);
-            const fs::path two = tortilla::write_revision_file(hash, "src/a.txt", "two", &two_dir);
+            const fs::path one = tortilla::write_revision_file(hash, "src/a.txt", "one");
+            const fs::path two = tortilla::write_revision_file(hash, "src/a.txt", "two");
+            const fs::path one_dir = one.parent_path().parent_path().parent_path(),
+                           two_dir = two.parent_path().parent_path().parent_path();
             check(!one.empty() && !two.empty() && one != two && one_dir != two_dir &&
+                      one_dir.parent_path() == root &&
                       one == one_dir / "01234567" / "src" / "a.txt" && read(one) == "one" &&
                       read(two) == "two",
                   "revision file: each Open its own folder, the file keeping its name");
@@ -1829,10 +1843,32 @@ int main(int argc, char** argv)
             const auto old = fs::file_time_type::clock::now() - std::chrono::hours(48);
             fs::last_write_time(stale, old, ec);
             fs::last_write_time(other, old, ec);
+            // Held and as old: a comparison whose tool is still open, which
+            // another Tortilla's startup mustn't take from it. And one whose
+            // owner crashed: its lock left, no one holding it.
+            auto lock_of = [](fs::path p) { return p += ".lock"; };
+            auto live = std::make_unique<tortilla::temp_dir>(tortilla::revision_dir_prefix);
+            const fs::path live_dir = live->path();
+            const fs::path abandoned_dir = tortilla::revision_temp_dir();
+            std::ofstream(lock_of(abandoned_dir)).put('x');  // as a crash leaves it: unheld
+            tortilla::write_temp_file(live_dir / "01234567" / "a.txt", "x");
+            tortilla::write_temp_file(abandoned_dir / "01234567" / "a.txt", "x");
+            fs::last_write_time(live_dir, old, ec);
+            fs::last_write_time(abandoned_dir, old, ec);
+            check(!live_dir.empty() && fs::exists(lock_of(live_dir)) &&
+                      fs::exists(lock_of(abandoned_dir)),
+                  "temp dir: held by a lock beside it");
             tortilla::sweep_temp_dirs();
             check(!stale.empty() && !fs::exists(stale) && fs::is_directory(fresh) &&
                       fs::is_directory(other),
                   "temp sweep: a day-old revision folder removed, others kept");
+            check(fs::exists(live_dir / "01234567" / "a.txt") && fs::exists(lock_of(live_dir)),
+                  "temp sweep: a day-old folder still held (a tool open) kept");
+            check(!fs::exists(abandoned_dir) && !fs::exists(lock_of(abandoned_dir)),
+                  "temp sweep: as old, its owner gone (lock unheld): removed, its lock too");
+            live.reset();
+            check(!fs::exists(live_dir) && !fs::exists(lock_of(live_dir)),
+                  "temp dir: its folder and lock gone with its owner");
             fs::remove_all(fresh, ec);
             fs::remove_all(other, ec);
         }
