@@ -1,6 +1,7 @@
 #include "remotes.h"
 
 #include "git/command.h"
+#include "git/repo.h"
 #include "util/strings.h"
 
 #include <git2.h>
@@ -50,38 +51,6 @@ repo_ptr local_repo(const std::string& workdir)
     if (git_repository_open_ext(&r, workdir.empty() ? "." : workdir.c_str(), 0, nullptr) != 0)
         r = nullptr;
     return repo_ptr(r, &git_repository_free);
-}
-
-// The repository's config as libgit2 reads it: every file git reads, with
-// include and includeIf gitdir/gitdir/i/onbranch. Not includeIf
-// hasconfig:, which libgit2 skips: then it fails, and git answers.
-int config_snapshot(git_config** out, git_repository* r)
-{
-    if (const int error = git_repository_config_snapshot(out, r); error != 0) return error;
-    git_config_iterator* it = nullptr;
-    bool unknown = false;
-    if (git_config_iterator_glob_new(&it, *out, "^includeif\\.hasconfig:.*\\.path$") == 0)
-    {
-        git_config_entry* e = nullptr;
-        unknown = git_config_next(&e, it) == 0;
-        git_config_iterator_free(it);
-    }
-#ifdef _WIN32
-    // A gitdir: pattern written with backslashes (C:\x\): git for Windows
-    // and libgit2 may read the \ differently (an escape, or a separator).
-    if (!unknown && git_config_iterator_glob_new(&it, *out, "^includeif\\.gitdir.*\\.path$") == 0)
-    {
-        git_config_entry* e = nullptr;
-        while (!unknown && git_config_next(&e, it) == 0)
-            unknown =
-                e && e->name && std::string_view(e->name).find('\\') != std::string_view::npos;
-        git_config_iterator_free(it);
-    }
-#endif
-    if (!unknown) return 0;
-    git_config_free(*out);
-    *out = nullptr;
-    return GIT_ERROR;
 }
 
 // A revision's commit, as hex; nullopt if libgit2 can't resolve it.

@@ -73,7 +73,8 @@ std::string upstream_track(const repo& r, const oid& local, const std::string& u
 }
 
 // fast_forward_targets' three reads, as git worktree list --porcelain and
-// its two for-each-refs put them, in process; false when libgit2 can't.
+// its two for-each-refs put them, in process; false when libgit2 can't
+// (the refs, or upstreams set in a config it can't read as git does).
 bool fast_forward_reads(const std::string& workdir, std::string& trees, std::string& tips,
                         std::string& branches)
 {
@@ -94,9 +95,11 @@ bool fast_forward_reads(const std::string& workdir, std::string& trees, std::str
     {
         tips += l.full_name + '\t' + l.target.hex() + '\t' + l.symref + '\n';
         if (!l.full_name.starts_with("refs/heads/")) continue;
-        const std::string upstream = r->upstream_ref(std::string_view(l.full_name).substr(11));
-        branches += l.full_name + '\t' + upstream + '\t' + upstream_track(*r, l.target, upstream) +
-                    '\t' + (l.full_name == head ? "*" : " ") + '\n';
+        const auto upstream = r->upstream_in_process(std::string_view(l.full_name).substr(11));
+        if (!upstream) return false;
+        branches += l.full_name + '\t' + *upstream + '\t' +
+                    upstream_track(*r, l.target, *upstream) + '\t' +
+                    (l.full_name == head ? "*" : " ") + '\n';
     }
     return true;
 }
@@ -342,15 +345,32 @@ std::vector<fast_forward> fast_forward_targets(const std::string& workdir,
     // Every branch and remote branch's commit, then each local branch's
     // upstream and how it stands against it.
     std::unordered_map<std::string_view, std::string_view> sha_of;
-    std::unordered_set<std::string_view> remote_mains;  // what each origin/HEAD points at
+    // Each remote's branches' namespace (refs/remotes/<remote>/): the
+    // remotes', and any with a HEAD of its own (a refspec may map a remote
+    // elsewhere). A remote's name may hold a slash (team/fork), so the
+    // longest that holds a ref is its remote's.
+    std::vector<std::string> spaces;
+    for (const std::string& name : remote_names(workdir))
+        spaces.push_back("refs/remotes/" + name + "/");
+    if (!only.empty()) spaces.push_back(only);
+    std::unordered_map<std::string_view, std::string_view> head_of;  // namespace -> what HEAD names
     each_line(tips.output,
               [&](std::string_view line)
               {
                   const auto [full, rest] = at_tab(line);
                   const auto [sha, symref] = at_tab(rest);
                   sha_of.emplace(full, sha);
-                  if (full.ends_with("/HEAD") && !symref.empty()) remote_mains.insert(symref);
+                  if (full.starts_with("refs/remotes/") && full.ends_with("/HEAD") &&
+                      !symref.empty())
+                  {
+                      const std::string_view space = full.substr(0, full.size() - 4);
+                      head_of.emplace(space, symref);
+                      spaces.emplace_back(space);
+                  }
               });
+    std::ranges::sort(spaces, std::greater<>{}, [](const std::string& s) { return s.size(); });
+    // The local branches' namespace too: a branch may track one of them.
+    spaces.push_back("refs/heads/");
     each_line(branches.output,
               [&](std::string_view line)
               {
@@ -359,23 +379,36 @@ std::vector<fast_forward> fast_forward_targets(const std::string& workdir,
                   auto [track, head] = at_tab(rest2);
                   // "[behind 3]" alone: "[ahead 1, behind 2]" has its own.
                   if (upstream.empty() || head == "*" || !track.starts_with("[behind ") ||
-                      !upstream.starts_with(only) || checked_out.contains(std::string(full)))
+                      checked_out.contains(std::string(full)))
                       return;
                   auto from = sha_of.find(full), to = sha_of.find(upstream);
                   if (from == sha_of.end() || to == sha_of.end()) return;
+                  const auto space = std::ranges::find_if(
+                      spaces, [&](const std::string& s)
+                      { return upstream.size() > s.size() && upstream.starts_with(s); });
+                  if (!only.empty() && (space == spaces.end() || *space != only)) return;
                   // A feature branch started from origin/main may track it
                   // (git's and the Track box's old default); once merged, it
                   // would be dragged up to main's tip on every fetch. So a
-                  // remote's main moves only its namesake; a branch pushed
-                  // under another name still follows that one.
+                  // remote's default branch (what its HEAD names, else its
+                  // main or master) moves only the branch of the same name;
+                  // a branch pushed under another name still follows that
+                  // one.
                   const std::string_view name = full.substr(11);
-                  const bool remote_main = remote_mains.contains(upstream) ||
-                                           upstream.ends_with("/main") ||
-                                           upstream.ends_with("/master");
-                  const bool namesake = upstream.size() > name.size() &&
-                                        upstream.ends_with(name) &&
-                                        upstream[upstream.size() - name.size() - 1] == '/';
-                  if (remote_main && !namesake) return;
+                  bool is_default = false, namesake = false;
+                  if (space == spaces.end())
+                      // Not a remote's that's known: today's guess, and
+                      // no namesake to be sure of.
+                      is_default = upstream.ends_with("/main") || upstream.ends_with("/master");
+                  else
+                  {
+                      const std::string_view there = upstream.substr(space->size());
+                      const auto h = head_of.find(std::string_view(*space));
+                      is_default = h != head_of.end() ? h->second == upstream
+                                                      : there == "main" || there == "master";
+                      namesake = there == name;
+                  }
+                  if (is_default && !namesake) return;
                   out.push_back({.branch = std::string(name),
                                  .upstream = std::string(upstream),
                                  .from = std::string(from->second),
@@ -401,13 +434,18 @@ current_state current_against_upstream(const std::string& workdir)
         while (!s.empty() && (s.back() == '\n' || s.back() == '\r')) s.pop_back();
         return s;
     };
-    // In process: the log asks as it opens and on every reload.
-    if (auto r = repo::open(workdir))
+    // In process: the log asks as it opens and on every reload. Git when
+    // libgit2 can't open the repository, or read its config as git does.
+    auto r = repo::open(workdir);
+    const std::string current = r ? current_branch(workdir) : "";
+    const auto upstream =
+        current.empty() ? std::optional<std::string>("") : r->upstream_in_process(current);
+    if (r && upstream)
     {
-        out.branch = current_branch(workdir);
+        out.branch = current;
         if (out.branch.empty()) return out;
         // @{u}: the upstream ref must be there.
-        const std::string up = r->upstream_ref(out.branch);
+        const std::string& up = *upstream;
         const auto refs = up.empty() ? std::nullopt : r->refs_under({up});
         const auto it = refs ? std::ranges::find(*refs, up, &repo::listed_ref::full_name)
                              : std::vector<repo::listed_ref>::const_iterator{};

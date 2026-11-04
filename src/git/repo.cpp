@@ -2,6 +2,7 @@
 
 #include "command.h"
 #include "libgit2_oid.h"
+#include "remotes.h"
 #include "worktrees.h"
 
 #include <git2.h>
@@ -169,6 +170,40 @@ std::string last_git_error()
     return e && e->message ? e->message : "unknown libgit2 error";
 }
 
+int config_snapshot(git_config** out, git_repository* r)
+{
+    *out = nullptr;
+    if (const int error = git_repository_config_snapshot(out, r); error != 0)
+    {
+        *out = nullptr;
+        return error;
+    }
+    git_config_iterator* it = nullptr;
+    bool unknown = false;
+    if (git_config_iterator_glob_new(&it, *out, "^includeif\\.hasconfig:.*\\.path$") == 0)
+    {
+        git_config_entry* e = nullptr;
+        unknown = git_config_next(&e, it) == 0;
+        git_config_iterator_free(it);
+    }
+#ifdef _WIN32
+    // A gitdir: pattern written with backslashes (C:\x\): git for Windows
+    // and libgit2 may read the \ differently (an escape, or a separator).
+    if (!unknown && git_config_iterator_glob_new(&it, *out, "^includeif\\.gitdir.*\\.path$") == 0)
+    {
+        git_config_entry* e = nullptr;
+        while (!unknown && git_config_next(&e, it) == 0)
+            unknown =
+                e && e->name && std::string_view(e->name).find('\\') != std::string_view::npos;
+        git_config_iterator_free(it);
+    }
+#endif
+    if (!unknown) return 0;
+    git_config_free(*out);
+    *out = nullptr;
+    return GIT_ERROR;
+}
+
 std::string commit_body(std::string_view message)
 {
     // Line by line: blank ones (only spaces) end the subject's paragraph,
@@ -200,12 +235,14 @@ std::expected<repo, std::string> repo::open(const std::string& path)
 
 repo::repo(repo&& o) noexcept
     : repo_(std::exchange(o.repo_, nullptr))
+    , git_strict_refs_(o.git_strict_refs_)
 {
 }
 
 repo& repo::operator=(repo&& o) noexcept
 {
     std::swap(repo_, o.repo_);
+    std::swap(git_strict_refs_, o.git_strict_refs_);
     return *this;
 }
 
@@ -333,15 +370,19 @@ bool git_labels(const repo& r, ref_map& out, remote_head_map& remote_heads)
 
 // A local branch's upstream, as for-each-ref's %(upstream) has it: its
 // branch.<b>.merge through branch.<b>.remote's fetch refspecs (or as is,
-// for the remote "."); "" when it has none or no refspec maps it.
+// for the remote "."); "" when it has none or no refspec maps it. Unknown
+// when libgit2 can't read the config as git does: git answers then.
 class upstreams
 {
 public:
     explicit upstreams(git_repository* r)
     {
-        if (git_repository_config_snapshot(&config_.p, r) != 0) config_.p = nullptr;
+        if (config_snapshot(&config_.p, r) != 0) config_.p = nullptr;
     }
 
+    bool known() const { return config_.p != nullptr; }
+
+    // Only when known().
     std::string of(std::string_view branch)
     {
         if (!config_.p) return {};
@@ -409,7 +450,10 @@ bool libgit2_labels(const repo& r, ref_map& out, remote_head_map& remote_heads)
             if (!w.branch.empty())
                 elsewhere.emplace(
                     w.branch.starts_with("refs/") ? w.branch : "refs/heads/" + w.branch, w.path);
+    // A config libgit2 can't read as git does (includeIf hasconfig:, say,
+    // setting branch.<b>.merge): every label from git, upstreams with them.
     upstreams upstream(raw);
+    if (!upstream.known()) return false;
     owned<git_odb, git_odb_free> odb;
     if (git_repository_odb(&odb.p, raw) != 0) return false;
 
@@ -1185,15 +1229,13 @@ std::optional<oid> repo::resolve(const std::string& rev) const
 
 std::string repo::upstream_of(const std::string& branch) const
 {
-    git_buf up = GIT_BUF_INIT;
-    std::string out;
-    if (git_branch_upstream_name(&up, repo_, ("refs/heads/" + branch).c_str()) == 0)
-    {
-        out = up.ptr;
-        for (const char* prefix : {"refs/remotes/", "refs/heads/"})
-            if (out.starts_with(prefix)) out.erase(0, std::strlen(prefix));
-    }
-    git_buf_dispose(&up);
+    std::string out = upstream_ref(branch);
+    for (const char* prefix : {"refs/remotes/", "refs/heads/"})
+        if (out.starts_with(prefix))
+        {
+            out.erase(0, std::strlen(prefix));
+            break;
+        }
     return out;
 }
 
@@ -1207,9 +1249,31 @@ bool repo::revision_exists(const std::string& rev) const
     return true;
 }
 
+std::optional<std::string> repo::upstream_in_process(std::string_view branch) const
+{
+    upstreams up(repo_);
+    if (!up.known()) return std::nullopt;
+    return up.of(branch);
+}
+
 std::string repo::upstream_ref(std::string_view branch) const
 {
-    return upstreams(repo_).of(branch);
+    if (auto in_process = upstream_in_process(branch)) return std::move(*in_process);
+    // for-each-ref's pattern takes refs/heads/<b>/... too: the line for <b>.
+    const std::string full = "refs/heads/" + std::string(branch);
+    const git_result listed =
+        run_git(workdir(), {"for-each-ref", "--format=%(refname)%09%(upstream)", full},
+                git_output::stdout_only);
+    for (std::string_view rest = listed.ok() ? listed.output : std::string_view(); !rest.empty();)
+    {
+        const size_t nl = rest.find('\n');
+        std::string_view line = rest.substr(0, nl);
+        rest.remove_prefix(nl == std::string_view::npos ? rest.size() : nl + 1);
+        if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
+        if (line.starts_with(full) && line.size() > full.size() && line[full.size()] == '\t')
+            return std::string(line.substr(full.size() + 1));
+    }
+    return {};
 }
 
 std::optional<std::vector<repo::listed_ref>>
@@ -1300,8 +1364,14 @@ std::string repo::short_ref_name(const std::string& full) const
     {
         owned<git_config, git_config_free> config;
         int value = 1;
-        if (git_repository_config_snapshot(&config.p, repo_) == 0 &&
-            git_config_get_bool(&value, config.p, "core.warnambiguousrefs") == 0)
+        if (config_snapshot(&config.p, repo_) != 0)
+        {
+            // git's word, kept: the reference dialogs ask for every ref.
+            if (!git_strict_refs_)
+                git_strict_refs_ = config_bool(workdir(), "core.warnambiguousrefs").value_or(true);
+            strict = *git_strict_refs_;
+        }
+        else if (git_config_get_bool(&value, config.p, "core.warnambiguousrefs") == 0)
             strict = value != 0;
     }
     for (size_t i = std::size(rules) - 1; i > 0; --i)

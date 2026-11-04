@@ -73,7 +73,8 @@ std::string subject_of(std::string_view message)
 
 // for-each-ref's lines as list_refs asks for them (fields NUL-separated),
 // through libgit2: Browse References opens on them. nullopt when libgit2
-// can't read the refs, or HEAD for the merged filters.
+// can't read the refs, HEAD for the merged filters, or the config as git
+// does (for upstreams).
 std::optional<std::string> refs_in_process(const std::string& workdir, merged_filter filter)
 {
     auto r = repo::open(workdir);
@@ -112,7 +113,11 @@ std::optional<std::string> refs_in_process(const std::string& workdir, merged_fi
         fields[1] = l.target.hex();
         fields[2] = git_object_type2string(type);
         if (l.full_name.starts_with("refs/heads/"))
-            fields[3] = r->upstream_ref(std::string_view(l.full_name).substr(11));
+        {
+            auto upstream = r->upstream_in_process(std::string_view(l.full_name).substr(11));
+            if (!upstream) return std::nullopt;
+            fields[3] = std::move(*upstream);
+        }
         std::optional<oid> commit;
         if (type == GIT_OBJECT_COMMIT)
         {
@@ -160,12 +165,12 @@ std::optional<std::string> refs_in_process(const std::string& workdir, merged_fi
 }
 
 // git config --null --get-regexp ^branch\..*\.description$'s output,
-// through libgit2; nullopt when it can't read the config.
+// through libgit2; nullopt when it can't read the config as git does.
 std::optional<std::string> descriptions_in_process(const std::string& workdir)
 {
     auto r = repo::open(workdir);
     git_config* config = nullptr;
-    if (!r || git_repository_config_snapshot(&config, r->raw()) != 0) return std::nullopt;
+    if (!r || config_snapshot(&config, r->raw()) != 0) return std::nullopt;
     std::string out;
     git_config_iterator* it = nullptr;
     if (git_config_iterator_glob_new(&it, config, "^branch\\..*\\.description$") == 0)

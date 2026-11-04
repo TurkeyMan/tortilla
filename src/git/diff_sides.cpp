@@ -3,6 +3,7 @@
 #include "git/command.h"
 #include "git/diff_tool.h"
 #include "git/merge_tool.h"
+#include "git/repo.h"
 #include "git/temp_files.h"
 #include "util/programs.h"
 
@@ -58,7 +59,7 @@ bool external_filter(git_repository* repo, const std::string& path)
         git_attr_value(value) != GIT_ATTR_VALUE_STRING)
         return false;
     git_config* config = nullptr;
-    if (git_repository_config_snapshot(&config, repo) != 0) return true;  // git knows
+    if (config_snapshot(&config, repo) != 0) return true;  // git knows
     bool driver = false;
     for (const char* key : {".smudge", ".process"})
     {
