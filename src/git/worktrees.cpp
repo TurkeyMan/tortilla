@@ -6,6 +6,8 @@
 #include <rapport/sys.h>
 
 #include <algorithm>
+#include <cctype>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -77,7 +79,40 @@ void read_admin_head(git_repository* main, const std::string& name, worktree_inf
     if (git_reference_name_to_id(&id, main, ref.c_str()) == 0) w.head = hex_of(&id);
 }
 
+// The branches a rebase or bisect in progress in a worktree holds, from
+// its git directory, as git's is_worktree_being_rebased and _bisected read
+// them: rebase-merge/head-name or rebase-apply/head-name (a full name, or
+// "detached HEAD"), and BISECT_START (the branch bisect started on, short,
+// or a commit when it started detached).
+void read_held(const fs::path& git_dir, worktree_info& w)
+{
+    auto first_line = [&](const fs::path& file) -> std::string
+    {
+        std::ifstream in(git_dir / file, std::ios::binary);
+        std::string line;
+        if (!std::getline(in, line)) return {};
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+        return line;
+    };
+    for (const char* file : {"rebase-merge/head-name", "rebase-apply/head-name"})
+        if (std::string name = first_line(file); name.starts_with("refs/heads/"))
+            w.held.push_back(std::move(name));
+    std::string start = first_line("BISECT_START");
+    const bool commit =
+        (start.size() == 40 || start.size() == 64) &&
+        std::ranges::all_of(start, [](char c) { return std::isxdigit(uint8_t(c)); });
+    if (start.empty() || commit || start == "detached HEAD") return;
+    w.held.push_back(start.starts_with("refs/heads/") ? std::move(start) : "refs/heads/" + start);
+}
+
 }  // namespace
+
+bool worktree_info::holds(std::string_view full_name) const
+{
+    if (!branch.empty() && full_name.starts_with("refs/heads/") && full_name.substr(11) == branch)
+        return true;
+    return std::ranges::contains(held, full_name);
+}
 
 std::expected<std::vector<worktree_info>, std::string> list_worktrees(const repo& r)
 {
@@ -99,6 +134,7 @@ std::expected<std::vector<worktree_info>, std::string> list_worktrees(const repo
     const char* top = first.bare ? git_repository_path(main) : git_repository_workdir(main);
     first.path = trimmed_path(top ? top : "");
     read_head(main, first);
+    read_held(rap::sys::path_from_utf8(git_repository_path(main)), first);
     out.push_back(std::move(first));
 
     git_strarray names{};
@@ -121,6 +157,9 @@ std::expected<std::vector<worktree_info>, std::string> list_worktrees(const repo
         // isn't locked, as git worktree prune decides.
         w.prunable = git_worktree_is_prunable(wt, nullptr) > 0;
         read_admin_head(main, name, w);
+        read_held(rap::sys::path_from_utf8(git_repository_commondir(main)) / "worktrees" /
+                      rap::sys::path_from_utf8(name),
+                  w);
         git_worktree_free(wt);
         out.push_back(std::move(w));
     }

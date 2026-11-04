@@ -661,11 +661,12 @@ void log_window::apply_history_edit(const std::string& title, history_edit e, bo
                 if (!applied)
                 {
                     // Refs it moved all the same and couldn't put back: a
-                    // step of their own, so Undo puts them back.
+                    // one-way step of their own: Undo puts them back, and nothing
+                    // redoes it (their files never followed them).
                     if (!applied.error().moved.moves.empty())
                     {
                         journal_.record(rap::i18n::format(_("{0} (in part)"), label),
-                                        applied.error().moved);
+                                        applied.error().moved, true);
                         update_undo_buttons();
                     }
                     reload();

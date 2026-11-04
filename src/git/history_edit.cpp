@@ -181,7 +181,7 @@ load_branch_history(const repo& repository, const std::string& branch, const std
         h.checked_out = git_reference_name(head.p) == branch;
     if (auto trees = list_worktrees(repository))
         for (const worktree_info& w : *trees)
-            if (!w.current && !w.prunable && w.branch == h.name()) h.worktree = w.path;
+            if (!w.current && !w.prunable && w.holds(branch)) h.worktree = w.path;
     return h;
 }
 
@@ -639,12 +639,20 @@ std::optional<std::string> why_checked_out_elsewhere(const repo& repository, con
     // since (a journal's step undone later).
     auto trees = list_worktrees(repository);
     if (!trees) return trees.error();
+    // Checked out there, or held by a rebase or bisect in progress there
+    // (its HEAD detached meanwhile), as git counts it. Here, a rebase or
+    // bisect holds its branch too: moving it would pull it from under them.
     for (const ref_move& m : e.moves)
         for (const worktree_info& w : *trees)
-            if (!w.current && !w.prunable && !w.bare && !w.branch.empty() &&
-                m.ref == "refs/heads/" + w.branch)
+        {
+            if (w.prunable || w.bare) continue;
+            if (!w.current && w.holds(m.ref))
                 return rap::i18n::format(_("{0} is checked out in another worktree."),
                                          short_name(m.ref));
+            if (w.current && std::ranges::contains(w.held, m.ref))
+                return rap::i18n::format(_("{0} is being rebased or bisected here."),
+                                         short_name(m.ref));
+        }
     return std::nullopt;
 }
 

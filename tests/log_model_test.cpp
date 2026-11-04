@@ -1037,6 +1037,23 @@ void ref_journal_tests(const std::string& root)
     for (int i = 0; i < 4; ++i) small.record("step " + std::to_string(i), move);
     check(small.undo_count() == 2 && small.next_undo()->label == "step 3",
           "journal: only the newest steps are kept");
+
+    // A one-way step (refs a failed edit left moved, which their files never
+    // followed): undoable, never redone, so Redo can't move them again
+    // without their files.
+    ref_journal one_way;
+    one_way.record("Move topic", move);
+    one_way.record("Move topic (in part)", move, true);
+    check(one_way.next_undo() && one_way.next_undo()->one_way && one_way.undo_edit(),
+          "journal: a one-way step can be undone");
+    one_way.undone();
+    check(!one_way.next_redo() && !one_way.redo_edit() && one_way.redo_count() == 0 &&
+              one_way.next_undo() && one_way.next_undo()->label == "Move topic",
+          "journal: undone, a one-way step isn't redoable");
+    one_way.undone();
+    check(one_way.next_redo() && one_way.next_redo()->label == "Move topic" &&
+              one_way.redo_count() == 1,
+          "journal: the steps before it still are");
 }
 
 // What libgit2 answers in process against what git itself says, on
@@ -1138,6 +1155,30 @@ void journal_worktree_tests(const std::string& root)
     check(d && !why_stale(*r, *d) && !apply_edit(*r, *d) && at("refs/heads/onto") == onto->tip &&
               at("refs/heads/from") == from->tip,
           "journal worktree: Redo over it is refused too");
+
+    // A rebase paused in that worktree: its HEAD is detached, but git holds
+    // the branch being rebased (git branch -f refuses it), and so does Redo,
+    // from either worktree.
+    const std::string lg = "git -C '" + linked + "' ";
+    sh(lg + "rebase -q --exec false --root >/dev/null 2>&1; true");
+    check(git_out(linked, {"rev-parse", "--abbrev-ref", "HEAD"}) == "HEAD" &&
+              std::filesystem::exists(root + "/journal-wt/.git/worktrees/journal-wt-linked/"
+                                             "rebase-merge/head-name"),
+          "journal worktree: (fixture) a rebase of onto paused there, HEAD detached");
+    check(d && !apply_edit(*r, *d) && at("refs/heads/onto") == onto->tip &&
+              at("refs/heads/from") == from->tip,
+          "journal worktree: Redo over a branch a paused rebase holds there is refused");
+    there = repo::open(linked);
+    check(there && d && !apply_edit(*there, *d) && at("refs/heads/onto") == onto->tip,
+          "journal worktree: and in that worktree itself");
+    sh(lg + "rebase --abort");
+
+    // A bisect there holds the branch it started on, HEAD moved off it.
+    sh(lg + "bisect start && " + lg + "checkout -q --detach");
+    check(git_out(linked, {"rev-parse", "--abbrev-ref", "HEAD"}) == "HEAD" && d &&
+              !why_stale(*r, *d) && !apply_edit(*r, *d) && at("refs/heads/onto") == onto->tip,
+          "journal worktree: Redo over a branch a bisect holds there is refused");
+    sh(lg + "bisect reset >/dev/null 2>&1");
 }
 
 // Two refs moved together where the second can't be written: libgit2

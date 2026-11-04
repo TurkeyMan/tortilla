@@ -9,11 +9,11 @@
 namespace tortilla
 {
 
-void ref_journal::record(std::string label, history_edit e)
+void ref_journal::record(std::string label, history_edit e, bool one_way)
 {
     if (e.moves.empty()) return;
     undone_.clear();
-    done_.push_back({std::move(label), std::move(e)});
+    done_.push_back({std::move(label), std::move(e), one_way});
     while (done_.size() > limit_) done_.pop_front();
 }
 
@@ -25,14 +25,15 @@ std::optional<history_edit> ref_journal::undo_edit() const
 
 std::optional<history_edit> ref_journal::redo_edit() const
 {
-    if (undone_.empty()) return std::nullopt;
+    if (undone_.empty() || undone_.back().one_way) return std::nullopt;
     return undone_.back().edit;
 }
 
 void ref_journal::undone()
 {
     if (done_.empty()) return;
-    undone_.push_back(std::move(done_.back()));
+    // A one-way step is gone once undone: never redone.
+    if (!done_.back().one_way) undone_.push_back(std::move(done_.back()));
     done_.pop_back();
 }
 

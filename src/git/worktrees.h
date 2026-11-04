@@ -5,6 +5,7 @@
 
 #include <expected>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace tortilla
@@ -24,6 +25,12 @@ struct worktree_info
     bool locked = false;
     std::string lock_reason;
     bool prunable = false;  // its directory is gone: git worktree prune would forget it
+    // Branches a rebase or bisect in progress there holds, full names, as
+    // git counts them (branch -f and checkout refuse them), though its HEAD
+    // is detached meanwhile.
+    std::vector<std::string> held;
+    // Whether it has `full_name` checked out, or a rebase or bisect there holds it.
+    bool holds(std::string_view full_name) const;
 };
 
 // The main working tree first, then the linked ones in name order.

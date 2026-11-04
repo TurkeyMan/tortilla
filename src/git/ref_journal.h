@@ -20,6 +20,10 @@ struct journal_step
 {
     std::string label;  // "Reword 1a2b3c4d", for "Undo Reword 1a2b3c4d"
     history_edit edit;  // as it was applied
+    // Undone, it's gone, never redone: refs a failed edit left moved, whose
+    // files never followed them (apply_failure::moved). Redoing it would
+    // move them again without their files.
+    bool one_way = false;
 };
 
 class ref_journal
@@ -32,7 +36,7 @@ public:
 
     // A step done: on top of the undo list; what was undone can't be redone
     // after it. The oldest go past the limit.
-    void record(std::string label, history_edit);
+    void record(std::string label, history_edit, bool one_way = false);
 
     // The step Undo or Redo would take, if any.
     const journal_step* next_undo() const { return done_.empty() ? nullptr : &done_.back(); }
@@ -40,7 +44,8 @@ public:
     // The edit that undoes next_undo(), and the one that redoes next_redo().
     std::optional<history_edit> undo_edit() const;
     std::optional<history_edit> redo_edit() const;
-    // After the edit applied: the step goes to the other list.
+    // After the edit applied: the step goes to the other list (a one-way
+    // step undone goes altogether).
     void undone();
     void redone();
     // A step that can't be taken (its refs moved since): gone.
