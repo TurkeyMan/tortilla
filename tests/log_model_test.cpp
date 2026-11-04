@@ -1080,6 +1080,111 @@ std::vector<std::string> lines_of(const std::string& text)
     return out;
 }
 
+// Undo and Redo over a branch another working tree has checked out since:
+// a commit moved between two branches, one of them then checked out in a
+// linked worktree, and Undo pressed in the first window. Moving it would
+// leave that tree's index and files on the old tip, so it's refused there,
+// and nothing changes; from the worktree that has it, its files follow.
+void journal_worktree_tests(const std::string& root)
+{
+    using namespace tortilla;
+    const std::string dir = root + "/journal-wt", linked = root + "/journal-wt-linked";
+    const std::string g = "git -C '" + dir + "' ";
+    sh("git init -q -b main '" + dir + "' && " + g + "config user.name Tester && " + g +
+       "config user.email t@example.com && " + g + "config core.autocrlf false && echo base > '" +
+       dir + "/base.txt' && " + g + "add base.txt && " + g + "commit -q -m base && " + g +
+       "branch onto && " + g + "checkout -q -b from && echo a > '" + dir + "/a.txt' && " + g +
+       "add a.txt && " + g + "commit -q -m 'move me' && " + g + "checkout -q main");
+    auto r = repo::open(dir);
+    check(r.has_value(), "journal worktree: the repository opens");
+    if (!r) return;
+    auto at = [&](const std::string& ref) { return ref_target(*r, ref); };
+    auto from = load_branch_history(*r, "refs/heads/from", "");
+    auto onto = load_branch_history(*r, "refs/heads/onto", "");
+    check(from && onto && from->worktree.empty() && onto->worktree.empty(),
+          "journal worktree: (fixture) two branches checked out nowhere");
+    if (!from || !onto) return;
+    auto moved = transplant_commits(*r, *onto, 0, {from->line[0]}, &*from,
+                                    "tortilla: move 1 commit to onto");
+    check(moved && moved->moves.size() == 2 && apply_edit(*r, *moved).has_value(),
+          "journal worktree: the commit moves between the branches");
+    if (!moved) return;
+    ref_journal j;
+    j.record("Move 1 commit to onto", *moved);
+    const std::optional<oid> from_now = at("refs/heads/from"), onto_now = at("refs/heads/onto");
+    check(onto_now != onto->tip && from_now != from->tip, "journal worktree: (fixture) both moved");
+
+    sh(g + "worktree add -q '" + linked + "' onto");
+    auto u = j.undo_edit();
+    check(u && !why_stale(*r, *u), "journal worktree: the step's refs are where it left them");
+    check(u && !apply_edit(*r, *u),
+          "journal worktree: Undo over a branch checked out elsewhere is refused");
+    check(at("refs/heads/onto") == onto_now && at("refs/heads/from") == from_now,
+          "journal worktree: and neither branch moves");
+    check(git_out(linked, {"status", "--porcelain"}).empty(),
+          "journal worktree: that worktree's files stay its branch's");
+
+    // Undone from the worktree that has it: its files follow; then Redo
+    // from the first one is refused the same way.
+    auto there = repo::open(linked);
+    check(there && u && effect_of(*there, *u) == tree_effect::follow &&
+              apply_edit(*there, *u).has_value() && at("refs/heads/onto") == onto->tip &&
+              at("refs/heads/from") == from->tip &&
+              git_out(linked, {"status", "--porcelain"}).empty() &&
+              !std::filesystem::exists(linked + "/a.txt"),
+          "journal worktree: undone where it's checked out, the files follow");
+    j.undone();
+    auto d = j.redo_edit();
+    check(d && !why_stale(*r, *d) && !apply_edit(*r, *d) && at("refs/heads/onto") == onto->tip &&
+              at("refs/heads/from") == from->tip,
+          "journal worktree: Redo over it is refused too");
+}
+
+// Two refs moved together where the second can't be written: libgit2
+// writes a transaction's refs one by one and stops at the first failure, so
+// the first has moved by then. It's put back, and nothing is left changed.
+// A ref's write fails here when its reflog can't be: a folder with a file in
+// it where the reflog goes. Which of the two libgit2 writes first is its own
+// order, so each is broken in turn: one way round, the other has moved
+// first and is put back (its reflog says so).
+void partial_move_tests(const std::string& root)
+{
+    using namespace tortilla;
+    const std::string dir = root + "/journal-partial";
+    const std::string g = "git -C '" + dir + "' ";
+    sh("git init -q -b main '" + dir + "' && " + g + "config user.name Tester && " + g +
+       "config user.email t@example.com && " + g + "config core.autocrlf false && " + g +
+       "commit -q --allow-empty -m one && " + g + "commit -q --allow-empty -m two");
+    auto r = repo::open(dir);
+    check(r.has_value(), "partial move: the repository opens");
+    if (!r) return;
+    const oid one = *r->resolve("HEAD~1"), two = *r->resolve("HEAD");
+    auto at = [&](const std::string& ref) { return ref_target(*r, ref); };
+    const std::string logs = dir + "/.git/logs/refs/heads/";
+    bool put_back = false;
+    for (const std::string broken : {"first", "second"})
+    {
+        const std::string other = broken == "first" ? "second" : "first";
+        sh("rm -rf '" + logs + "first' '" + logs + "second' && " + g +
+           "branch -f first HEAD~1 && " + g + "branch -f second HEAD~1 && rm -f '" + logs + broken +
+           "' && mkdir '" + logs + broken + "' && echo x > '" + logs + broken + "/in-the-way'");
+        const history_edit e{
+            .reflog = "tortilla: partial move",
+            .moves = {{"refs/heads/first", one, two}, {"refs/heads/second", one, two}}};
+        auto applied = apply_edit(*r, e);
+        check(!applied && !applied.error().message.empty(),
+              ("partial move: the edit fails, " + broken + " not written").c_str());
+        check(at("refs/heads/first") == one && at("refs/heads/second") == one,
+              ("partial move: neither ref is left moved, " + broken + " not written").c_str());
+        check(!applied && applied.error().moved.moves.empty(),
+              ("partial move: nothing left for the journal, " + broken + " not written").c_str());
+        put_back = put_back || git_out(dir, {"reflog", "-1", "--format=%gs", other}) ==
+                                   "tortilla: undo partial move";
+    }
+    check(put_back, "partial move: a ref moved before the failure was put back");
+    sh("rm -rf '" + logs + "first' '" + logs + "second'");
+}
+
 void libgit2_parity_tests(const std::string& root)
 {
     using namespace tortilla;
@@ -5241,6 +5346,8 @@ int main(int argc, char** argv)
     history_edit_tests(argv[1]);
     diff_sides_tests(**ui, argv[1]);
     ref_journal_tests(argv[1]);
+    journal_worktree_tests(argv[1]);
+    partial_move_tests(argv[1]);
     libgit2_parity_tests(argv[1]);
     libgit2_dialog_parity_tests(argv[1]);
 

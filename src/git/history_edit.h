@@ -3,7 +3,8 @@
 // rewritten in memory with libgit2 (three-way tree merges, never the working
 // tree or the index), then the branch is moved with a compare-and-swap, so
 // nothing happens unless the whole edit worked, and a branch that moved
-// meanwhile isn't overwritten.
+// meanwhile isn't overwritten. (Two refs moved together aren't one atomic
+// write on disk: if the second fails, the first is put back.)
 //
 // libgit2 rather than git's plumbing (merge-tree --write-tree, commit-tree):
 // it's linked already, needs no git version check (merge-tree's mode is git
@@ -129,16 +130,35 @@ enum class tree_effect
 };
 tree_effect effect_of(const repo&, const history_edit&);
 
-// Moves the refs (all or none, each only from what it was), then, if the
-// checked-out branch's tree changed, brings the index and files along
-// safely (git read-tree -m -u: local changes are never overwritten).
-// `stash`: local changes are stashed first and restored after; if they
-// don't restore cleanly they're left in the stash, and the error says so.
-// Returns a warning that doesn't undo the edit, if any (changes left in the
-// stash). A move that leaves a commit in SVN behind isn't made: SVN's
-// history stays as it is, whatever made the edit.
-std::expected<std::string, std::string> apply_edit(const repo&, const history_edit&,
-                                                   bool stash = false);
+// Why `e` can't be applied from this working tree: a branch it moves is
+// checked out in another one, whose index and files would stay on the old
+// tip; nullopt when none is. (This one's own branch is fine: its files
+// follow, or are stashed first.)
+std::optional<std::string> why_checked_out_elsewhere(const repo&, const history_edit& e);
+
+// Why an edit wasn't applied. `moved`: refs it moved all the same and
+// couldn't put back (libgit2 writes a transaction's refs one by one, so a
+// failure part way leaves the first ones moved, and putting them back
+// failed too), as an edit of its own for the journal, whose Undo puts them
+// back; empty when nothing changed.
+struct apply_failure
+{
+    std::string message;
+    history_edit moved;
+};
+
+// Moves the refs, each only from what it was: all or none, those that
+// moved before a failure put back. Then, if the checked-out branch's tree
+// changed, brings the index and files along safely (git read-tree -m -u:
+// local changes are never overwritten). `stash`: local changes are stashed
+// first and restored after; if they don't restore cleanly they're left in
+// the stash, and the error says so. Returns a warning that doesn't undo the
+// edit, if any (changes left in the stash). A move that leaves a commit in
+// SVN behind isn't made: SVN's history stays as it is, whatever made the
+// edit; nor is one of a branch checked out in another working tree
+// (why_checked_out_elsewhere), the journal's Undo and Redo included.
+std::expected<std::string, apply_failure> apply_edit(const repo&, const history_edit&,
+                                                     bool stash = false);
 
 // -- The log's actions, each a plan or why not --------------------------
 
@@ -238,7 +258,7 @@ std::expected<edit_plan, std::string> plan_insert(const repo&, const branch_hist
                                                   const std::vector<oid>& commits, size_t place);
 // The edit: plan_insert's replayed and, given `from`, the commits dropped
 // from it (a move; without, a copy, a cherry-pick). Both refs move, or
-// neither.
+// neither (apply_edit's rule).
 std::expected<history_edit, replay_failure>
 transplant_commits(const repo&, const branch_history& onto, size_t place,
                    const std::vector<oid>& commits, const branch_history* from, std::string reflog);

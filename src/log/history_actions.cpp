@@ -603,6 +603,11 @@ void log_window::start_history_edit(const std::string& title, edit_maker make,
          use](repo& r, const repo_worker::progress&) -> std::function<void()>
         {
             auto e = make(r);
+            // Refused before asking about local changes: a branch checked
+            // out in another worktree (since, for an Undo or Redo).
+            if (e)
+                if (auto why = why_checked_out_elsewhere(r, *e))
+                    e = std::unexpected(replay_failure{.message = std::move(*why)});
             const tree_effect effect = e ? effect_of(r, *e) : tree_effect::none;
             return [this, title, e = std::move(e), effect, fallback, label, use]
             { history_replayed(title, e, effect, fallback, label, use); };
@@ -655,12 +660,20 @@ void log_window::apply_history_edit(const std::string& title, history_edit e, bo
             {
                 if (!applied)
                 {
+                    // Refs it moved all the same and couldn't put back: a
+                    // step of their own, so Undo puts them back.
+                    if (!applied.error().moved.moves.empty())
+                    {
+                        journal_.record(rap::i18n::format(_("{0} (in part)"), label),
+                                        applied.error().moved);
+                        update_undo_buttons();
+                    }
                     reload();
                     return ui_.message(window_.get(),
                                        {.icon = rap::message_spec::icon::error,
                                         .title = title,
                                         .text = rap::i18n::format(_("{0} failed."), title),
-                                        .detail = applied.error()});
+                                        .detail = applied.error().message});
                 }
                 if (!applied->empty())
                     ui_.message(window_.get(), {.icon = rap::message_spec::icon::warning,
@@ -685,7 +698,9 @@ void log_window::apply_history_edit(const std::string& title, history_edit e, bo
 // The next step undone or redone, through the history edit's own path (the
 // working tree asked about when a checked-out branch's files change), and
 // only if its refs are where the step left them: anything that moved them
-// since is never overwritten; the step is dropped instead.
+// since is never overwritten; the step is dropped instead. A branch checked
+// out in another worktree since is refused there (apply_edit's rule), the
+// step kept for when it isn't.
 void log_window::step_journal(bool redo)
 {
     const journal_step* step = redo ? journal_.next_redo() : journal_.next_undo();

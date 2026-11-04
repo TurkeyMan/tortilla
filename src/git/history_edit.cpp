@@ -480,36 +480,110 @@ bool has_local_changes(git_repository* r)
     return git_status_list_entrycount(list.p) > 0;
 }
 
-// Every move, or none: each ref locked and checked against what it was.
-std::expected<void, std::string> move_refs(git_repository* r, const history_edit& e)
+// The moves in one libgit2 transaction: each ref locked and checked against
+// what it was, then written. libgit2 writes them one at a time and stops at
+// the first that fails, so a failure while writing (`writing`; every ref
+// was where it moves from just before) may leave the ones before it moved.
+struct commit_failure
+{
+    std::string message;
+    bool writing = false;
+};
+std::expected<void, commit_failure> commit_moves(git_repository* r, const history_edit& e)
 {
     owned_transaction tx;
-    if (git_transaction_new(&tx.p, r) != 0) return std::unexpected(last_git_error());
+    if (git_transaction_new(&tx.p, r) != 0)
+        return std::unexpected(commit_failure{last_git_error()});
     for (const ref_move& m : e.moves)
         if (git_transaction_lock_ref(tx.p, m.ref.c_str()) != 0)
-            return std::unexpected(last_git_error());
+            return std::unexpected(commit_failure{last_git_error()});
     for (const ref_move& m : e.moves)
     {
         git_oid now;
         const bool exists = git_reference_name_to_id(&now, r, m.ref.c_str()) == 0;
         const bool same = m.from ? exists && to_oid(&now) == *m.from : !exists;
         if (!same)
-            return std::unexpected(
+            return std::unexpected(commit_failure{
                 rap::i18n::format(m.from ? _("{0} has moved since; nothing was changed.")
                                          : _("{0} exists already; nothing was changed."),
-                                  short_name(m.ref)));
+                                  short_name(m.ref))});
         if (m.to)
         {
             git_oid to = to_git(*m.to);
             if (git_transaction_set_target(tx.p, m.ref.c_str(), &to, nullptr, e.reflog.c_str()) !=
                 0)
-                return std::unexpected(last_git_error());
+                return std::unexpected(commit_failure{last_git_error()});
         }
         else if (git_transaction_remove(tx.p, m.ref.c_str()) != 0)
-            return std::unexpected(last_git_error());
+            return std::unexpected(commit_failure{last_git_error()});
     }
-    if (git_transaction_commit(tx.p) != 0) return std::unexpected(last_git_error());
+    if (git_transaction_commit(tx.p) != 0)
+        return std::unexpected(commit_failure{last_git_error(), true});
     return {};
+}
+
+// The moves of `e` that were made, read again: each ref where its move
+// leaves it, not where it was. Their files never followed (nothing is
+// checked out until every ref has moved), so undoing them mustn't either.
+history_edit moves_made(git_repository* r, const history_edit& e)
+{
+    history_edit made{.reflog = e.reflog, .keep_index = true};
+    for (const ref_move& m : e.moves)
+    {
+        git_oid id;
+        const std::optional<oid> now = git_reference_name_to_id(&id, r, m.ref.c_str()) == 0
+                                           ? std::optional(to_oid(&id))
+                                           : std::nullopt;
+        if (m.from != m.to && now == m.to) made.moves.push_back(m);
+    }
+    return made;
+}
+
+// Refs left moved, precisely, for the error: each where it is now and was.
+std::string stuck_text(const history_edit& stuck)
+{
+    std::string out = _("These refs moved, and couldn't be put back:");
+    for (const ref_move& m : stuck.moves)
+    {
+        out += "\n    ";
+        if (!m.to)
+            out += rap::i18n::format(_("{0} deleted (it was at {1})"), short_name(m.ref),
+                                     m.from->hex());
+        else if (!m.from)
+            out += rap::i18n::format(_("{0} made, at {1}"), short_name(m.ref), m.to->hex());
+        else
+            out += rap::i18n::format(_("{0} at {1} (it was at {2})"), short_name(m.ref),
+                                     m.to->hex(), m.from->hex());
+    }
+    return out + "\n" + _("Undo puts them back.");
+}
+
+// Every move, or none: after a failure each ref is read again, and those
+// that moved are put back (each only from where it was moved to). If that
+// fails too, the error names them, and `moved` is what's left moved.
+std::expected<void, apply_failure> move_refs(git_repository* r, const history_edit& e)
+{
+    auto committed = commit_moves(r, e);
+    if (committed) return {};
+    const std::string& why = committed.error().message;
+    // Refused before writing (a ref moved since, say): nothing moved.
+    if (!committed.error().writing) return std::unexpected(apply_failure{why});
+    const history_edit made = moves_made(r, e);
+    if (made.moves.empty()) return std::unexpected(apply_failure{why});
+    (void)commit_moves(r, made.undo());
+    history_edit stuck = moves_made(r, made);
+    if (stuck.moves.empty())
+    {
+        std::string names;
+        for (const ref_move& m : made.moves)
+            names += (names.empty() ? "" : ", ") + short_name(m.ref);
+        return std::unexpected(apply_failure{
+            why + "\n" +
+            rap::i18n::format(_("{0} had moved already, and has been put back. Nothing was "
+                                "changed."),
+                              names)});
+    }
+    return std::unexpected(apply_failure{why + "\n" + stuck_text(stuck), std::move(stuck)});
 }
 
 std::string stash_index(const repo& repository, const std::string& sha)
@@ -556,19 +630,41 @@ std::optional<oid> svn_left_behind(git_repository* r, const ref_move& m)
 
 }  // namespace
 
-std::expected<std::string, std::string> apply_edit(const repo& repository, const history_edit& e,
-                                                   bool stash)
+std::optional<std::string> why_checked_out_elsewhere(const repo& repository, const history_edit& e)
 {
+    if (std::ranges::none_of(e.moves,
+                             [](const ref_move& m) { return m.ref.starts_with("refs/heads/"); }))
+        return std::nullopt;
+    // Read now, not when the edit was made: a worktree may have been added
+    // since (a journal's step undone later).
+    auto trees = list_worktrees(repository);
+    if (!trees) return trees.error();
+    for (const ref_move& m : e.moves)
+        for (const worktree_info& w : *trees)
+            if (!w.current && !w.prunable && !w.bare && !w.branch.empty() &&
+                m.ref == "refs/heads/" + w.branch)
+                return rap::i18n::format(_("{0} is checked out in another worktree."),
+                                         short_name(m.ref));
+    return std::nullopt;
+}
+
+std::expected<std::string, apply_failure> apply_edit(const repo& repository, const history_edit& e,
+                                                     bool stash)
+{
+    auto fail = [](std::string why) { return std::unexpected(apply_failure{std::move(why)}); };
     git_repository* r = repository.raw();
     for (const ref_move& m : e.moves)
         if (const auto at = svn_left_behind(r, m))
-            return std::unexpected(rap::i18n::format(
-                _("{0} is in SVN: SVN's history can't be rewritten."), at->hex(8)));
+            return fail(rap::i18n::format(_("{0} is in SVN: SVN's history can't be rewritten."),
+                                          at->hex(8)));
+    // Before anything moves: another working tree's index and files would
+    // stay on the old tip.
+    if (auto why = why_checked_out_elsewhere(repository, e)) return fail(std::move(*why));
     const tree_effect effect = effect_of(repository, e);
     if (effect == tree_effect::stash && !stash)
-        return std::unexpected(std::string(_("The working tree has local changes.")));
+        return fail(_("The working tree has local changes."));
     if (effect != tree_effect::none && repository.state() != repo::repo_state::none)
-        return std::unexpected(std::string(_("Git is in the middle of another operation here.")));
+        return fail(_("Git is in the middle of another operation here."));
     const std::string workdir = repository.workdir();
 
     std::string stashed;
@@ -587,29 +683,34 @@ std::expected<std::string, std::string> apply_edit(const repo& repository, const
     if (effect == tree_effect::stash)
     {
         const git_result pushed = run_git(workdir, {"stash", "push", "-m", e.reflog});
-        if (!pushed.ok()) return std::unexpected(pushed.output);
+        if (!pushed.ok()) return fail(pushed.output);
         // The stash just made, in process.
         if (const auto made = repository.resolve("refs/stash")) stashed = made->hex();
     }
 
     if (auto moved = move_refs(r, e); !moved)
     {
-        const std::string warning = restore();
-        return std::unexpected(moved.error() + (warning.empty() ? "" : "\n" + warning));
+        apply_failure f = std::move(moved.error());
+        if (const std::string warning = restore(); !warning.empty()) f.message += "\n" + warning;
+        return std::unexpected(std::move(f));
     }
     if (effect != tree_effect::none)
     {
         // The index and files from the old tip's tree to the new one's;
         // git refuses where that would lose a change (an untracked file in
-        // the way), and then the refs go back.
+        // the way), and then the refs go back, read again after: any that
+        // didn't are named, and left for the journal.
         const ref_move* m = head_move(r, e);
         const git_result read =
             run_git(workdir, {"read-tree", "-m", "-u", m->from->hex(), m->to->hex()});
         if (!read.ok())
         {
             (void)move_refs(r, e.undo());
-            const std::string warning = restore();
-            return std::unexpected(read.output + (warning.empty() ? "" : "\n" + warning));
+            apply_failure f{read.output, moves_made(r, e)};
+            if (!f.moved.moves.empty()) f.message += "\n" + stuck_text(f.moved);
+            if (const std::string warning = restore(); !warning.empty())
+                f.message += "\n" + warning;
+            return std::unexpected(std::move(f));
         }
     }
     return restore();
