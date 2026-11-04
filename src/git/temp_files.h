@@ -3,6 +3,7 @@
 #pragma once
 
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -31,24 +32,27 @@ std::filesystem::path unique_temp_path(std::string_view prefix, std::string_view
 std::filesystem::path revision_temp_path(const std::filesystem::path& dir, std::string_view rev,
                                          std::string_view path);
 
-// A new folder for one viewer's revision files (an Open, a comparison):
-// each has its own, so one finishing, or another starting, in this process
-// or another, never removes or rewrites a file still shown. Empty if it
-// can't be made. Its maker removes it once the viewer is done; one handed
-// to a program whose end isn't seen stays until sweep_temp_dirs().
+// What revision files' folders are named after: one viewer's each, so one
+// finishing, or another starting, in this process or another, never
+// removes or rewrites a file still shown.
+inline constexpr std::string_view revision_dir_prefix = "rev";
+
+// A new folder for revision files handed to a program whose end isn't seen
+// (Open, Open with): no one owns it (no lock, see temp_dir), so
+// sweep_temp_dirs() removes it once it's a day old. Empty if it can't be
+// made. A viewer that sees its end holds a temp_dir(revision_dir_prefix)
+// instead.
 std::filesystem::path revision_temp_dir();
 
 // `content` written as `rev`'s `path` in a new revision_temp_dir(), for a
 // program that opens it: the file's path, or empty (and no folder left) if
-// it couldn't be written. `folder`, if given, is set to that folder, for a
-// caller that sees the program end to remove.
+// it couldn't be written.
 std::filesystem::path write_revision_file(std::string_view rev, std::string_view path,
-                                          std::string_view content,
-                                          std::filesystem::path* folder = nullptr);
+                                          std::string_view content);
 
 // Removes the folders revision_temp_dir() and temp_dir made that are older
-// than `age`: left by a crash, or by a program a file was opened in. Run at
-// startup.
+// than `age` and that no one holds (a temp_dir's lock, in any process): left
+// by a crash, or by a program a file was opened in. Run at startup.
 void sweep_temp_dirs(std::chrono::hours age = std::chrono::hours(24));
 
 // A new, empty folder there, made by this call, "<prefix>-<time>-<n>"; empty
@@ -56,14 +60,14 @@ void sweep_temp_dirs(std::chrono::hours age = std::chrono::hours(24));
 std::filesystem::path unique_temp_dir(std::string_view prefix);
 
 // A unique_temp_dir() removed, with all in it, when this goes: a scratch
-// tree (Review Patch's previews) kept while something reads it.
+// tree (Review Patch's previews, a comparison's revision files) kept while
+// something reads it. While it lives it holds a lock on "<folder>.lock"
+// beside it (flock; on Windows the file open, unshared), so no
+// sweep_temp_dirs() in any Tortilla removes it however old it gets.
 class temp_dir
 {
 public:
-    explicit temp_dir(std::string_view prefix)
-        : path_(unique_temp_dir(prefix))
-    {
-    }
+    explicit temp_dir(std::string_view prefix);
     ~temp_dir();
     temp_dir(const temp_dir&) = delete;
     temp_dir& operator=(const temp_dir&) = delete;
@@ -72,6 +76,7 @@ public:
 
 private:
     std::filesystem::path path_;
+    std::intptr_t lock_ = -1;  // a descriptor, or a HANDLE on Windows
 };
 
 // `content` as the whole of `path`, byte for byte, making its folders.

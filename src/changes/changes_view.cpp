@@ -715,21 +715,30 @@ changes_view::version changes_view::version_of(const file_change& f) const
 
 // A version as a file a tool can read: the working file, or the revision's
 // written to a temporary file in a folder of its own (write_revision_file),
-// so no other viewer's rewrites or removes it. That folder is added to
-// `folders` for a caller that sees the tool end; otherwise it stays until
+// so no other viewer's rewrites or removes it. With `owners`, a caller that
+// sees the tool end holds the folder (a temp_dir, added there) and it goes
+// with the last holder; otherwise no one holds it and it stays until
 // sweep_temp_dirs().
 std::optional<std::filesystem::path>
 changes_view::file_of(const version& v, const std::string& title,
-                      std::vector<std::filesystem::path>* folders)
+                      std::vector<std::shared_ptr<temp_dir>>* owners)
 {
     const std::filesystem::path working =
         rap::sys::path_from_utf8(v.workdir) / rap::sys::path_from_utf8(v.path);
     if (v.rev.empty()) return working;
     git_result r = revision_file(v.workdir, v.rev, v.path);
-    std::filesystem::path folder;
-    const std::filesystem::path path =
-        r.ok() ? write_revision_file(v.rev, v.path, r.output, &folder) : std::filesystem::path();
-    if (folders && !folder.empty()) folders->push_back(folder);
+    std::filesystem::path path;
+    if (r.ok() && owners)
+    {
+        auto owner = std::make_shared<temp_dir>(revision_dir_prefix);
+        path = revision_temp_path(owner->path(), v.rev, v.path);
+        if (path.empty() || !write_temp_file(path, r.output))
+            path.clear();
+        else
+            owners->push_back(std::move(owner));
+    }
+    else if (r.ok())
+        path = write_revision_file(v.rev, v.path, r.output);
     if (!path.empty()) return path;
     host_.ui.message(host_.window(), {.icon = rap::message_spec::icon::error,
                                       .title = title,
@@ -741,27 +750,23 @@ changes_view::file_of(const version& v, const std::string& title,
 
 // Compare two files, and Diff with a marked one: two files, wherever they
 // are, in the Diff Viewer page's tool (compare.h). A revision's file goes
-// with its folder once the tool is done.
+// with its folder once the tool is done: the folders are held by the
+// callback, so they go when it runs, or when it's dropped without running
+// (the window closed, the tool replaced, Settings chosen instead).
 void changes_view::compare(const version& base, const version& mine, const std::string& title)
 {
-    auto folders = std::make_shared<std::vector<std::filesystem::path>>();
-    auto remove = [folders]
-    {
-        std::error_code ec;
-        for (const std::filesystem::path& f : *folders) std::filesystem::remove_all(f, ec);
-        folders->clear();
-    };
-    const auto a = file_of(base, title, folders.get());
-    if (!a) return remove();
-    const auto b = file_of(mine, title, folders.get());
-    if (!b) return remove();
+    auto owners = std::make_shared<std::vector<std::shared_ptr<temp_dir>>>();
+    const auto a = file_of(base, title, owners.get());
+    if (!a) return;
+    const auto b = file_of(mine, title, owners.get());
+    if (!b) return;
     difftool_ = compare_files(
         host_.ui, host_.window(), rap::sys::path_to_utf8(*a), rap::sys::path_to_utf8(*b),
         [this]
         {
             if (host_.open_settings) host_.open_settings(settings_page::diff_viewer);
         },
-        remove);
+        [owners] { owners->clear(); });
 }
 
 // View revision in alternative editor: the file in a text editor rather

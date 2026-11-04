@@ -260,10 +260,11 @@ std::expected<diff_sides, std::string> write_diff_sides(const std::string& dir,
         std::expected<std::string, std::string> bytes =
             checkout_bytes(repo.get(), dir, rev, path, id);
         if (!bytes) return std::unexpected(bytes.error());
-        if (sides.folder.empty()) sides.folder = revision_temp_dir();
-        if (sides.folder.empty()) return std::unexpected(std::string("no temporary folder"));
+        if (!sides.folder) sides.folder = std::make_shared<const temp_dir>(revision_dir_prefix);
+        if (sides.folder->path().empty())
+            return std::unexpected(std::string("no temporary folder"));
         const fs::path file =
-            revision_temp_path(sides.folder, revision_folder(repo.get(), rev), path);
+            revision_temp_path(sides.folder->path(), revision_folder(repo.get(), rev), path);
         if (file.empty() || !write_temp_file(file, *bytes))
             return std::unexpected("Could not write " + rap::sys::path_to_utf8(file));
         sides.written.push_back(file);
@@ -305,10 +306,9 @@ std::expected<diff_sides, std::string> write_diff_sides(const std::string& dir,
     return sides;
 }
 
-void remove_diff_sides(const diff_sides& sides)
+void remove_diff_sides(diff_sides& sides)
 {
-    std::error_code ec;
-    if (!sides.folder.empty()) fs::remove_all(sides.folder, ec);  // a link in it, not its target
+    sides.folder.reset();  // the last holder's temp_dir removes it
 }
 
 std::optional<std::vector<std::string>>

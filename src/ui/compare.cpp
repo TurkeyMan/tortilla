@@ -395,12 +395,9 @@ compare_revisions(rap::ui& ui, rap::window* parent, const std::string& dir,
             const file_diff& f = changed->front();
             if (auto sides = write_diff_sides(dir, revisions, f))
             {
-                auto written = std::shared_ptr<diff_sides>(new diff_sides(std::move(*sides)),
-                                                           [](diff_sides* s)
-                                                           {
-                                                               remove_diff_sides(*s);
-                                                               delete s;
-                                                           });
+                // Its folder goes with the last holder: the tool's callbacks,
+                // dropped once it exits or is stopped, a callback skipped too.
+                auto written = std::make_shared<diff_sides>(std::move(*sides));
                 if (auto tool = start_direct(ui, parent, dir, written->base, written->mine,
                                              f.old_path + " : " + base_rev,
                                              f.path + " : " + mine_rev, done, written))
