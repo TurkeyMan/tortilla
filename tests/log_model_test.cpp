@@ -194,8 +194,36 @@ void diff_sides_tests(rap::ui& ui, const std::string& root)
     if (sides)
     {
         remove_diff_sides(*sides);
-        check(!fs::exists(sides->written[0]) && !fs::exists(sides->written[1]),
-              "diff sides: removed once the tool is done");
+        check(!fs::exists(sides->written[0]) && !fs::exists(sides->written[1]) &&
+                  !sides->folder.empty() && !fs::exists(sides->folder),
+              "diff sides: removed, their folder too, once the tool is done");
+    }
+
+    // Two comparisons of the same file and revisions at once, and the
+    // repository browser's Open of it: each its own files, so one ending
+    // (or starting) never removes or rewrites what another still shows.
+    {
+        auto first = mod ? write_diff_sides(dir, both, *mod) : std::unexpected(std::string());
+        auto second = mod ? write_diff_sides(dir, both, *mod) : std::unexpected(std::string());
+        fs::path open_dir;
+        const fs::path opened = write_revision_file(two, "mod.txt", "opened\n", &open_dir);
+        const bool apart = first && second && first->base != second->base &&
+                           first->mine != second->mine && first->folder != second->folder &&
+                           !opened.empty() && open_dir != first->folder &&
+                           open_dir != second->folder &&
+                           rap::sys::path_from_utf8(first->mine).filename() == "mod.txt" &&
+                           rap::sys::path_from_utf8(second->mine).filename() == "mod.txt";
+        check(apart, "diff sides: overlapping comparisons and an Open of one file kept apart");
+        if (first) remove_diff_sides(*first);
+        check(second && bytes(second->base) == "a\nb\n" && bytes(second->mine) == "a\nB\n" &&
+                  read_bytes(rap::sys::path_to_utf8(opened)) == "opened\n" && first &&
+                  !fs::exists(first->folder),
+              "diff sides: one comparison done leaves the other's files, and the Open's");
+        if (second) remove_diff_sides(*second);
+        check(second && !fs::exists(second->folder) && fs::exists(opened),
+              "diff sides: the second's folder gone with it, the Open's kept");
+        std::error_code ec;
+        fs::remove_all(open_dir, ec);
     }
 
     // A rename: one file, its old name and content on the base side.
@@ -1679,30 +1707,33 @@ int main(int argc, char** argv)
         namespace fs = std::filesystem;
         const fs::path root = tortilla::tortilla_temp_dir();
         const std::string hash = "0123456789abcdef0123456789abcdef01234567";
-        const fs::path a = tortilla::revision_temp_path(hash, "src/config.h");
-        const fs::path b = tortilla::revision_temp_path(hash, "tests/config.h");
-        check(!root.empty() && a == root / "01234567" / "src" / "config.h" &&
-                  b == root / "01234567" / "tests" / "config.h",
-              "revision temp path: <temp>/tortilla/<hash>/<repo path>");
-        check(tortilla::revision_temp_path("origin/main", "a.txt") ==
-                  root / "origin_main" / "a.txt",
-              "revision temp path: a ref name is one folder");
+        const fs::path dir = tortilla::revision_temp_dir();
+        const fs::path a = tortilla::revision_temp_path(dir, hash, "src/config.h");
+        const fs::path b = tortilla::revision_temp_path(dir, hash, "tests/config.h");
+        check(!root.empty() && !dir.empty() && dir.parent_path() == root &&
+                  a == dir / "01234567" / "src" / "config.h" &&
+                  b == dir / "01234567" / "tests" / "config.h",
+              "revision temp path: <temp>/tortilla/<its folder>/<hash>/<repo path>");
+        check(tortilla::revision_temp_path(dir, "origin/main", "a.txt") ==
+                      dir / "origin_main" / "a.txt" &&
+                  tortilla::revision_temp_path({}, hash, "a.txt").empty(),
+              "revision temp path: a ref name is one folder; none without a folder");
         // A name that could land anywhere else is refused, not trimmed into
         // another file's name.
-        check(tortilla::revision_temp_path(hash, "../x/./y").empty() &&
-                  tortilla::revision_temp_path(hash, "x/../../y").empty() &&
-                  tortilla::revision_temp_path(hash, "/etc/y").empty() &&
-                  tortilla::revision_temp_path(hash, "a//b").empty() &&
-                  tortilla::revision_temp_path(hash, "").empty(),
+        check(tortilla::revision_temp_path(dir, hash, "../x/./y").empty() &&
+                  tortilla::revision_temp_path(dir, hash, "x/../../y").empty() &&
+                  tortilla::revision_temp_path(dir, hash, "/etc/y").empty() &&
+                  tortilla::revision_temp_path(dir, hash, "a//b").empty() &&
+                  tortilla::revision_temp_path(dir, hash, "").empty(),
               "revision temp path: none for a name outside the revision's folder");
 #ifdef _WIN32
         // Legal in a git tree, a drive and a root here: once it replaced the
         // whole temporary folder.
-        check(tortilla::revision_temp_path("deadbeef", "C:\\audit-escape.txt").empty() &&
-                  tortilla::revision_temp_path("deadbeef", "C:audit.txt").empty() &&
-                  tortilla::revision_temp_path("deadbeef", "a\\..\\..\\x.txt").empty() &&
-                  tortilla::revision_temp_path("deadbeef", "a.txt:stream").empty() &&
-                  tortilla::revision_temp_path("deadbeef", "sub/nul.txt").empty(),
+        check(tortilla::revision_temp_path(dir, "deadbeef", "C:\\audit-escape.txt").empty() &&
+                  tortilla::revision_temp_path(dir, "deadbeef", "C:audit.txt").empty() &&
+                  tortilla::revision_temp_path(dir, "deadbeef", "a\\..\\..\\x.txt").empty() &&
+                  tortilla::revision_temp_path(dir, "deadbeef", "a.txt:stream").empty() &&
+                  tortilla::revision_temp_path(dir, "deadbeef", "sub/nul.txt").empty(),
               "revision temp path: no drive, \\, stream or device name on Windows");
 #endif
         // The rules themselves, either system's, wherever the tests run.
@@ -1767,7 +1798,44 @@ int main(int argc, char** argv)
         };
         check(read(a) == "one" && read(b) == "two", "same-named revision files kept apart");
         std::error_code ec;
-        fs::remove_all(root / "01234567", ec);
+        fs::remove_all(dir, ec);
+
+        // Each viewer (an Open here, from the repository browser or the
+        // changed files) has a folder of its own: the same revision's file
+        // opened twice is two files, the second never rewriting the first.
+        {
+            fs::path one_dir, two_dir;
+            const fs::path one = tortilla::write_revision_file(hash, "src/a.txt", "one", &one_dir);
+            const fs::path two = tortilla::write_revision_file(hash, "src/a.txt", "two", &two_dir);
+            check(!one.empty() && !two.empty() && one != two && one_dir != two_dir &&
+                      one == one_dir / "01234567" / "src" / "a.txt" && read(one) == "one" &&
+                      read(two) == "two",
+                  "revision file: each Open its own folder, the file keeping its name");
+            check(tortilla::write_revision_file(hash, "../x", "x").empty(),
+                  "revision file: none for a name outside its folder");
+            fs::remove_all(one_dir, ec);
+            fs::remove_all(two_dir, ec);
+        }
+
+        // Folders left by a crash (or by a program a file was opened in) go
+        // at startup once a day old; a fresh one, and anything not named as
+        // ours, stays.
+        {
+            const fs::path stale = tortilla::revision_temp_dir();
+            const fs::path fresh = tortilla::revision_temp_dir();
+            const fs::path other = root / "rev-not-ours";
+            fs::create_directories(other, ec);
+            tortilla::write_temp_file(stale / "01234567" / "a.txt", "x");
+            const auto old = fs::file_time_type::clock::now() - std::chrono::hours(48);
+            fs::last_write_time(stale, old, ec);
+            fs::last_write_time(other, old, ec);
+            tortilla::sweep_temp_dirs();
+            check(!stale.empty() && !fs::exists(stale) && fs::is_directory(fresh) &&
+                      fs::is_directory(other),
+                  "temp sweep: a day-old revision folder removed, others kept");
+            fs::remove_all(fresh, ec);
+            fs::remove_all(other, ec);
+        }
 
         // Two names asked for at once are two files.
         check(tortilla::unique_temp_path("x", ".txt") != tortilla::unique_temp_path("x", ".txt"),

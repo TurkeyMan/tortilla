@@ -673,8 +673,11 @@ void changes_view::open_file(const file_change& f, bool choose)
     if (source_.what == changes_source::revision)
     {
         git_result r = revision_file(host_.workdir, source_.hash, f.path);
-        path = revision_temp_path(source_.hash, f.path);
-        if (!r.ok() || path.empty() || !write_temp_file(path, r.output))
+        // In a folder of its own: another Open or a comparison of this
+        // revision never rewrites or removes the file its program shows.
+        path =
+            r.ok() ? write_revision_file(source_.hash, f.path, r.output) : std::filesystem::path();
+        if (path.empty())
         {
             idle();
             host_.ui.message(host_.window(), {.icon = rap::message_spec::icon::error,
@@ -711,17 +714,23 @@ changes_view::version changes_view::version_of(const file_change& f) const
 }
 
 // A version as a file a tool can read: the working file, or the revision's
-// written to a temporary file. It keeps its folders there, so two files of
-// one name in a revision don't overwrite each other.
-std::optional<std::filesystem::path> changes_view::file_of(const version& v,
-                                                           const std::string& title)
+// written to a temporary file in a folder of its own (write_revision_file),
+// so no other viewer's rewrites or removes it. That folder is added to
+// `folders` for a caller that sees the tool end; otherwise it stays until
+// sweep_temp_dirs().
+std::optional<std::filesystem::path>
+changes_view::file_of(const version& v, const std::string& title,
+                      std::vector<std::filesystem::path>* folders)
 {
     const std::filesystem::path working =
         rap::sys::path_from_utf8(v.workdir) / rap::sys::path_from_utf8(v.path);
     if (v.rev.empty()) return working;
     git_result r = revision_file(v.workdir, v.rev, v.path);
-    const std::filesystem::path path = revision_temp_path(v.rev, v.path);
-    if (r.ok() && !path.empty() && write_temp_file(path, r.output)) return path;
+    std::filesystem::path folder;
+    const std::filesystem::path path =
+        r.ok() ? write_revision_file(v.rev, v.path, r.output, &folder) : std::filesystem::path();
+    if (folders && !folder.empty()) folders->push_back(folder);
+    if (!path.empty()) return path;
     host_.ui.message(host_.window(), {.icon = rap::message_spec::icon::error,
                                       .title = title,
                                       .text = rap::i18n::format(_("Could not get {0} at {1}."),
@@ -731,20 +740,28 @@ std::optional<std::filesystem::path> changes_view::file_of(const version& v,
 }
 
 // Compare two files, and Diff with a marked one: two files, wherever they
-// are, in the Diff Viewer page's tool (compare.h).
+// are, in the Diff Viewer page's tool (compare.h). A revision's file goes
+// with its folder once the tool is done.
 void changes_view::compare(const version& base, const version& mine, const std::string& title)
 {
-    const auto a = file_of(base, title);
-    if (!a) return;
-    const auto b = file_of(mine, title);
-    if (!b) return;
-    difftool_ = compare_files(host_.ui, host_.window(), rap::sys::path_to_utf8(*a),
-                              rap::sys::path_to_utf8(*b),
-                              [this]
-                              {
-                                  if (host_.open_settings)
-                                      host_.open_settings(settings_page::diff_viewer);
-                              });
+    auto folders = std::make_shared<std::vector<std::filesystem::path>>();
+    auto remove = [folders]
+    {
+        std::error_code ec;
+        for (const std::filesystem::path& f : *folders) std::filesystem::remove_all(f, ec);
+        folders->clear();
+    };
+    const auto a = file_of(base, title, folders.get());
+    if (!a) return remove();
+    const auto b = file_of(mine, title, folders.get());
+    if (!b) return remove();
+    difftool_ = compare_files(
+        host_.ui, host_.window(), rap::sys::path_to_utf8(*a), rap::sys::path_to_utf8(*b),
+        [this]
+        {
+            if (host_.open_settings) host_.open_settings(settings_page::diff_viewer);
+        },
+        remove);
 }
 
 // View revision in alternative editor: the file in a text editor rather
