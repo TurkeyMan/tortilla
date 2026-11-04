@@ -282,8 +282,10 @@ void diff_sides_tests(rap::ui& ui, const std::string& root)
             run_git(dir, {"rev-parse", "HEAD"}, git_output::stdout_only).output.substr(0, 40);
         const std::string attrs = root + "/sides-hasconfig.attrs";
         const std::string inc = root + "/sides-hasconfig.cfg";
-        sh("printf '*.lo filter=upper\\n' > '" + attrs +
-           "' && printf '[core]\\n\\tattributesFile = " + attrs + "\\n' > '" + inc + "' && " + g +
+        // The path through git config, not printf: a Windows one's
+        // backslashes would be printf's escapes.
+        sh("printf '*.lo filter=upper\\n' > '" + attrs + "' && git config -f '" + inc +
+           "' core.attributesFile '" + attrs + "' && " + g +
            "remote add origin https://example.com/sides.git && " + g +
            "config 'includeIf.hasconfig:remote.*.url:https://example.com/**.path' '" + inc + "'");
         const auto lo = one_diff({lo1, lo2}, {"a.lo"});
@@ -291,6 +293,11 @@ void diff_sides_tests(rap::ui& ui, const std::string& root)
             lo ? write_diff_sides(dir, {lo1, lo2}, *lo) : std::unexpected(std::string("no diff"));
         check(sides && bytes(sides->base) == "L\n" && bytes(sides->mine) == "L2\n",
               "diff sides: a filter set by an attributes file only git sees (hasconfig) applied");
+        if (!sides)
+            std::printf("  hasconfig attributes: %s\n", sides.error().c_str());
+        else if (bytes(sides->base) != "L\n")
+            std::printf("  hasconfig attributes: base [%s] mine [%s]\n", bytes(sides->base).c_str(),
+                        bytes(sides->mine).c_str());
         if (sides) remove_diff_sides(*sides);
         sh(g + "config --unset 'includeIf.hasconfig:remote.*.url:https://example.com/**.path' && " +
            g + "remote remove origin");
