@@ -121,7 +121,9 @@ private:
 
     rap::menu context_menu(std::optional<size_t> row, std::optional<size_t> column);
     version version_of(const file_change&) const;
-    std::optional<std::filesystem::path> file_of(const version&, const std::string& title);
+    std::optional<std::filesystem::path>
+    file_of(const version&, const std::string& title,
+            std::vector<std::filesystem::path>* folders = nullptr);
     void compare(const version& base, const version& mine, const std::string& title);
     void view_in_editor(const file_change&);
     void commit(const std::vector<file_change>&);

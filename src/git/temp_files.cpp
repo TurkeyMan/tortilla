@@ -25,6 +25,19 @@ bool real_folder(const fs::path& p)
     return !ec && s.type() == fs::file_type::directory;
 }
 
+// revision_temp_dir()'s folders, and the others sweep_temp_dirs() removes
+// once stale (Review Patch's temp_dir).
+constexpr std::string_view revision_prefix = "rev";
+constexpr std::string_view swept_prefixes[] = {revision_prefix, "review-patch"};
+
+// A name unique_temp_dir(prefix) gives: "<prefix>-<time>-<n>".
+bool unique_name(std::string_view name, std::string_view prefix)
+{
+    return name.size() > prefix.size() + 1 && name.starts_with(prefix) &&
+           name[prefix.size()] == '-' &&
+           name.find_first_not_of("0123456789-", prefix.size()) == std::string_view::npos;
+}
+
 }  // namespace
 
 fs::path tortilla_temp_dir()
@@ -68,7 +81,7 @@ temp_dir::~temp_dir()
     if (!path_.empty()) fs::remove_all(path_, ec);  // links in it go, not what they point at
 }
 
-fs::path revision_temp_path(std::string_view rev, std::string_view path)
+fs::path revision_temp_path(const fs::path& dir, std::string_view rev, std::string_view path)
 {
     // A hash is shortened as everywhere else; any other name (HEAD,
     // origin/main, main~2) is kept, with what a folder name can't hold as _.
@@ -84,9 +97,47 @@ fs::path revision_temp_path(std::string_view rev, std::string_view path)
     // can hold names this system reads as a drive, a root, a device or a
     // stream (C:\x, NUL), and none is trimmed into another file's name.
     const std::optional<fs::path> rel = entry_path(path);
+    if (!rel || dir.empty()) return {};
+    return dir / rap::sys::path_from_utf8(folder) / *rel;
+}
+
+fs::path revision_temp_dir()
+{
+    return unique_temp_dir(revision_prefix);
+}
+
+fs::path write_revision_file(std::string_view rev, std::string_view path, std::string_view content,
+                             fs::path* folder)
+{
+    const fs::path dir = revision_temp_dir();
+    const fs::path file = revision_temp_path(dir, rev, path);
+    if (!file.empty() && write_temp_file(file, content))
+    {
+        if (folder) *folder = dir;
+        return file;
+    }
+    std::error_code ec;
+    if (!dir.empty()) fs::remove_all(dir, ec);
+    return {};
+}
+
+void sweep_temp_dirs(std::chrono::hours age)
+{
     const fs::path root = tortilla_temp_dir();
-    if (!rel || root.empty()) return {};
-    return root / rap::sys::path_from_utf8(folder) / *rel;
+    if (root.empty() || !real_folder(root)) return;
+    const auto before = fs::file_time_type::clock::now() - age;
+    std::error_code ec;
+    for (fs::directory_iterator it(root, ec), end; !ec && it != end; it.increment(ec))
+    {
+        // Only the folders unique_temp_dir() named for these, nothing else.
+        const std::string name = rap::sys::path_to_utf8(it->path().filename());
+        bool ours = false;
+        for (std::string_view prefix : swept_prefixes) ours = ours || unique_name(name, prefix);
+        if (!ours || !real_folder(it->path())) continue;
+        std::error_code e;
+        const auto written = fs::last_write_time(it->path(), e);
+        if (!e && written < before) fs::remove_all(it->path(), e);  // a link in it, not its target
+    }
 }
 
 bool write_file(const fs::path& path, std::string_view content)

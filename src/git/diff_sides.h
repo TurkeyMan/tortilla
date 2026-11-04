@@ -36,10 +36,13 @@ struct diff_sides
 {
     std::string base, mine;
     std::vector<std::filesystem::path> written;  // the temporary files made for them
+    std::filesystem::path folder;                // theirs alone (revision_temp_dir)
 };
 
-// `f`'s sides as files: a revision's written under the temporary folder
-// (revision_temp_path) through the repository's filters, as git difftool
+// `f`'s sides as files: a revision's written in a temporary folder of this
+// comparison's own (revision_temp_path), so no other comparison or Open,
+// here or in another Tortilla, touches them; through the repository's
+// filters, as git difftool
 // writes them (line endings, ident; an LFS file through git, which runs
 // git-lfs); the working tree's is the file itself; a side that doesn't
 // exist (added, deleted) is the empty file.
@@ -47,8 +50,8 @@ std::expected<diff_sides, std::string> write_diff_sides(const std::string& dir,
                                                         const std::vector<std::string>& revisions,
                                                         const file_diff& f);
 
-// Removes the files write_diff_sides wrote, unless another comparison it
-// made still has them.
+// Removes the folder write_diff_sides wrote its files in, once the tool is
+// done with them.
 void remove_diff_sides(const diff_sides&);
 
 // The program and arguments that run `command` (TortoiseGit's

@@ -79,6 +79,7 @@
 #include "git/git_install.h"
 #include "git/repo.h"
 #include "git/ssh_client.h"
+#include "git/temp_files.h"
 #include "i18n.h"
 #include "log/bisect_dialog.h"
 #include "log/log_window.h"
@@ -212,6 +213,9 @@ int main(int argc, char** argv)
 #endif
     // The SSH client's settings, read here before any worker runs git.
     tortilla::ssh_environment();
+    // Revision files a day old and more, from a crash or a file opened in
+    // another program: one listing of the temporary folder.
+    tortilla::sweep_temp_dirs();
     rap::load_options opts;
     std::string command = "log";
     bool named = false;  // a command was given (else the log, or the welcome window)

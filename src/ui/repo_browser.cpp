@@ -552,8 +552,10 @@ void repo_browser::open_file(const std::string& path, bool choose)
     const std::function<void()> idle = choose ? [] {} : show_busy_pointer(ui_);
     const std::string rev = revision_id();
     const git_result r = revision_file(workdir_, rev, path);
-    const fs::path file = revision_temp_path(rev, path);
-    if (!r.ok() || file.empty() || !write_temp_file(file, r.output))
+    // In a folder of its own: another Open or a comparison of this revision
+    // never rewrites or removes the file its program shows.
+    const fs::path file = r.ok() ? write_revision_file(rev, path, r.output) : fs::path();
+    if (file.empty())
     {
         idle();
         return error(_("Open"),

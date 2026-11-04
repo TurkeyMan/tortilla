@@ -116,11 +116,6 @@ std::expected<std::string, std::string> checkout_bytes(git_repository* repo, con
     return bytes;
 }
 
-// How many comparisons hold each temporary file, so one ending doesn't
-// remove another's (the same revision of the same file, twice).
-std::mutex held_mutex;
-std::map<fs::path, int> held;
-
 std::string platform_path(const fs::path& p)
 {
     fs::path copy = p;
@@ -265,13 +260,12 @@ std::expected<diff_sides, std::string> write_diff_sides(const std::string& dir,
         std::expected<std::string, std::string> bytes =
             checkout_bytes(repo.get(), dir, rev, path, id);
         if (!bytes) return std::unexpected(bytes.error());
-        const fs::path file = revision_temp_path(revision_folder(repo.get(), rev), path);
-        {
-            std::lock_guard lock(held_mutex);
-            if (file.empty() || !write_temp_file(file, *bytes))
-                return std::unexpected("Could not write " + rap::sys::path_to_utf8(file));
-            ++held[file];
-        }
+        if (sides.folder.empty()) sides.folder = revision_temp_dir();
+        if (sides.folder.empty()) return std::unexpected(std::string("no temporary folder"));
+        const fs::path file =
+            revision_temp_path(sides.folder, revision_folder(repo.get(), rev), path);
+        if (file.empty() || !write_temp_file(file, *bytes))
+            return std::unexpected("Could not write " + rap::sys::path_to_utf8(file));
         sides.written.push_back(file);
         return platform_path(file);
     };
@@ -313,15 +307,8 @@ std::expected<diff_sides, std::string> write_diff_sides(const std::string& dir,
 
 void remove_diff_sides(const diff_sides& sides)
 {
-    std::lock_guard lock(held_mutex);
     std::error_code ec;
-    for (const fs::path& file : sides.written)
-    {
-        auto it = held.find(file);
-        if (it == held.end() || --it->second > 0) continue;
-        held.erase(it);
-        fs::remove(file, ec);
-    }
+    if (!sides.folder.empty()) fs::remove_all(sides.folder, ec);  // a link in it, not its target
 }
 
 std::optional<std::vector<std::string>>

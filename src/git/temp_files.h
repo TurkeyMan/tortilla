@@ -2,6 +2,7 @@
 // opened from history, and the inputs it hands git.
 #pragma once
 
+#include <chrono>
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -19,14 +20,36 @@ std::filesystem::path tortilla_temp_dir();
 // temporary folder.
 std::filesystem::path unique_temp_path(std::string_view prefix, std::string_view extension);
 
-// Where `rev`'s copy of the repository file `path` goes:
-// <temp>/tortilla/<rev>/<path>, the hash shortened to 8. It keeps its
+// Where `rev`'s copy of the repository file `path` goes in `dir`, a folder
+// revision_temp_dir() made: <dir>/<rev>/<path>, the hash shortened to 8, so
+// a tool's title still names the file and its revision. It keeps its
 // folders, so two files of one name in a revision don't overwrite each
-// other. A name such as origin/main is made a single folder. Empty if
-// `path` can't be written there as that name (entry_path(): "..", a root,
-// and on Windows a drive, a \, a stream or a device name): a name from a
-// git tree is anyone's.
-std::filesystem::path revision_temp_path(std::string_view rev, std::string_view path);
+// other. A name such as origin/main is made a single folder. Empty if `dir`
+// is, or if `path` can't be written there as that name (entry_path(): "..",
+// a root, and on Windows a drive, a \, a stream or a device name): a name
+// from a git tree is anyone's.
+std::filesystem::path revision_temp_path(const std::filesystem::path& dir, std::string_view rev,
+                                         std::string_view path);
+
+// A new folder for one viewer's revision files (an Open, a comparison):
+// each has its own, so one finishing, or another starting, in this process
+// or another, never removes or rewrites a file still shown. Empty if it
+// can't be made. Its maker removes it once the viewer is done; one handed
+// to a program whose end isn't seen stays until sweep_temp_dirs().
+std::filesystem::path revision_temp_dir();
+
+// `content` written as `rev`'s `path` in a new revision_temp_dir(), for a
+// program that opens it: the file's path, or empty (and no folder left) if
+// it couldn't be written. `folder`, if given, is set to that folder, for a
+// caller that sees the program end to remove.
+std::filesystem::path write_revision_file(std::string_view rev, std::string_view path,
+                                          std::string_view content,
+                                          std::filesystem::path* folder = nullptr);
+
+// Removes the folders revision_temp_dir() and temp_dir made that are older
+// than `age`: left by a crash, or by a program a file was opened in. Run at
+// startup.
+void sweep_temp_dirs(std::chrono::hours age = std::chrono::hours(24));
 
 // A new, empty folder there, made by this call, "<prefix>-<time>-<n>"; empty
 // if it can't be made. Its maker removes it when done with it.
