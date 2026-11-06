@@ -127,19 +127,12 @@ std::expected<commit_ci, std::string> github_rest_checks(const forge_repo& r, st
             out.workflows.push_back(std::move(found));
             w = out.workflows.end() - 1;
         }
-        const json::value conclusion = c["conclusion"];
         ci_job job{.name = c["name"].str(),
+                   .state = github_rest_state(c, check_state::failure),
                    .started_at = time_of(c["started_at"]),
                    .completed_at = time_of(c["completed_at"]),
                    .url = c["html_url"].str(),
                    .id = c["id"].integer().value_or(0)};
-        if (!c["status"].str_is("completed"))
-            job.state = check_state::pending;
-        else if (conclusion.str_is("success") || conclusion.str_is("neutral") ||
-                 conclusion.str_is("skipped"))
-            job.state = check_state::success;
-        else
-            job.state = check_state::failure;
         w->jobs.push_back(std::move(job));
     }
     return out;

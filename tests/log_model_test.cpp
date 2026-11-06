@@ -2497,6 +2497,11 @@ int main(int argc, char** argv)
   "base": {"ref": "trunk"}}
 ])";
             const forge_repo cli{"github.com", "cli", "cli"};
+            const auto unknown = json::parse(R"({"status":"completed","conclusion":"future"})");
+            check(unknown &&
+                      forge_detail::github_rest_state(*unknown, check_state::none) == check_state::none &&
+                      forge_detail::github_rest_state(*unknown, check_state::failure) == check_state::failure,
+                  "github REST: an unknown conclusion keeps each caller's fallback");
             auto prs = parse_github_rest_pulls(pulls, cli);
             check(prs.size() == 3 && prs[0].number == 14845 &&
                       prs[0].url == "https://github.com/cli/cli/pull/14845" && prs[0].head == cli &&

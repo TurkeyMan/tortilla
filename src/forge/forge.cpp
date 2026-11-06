@@ -984,20 +984,6 @@ gitea_pulls(const forge_repo& r, std::string_view token, bool ask_access, bool a
 
 // -- GitHub as no one ---------------------------------------------------------
 
-// A REST check run's or workflow run's state: status and conclusion in
-// lowercase, as GraphQL's in capitals.
-check_state rest_run_state(const json::value& run)
-{
-    if (!run["status"].str_is("completed")) return check_state::pending;
-    const json::value c = run["conclusion"];
-    if (c.str_is("success") || c.str_is("neutral") || c.str_is("skipped"))
-        return check_state::success;
-    if (c.str_is("failure") || c.str_is("timed_out") || c.str_is("cancelled") ||
-        c.str_is("action_required") || c.str_is("startup_failure") || c.str_is("stale"))
-        return check_state::failure;
-    return check_state::none;
-}
-
 // The runs combined, as GitHub's rollup: any failed, else any running, else
 // passed.
 check_state combined(const std::vector<check_run>& runs)
@@ -1130,7 +1116,7 @@ void apply_github_workflow_runs(std::string_view text, std::vector<pull_request>
         if (std::ranges::find(seen, id) != seen.end()) continue;
         seen.push_back(id);
         check_run run{.name = w["name"].str(),
-                      .state = rest_run_state(w),
+                      .state = forge_detail::github_rest_state(w, check_state::none),
                       .started_at = time_of(w["run_started_at"])};
         if (run.state != check_state::pending) run.completed_at = time_of(w["updated_at"]);
         pr->runs.push_back(std::move(run));
@@ -1151,7 +1137,7 @@ bool apply_github_check_runs(std::string_view text, pull_request& pr)
     for (const json::value& c : (*j)["check_runs"].elements())
     {
         check_run run{.name = c["name"].str(),
-                      .state = rest_run_state(c),
+                      .state = forge_detail::github_rest_state(c, check_state::none),
                       .started_at = time_of(c["started_at"]),
                       .completed_at = time_of(c["completed_at"])};
         if (c["conclusion"].str_is("skipped")) run.started_at = run.completed_at = 0;
@@ -2004,6 +1990,20 @@ std::string repo_api(forge_kind k, const forge_repo& r)
 std::int64_t time_of(const json::value& v)
 {
     return tortilla::time_of(v);
+}
+
+// A REST check run's or workflow run's state: status and conclusion in
+// lowercase, as GraphQL's in capitals.
+check_state github_rest_state(const json::value& run, check_state unknown_conclusion)
+{
+    if (!run["status"].str_is("completed")) return check_state::pending;
+    const json::value c = run["conclusion"];
+    if (c.str_is("success") || c.str_is("neutral") || c.str_is("skipped"))
+        return check_state::success;
+    if (c.str_is("failure") || c.str_is("timed_out") || c.str_is("cancelled") ||
+        c.str_is("action_required") || c.str_is("startup_failure") || c.str_is("stale"))
+        return check_state::failure;
+    return unknown_conclusion;
 }
 
 check_state github_state(std::string_view s)
