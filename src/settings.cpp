@@ -2,22 +2,231 @@
 
 #include <rapport/sys.h>
 
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <mutex>
+#include <optional>
+#include <thread>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <io.h>
+#include <windows.h>
+#else
+#include <cerrno>
+#include <fcntl.h>
+#include <sys/file.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
 
 namespace tortilla
 {
 namespace
 {
 
-std::filesystem::path settings_file()
+namespace fs = std::filesystem;
+using values = std::map<std::string, std::string>;
+
+fs::path settings_file()
 {
     return rap::sys::config_dir("tortilla") / "settings";
 }
 
+fs::path with_suffix(const fs::path& file, const std::string& suffix)
+{
+    fs::path out = file;
+    out += rap::sys::path_from_utf8(suffix);
+    return out;
+}
+
+// The lock writers hold across processes while they read, change and
+// replace the file: a file of its own beside it, since the settings file
+// is replaced, never written in place. Released on close, so also when a
+// process dies holding it. Where the filesystem can't lock (some network
+// shares), writers go ahead unlocked: the file is still always whole, but a
+// change made at the same moment by another process may be lost.
+class writer_lock
+{
+public:
+    explicit writer_lock(const fs::path& file)
+    {
+        const fs::path path = with_suffix(file, ".lock");
+#ifdef _WIN32
+        HANDLE h = CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE,
+                               FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                               OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (h == INVALID_HANDLE_VALUE) return;
+        OVERLAPPED at{};
+        // Blocks until the other writer is done: it holds the lock only to
+        // read and replace one small file.
+        if (!LockFileEx(h, LOCKFILE_EXCLUSIVE_LOCK, 0, 1, 0, &at))
+        {
+            CloseHandle(h);
+            return;
+        }
+        handle_ = h;
+#else
+        const int fd = ::open(path.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0600);
+        if (fd < 0) return;
+        int r;
+        while ((r = ::flock(fd, LOCK_EX)) != 0 && errno == EINTR)
+        {
+        }
+        if (r != 0)
+        {
+            ::close(fd);
+            return;
+        }
+        fd_ = fd;
+#endif
+    }
+    ~writer_lock()
+    {
+#ifdef _WIN32
+        if (handle_) CloseHandle(handle_);
+#else
+        if (fd_ >= 0) ::close(fd_);
+#endif
+    }
+    writer_lock(const writer_lock&) = delete;
+    writer_lock& operator=(const writer_lock&) = delete;
+
+private:
+#ifdef _WIN32
+    HANDLE handle_ = nullptr;
+#else
+    int fd_ = -1;
+#endif
+};
+
+void parse(std::FILE* f, values& out)
+{
+    char line[4096];
+    while (std::fgets(line, sizeof line, f))
+    {
+        std::string s = line;
+        while (!s.empty() && (s.back() == '\n' || s.back() == '\r')) s.pop_back();
+        auto eq = s.find('=');
+        if (eq == std::string::npos || s.starts_with('#')) continue;
+        out[s.substr(0, eq)] = s.substr(eq + 1);
+    }
+}
+
+// The file as it is now: empty if there is none; nullopt if it is there but
+// can't be read, so an update doesn't replace what it couldn't see.
+std::optional<values> read_file(const fs::path& file)
+{
+    for (int attempt = 0;; ++attempt)
+    {
+        if (std::FILE* f = rap::sys::fopen(file, "rb"))
+        {
+            values out;
+            parse(f, out);
+            const bool ok = !std::ferror(f);
+            std::fclose(f);
+            if (ok) return out;
+        }
+        else
+        {
+            std::error_code ec;
+            if (!fs::exists(file, ec) && !ec) return values{};
+        }
+        // On Windows, an open can meet a rename by a writer that isn't
+        // holding the lock (one where locks don't work): try again shortly.
+        if (attempt == 20) return std::nullopt;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+}
+
+#ifdef _WIN32
+bool sharing_error(DWORD e)
+{
+    return e == ERROR_SHARING_VIOLATION || e == ERROR_LOCK_VIOLATION || e == ERROR_ACCESS_DENIED;
+}
+#endif
+
+// Renames `from` over `to`, in one step.
+bool replace(const fs::path& from, const fs::path& to)
+{
+#ifdef _WIN32
+    // A reader that opened the file without FILE_SHARE_DELETE (the C
+    // runtime and std::ifstream, as the shell extension uses) holds off the
+    // rename until it closes it, which is a moment: wait a little for it.
+    for (int attempt = 0;; ++attempt)
+    {
+        if (MoveFileExW(from.c_str(), to.c_str(),
+                        MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+            return true;
+        if (attempt == 200 || !sharing_error(GetLastError())) return false;
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+#else
+    return std::rename(from.c_str(), to.c_str()) == 0;
+#endif
+}
+
+// Writes `v` to a file beside `file` and renames it over `file`. On any
+// failure `file` is untouched and the temporary file is gone.
+bool write_file(const fs::path& file, const values& v)
+{
+    std::error_code ec;
+    // A settings file that links elsewhere (kept with someone's dotfiles)
+    // stays a link: the file it names is what's replaced.
+    fs::path target = file;
+    if (fs::is_symlink(file, ec))
+        if (fs::path real = fs::weakly_canonical(file, ec); !ec) target = real;
+    if (target.has_parent_path()) fs::create_directories(target.parent_path(), ec);
+
+    const fs::path temp = settings_temp_file(target);
+    std::FILE* f = rap::sys::fopen(temp, "wb");
+    if (!f) return false;
+#ifndef _WIN32
+    // Kept as private as the file it replaces.
+    if (struct stat st; ::stat(target.c_str(), &st) == 0) ::fchmod(::fileno(f), st.st_mode & 07777);
+#endif
+    for (auto& [k, val] : v) std::fprintf(f, "%s=%s\n", k.c_str(), val.c_str());
+    bool ok = std::fflush(f) == 0 && !std::ferror(f);
+    // On disk before the rename, so a crash leaves the old file or the new
+    // one, not an empty one.
+#ifdef _WIN32
+    ok = ok && _commit(_fileno(f)) == 0;
+#else
+    ok = ok && ::fsync(::fileno(f)) == 0;
+#endif
+    ok = std::fclose(f) == 0 && ok;
+    if (!ok || !replace(temp, target))
+    {
+        fs::remove(temp, ec);
+        return false;
+    }
+    return true;
+}
+
+std::string numbers_value(const std::vector<float>& v)
+{
+    std::string s;
+    for (float f : v) s += (s.empty() ? "" : ",") + std::to_string(int(std::lround(f)));
+    return s;
+}
+
 }  // namespace
+
+fs::path settings_temp_file(const fs::path& file)
+{
+#ifdef _WIN32
+    const unsigned long pid = GetCurrentProcessId();
+#else
+    const unsigned long pid = static_cast<unsigned long>(::getpid());
+#endif
+    return with_suffix(file, "." + std::to_string(pid) + ".tmp");
+}
 
 rap::color_scheme appearance_from(std::string_view stored)
 {
@@ -36,6 +245,40 @@ rap::color_scheme appearance()
     return appearance_from(settings::get().value(k_appearance_setting));
 }
 
+void settings_changes::set(const std::string& key, const std::string& value)
+{
+    changes_.push_back([key, value](values& v) { v[key] = value; });
+}
+
+void settings_changes::remove(const std::string& key)
+{
+    changes_.push_back([key](values& v) { v.erase(key); });
+}
+
+void settings_changes::set_numbers(const std::string& key, const std::vector<float>& v)
+{
+    set(key, numbers_value(v));
+}
+
+void settings_changes::add_to_history(const std::string& key, const std::string& entry, size_t keep)
+{
+    // Added to the history as the file has it, so entries another process
+    // added meanwhile stay.
+    changes_.push_back(
+        [key, entry, keep](values& v)
+        {
+            auto it = v.find(key);
+            v[key] = history_with(it == v.end() ? std::string_view{} : it->second, entry, keep);
+        });
+}
+
+void settings_changes::save_window(const std::string& prefix, const rap::window& w)
+{
+    const rap::size_f size = w.size();
+    set_numbers(prefix + ".size", {size.w, size.h});
+    if (auto pos = w.position()) set_numbers(prefix + ".position", {pos->x, pos->y});
+}
+
 settings& settings::get()
 {
     static settings s;
@@ -45,62 +288,57 @@ settings& settings::get()
 settings::settings()
     : file_(settings_file())
 {
-    load();
+    values_ = read_file(file_).value_or(values{});
 }
 
-void settings::use_file(const std::filesystem::path& file)
+void settings::use_file(const fs::path& file)
 {
+    std::scoped_lock write(write_mutex_);
+    values v = read_file(file).value_or(values{});
     std::unique_lock lock(mutex_);
     file_ = file;
-    values_.clear();
-    load();
+    values_ = std::move(v);
 }
 
-void settings::load()
+bool settings::apply(const settings_changes& changes)
 {
-    std::FILE* f = rap::sys::fopen(file_, "r");
-    if (!f) return;
-    char line[4096];
-    while (std::fgets(line, sizeof line, f))
+    if (changes.empty()) return true;
+    std::scoped_lock write(write_mutex_);
+    fs::path file;
     {
-        std::string s = line;
-        while (!s.empty() && (s.back() == '\n' || s.back() == '\r')) s.pop_back();
-        auto eq = s.find('=');
-        if (eq == std::string::npos || s.starts_with('#')) continue;
-        values_[s.substr(0, eq)] = s.substr(eq + 1);
+        std::shared_lock lock(mutex_);
+        file = file_;
     }
-    std::fclose(f);
+    writer_lock across_processes(file);
+    std::optional<values> now = read_file(file);
+    if (!now) return false;
+    values next = *now;
+    for (auto& change : changes.changes_) change(next);
+    const bool ok = next == *now || write_file(file, next);
+    std::unique_lock lock(mutex_);
+    values_ = ok ? std::move(next) : std::move(*now);
+    return ok;
 }
 
 std::string settings::value(const std::string& key, const std::string& fallback) const
 {
     std::shared_lock lock(mutex_);
-    return value_locked(key, fallback);
-}
-
-std::string settings::value_locked(const std::string& key, const std::string& fallback) const
-{
     auto it = values_.find(key);
     return it == values_.end() ? fallback : it->second;
 }
 
 void settings::set(const std::string& key, const std::string& value)
 {
-    std::unique_lock lock(mutex_);
-    set_locked(key, value);
-}
-
-void settings::set_locked(const std::string& key, const std::string& value)
-{
-    if (values_[key] == value) return;
-    values_[key] = value;
-    save();
+    settings_changes c;
+    c.set(key, value);
+    apply(c);
 }
 
 void settings::remove(const std::string& key)
 {
-    std::unique_lock lock(mutex_);
-    if (values_.erase(key)) save();
+    settings_changes c;
+    c.remove(key);
+    apply(c);
 }
 
 std::vector<std::string> history_entries(std::string_view stored)
@@ -134,16 +372,9 @@ std::vector<std::string> settings::history(const std::string& key) const
 
 void settings::add_to_history(const std::string& key, const std::string& entry, size_t keep)
 {
-    std::unique_lock lock(mutex_);  // read and written as one
-    set_locked(key, history_with(value_locked(key, {}), entry, keep));
-}
-
-void settings::save() const
-{
-    std::FILE* f = rap::sys::fopen(file_, "w");
-    if (!f) return;
-    for (auto& [k, v] : values_) std::fprintf(f, "%s=%s\n", k.c_str(), v.c_str());
-    std::fclose(f);
+    settings_changes c;
+    c.add_to_history(key, entry, keep);
+    apply(c);
 }
 
 std::vector<float> settings::numbers(const std::string& key) const
@@ -162,16 +393,16 @@ std::vector<float> settings::numbers(const std::string& key) const
 
 void settings::set_numbers(const std::string& key, const std::vector<float>& v)
 {
-    std::string s;
-    for (float f : v) s += (s.empty() ? "" : ",") + std::to_string(int(std::lround(f)));
-    set(key, s);
+    settings_changes c;
+    c.set_numbers(key, v);
+    apply(c);
 }
 
 void settings::save_window(const std::string& prefix, const rap::window& w)
 {
-    const rap::size_f size = w.size();
-    set_numbers(prefix + ".size", {size.w, size.h});
-    if (auto pos = w.position()) set_numbers(prefix + ".position", {pos->x, pos->y});
+    settings_changes c;
+    c.save_window(prefix, w);
+    apply(c);
 }
 
 void settings::restore_window(const std::string& prefix, rap::window& w) const
