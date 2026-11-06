@@ -10,7 +10,9 @@
 #pragma once
 
 #include <filesystem>
+#include <functional>
 #include <string>
+#include <system_error>
 #include <vector>
 
 namespace tortilla
@@ -26,5 +28,10 @@ bool save_notice(const std::filesystem::path& dir, const std::string& repo,
 // The notices for `repo`, oldest first, each with its time ("2026-11-07
 // 18:04:31 UTC\n..."), removed as they're taken.
 std::vector<std::string> take_notices(const std::filesystem::path& dir, const std::string& repo);
+
+// For tests: what moves a written notice in (std::filesystem::rename).
+extern std::function<void(const std::filesystem::path& from, const std::filesystem::path& to,
+                          std::error_code&)>
+    notice_rename;
 
 }  // namespace tortilla

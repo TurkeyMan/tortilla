@@ -500,6 +500,7 @@ void history_writer_tests(rap::ui& ui, const std::string& root)
     // stash) or a failure (refs left moved) is saved, in full, for the next
     // window on the repository, which takes it once.
     const std::filesystem::path notes = rap::sys::path_from_utf8(root + "/journal-notices");
+    std::vector<std::string> unsaved;  // notices the writer couldn't save
     auto close_mid_write = [&](const std::string& label, history_writer::write_fn write)
     {
         sh(g + "branch -f topic HEAD~2 && " + g + "branch -f other HEAD~2");
@@ -508,6 +509,7 @@ void history_writer_tests(rap::ui& ui, const std::string& root)
             ref_journal j;
             auto w = std::make_unique<history_writer>(ui, dir, j);
             w->notices = notes;
+            w->unsaved = [&](const std::string& text) { unsaved.push_back(text); };
             if (write) w->write = std::move(write);
             auto b = std::make_shared<barrier>();
             w->after_write = [b]
@@ -577,6 +579,42 @@ void history_writer_tests(rap::ui& ui, const std::string& root)
               got[0].find(one.hex()) != std::string::npos,
           "writer closed: a failure leaves the refs it left moved, with both ends");
     check(take().empty(), "writer closed: and is taken once");
+    check(unsaved.empty(), "writer closed: every notice so far was saved");
+
+    // The notice can't be moved in (a rename refused, as by EACCES), though
+    // tidying its half-written file away works: that's still a failure, and
+    // the writer says so; nothing is left behind.
+    auto files_in = [&]
+    {
+        size_t n = 0;
+        std::error_code ec;
+        for (std::filesystem::directory_iterator it(notes, ec), end; !ec && it != end;
+             it.increment(ec))
+            ++n;
+        return n;
+    };
+    const auto rename = notice_rename;
+    notice_rename =
+        [](const std::filesystem::path&, const std::filesystem::path&, std::error_code& ec)
+    { ec = std::make_error_code(std::errc::permission_denied); };
+    check(!save_notice(notes, dir, "refused") && files_in() == 0,
+          "notices: a refused rename is a failure, and nothing is left");
+    close_mid_write("Move unsaved",
+                    [&](const repo& rp, const history_edit& e,
+                        bool) -> std::expected<std::string, apply_failure>
+                    {
+                        history_edit first{.reflog = e.reflog, .moves = {e.moves.front()}};
+                        if (!apply_edit(rp, first))
+                            return std::unexpected(apply_failure{"first failed"});
+                        return std::unexpected(apply_failure{"other can't be written", first});
+                    });
+    notice_rename = rename;
+    check(unsaved.size() == 1 && unsaved[0].find("Move unsaved") != std::string::npos &&
+              unsaved[0].find("refs/heads/topic") != std::string::npos,
+          "notices: the writer reports a notice it couldn't save, in full");
+    check(take().empty() && files_in() == 0, "notices: and none is left half-saved");
+    check(save_notice(notes, dir, "saved again") && take().size() == 1,
+          "notices: with rename working again, it saves");
 }
 
 }  // namespace

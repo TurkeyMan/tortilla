@@ -107,10 +107,12 @@ public:
 
     // For tests: the write itself (apply_edit), a hook run on the worker
     // after a write, before its outcome is posted to the UI thread, and
-    // where an orphaned outcome's notice goes.
+    // where an orphaned outcome's notice goes, and what's told (besides
+    // stderr) when it can't be saved there.
     write_fn write;
     std::function<void()> after_write;
     std::filesystem::path notices;
+    std::function<void(const std::string& text)> unsaved;
 
     struct job
     {

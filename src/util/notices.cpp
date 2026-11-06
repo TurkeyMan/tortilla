@@ -55,32 +55,46 @@ std::filesystem::path notices_dir()
     return rap::sys::config_dir("tortilla") / "notices";
 }
 
+std::function<void(const std::filesystem::path&, const std::filesystem::path&, std::error_code&)>
+    notice_rename = [](const std::filesystem::path& from, const std::filesystem::path& to,
+                       std::error_code& ec) { std::filesystem::rename(from, to, ec); };
+
 bool save_notice(const std::filesystem::path& dir, const std::string& repo, const std::string& text)
 {
-    std::error_code ec;
-    std::filesystem::create_directories(dir, ec);
+    std::error_code made;
+    std::filesystem::create_directories(dir, made);  // a failure shows when writing
     const std::string name = unique_name();
     const std::filesystem::path aside = dir / (name + ".tmp"), in = dir / (name + ".notice");
+    // Whatever failed, nothing half-written is left behind; tidying up never
+    // makes a failure a success.
+    auto give_up = [&]
+    {
+        std::error_code removed;
+        std::filesystem::remove(aside, removed);
+        return false;
+    };
     {
         std::ofstream out(aside, std::ios::binary | std::ios::trunc);
-        if (!out) return false;
+        if (!out) return give_up();
         const auto now = std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now());
         out << header << '\n'
             << repo_key(repo) << '\n'
             << std::format("{:%F %T} UTC", now) << '\n'
             << text;
-        if (!out.flush()) return false;
+        if (!out.flush()) return give_up();
     }
-    std::filesystem::rename(aside, in, ec);
-    if (ec) std::filesystem::remove(aside, ec);
-    return !ec;
+    std::error_code renamed;
+    notice_rename(aside, in, renamed);
+    if (renamed) return give_up();
+    return true;
 }
 
 std::vector<std::string> take_notices(const std::filesystem::path& dir, const std::string& repo)
 {
-    std::error_code ec;
+    std::error_code listed;
     std::vector<std::filesystem::path> files;
-    for (std::filesystem::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec))
+    for (std::filesystem::directory_iterator it(dir, listed), end; !listed && it != end;
+         it.increment(listed))
         if (it->path().extension() == ".notice") files.push_back(it->path());
     std::ranges::sort(files);
     const std::string key = repo_key(repo);
@@ -103,7 +117,8 @@ std::vector<std::string> take_notices(const std::filesystem::path& dir, const st
         };
         if (line() != header || line() != key) continue;
         // Taken by whoever removes it: another process may be here too.
-        if (!std::filesystem::remove(f, ec) || ec) continue;
+        std::error_code removed;
+        if (!std::filesystem::remove(f, removed) || removed) continue;
         out.emplace_back(rest);
     }
     return out;

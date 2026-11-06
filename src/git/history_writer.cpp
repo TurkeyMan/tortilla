@@ -15,13 +15,16 @@ namespace
 // silent; and a warning or failure saved for the next window on the
 // repository too, as a GUI launch on Windows has no stderr.
 void log_orphan(const history_outcome& o, const std::filesystem::path& notices,
-                const std::string& repo)
+                const std::string& repo, const std::function<void(const std::string&)>& unsaved)
 {
     const std::string text = orphan_text(o);
     std::fprintf(stderr, "tortilla: %s\n", text.c_str());
     const bool plain = o.applied && o.applied->empty();
     if (!plain && !save_notice(notices, repo, text))
+    {
         std::fprintf(stderr, "tortilla: (this couldn't be saved for the next window)\n");
+        if (unsaved) unsaved(text);
+    }
 }
 
 }  // namespace
@@ -112,7 +115,7 @@ history_writer::~history_writer()
     state_->wake.notify_all();
     thread_.join();
     // Written, and its post not handled (it never will be now).
-    if (state_->undelivered) log_orphan(*state_->undelivered, notices, path_);
+    if (state_->undelivered) log_orphan(*state_->undelivered, notices, path_, unsaved);
     state_->undelivered.reset();
 }
 
