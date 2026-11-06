@@ -5,6 +5,7 @@
 #include "git/repo.h"
 #include "i18n.h"
 #include "remote/pull_fetch_dialog.h"
+#include "remote/remote_selector.h"
 #include "settings.h"
 #include "ui/progress_dialog.h"
 #include "ui/repo_icon.h"
@@ -17,10 +18,6 @@ namespace tortilla
 {
 namespace
 {
-
-// Shown translated; k_all is also what the settings remember for "all".
-constexpr const char* k_url_item = T_("Arbitrary URL...");
-constexpr const char* k_all = T_("- all -");
 
 // `what` with the repository's folder for {0}.
 std::string title(const std::string& workdir, const char* what)
@@ -54,7 +51,7 @@ push_dialog::push_dialog(rap::ui& ui, std::string workdir)
 // "Arbitrary URL...".
 int push_dialog::first_remote() const
 {
-    return remotes_.size() > 1 ? 1 : 0;
+    return first_named_remote(remotes_, true);
 }
 
 bool push_dialog::by_url() const
@@ -72,10 +69,7 @@ void push_dialog::build(const std::string& preselected)
     using namespace rap::layout;
     using namespace rap::literals;
     const std::string key = "push." + workdir_;
-    std::vector<std::string> items;
-    if (remotes_.size() > 1) items.push_back(_(k_all));
-    items.insert(items.end(), remotes_.begin(), remotes_.end());
-    items.push_back(_(k_url_item));
+    auto items = remote_items(remotes_, true);
     // The last remote pushed to, until the branch's own says otherwise
     // [spec 7.3.2].
     // (TortoiseGit leaves it blank with several remotes and no say; a
@@ -86,7 +80,7 @@ void push_dialog::build(const std::string& preselected)
         if (remotes_[i] == "origin") current = first_remote() + int(i);
     for (size_t i = 0; i < remotes_.size(); ++i)
         if (remotes_[i] == last) current = first_remote() + int(i);
-    if (last == k_all && first_remote() == 1) current = 0;
+    if (last == all_remotes_label && first_remote() == 1) current = 0;
     const std::string branch = !preselected.empty() ? preselected : current_branch(workdir_);
 
     std::string recurse_config = config_value(workdir_, "push.recurseSubmodules");
@@ -236,7 +230,7 @@ void push_dialog::push()
 
     const std::string key = "push." + workdir_;
     settings& s = settings::get();
-    if (!url) s.set(key + ".remote", all_remotes() ? k_all : targets.front());
+    if (!url) s.set(key + ".remote", all_remotes() ? all_remotes_label : targets.front());
     s.set(key + ".all", all ? "1" : "0");
 
     std::vector<std::string> options;
@@ -310,20 +304,7 @@ void push_dialog::manage_remotes()
 
 void push_dialog::refresh_remotes()
 {
-    const bool url = by_url(), all = all_remotes();
-    const int was = remote_->current() - first_remote();
-    const std::string name = was >= 0 && was < int(remotes_.size()) ? remotes_[size_t(was)] : "";
-    remotes_ = remote_names(workdir_);
-    std::vector<std::string> items;
-    if (first_remote() == 1) items.push_back(_(k_all));
-    items.insert(items.end(), remotes_.begin(), remotes_.end());
-    items.push_back(_(k_url_item));
-    remote_->set_items(items);
-    int current = remotes_.empty() || url ? int(items.size()) - 1 : first_remote();
-    if (all && first_remote() == 1) current = 0;
-    for (size_t i = 0; i < remotes_.size(); ++i)
-        if (remotes_[i] == name) current = first_remote() + int(i);
-    remote_->set_current(current);
+    refresh_remote_selector(*remote_, remotes_, workdir_, true);
     update_state();
 }
 

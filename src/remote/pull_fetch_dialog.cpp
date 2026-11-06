@@ -8,6 +8,7 @@
 #include "i18n.h"
 #include "log/log_window.h"
 #include "rebase/rebase_window.h"
+#include "remote/remote_selector.h"
 #include "settings.h"
 #include "ui/compare.h"
 #include "ui/progress_dialog.h"
@@ -26,10 +27,6 @@ namespace
 {
 
 namespace fs = std::filesystem;
-
-// Shown translated; k_all is also what the settings remember for "all".
-constexpr const char* k_url_item = T_("Arbitrary URL...");
-constexpr const char* k_all = T_("- all -");
 
 // "<path> - Pull - Tortilla": `what` with the path for {0}.
 std::string title(const std::string& workdir, const char* what)
@@ -78,7 +75,7 @@ pull_fetch_dialog::pull_fetch_dialog(rap::ui& ui, std::string workdir, bool pull
 // "Arbitrary URL...".
 int pull_fetch_dialog::first_remote() const
 {
-    return !pull_ && remotes_.size() > 1 ? 1 : 0;
+    return first_named_remote(remotes_, !pull_);
 }
 
 bool pull_fetch_dialog::by_url() const
@@ -106,10 +103,7 @@ void pull_fetch_dialog::build()
 
     // The remote: the caller's, else the branch's own, else the last used here [spec 7.2.2];
     // Fetch with several remotes offers (and defaults to) all of them.
-    std::vector<std::string> items;
-    if (!pull_ && remotes_.size() > 1) items.push_back(_(k_all));
-    items.insert(items.end(), remotes_.begin(), remotes_.end());
-    items.push_back(_(k_url_item));
+    auto items = remote_items(remotes_, !pull_);
     const upstream up = upstream_of(workdir_, branch_);
     std::string chosen = !preselect_.empty() ? preselect_
                          : up.remote.empty() ? settings::get().value(key + ".remote")
@@ -117,7 +111,7 @@ void pull_fetch_dialog::build()
     int current = 0;
     for (size_t i = 0; i < remotes_.size(); ++i)
         if (remotes_[i] == chosen) current = first_remote() + int(i);
-    if (chosen == k_all && first_remote() == 1) current = 0;
+    if (chosen == all_remotes_label && first_remote() == 1) current = 0;
     if (remotes_.empty()) current = int(items.size()) - 1;  // only a URL makes sense
 
     // The branch: the upstream's, else this branch's own name.
@@ -245,7 +239,7 @@ void pull_fetch_dialog::ok()
     // Remembered: the remote, rebase and fast-forward-only [spec 7.2.4].
     const std::string key = (pull_ ? "pull." : "fetch.") + workdir_;
     settings& s = settings::get();
-    if (!url) s.set(key + ".remote", all ? k_all : where);
+    if (!url) s.set(key + ".remote", all ? all_remotes_label : where);
     if (url) remember_url(where);
     s.set(key + ".rebase", rebase_->checked() && !rebase_from_config_ ? "1" : "0");
     if (pull_) s.set(key + ".ffonly", ff_only_->checked() ? "1" : "0");
@@ -412,20 +406,7 @@ void pull_fetch_dialog::manage_remotes()
 
 void pull_fetch_dialog::refresh_remotes()
 {
-    const bool url = by_url(), all = all_remotes();
-    const int was = remote_->current() - first_remote();
-    const std::string name = was >= 0 && was < int(remotes_.size()) ? remotes_[size_t(was)] : "";
-    remotes_ = remote_names(workdir_);
-    std::vector<std::string> items;
-    if (first_remote() == 1) items.push_back(_(k_all));
-    items.insert(items.end(), remotes_.begin(), remotes_.end());
-    items.push_back(_(k_url_item));
-    remote_->set_items(items);
-    int current = remotes_.empty() || url ? int(items.size()) - 1 : first_remote();
-    if (all && first_remote() == 1) current = 0;
-    for (size_t i = 0; i < remotes_.size(); ++i)
-        if (remotes_[i] == name) current = first_remote() + int(i);
-    remote_->set_current(current);
+    refresh_remote_selector(*remote_, remotes_, workdir_, !pull_);
     remote_changed();
 }
 
