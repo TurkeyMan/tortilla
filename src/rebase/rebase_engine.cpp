@@ -469,11 +469,6 @@ void rebase_engine::keep_result(const oid& result, kept why, const std::string& 
 {
     auto r = repo::open(workdir_);
     if (!r) return stop(rebase_stage::error);
-    const std::string base =
-        start_.branch.starts_with("refs/heads/") ? start_.branch.substr(11) : start_.branch;
-    std::string name = base + "-rebased";
-    for (int n = 2; r->resolve("refs/heads/" + name); ++n)
-        name = base + "-rebased-" + std::to_string(n);
     std::string reason;
     switch (why)
     {
@@ -493,15 +488,44 @@ void rebase_engine::keep_result(const oid& result, kept why, const std::string& 
                                    start_.branch, detail);
         break;
     }
+    keep_on_branch(result, reason, 0);
+}
+
+// The result onto a new branch, then HEAD attached to it. Another program
+// can move that branch in between, as it could the rebased one: then HEAD
+// goes back to the result, detached, and a fresh name is tried, the moved
+// branch left as it is. After a few, HEAD stays detached at the result.
+void rebase_engine::keep_on_branch(const oid& result, const std::string& reason, int tries)
+{
+    if (tries >= 3) return kept_detached(result, reason);
+    auto r = repo::open(workdir_);
+    if (!r) return stop(rebase_stage::error);
+    const std::string base =
+        start_.branch.starts_with("refs/heads/") ? start_.branch.substr(11) : start_.branch;
+    std::string name = base + "-rebased";
+    for (int n = 2; r->resolve("refs/heads/" + name); ++n)
+        name = base + "-rebased-" + std::to_string(n);
+    // HEAD is detached at the result throughout, so a name taken meanwhile
+    // (git refuses it) is only another try.
     run({"branch", "--no-track", name, result.hex()},
-        [this, name, reason](int code, auto&)
+        [this, result, name, reason, tries](int code, auto&)
         {
-            if (code != 0) return stop(rebase_stage::error);
+            if (code != 0) return keep_on_branch(result, reason, tries + 1);
+            if (hooks_.result_kept) hooks_.result_kept(name);
             run({"symbolic-ref", "-m", "rebase (finish): kept on " + name, "HEAD",
                  "refs/heads/" + name},
-                [this, name, reason](int code, auto&)
+                [this, result, name, reason, tries](int code, auto&)
                 {
                     if (code != 0) return stop(rebase_stage::error);
+                    auto r = repo::open(workdir_);
+                    if (!r || r->head_id() != result)
+                        return run({"update-ref", "--no-deref", "-m",
+                                    "rebase (finish): back to the result", "HEAD", result.hex()},
+                                   [this, result, reason, tries](int code, auto&)
+                                   {
+                                       if (code != 0) return stop(rebase_stage::error);
+                                       keep_on_branch(result, reason, tries + 1);
+                                   });
                     const std::string text =
                         reason + " " +
                         rap::i18n::format(
@@ -511,13 +535,29 @@ void rebase_engine::keep_result(const oid& result, kept why, const std::string& 
                               "commits, reset “{1}” to “{0}”: that drops what changed it "
                               "meanwhile. Then delete “{0}”."),
                             name, start_.branch);
-                    remove_file(msg_file_);
-                    remove_file(active_file_);
-                    hooks_.log(text + "\n", true);
-                    hooks_.warn(text);
-                    stop(rebase_stage::done);
+                    kept_done(text);
                 });
         });
+}
+
+// No branch would hold the result: HEAD stays detached at it, named in the
+// message so it can be made one.
+void rebase_engine::kept_detached(const oid& result, const std::string& reason)
+{
+    kept_done(reason + " " +
+              rap::i18n::format(_("The rebased commits couldn't be put on a branch of their own, "
+                                  "as something else kept moving it: HEAD is left detached at "
+                                  "them, {0}.\n\nTo keep them: git branch <name> {0}"),
+                                result.hex()));
+}
+
+void rebase_engine::kept_done(const std::string& text)
+{
+    remove_file(msg_file_);
+    remove_file(active_file_);
+    hooks_.log(text + "\n", true);
+    hooks_.warn(text);
+    stop(rebase_stage::done);
 }
 
 // The branch only moves at the end, so aborting is: drop any pick in

@@ -65,6 +65,9 @@ public:
         // attached to it. The tests move the branch here, as another
         // program could.
         std::function<void()> branch_moved;
+        // Optional: the result's own branch (<branch>-rebased) is made, HEAD
+        // not yet attached to it; the tests move it here too.
+        std::function<void(const std::string& name)> result_kept;
         // Optional: reads the worktrees in place of list_worktrees (the tests
         // make it fail).
         std::function<std::expected<std::vector<worktree_info>, std::string>(const repo&)>
@@ -102,6 +105,9 @@ private:
         unreadable,  // the worktrees couldn't be read, so that couldn't be told
     };
     void keep_result(const oid& result, kept why, const std::string& detail);
+    void keep_on_branch(const oid& result, const std::string& reason, int tries);
+    void kept_detached(const oid& result, const std::string& reason);
+    void kept_done(const std::string& text);
     void commit_squash(const std::string& message);
     void write_message(const std::string& message);
     std::string author_arg(const commit&) const;

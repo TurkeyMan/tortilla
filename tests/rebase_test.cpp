@@ -85,6 +85,8 @@ struct harness
     // Run once in the finish's gap: the branch moved, HEAD not attached yet.
     std::function<void()> between;
     bool worktrees_fail = false;  // the finish's worktree read fails
+    // Run as each recovery branch is made, before HEAD is attached to it.
+    std::function<void(const std::string&)> on_kept;
 
     harness(rap::ui& u, const std::string& r)
         : ui(u)
@@ -107,6 +109,11 @@ struct harness
                 [this]
             {
                 if (auto f = std::exchange(between, nullptr)) f();
+            },
+            .result_kept =
+                [this](const std::string& name)
+            {
+                if (on_kept) on_kept(name);
             },
             .worktrees = [this](const tortilla::repo& r)
                 -> std::expected<std::vector<worktree_info>, std::string>
@@ -552,6 +559,61 @@ int main(int argc, char** argv)
         check(h.log.find("couldn't be read") != std::string::npos &&
                   !std::filesystem::exists(h.repo + "/.git/tortilla-rebase-active"),
               "worktrees unreadable: says so, no rebase left marked");
+    }
+    // The recovery branch moved between its making and HEAD attached to it:
+    // HEAD goes back to the result and a fresh name is tried, the moved one
+    // left as the other program left it.
+    {
+        harness h(**ui, make_repo(root, "kept-moved"));
+        std::string main_tip = git(h.repo, {"rev-parse", "main"});
+        main_tip.pop_back();
+        const std::string before = git(h.repo, {"rev-parse", "feature"});
+        h.worktrees_fail = true;  // so the result is kept on a branch of its own
+        h.on_kept = [&](const std::string& name)
+        {
+            if (name == "feature-rebased")
+                git(h.repo, {"update-ref", "refs/heads/" + name, main_tip});
+        };
+        h.start();
+        check(h.engine->stage() == rebase_stage::done &&
+                  git(h.repo, {"rev-parse", "feature"}) == before &&
+                  git(h.repo, {"rev-parse", "feature-rebased"}) == main_tip + "\n",
+              "recovery branch moved: the branch and the moved one left as they are");
+        check(git(h.repo, {"symbolic-ref", "HEAD"}) == "refs/heads/feature-rebased-2\n" &&
+                  git(h.repo, {"log", "--format=%s", "main~1..HEAD"}) == "F3\nF2\nF1\nMain two\n" &&
+                  git(h.repo, {"status", "--porcelain"}).empty(),
+              "recovery branch moved: the result on feature-rebased-2, checked out, clean");
+        check(h.log.find("WARN") != std::string::npos &&
+                  h.log.find("feature-rebased-2") != std::string::npos &&
+                  !std::filesystem::exists(h.repo + "/.git/tortilla-rebase-active"),
+              "recovery branch moved: says so, no rebase left marked");
+    }
+    // Moved every time: after a few tries HEAD stays detached at the
+    // result, and the message names it.
+    {
+        harness h(**ui, make_repo(root, "kept-moving"));
+        std::string main_tip = git(h.repo, {"rev-parse", "main"});
+        main_tip.pop_back();
+        h.worktrees_fail = true;
+        int tries = 0;
+        h.on_kept = [&](const std::string& name)
+        {
+            ++tries;
+            git(h.repo, {"update-ref", "refs/heads/" + name, main_tip});
+        };
+        h.start();
+        std::string head = git(h.repo, {"rev-parse", "HEAD"});
+        head.pop_back();
+        check(h.engine->stage() == rebase_stage::done && tries == 3 &&
+                  git(h.repo, {"symbolic-ref", "-q", "HEAD"}).empty() &&
+                  git(h.repo, {"log", "--format=%s", "main~1..HEAD"}) == "F3\nF2\nF1\nMain two\n" &&
+                  git(h.repo, {"status", "--porcelain"}).empty(),
+              "recovery branch always moved: HEAD detached at the result, clean");
+        check(git(h.repo, {"rev-parse", "feature-rebased-3"}) == main_tip + "\n" &&
+                  h.log.find("WARN") != std::string::npos &&
+                  h.log.find(head) != std::string::npos &&
+                  !std::filesystem::exists(h.repo + "/.git/tortilla-rebase-active"),
+              "recovery branch always moved: the moved ones left, the result named, unmarked");
     }
     // Aborting never resets the branch: one moved meanwhile keeps its commit.
     {
