@@ -9,6 +9,8 @@
 // "mine" is stage 3, git's "theirs".
 #pragma once
 
+#include <filesystem>
+#include <optional>
 #include <string>
 
 namespace tortilla
@@ -40,6 +42,20 @@ struct operation_state
     int mine_stage() const { return rebasing() ? 3 : 2; }
     int theirs_stage() const { return rebasing() ? 2 : 3; }
 };
+
+// Tortilla's rebase going on in a worktree: its marker, while HEAD is
+// detached (a marker left behind by a crash, with a branch checked out
+// again, doesn't count). The one description of it: the operation shown,
+// and the branch it holds against other worktrees and history edits
+// (worktree_info::held), both read it here.
+struct tortilla_rebase
+{
+    std::string onto;    // what it's onto, as chosen; may be empty
+    std::string branch;  // the branch being rebased, short; may be empty
+    // The branch's full name ("refs/heads/feature"); empty when not known.
+    std::string branch_ref() const;
+};
+std::optional<tortilla_rebase> tortilla_rebase_in(const std::filesystem::path& git_dir);
 
 // From the repository's own (worktree's) git directory: a few file checks.
 operation_state operation_in_git_dir(const std::string& git_dir);

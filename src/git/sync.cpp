@@ -84,9 +84,13 @@ bool fast_forward_reads(const std::string& workdir, std::string& trees, std::str
     const auto refs = r->refs_under({"refs/heads/", "refs/remotes/"});
     if (!worktrees || !refs) return false;
     for (const worktree_info& w : *worktrees)
+    {
         if (!w.branch.empty())
             trees += "branch " +
                      (w.branch.starts_with("refs/") ? w.branch : "refs/heads/" + w.branch) + "\n";
+        // A rebase or bisect holds its branch: not fast-forwarded under it.
+        for (const std::string& held : w.held) trees += "branch " + held + "\n";
+    }
     upstream_list upstreams(*r);
     std::string head;
     for (const worktree_info& w : *worktrees)

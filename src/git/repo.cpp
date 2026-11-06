@@ -471,9 +471,14 @@ bool libgit2_labels(const repo& r, ref_map& out, remote_head_map& remote_heads)
     std::unordered_map<std::string, std::string> elsewhere;  // full branch name -> worktree
     if (auto trees = list_worktrees(r))
         for (const worktree_info& w : *trees)
+        {
             if (!w.branch.empty())
                 elsewhere.emplace(
                     w.branch.starts_with("refs/") ? w.branch : "refs/heads/" + w.branch, w.path);
+            // A rebase or bisect there holds its branch as if checked out.
+            if (!w.current)
+                for (const std::string& held : w.held) elsewhere.emplace(held, w.path);
+        }
     // A config libgit2 can't read as git does (includeIf hasconfig:, say,
     // setting branch.<b>.merge): every label from git, upstreams with them.
     upstream_list upstream(r);

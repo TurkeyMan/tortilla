@@ -3,6 +3,7 @@
 #include "git/remotes.h"
 #include "git/repo.h"
 #include "git/tree_list.h"
+#include "git/worktrees.h"
 #include "i18n.h"
 
 #include <rapport/sys.h>
@@ -147,23 +148,21 @@ void rebase_engine::start(const start_args& s)
     hooks_.stage_changed();
     hooks_.log(std::string(_("Start Rebase")) + "\n", true);
 
-    // Fast-forward: move the branch to the upstream and stop [spec 2.7.9].
+    // Fast-forward: move the branch to the upstream and stop [spec 2.7.9];
+    // as a rebase with nothing to pick, so the branch moves as finish()
+    // moves it, only if it's still where it was.
     if (s.fast_forward)
     {
-        std::string onto = s.onto.hex();
         // Without -f: git refuses rather than overwrite an untracked file
         // the upstream has (local changes were stashed before the start).
-        run({"checkout", "--no-track", "-B", s.branch, onto},
+        run({"checkout", "--detach", s.onto.hex()},
             [this](int code, auto&)
             {
                 if (code != 0) return stop(rebase_stage::error);
-                // Done, so no longer a rebase: the marker would swap a later
-                // merge's mine and theirs.
-                remove_file(active_file_);
                 hooks_.log(rap::i18n::format(_("Fast forward to \"{0}\""), start_.onto.hex(8)) +
                                "\n",
                            true);
-                stop(rebase_stage::done);
+                finish();
             });
         return;
     }
@@ -406,17 +405,93 @@ void rebase_engine::resume(const std::string& message)
     }
 }
 
-// Move the branch to the rebased commits and check it out [spec 2.7.6].
+// Move the branch to the rebased commits and check it out [spec 2.7.6]:
+// only from the tip it had at the start. Moved meanwhile (another worktree,
+// another program), or checked out elsewhere now, it stays as it is and the
+// result goes on a branch of its own (keep_result).
 void rebase_engine::finish()
 {
-    run({"checkout", "-B", start_.branch},
-        [this](int code, auto&)
+    const std::string full =
+        start_.branch.starts_with("refs/") ? start_.branch : "refs/heads/" + start_.branch;
+    auto r = repo::open(workdir_);
+    const std::optional<oid> result = r ? r->head_id() : std::nullopt;
+    if (!result) return stop(rebase_stage::error);
+    std::string elsewhere;
+    if (auto trees = list_worktrees(*r))
+        for (const worktree_info& w : *trees)
+            if (!w.current && !w.prunable && !w.bare && w.holds(full)) elsewhere = w.path;
+    if (!elsewhere.empty()) return keep_result(*result, elsewhere);
+
+    // Its old tip as the expected value: git refuses if it moved since.
+    run({"update-ref", "-m", "rebase (finish): " + full + " onto " + start_.onto.hex(), full,
+         result->hex(), start_.branch_head.hex()},
+        [this, full, tip = *result](int code, auto&)
+        {
+            if (code != 0) return keep_result(tip, {});
+            // HEAD is at the result already, with its index and files:
+            // attaching it to the branch changes neither.
+            run({"symbolic-ref", "-m", "rebase (finish): returning to " + full, "HEAD", full},
+                [this](int code, auto&)
+                {
+                    if (code != 0) return stop(rebase_stage::error);
+                    finished();
+                });
+        });
+}
+
+void rebase_engine::finished()
+{
+    remove_file(msg_file_);
+    remove_file(active_file_);
+    hooks_.log(std::string(_("Finished rebasing.")) + "\n", true);
+    stop(rebase_stage::done);
+}
+
+// The branch couldn't take the result: it's left as it is, and the result
+// goes on a new branch, "<branch>-rebased" (or -2, -3...), checked out, so
+// nothing is lost and no rebase is left hanging.
+void rebase_engine::keep_result(const oid& result, const std::string& elsewhere)
+{
+    auto r = repo::open(workdir_);
+    if (!r) return stop(rebase_stage::error);
+    const std::string base =
+        start_.branch.starts_with("refs/heads/") ? start_.branch.substr(11) : start_.branch;
+    std::string name = base + "-rebased";
+    for (int n = 2; r->resolve("refs/heads/" + name); ++n)
+        name = base + "-rebased-" + std::to_string(n);
+    const std::string now = r->resolve(start_.branch).value_or(oid{}).hex(8);
+    run({"branch", "--no-track", name, result.hex()},
+        [this, name, now, elsewhere](int code, auto&)
         {
             if (code != 0) return stop(rebase_stage::error);
-            remove_file(msg_file_);
-            remove_file(active_file_);
-            hooks_.log(std::string(_("Finished rebasing.")) + "\n", true);
-            stop(rebase_stage::done);
+            run({"symbolic-ref", "-m", "rebase (finish): kept on " + name, "HEAD",
+                 "refs/heads/" + name},
+                [this, name, now, elsewhere](int code, auto&)
+                {
+                    if (code != 0) return stop(rebase_stage::error);
+                    const std::string why =
+                        elsewhere.empty()
+                            ? rap::i18n::format(_("“{0}” changed while it was being rebased, so it "
+                                                  "was left as it is now, at {1}."),
+                                                start_.branch, now)
+                            : rap::i18n::format(_("“{0}” is checked out in another worktree, "
+                                                  "{1}, so it was left as it is."),
+                                                start_.branch, elsewhere);
+                    const std::string text =
+                        why + " " +
+                        rap::i18n::format(
+                            _("The rebased commits are on a new branch, “{0}”, now checked "
+                              "out.\n\nTo compare the two: git log --graph --oneline {1} {0}\n"
+                              "To keep both, rebase “{0}” onto “{1}”. To keep only the rebased "
+                              "commits, reset “{1}” to “{0}”: that drops what changed it "
+                              "meanwhile. Then delete “{0}”."),
+                            name, start_.branch);
+                    remove_file(msg_file_);
+                    remove_file(active_file_);
+                    hooks_.log(text + "\n", true);
+                    hooks_.warn(text);
+                    stop(rebase_stage::done);
+                });
         });
 }
 

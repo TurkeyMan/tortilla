@@ -2,7 +2,8 @@
 // commits are replayed one by one with git cherry-pick, from the bottom of
 // the list up, on a detached HEAD at the upstream. That lets the dialog stop
 // for conflicts, edits and squash messages and resume from its own buttons.
-// When everything is applied the branch is moved to the result.
+// When everything is applied the branch is moved to the result, if no one
+// moved it meanwhile; if someone did, the result goes on a branch of its own.
 #pragma once
 
 #include "git/command.h"
@@ -83,6 +84,8 @@ private:
     void picked(int code, const std::string& output, bool in_group);
     void stop(rebase_stage);
     void finish();
+    void finished();
+    void keep_result(const oid& result, const std::string& elsewhere);
     void commit_squash(const std::string& message);
     void write_message(const std::string& message);
     std::string author_arg(const commit&) const;

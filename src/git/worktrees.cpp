@@ -1,6 +1,7 @@
 #include "worktrees.h"
 
 #include "repo.h"
+#include "repo_operation.h"
 
 #include <git2.h>
 #include <rapport/sys.h>
@@ -83,9 +84,12 @@ void read_admin_head(git_repository* main, const std::string& name, worktree_inf
 // its git directory, as git's is_worktree_being_rebased and _bisected read
 // them: rebase-merge/head-name or rebase-apply/head-name (a full name, or
 // "detached HEAD"), and BISECT_START (the branch bisect started on, short,
-// or a commit when it started detached).
+// or a commit when it started detached). Tortilla's own rebase holds its
+// branch too, though git doesn't know it.
 void read_held(const fs::path& git_dir, worktree_info& w)
 {
+    if (auto t = tortilla_rebase_in(git_dir); t && t->branch_ref().starts_with("refs/heads/"))
+        w.held.push_back(t->branch_ref());
     auto first_line = [&](const fs::path& file) -> std::string
     {
         std::ifstream in(git_dir / file, std::ios::binary);

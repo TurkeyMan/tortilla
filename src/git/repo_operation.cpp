@@ -46,6 +46,23 @@ std::string field(std::string_view text, std::string_view key)
 
 }  // namespace
 
+std::string tortilla_rebase::branch_ref() const
+{
+    if (branch.empty() || branch.starts_with("refs/")) return branch;
+    return "refs/heads/" + branch;
+}
+
+std::optional<tortilla_rebase> tortilla_rebase_in(const fs::path& git_dir)
+{
+    std::error_code ec;
+    // It works on a detached HEAD.
+    if (git_dir.empty() || !fs::exists(git_dir / "tortilla-rebase-active", ec) ||
+        read_file(git_dir / "HEAD").starts_with("ref:"))
+        return std::nullopt;
+    const std::string text = read_file(git_dir / "tortilla-rebase-active");
+    return tortilla_rebase{.onto = field(text, "onto"), .branch = field(text, "branch")};
+}
+
 operation_state operation_in_git_dir(const std::string& git_dir)
 {
     operation_state s;
@@ -53,15 +70,12 @@ operation_state operation_in_git_dir(const std::string& git_dir)
     const fs::path dir = rap::sys::path_from_utf8(git_dir);
     std::error_code ec;
     auto there = [&](const char* name) { return fs::exists(dir / name, ec); };
-    // Tortilla's first: its picks leave CHERRY_PICK_HEAD too. It works on a
-    // detached HEAD, so a marker left behind (a crash) while a branch is
-    // checked out doesn't count.
-    if (there("tortilla-rebase-active") && !read_file(dir / "HEAD").starts_with("ref:"))
+    // Tortilla's first: its picks leave CHERRY_PICK_HEAD too.
+    if (auto t = tortilla_rebase_in(dir))
     {
         s.operation = repo_operation::tortilla_rebase;
-        const std::string text = read_file(dir / "tortilla-rebase-active");
-        s.onto = field(text, "onto");
-        s.branch = field(text, "branch");
+        s.onto = std::move(t->onto);
+        s.branch = std::move(t->branch);
     }
     else if (there("rebase-merge"))
         s.operation = repo_operation::rebase;

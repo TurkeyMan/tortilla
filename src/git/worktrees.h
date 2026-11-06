@@ -27,7 +27,8 @@ struct worktree_info
     bool prunable = false;  // its directory is gone: git worktree prune would forget it
     // Branches a rebase or bisect in progress there holds, full names, as
     // git counts them (branch -f and checkout refuse them), though its HEAD
-    // is detached meanwhile.
+    // is detached meanwhile; and the one Tortilla's own rebase holds
+    // (tortilla_rebase_in), which only Tortilla's checks know.
     std::vector<std::string> held;
     // Whether it has `full_name` checked out, or a rebase or bisect there holds it.
     bool holds(std::string_view full_name) const;

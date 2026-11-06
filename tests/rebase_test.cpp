@@ -3,6 +3,10 @@
 // Each case builds a repo with the git CLI, runs rebase_engine on the null
 // UI backend, and checks the resulting history.
 #include "git/command.h"
+#include "git/history_edit.h"
+#include "git/repo.h"
+#include "git/repo_operation.h"
+#include "git/worktrees.h"
 #include "rebase/rebase_engine.h"
 #include "shell.h"
 
@@ -379,6 +383,154 @@ int main(int argc, char** argv)
         check(std::string(text) == "new work\n", "abort, untracked: the file kept");
         check(!aborted && h.engine->stage() == rebase_stage::error,
               "abort, untracked: stops with an error instead");
+    }
+
+    // Finishing moves the branch from the tip it had at the start (an
+    // expected-value update) and attaches HEAD to it, the files untouched.
+    {
+        harness h(**ui, make_repo(root, "finish"));
+        h.start();
+        const std::string head = git(h.repo, {"rev-parse", "HEAD"});
+        check(h.engine->stage() == rebase_stage::done && h.subjects() == "F3\nF2\nF1\nMain two\n" &&
+                  git(h.repo, {"symbolic-ref", "HEAD"}) == "refs/heads/feature\n" &&
+                  git(h.repo, {"rev-parse", "feature"}) == head,
+              "finish: the branch at the result, checked out");
+        check(git(h.repo, {"status", "--porcelain"}).empty() &&
+                  !std::filesystem::exists(h.repo + "/.git/tortilla-rebase-active") &&
+                  git(h.repo, {"reflog", "-1", "--format=%gs", "refs/heads/feature"})
+                      .starts_with("rebase (finish)") &&
+                  git(h.repo, {"branch", "--list", "feature-rebased"}).empty(),
+              "finish: clean, unmarked, the branch's reflog says so, no extra branch");
+    }
+    // While it's paused another program (git itself) moves the branch: the
+    // finish leaves that, and the result goes on a branch of its own.
+    {
+        harness h(**ui, make_repo(root, "moved"));
+        h.model.set_action(h.row("F1"), rebase_action::edit);
+        h.start();
+        check(h.engine->stage() == rebase_stage::edit, "moved meanwhile: stops at F1");
+        std::string tree = git(h.repo, {"rev-parse", "feature^{tree}"});
+        tree.pop_back();
+        std::string external =
+            git(h.repo, {"commit-tree", tree, "-p", "feature", "-m", "External"});
+        external.pop_back();
+        git(h.repo, {"update-ref", "refs/heads/feature", external});
+        h.engine->resume("F1\n");
+        h.settle();
+        check(h.engine->stage() == rebase_stage::done &&
+                  git(h.repo, {"rev-parse", "feature"}) == external + "\n",
+              "moved meanwhile: the branch keeps the other program's commit");
+        check(git(h.repo, {"symbolic-ref", "HEAD"}) == "refs/heads/feature-rebased\n" &&
+                  git(h.repo, {"log", "--format=%s", "main~1..feature-rebased"}) ==
+                      "F3\nF2\nF1\nMain two\n",
+              "moved meanwhile: the result on feature-rebased, checked out");
+        check(h.log.find("WARN") != std::string::npos &&
+                  h.log.find("feature-rebased") != std::string::npos &&
+                  h.log.find("git log --graph --oneline feature feature-rebased") !=
+                      std::string::npos,
+              "moved meanwhile: says where each is and how to compare");
+        check(git(h.repo, {"status", "--porcelain"}).empty() &&
+                  !std::filesystem::exists(h.repo + "/.git/tortilla-rebase-active"),
+              "moved meanwhile: clean, no rebase left marked");
+    }
+    // A second worktree while it's paused: Tortilla's checks there see the
+    // branch held, as git's rebase holds one; the operation shown here and
+    // what's held read the same marker.
+    {
+        harness h(**ui, make_repo(root, "held"));
+        h.model.set_action(h.row("F2"), rebase_action::edit);
+        h.start();
+        check(h.engine->stage() == rebase_stage::edit, "held: stops at F2");
+        const std::string linked = root + "/held-linked";
+        sh("git -C '" + h.repo + "' worktree add -q --detach '" + linked + "' main");
+        const operation_state op = operation_in_progress(h.repo);
+        check(op.operation == repo_operation::tortilla_rebase && op.branch == "feature",
+              "held: shown as Tortilla's rebase of feature");
+        auto other = repo::open(linked);
+        auto here = repo::open(h.repo);
+        const history_edit move{.moves = {{.ref = "refs/heads/feature",
+                                           .from = here->resolve("feature"),
+                                           .to = here->resolve("main")}}};
+        std::expected<std::vector<worktree_info>, std::string> trees =
+            std::unexpected(std::string("no repository"));
+        if (other) trees = list_worktrees(*other);
+        check(trees && !trees->empty() && trees->front().main && !trees->front().current &&
+                  trees->front().holds("refs/heads/feature"),
+              "held: the other worktree sees the branch held here");
+        check(other && why_checked_out_elsewhere(*other, move).has_value(),
+              "held: a history edit there refuses to move it");
+        bool labelled = false;
+        if (other)
+            for (auto& [id, labels] : other->refs())
+                for (const ref& l : labels)
+                    if (l.full_name == "refs/heads/feature") labelled = !l.worktree.empty();
+        check(labelled, "held: its label there names this worktree (no checkout, no delete)");
+        check(here && why_checked_out_elsewhere(*here, move).has_value(),
+              "held: here too, a history edit refuses to move it");
+
+        // git itself doesn't know: it checks the branch out there anyway.
+        // The finish then leaves it, rather than move it under that tree.
+        sh("git -C '" + linked + "' checkout -q feature");
+        const std::string before = git(h.repo, {"rev-parse", "feature"});
+        h.engine->resume("F2\n");
+        h.settle();
+        check(h.engine->stage() == rebase_stage::done &&
+                  git(h.repo, {"rev-parse", "feature"}) == before &&
+                  git(h.repo, {"symbolic-ref", "HEAD"}) == "refs/heads/feature-rebased\n" &&
+                  git(h.repo, {"log", "--format=%s", "main~1..feature-rebased"}) ==
+                      "F3\nF2\nF1\nMain two\n",
+              "held: checked out there meanwhile, left; the result on feature-rebased");
+        check(h.log.find("another worktree") != std::string::npos &&
+                  git(linked, {"status", "--porcelain"}).empty(),
+              "held: says so; that worktree's files untouched");
+        // Done, the hold goes with the marker.
+        sh("git -C '" + linked + "' checkout -q --detach");
+        check(here && !why_checked_out_elsewhere(*here, move).has_value(),
+              "held: released once finished");
+    }
+    // Aborting never resets the branch: one moved meanwhile keeps its commit.
+    {
+        harness h(**ui, make_repo(root, "abort-moved", true));
+        h.start();
+        check(h.engine->stage() == rebase_stage::conflict, "abort, moved: stops at F2");
+        std::string tree = git(h.repo, {"rev-parse", "feature^{tree}"});
+        tree.pop_back();
+        std::string external =
+            git(h.repo, {"commit-tree", tree, "-p", "feature", "-m", "External"});
+        external.pop_back();
+        git(h.repo, {"update-ref", "refs/heads/feature", external});
+        bool aborted = false;
+        h.engine->abort([&] { aborted = true; });
+        for (int i = 0; i < 2000 && !aborted; ++i)
+        {
+            (*ui)->run();
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        check(aborted && git(h.repo, {"rev-parse", "feature"}) == external + "\n" &&
+                  git(h.repo, {"symbolic-ref", "HEAD"}) == "refs/heads/feature\n",
+              "abort, moved: back on the branch, its new commit kept");
+    }
+    // Fast-forward from a tip that moved since the dialog read it: kept.
+    {
+        harness h(**ui, make_repo(root, "ff-moved"));
+        const std::string g = "git -C '" + h.repo + "' ";
+        sh(g + "checkout -q -B feature main~1");
+        auto opened = repo::open(h.repo);
+        const oid read_then = *opened->resolve("feature");
+        sh(g + "commit -q --allow-empty -m Later");
+        const std::string later = git(h.repo, {"rev-parse", "feature"});
+        h.engine->start({.branch = "feature",
+                         .branch_head = read_then,
+                         .onto = *opened->resolve("main"),
+                         .onto_name = "main",
+                         .checked_out = "feature",
+                         .fast_forward = true});
+        h.settle();
+        check(h.engine->stage() == rebase_stage::done &&
+                  git(h.repo, {"rev-parse", "feature"}) == later &&
+                  git(h.repo, {"rev-parse", "feature-rebased"}) ==
+                      git(h.repo, {"rev-parse", "main"}),
+              "fast-forward, moved: the later commit kept, main on feature-rebased");
     }
 
     std::printf("%s\n", failures ? "FAILED" : "all passed");
