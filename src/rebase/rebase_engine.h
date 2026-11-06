@@ -7,6 +7,7 @@
 #pragma once
 
 #include "git/command.h"
+#include "git/worktrees.h"
 #include "rebase/rebase_model.h"
 
 #include <rapport/rapport.h>
@@ -60,6 +61,14 @@ public:
         std::function<void(const std::string&)> warn;
         // Ask whether to skip a commit that failed without conflicts.
         std::function<void(const std::string& output, std::function<void(bool skip)>)> ask_skip;
+        // Optional: the branch has just taken the result, HEAD not yet
+        // attached to it. The tests move the branch here, as another
+        // program could.
+        std::function<void()> branch_moved;
+        // Optional: reads the worktrees in place of list_worktrees (the tests
+        // make it fail).
+        std::function<std::expected<std::vector<worktree_info>, std::string>(const repo&)>
+            worktrees;
     };
 
     rebase_engine(rap::ui&, const std::string& workdir, const std::string& git_dir, rebase_model&,
@@ -85,7 +94,14 @@ private:
     void stop(rebase_stage);
     void finish();
     void finished();
-    void keep_result(const oid& result, const std::string& elsewhere);
+    // Why the branch couldn't take the result.
+    enum class kept
+    {
+        moved,       // it isn't where it was at the start
+        elsewhere,   // another worktree has it
+        unreadable,  // the worktrees couldn't be read, so that couldn't be told
+    };
+    void keep_result(const oid& result, kept why, const std::string& detail);
     void commit_squash(const std::string& message);
     void write_message(const std::string& message);
     std::string author_arg(const commit&) const;

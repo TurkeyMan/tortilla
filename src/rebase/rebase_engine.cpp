@@ -407,8 +407,9 @@ void rebase_engine::resume(const std::string& message)
 
 // Move the branch to the rebased commits and check it out [spec 2.7.6]:
 // only from the tip it had at the start. Moved meanwhile (another worktree,
-// another program), or checked out elsewhere now, it stays as it is and the
-// result goes on a branch of its own (keep_result).
+// another program), or checked out elsewhere now (or when that can't be
+// told), it stays as it is and the result goes on a branch of its own
+// (keep_result).
 void rebase_engine::finish()
 {
     const std::string full =
@@ -416,25 +417,38 @@ void rebase_engine::finish()
     auto r = repo::open(workdir_);
     const std::optional<oid> result = r ? r->head_id() : std::nullopt;
     if (!result) return stop(rebase_stage::error);
-    std::string elsewhere;
-    if (auto trees = list_worktrees(*r))
-        for (const worktree_info& w : *trees)
-            if (!w.current && !w.prunable && !w.bare && w.holds(full)) elsewhere = w.path;
-    if (!elsewhere.empty()) return keep_result(*result, elsewhere);
+    auto trees = hooks_.worktrees ? hooks_.worktrees(*r) : list_worktrees(*r);
+    if (!trees) return keep_result(*result, kept::unreadable, trees.error());
+    for (const worktree_info& w : *trees)
+        if (!w.current && !w.prunable && !w.bare && w.holds(full))
+            return keep_result(*result, kept::elsewhere, w.path);
 
     // Its old tip as the expected value: git refuses if it moved since.
     run({"update-ref", "-m", "rebase (finish): " + full + " onto " + start_.onto.hex(), full,
          result->hex(), start_.branch_head.hex()},
         [this, full, tip = *result](int code, auto&)
         {
-            if (code != 0) return keep_result(tip, {});
+            if (code != 0) return keep_result(tip, kept::moved, {});
+            if (hooks_.branch_moved) hooks_.branch_moved();
             // HEAD is at the result already, with its index and files:
-            // attaching it to the branch changes neither.
+            // attaching it to the branch changes neither...
             run({"symbolic-ref", "-m", "rebase (finish): returning to " + full, "HEAD", full},
-                [this](int code, auto&)
+                [this, tip](int code, auto&)
                 {
                     if (code != 0) return stop(rebase_stage::error);
-                    finished();
+                    // ...unless the branch moved again between the two, its
+                    // lock let go. Then HEAD goes back to the result,
+                    // detached, the files matching it again, and the result
+                    // is kept as when it moved before.
+                    auto r = repo::open(workdir_);
+                    if (r && r->head_id() == tip) return finished();
+                    run({"update-ref", "--no-deref", "-m", "rebase (finish): back to the result",
+                         "HEAD", tip.hex()},
+                        [this, tip](int code, auto&)
+                        {
+                            if (code != 0) return stop(rebase_stage::error);
+                            keep_result(tip, kept::moved, {});
+                        });
                 });
         });
 }
@@ -447,10 +461,11 @@ void rebase_engine::finished()
     stop(rebase_stage::done);
 }
 
-// The branch couldn't take the result: it's left as it is, and the result
-// goes on a new branch, "<branch>-rebased" (or -2, -3...), checked out, so
-// nothing is lost and no rebase is left hanging.
-void rebase_engine::keep_result(const oid& result, const std::string& elsewhere)
+// The branch couldn't take the result, or mightn't: it's left as it is, and
+// the result goes on a new branch, "<branch>-rebased" (or -2, -3...),
+// checked out, so nothing is lost and no rebase is left hanging. `detail`
+// is the other worktree, or why the worktrees couldn't be read.
+void rebase_engine::keep_result(const oid& result, kept why, const std::string& detail)
 {
     auto r = repo::open(workdir_);
     if (!r) return stop(rebase_stage::error);
@@ -459,26 +474,36 @@ void rebase_engine::keep_result(const oid& result, const std::string& elsewhere)
     std::string name = base + "-rebased";
     for (int n = 2; r->resolve("refs/heads/" + name); ++n)
         name = base + "-rebased-" + std::to_string(n);
-    const std::string now = r->resolve(start_.branch).value_or(oid{}).hex(8);
+    std::string reason;
+    switch (why)
+    {
+    case kept::moved:
+        reason = rap::i18n::format(_("“{0}” changed while it was being rebased, so it was left as "
+                                     "it is now, at {1}."),
+                                   start_.branch, r->resolve(start_.branch).value_or(oid{}).hex(8));
+        break;
+    case kept::elsewhere:
+        reason = rap::i18n::format(
+            _("“{0}” is checked out in another worktree, {1}, so it was left as it is."),
+            start_.branch, detail);
+        break;
+    case kept::unreadable:
+        reason = rap::i18n::format(_("The repository's list of worktrees couldn't be read ({1}), "
+                                     "so “{0}” was left as it is, in case another one has it."),
+                                   start_.branch, detail);
+        break;
+    }
     run({"branch", "--no-track", name, result.hex()},
-        [this, name, now, elsewhere](int code, auto&)
+        [this, name, reason](int code, auto&)
         {
             if (code != 0) return stop(rebase_stage::error);
             run({"symbolic-ref", "-m", "rebase (finish): kept on " + name, "HEAD",
                  "refs/heads/" + name},
-                [this, name, now, elsewhere](int code, auto&)
+                [this, name, reason](int code, auto&)
                 {
                     if (code != 0) return stop(rebase_stage::error);
-                    const std::string why =
-                        elsewhere.empty()
-                            ? rap::i18n::format(_("“{0}” changed while it was being rebased, so it "
-                                                  "was left as it is now, at {1}."),
-                                                start_.branch, now)
-                            : rap::i18n::format(_("“{0}” is checked out in another worktree, "
-                                                  "{1}, so it was left as it is."),
-                                                start_.branch, elsewhere);
                     const std::string text =
-                        why + " " +
+                        reason + " " +
                         rap::i18n::format(
                             _("The rebased commits are on a new branch, “{0}”, now checked "
                               "out.\n\nTo compare the two: git log --graph --oneline {1} {0}\n"

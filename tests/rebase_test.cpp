@@ -14,7 +14,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <functional>
 #include <thread>
+#include <utility>
 
 namespace
 {
@@ -80,6 +82,9 @@ struct harness
     std::unique_ptr<rebase_engine> engine;
     std::string log;
     bool skip_answer = true;
+    // Run once in the finish's gap: the branch moved, HEAD not attached yet.
+    std::function<void()> between;
+    bool worktrees_fail = false;  // the finish's worktree read fails
 
     harness(rap::ui& u, const std::string& r)
         : ui(u)
@@ -98,6 +103,17 @@ struct harness
             .message = [](const std::string&) {},
             .warn = [this](const std::string& m) { log += "WARN " + m; },
             .ask_skip = [this](const std::string&, std::function<void(bool)> a) { a(skip_answer); },
+            .branch_moved =
+                [this]
+            {
+                if (auto f = std::exchange(between, nullptr)) f();
+            },
+            .worktrees = [this](const tortilla::repo& r)
+                -> std::expected<std::vector<worktree_info>, std::string>
+            {
+                if (worktrees_fail) return std::unexpected(std::string("no worktrees here"));
+                return list_worktrees(r);
+            },
         };
         engine = std::make_unique<rebase_engine>(ui, r, rp.git_dir(), model, hooks);
     }
@@ -487,6 +503,55 @@ int main(int argc, char** argv)
         sh("git -C '" + linked + "' checkout -q --detach");
         check(here && !why_checked_out_elsewhere(*here, move).has_value(),
               "held: released once finished");
+    }
+    // Moved again in the gap between the branch taking the result and HEAD
+    // attached to it (git branch -f, say): HEAD goes back to the result and
+    // the result is kept on a branch of its own, as when it moved before.
+    {
+        harness h(**ui, make_repo(root, "gap"));
+        std::string main_tip = git(h.repo, {"rev-parse", "main"});
+        main_tip.pop_back();
+        bool moved = false;
+        h.between = [&]
+        {
+            git(h.repo, {"update-ref", "refs/heads/feature", main_tip});
+            moved = true;
+        };
+        h.start();
+        check(moved && h.engine->stage() == rebase_stage::done &&
+                  git(h.repo, {"rev-parse", "feature"}) == main_tip + "\n",
+              "moved in the gap: the branch keeps where it was moved to");
+        check(git(h.repo, {"symbolic-ref", "HEAD"}) == "refs/heads/feature-rebased\n" &&
+                  git(h.repo, {"log", "--format=%s", "main~1..feature-rebased"}) ==
+                      "F3\nF2\nF1\nMain two\n" &&
+                  git(h.repo, {"status", "--porcelain"}).empty(),
+              "moved in the gap: the result on feature-rebased, checked out, clean");
+        check(h.log.find("WARN") != std::string::npos &&
+                  h.log.find("feature-rebased") != std::string::npos &&
+                  !std::filesystem::exists(h.repo + "/.git/tortilla-rebase-active"),
+              "moved in the gap: says so, no rebase left marked");
+    }
+    // The worktree list can't be read (the read made to fail): which
+    // worktree has the branch can't be told, so it's left alone.
+    {
+        harness h(**ui, make_repo(root, "unreadable"));
+        h.model.set_action(h.row("F2"), rebase_action::edit);
+        h.start();
+        check(h.engine->stage() == rebase_stage::edit, "worktrees unreadable: stops at F2");
+        const std::string before = git(h.repo, {"rev-parse", "feature"});
+        h.worktrees_fail = true;
+        h.engine->resume("F2\n");
+        h.settle();
+        check(h.engine->stage() == rebase_stage::done &&
+                  git(h.repo, {"rev-parse", "feature"}) == before &&
+                  git(h.repo, {"symbolic-ref", "HEAD"}) == "refs/heads/feature-rebased\n" &&
+                  git(h.repo, {"log", "--format=%s", "main~1..feature-rebased"}) ==
+                      "F3\nF2\nF1\nMain two\n" &&
+                  git(h.repo, {"status", "--porcelain"}).empty(),
+              "worktrees unreadable: the branch untouched, the result on feature-rebased");
+        check(h.log.find("couldn't be read") != std::string::npos &&
+                  !std::filesystem::exists(h.repo + "/.git/tortilla-rebase-active"),
+              "worktrees unreadable: says so, no rebase left marked");
     }
     // Aborting never resets the branch: one moved meanwhile keeps its commit.
     {
