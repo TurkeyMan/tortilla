@@ -71,8 +71,11 @@ public:
     ~temp_dir();
     temp_dir(const temp_dir&) = delete;
     temp_dir& operator=(const temp_dir&) = delete;
-    // Empty if it couldn't be made.
+    // Empty if it couldn't be made, or its lock couldn't be taken (no
+    // folder is left then: unheld, a sweep could take it while in use).
     const std::filesystem::path& path() const { return path_; }
+    // Tests: every lock fails from now on, or no longer.
+    static void fail_locks_for_tests(bool fail);
 
 private:
     std::filesystem::path path_;

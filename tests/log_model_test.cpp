@@ -78,6 +78,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -236,6 +237,12 @@ void diff_sides_tests(rap::ui& ui, const std::string& root)
               "diff sides: the second's folder gone with its dropped callback, the Open's kept");
         std::error_code ec;
         fs::remove_all(open_dir, ec);
+        // No folder it can hold: the comparison fails, saying so.
+        temp_dir::fail_locks_for_tests(true);
+        auto unheld = mod ? write_diff_sides(dir, both, *mod) : std::unexpected(std::string());
+        temp_dir::fail_locks_for_tests(false);
+        check(mod && !unheld && !unheld.error().empty(),
+              "diff sides: none when their folder can't be held");
     }
 
     // A rename: one file, its old name and content on the base side.
@@ -1871,6 +1878,31 @@ int main(int argc, char** argv)
                   "temp dir: its folder and lock gone with its owner");
             fs::remove_all(fresh, ec);
             fs::remove_all(other, ec);
+        }
+
+        // A lock that can't be taken (no descriptors left): no folder at
+        // all, rather than one a sweep could take from its user.
+        {
+            auto ours = [&]
+            {
+                std::set<fs::path> found;
+                for (const auto& e : fs::directory_iterator(root, ec))
+                    if (e.path().filename().string().starts_with("rev-")) found.insert(e.path());
+                return found;
+            };
+            const std::set<fs::path> before = ours();
+            tortilla::temp_dir::fail_locks_for_tests(true);
+            fs::path unlocked;
+            {
+                tortilla::temp_dir d(tortilla::revision_dir_prefix);
+                unlocked = d.path();
+            }
+            const std::set<fs::path> during = ours();
+            tortilla::temp_dir::fail_locks_for_tests(false);
+            check(unlocked.empty() && during == before,
+                  "temp dir: none, no folder left, when its lock can't be taken");
+            tortilla::temp_dir after(tortilla::revision_dir_prefix);
+            check(!after.path().empty(), "temp dir: made again once locks work");
         }
 
         // Two names asked for at once are two files.

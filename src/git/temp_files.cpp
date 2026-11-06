@@ -59,6 +59,10 @@ fs::path lock_path(const fs::path& folder)
 
 constexpr std::intptr_t no_lock = -1;
 
+// temp_dir::fail_locks_for_tests(): every lock fails, as with no
+// descriptors left.
+std::atomic<bool> fail_locks = false;
+
 #ifdef _WIN32
 // Open with no sharing: while the handle lives, no other open of it, in
 // this process or another, succeeds, and it can't be deleted.
@@ -153,7 +157,17 @@ temp_dir::temp_dir(std::string_view prefix)
     : path_(unique_temp_dir(prefix))
 {
     // Held from the start: the folder is new, so no sweep takes it before.
-    if (!path_.empty()) lock_ = open_lock(lock_path(path_), true);
+    if (path_.empty()) return;
+    if (!fail_locks) lock_ = open_lock(lock_path(path_), true);
+    if (lock_ == no_lock)
+    {
+        // Unheld, any sweep could take it from under its user once it's a
+        // day old: none, and its maker says it couldn't be made. The lock
+        // path isn't this one's to remove (it may be another's).
+        std::error_code ec;
+        fs::remove_all(path_, ec);
+        path_.clear();
+    }
 }
 
 temp_dir::~temp_dir()
@@ -161,8 +175,13 @@ temp_dir::~temp_dir()
     if (path_.empty()) return;
     std::error_code ec;
     fs::remove_all(path_, ec);  // links in it go, not what they point at
-    if (lock_ != no_lock) close_lock(lock_);
-    fs::remove(lock_path(path_), ec);
+    close_lock(lock_);
+    fs::remove(lock_path(path_), ec);  // made by this one: no lock, no path
+}
+
+void temp_dir::fail_locks_for_tests(bool fail)
+{
+    fail_locks = fail;
 }
 
 fs::path revision_temp_path(const fs::path& dir, std::string_view rev, std::string_view path)
