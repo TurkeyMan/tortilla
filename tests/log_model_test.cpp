@@ -75,6 +75,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -1612,6 +1613,204 @@ void libgit2_dialog_parity_tests(const std::string& root)
           "dialog parity: an includeIf hasconfig config, through git");
 }
 
+// The settings file as a separate reader sees it.
+std::map<std::string, std::string> settings_on_disk(const std::filesystem::path& file)
+{
+    std::map<std::string, std::string> out;
+    std::ifstream in(file, std::ios::binary);
+    for (std::string line; std::getline(in, line);)
+        if (size_t eq = line.find('='); eq != std::string::npos)
+            out[line.substr(0, eq)] = line.substr(eq + 1);
+    return out;
+}
+
+void write_text(const std::filesystem::path& file, const std::string& text)
+{
+    if (std::FILE* f = rap::sys::fopen(file, "wb"))
+    {
+        std::fwrite(text.data(), 1, text.size(), f);
+        std::fclose(f);
+    }
+}
+
+// `tortilla-tests --settings-child <file> <tag> <count>`: another Tortilla
+// process saving to the same settings file. Says it's ready, waits for the
+// go, then saves `count` keys of its own and adds `count` entries to a
+// shared history, one save each.
+int settings_child(char** argv)
+{
+    namespace fs = std::filesystem;
+    const fs::path file = rap::sys::path_from_utf8(argv[2]);
+    const std::string tag = argv[3];
+    const int count = std::atoi(argv[4]);
+    auto& st = tortilla::settings::get();
+    st.use_file(file);
+    fs::path ready = file;
+    ready += rap::sys::path_from_utf8(".ready-" + tag);
+    write_text(ready, "");
+    fs::path go = file;
+    go += rap::sys::path_from_utf8(".go");
+    for (int i = 0; !fs::exists(go); ++i)
+    {
+        if (i == 3000) return 3;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    for (int i = 0; i < count; ++i)
+    {
+        st.set(tag + ".key" + std::to_string(i), std::to_string(i));
+        st.add_to_history("shared.history", tag + "-" + std::to_string(i), 1000);
+    }
+    return 0;
+}
+
+// Settings saved by several processes at once, read by another meanwhile,
+// and saves that fail.
+void settings_across_processes(const std::string& scratch)
+{
+    namespace fs = std::filesystem;
+    const fs::path dir = rap::sys::path_from_utf8(scratch) / "settings-shared";
+    fs::create_directories(dir);
+    auto& st = tortilla::settings::get();
+
+    // Two processes, each with a snapshot from before the other's saves:
+    // neither's keys or history entries are lost, and a reader (as the
+    // shell extension reads) only ever sees a whole document. The first
+    // and last keys mark one.
+    {
+        const fs::path file = dir / "two";
+        write_text(file, "!first=1\n~last=1\n");
+        const int count = 40;
+        const std::string exe = rap::sys::path_to_utf8(rap::sys::executable_path());
+        std::atomic<bool> stop{false};
+        std::atomic<int> reads{0}, torn{0};
+        std::thread reader(
+            [&]
+            {
+                while (!stop)
+                {
+                    std::string text;
+                    {
+                        std::ifstream in(file, std::ios::binary);
+                        text.assign(std::istreambuf_iterator<char>(in), {});
+                    }
+                    ++reads;
+                    if (!text.starts_with("!first=1\n") || !text.ends_with("~last=1\n")) ++torn;
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                }
+            });
+        std::vector<int> exits(2, -1);
+        std::vector<std::string> outputs(2);
+        std::vector<std::thread> children;
+        for (int c = 0; c < 2; ++c)
+            children.emplace_back(
+                [&, c]
+                {
+                    const std::vector<std::string> args = {"--settings-child",
+                                                           rap::sys::path_to_utf8(file),
+                                                           c ? "b" : "a", std::to_string(count)};
+                    if (auto r = rap::sys::process::run(exe, args))
+                    {
+                        exits[c] = r->exit_code;
+                        outputs[c] = r->output;
+                    }
+                });
+        for (int i = 0;
+             i < 3000 && !(fs::exists(dir / "two.ready-a") && fs::exists(dir / "two.ready-b")); ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        write_text(dir / "two.go", "");
+        for (std::thread& t : children) t.join();
+        stop = true;
+        reader.join();
+        for (const std::string& o : outputs)
+            if (!o.empty()) std::fputs(o.c_str(), stdout);
+
+        const auto saved = settings_on_disk(file);
+        bool keys = saved.count("!first") && saved.count("~last");
+        for (const char* tag : {"a", "b"})
+            for (int i = 0; i < count; ++i)
+            {
+                auto it = saved.find(std::string(tag) + ".key" + std::to_string(i));
+                keys = keys && it != saved.end() && it->second == std::to_string(i);
+            }
+        check(exits[0] == 0 && exits[1] == 0 && keys,
+              "settings: two processes saving at once both keep their keys");
+        std::vector<std::string> entries = tortilla::history_entries(
+            saved.count("shared.history") ? saved.at("shared.history") : std::string());
+        std::sort(entries.begin(), entries.end());
+        std::vector<std::string> want;
+        for (const char* tag : {"a", "b"})
+            for (int i = 0; i < count; ++i)
+                want.push_back(std::string(tag) + "-" + std::to_string(i));
+        std::sort(want.begin(), want.end());
+        check(entries == want, "settings: two processes adding to one history both keep theirs");
+        check(reads > 0 && torn == 0,
+              "settings: a reader meanwhile only ever sees a whole document");
+        bool leftovers = false;
+        for (const auto& e : fs::directory_iterator(dir))
+            if (e.path().extension() == ".tmp") leftovers = true;
+        check(!leftovers, "settings: no temporary files left behind");
+    }
+
+    // A change made from a snapshot that another process has since moved
+    // on from: it applies to the file as it is, keeping the other's keys,
+    // even a value this process's copy already had.
+    {
+        const fs::path file = dir / "stale";
+        write_text(file, "x=1\n");
+        st.use_file(file);
+        write_text(file, "elsewhere=1\nx=2\n");  // another process's save
+        st.set("x", "1");
+        check(settings_on_disk(file) ==
+                      std::map<std::string, std::string>{{"elsewhere", "1"}, {"x", "1"}} &&
+                  st.value("elsewhere") == "1",
+              "settings: a save from a stale copy keeps others' changes");
+    }
+
+    // Changes saved together: in order, as one update.
+    {
+        const fs::path file = dir / "together";
+        write_text(file, "gone=1\nh=x\n");
+        st.use_file(file);
+        tortilla::settings_changes c;
+        c.set("w.size", "1,2");
+        c.set_numbers("w.position", {3.4f, 5.6f});
+        c.remove("gone");
+        c.add_to_history("h", "y");
+        c.set("later", "a");
+        c.set("later", "b");
+        check(st.apply(c) &&
+                  settings_on_disk(file) ==
+                      std::map<std::string, std::string>{
+                          {"h", "y\tx"}, {"later", "b"}, {"w.position", "3,6"}, {"w.size", "1,2"}},
+              "settings: changes saved together, in order");
+    }
+
+    // A save that can't be written leaves the file as it was, and this
+    // process's copy too; the next save that can, saves.
+    {
+        const fs::path file = dir / "fails";
+        write_text(file, "");
+        st.use_file(file);
+        st.set("kept", "1");
+        const std::string before = slurp(file);
+        const fs::path temp = tortilla::settings_temp_file(file);
+        fs::create_directory(temp);  // where the update would be written
+        tortilla::settings_changes c;
+        c.set("lost", "1");
+        c.add_to_history("h", "e");
+        const bool saved = st.apply(c);
+        st.remove("kept");
+        check(!saved && before == "kept=1\n" && slurp(file) == before && st.value("lost").empty() &&
+                  st.history("h").empty() && st.value("kept") == "1",
+              "settings: a failed save keeps the last good file, and the copy of it");
+        fs::remove(temp);
+        st.set("lost", "1");
+        check(settings_on_disk(file) ==
+                  std::map<std::string, std::string>{{"kept", "1"}, {"lost", "1"}},
+              "settings: the next save after a failed one saves");
+    }
+}
+
 }  // namespace
 
 // Draws nothing; text is 7 px a character, for label layout.
@@ -1640,6 +1839,7 @@ public:
 
 int main(int argc, char** argv)
 {
+    if (argc == 5 && std::string_view(argv[1]) == "--settings-child") return settings_child(argv);
     if (argc < 2)
     {
         std::fprintf(stderr, "usage: %s <empty scratch dir>\n", argv[0]);
@@ -1685,6 +1885,8 @@ int main(int argc, char** argv)
         st.remove("test.race");
         st.remove("test.list");
     }
+    settings_across_processes(argv[1]);
+    tortilla::settings::get().use_file(rap::sys::path_from_utf8(argv[1]) / "tortilla-settings");
 
     // Several branches started from github/master all track it: its label
     // shows once, after the branch of its own name, not after each of them.
