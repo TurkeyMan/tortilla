@@ -25,6 +25,9 @@ std::int64_t time_of(const json::value&);
 // GitHub's rollup and status words; Gitea's and GitLab's status words.
 check_state github_state(std::string_view);
 check_state status_word(std::string_view);
+// GitHub REST check/workflow runs. The PR list leaves unknown conclusions blank;
+// the CI panel and fast poll historically show them as failed.
+check_state github_rest_state(const json::value& run, check_state unknown_conclusion);
 // A check run or status context from GitHub's GraphQL, as in the PR list.
 check_run github_run(const json::value&);
 // What an anonymous GitHub reply says is left of the hour's allowance

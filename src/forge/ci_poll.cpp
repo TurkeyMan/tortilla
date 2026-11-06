@@ -34,15 +34,6 @@ std::int64_t number(std::string_view s)
     return v;
 }
 
-check_state rest_state(const json::value& run)
-{
-    if (!run["status"].str_is("completed")) return check_state::pending;
-    const json::value c = run["conclusion"];
-    if (c.str_is("success") || c.str_is("neutral") || c.str_is("skipped"))
-        return check_state::success;
-    return check_state::failure;
-}
-
 }  // namespace
 
 std::expected<conditional_reply, std::string>
@@ -103,7 +94,7 @@ std::expected<commit_runs, std::string> poll_commit_runs(const forge_repo& r, st
         for (const json::value& c : (*j)["check_runs"].elements())
         {
             check_run run{.name = c["name"].str(),
-                          .state = rest_state(c),
+                          .state = github_rest_state(c, check_state::failure),
                           .started_at = time_of(c["started_at"]),
                           .completed_at = time_of(c["completed_at"]),
                           .url = c["details_url"].str()};
