@@ -5471,7 +5471,7 @@ int main(int argc, char** argv)
     }
     history_edit_tests(argv[1]);
     diff_sides_tests(**ui, argv[1]);
-    tortilla::test::run_journal_tests(argv[1]);
+    tortilla::test::run_journal_tests(**ui, argv[1]);
     libgit2_parity_tests(argv[1]);
     libgit2_dialog_parity_tests(argv[1]);
 

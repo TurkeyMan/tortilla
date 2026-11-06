@@ -104,6 +104,7 @@ add_library(tortilla_git STATIC
     src/git/sync.cpp
     src/git/history_edit.cpp
     src/git/ref_journal.cpp
+    src/git/history_writer.cpp
     src/cache/badge_cache.cpp
     src/cache/badge_changes.cpp
     src/cache/cache_main.cpp

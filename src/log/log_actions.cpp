@@ -113,6 +113,12 @@ void log_window::run_git_commands(const std::string& title, std::vector<arg_list
 void log_window::run_ref_commands(const std::string& title, std::vector<arg_list> commands,
                                   std::string label)
 {
+    // A journal step while a history edit is outstanding would land under
+    // its Undo or Redo: refused, nothing run.
+    if (!label.empty() && history_edit_busy())
+        return set_sync_notice(
+            rap::i18n::format(_("{0}: not done, another history edit is still under way."), title),
+            false);
     // The refs as they were, for the journal: what moved is a step, even
     // when a later command failed.
     std::vector<ref_move> moves;
@@ -1108,11 +1114,12 @@ void log_window::row_activated(size_t row)
 // A dialog of choices, each a button with a line saying what it does:
 // choosing one closes the dialog, then acts.
 void log_window::choose(const std::string& title, const std::string& question,
-                        std::vector<choice> choices)
+                        std::vector<choice> choices, std::function<void()> cancelled)
 {
     struct state
     {
         std::unique_ptr<rap::window> window;
+        bool chosen = false;
     };
     auto st = std::make_shared<state>();
     std::weak_ptr<state> weak = st;
@@ -1125,6 +1132,7 @@ void log_window::choose(const std::string& title, const std::string& question,
             {
                 auto s = weak.lock();
                 if (!s) return;
+                s->chosen = true;
                 s->window->close();
                 ui_.post([s] {});  // destroyed after this click returns
                 act();
@@ -1137,9 +1145,11 @@ void log_window::choose(const std::string& title, const std::string& question,
     st->window =
         create_window(ui_, dialog{title, {std::move(box)}}.resizable(false), window_.get());
     st->window->on_finished(
-        [this, st](rap::dialog_role) mutable
+        [this, st, cancelled = std::move(cancelled)](rap::dialog_role) mutable
         {
+            if (!st) return;  // fired once only
             auto keep = std::move(st);
+            if (!keep->chosen && cancelled) cancelled();
             ui_.post([keep] {});
         });
     st->window->show();

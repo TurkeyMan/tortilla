@@ -7,6 +7,7 @@
 #include "forge/pr_watch.h"
 #include "git/command.h"
 #include "git/history_edit.h"
+#include "git/history_writer.h"
 #include "git/ref_journal.h"
 #include "git/repo_worker.h"
 #include "git/sync.h"
@@ -264,7 +265,9 @@ private:
         std::string label, description;
         std::function<void()> act;
     };
-    void choose(const std::string& title, const std::string& question, std::vector<choice> choices);
+    // `cancelled`: closed without a choice.
+    void choose(const std::string& title, const std::string& question, std::vector<choice> choices,
+                std::function<void()> cancelled = {});
     void offer_stash_pop();
     rap::menu cell_menu(size_t row, size_t column, rap::point_f at);
     std::optional<std::string> clicked_ref_;  // while building a label's context menu
@@ -404,12 +407,8 @@ private:
     // applied there too; a conflict offers the rebase window with `fallback`.
     // `label` names it in the journal ("Reword 1a2b3c4d"; the title when
     // empty); `use`: a new step, or the journal's own undoing or redoing.
-    enum class journal_use
-    {
-        record,
-        undo,
-        redo,
-    };
+    // One at a time (git/history_writer.h): while one is outstanding,
+    // another, Undo and Redo are refused, and their buttons greyed.
     void start_history_edit(const std::string& title, edit_maker,
                             std::optional<rebase_todo> fallback = {}, std::string label = {},
                             journal_use use = journal_use::record);
@@ -418,16 +417,21 @@ private:
                           journal_use);
     void apply_history_edit(const std::string& title, history_edit, bool stash, std::string label,
                             journal_use);
+    void history_applied(const history_outcome&);
+    bool history_edit_busy() const { return edit_writer_ && edit_writer_->busy(); }
+    // The claimed edit given up before anything was written.
+    void cancel_history_edit();
     // A question first when the commits are on the upstream already.
     void confirm_history_edit(const std::string& title, const std::string& question, bool pushed,
                               const branch_history&, std::function<void()> go);
     std::string pushed_warning(const branch_history&) const;
     void offer_force_push(const history_edit&);
-    std::unique_ptr<repo_worker> edit_worker_;
     // -- Undo and Redo: what this window did to the refs (history edits,
     // labels dragged, branches and tags deleted), the buttons top left and
     // Ctrl+Z / Ctrl+Y in the commit list.
     ref_journal journal_;
+    // After the journal, so gone first (waiting for a write under way).
+    std::unique_ptr<history_writer> edit_writer_;
     rap::tool_button* undo_ = nullptr;
     rap::tool_button* redo_ = nullptr;
     void step_journal(bool redo);

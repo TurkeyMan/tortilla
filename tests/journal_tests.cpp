@@ -1,10 +1,16 @@
 #include "journal_tests.h"
 
+#include "git/history_writer.h"
 #include "git/ref_journal.h"
 #include "shell.h"
 #include "test_support.h"
 
+#include <chrono>
 #include <filesystem>
+#include <functional>
+#include <future>
+#include <memory>
+#include <thread>
 
 namespace tortilla::test
 {
@@ -246,13 +252,217 @@ void partial_move_tests(const std::string& root)
     sh("rm -rf '" + logs + "first' '" + logs + "second'");
 }
 
+// The history editor's writes (git/history_writer.h): an edit written, and
+// held at a barrier after its refs moved but before its outcome reaches the
+// UI thread; meanwhile a second edit and an Undo are refused and touch
+// nothing, and the first's outcome still lands in the journal exactly once,
+// a partial failure's too. A writer gone mid-write (its window closed)
+// finishes the write and never calls the window.
+void history_writer_tests(rap::ui& ui, const std::string& root)
+{
+    const std::string dir = root + "/journal-writer";
+    const std::string g = "git -C '" + dir + "' ";
+    sh("git init -q -b main '" + dir + "' && " + g + "config user.name Tester && " + g +
+       "config user.email t@example.com && " + g + "config core.autocrlf false && " + g +
+       "commit -q --allow-empty -m one && " + g + "commit -q --allow-empty -m two && " + g +
+       "commit -q --allow-empty -m three && " + g + "branch topic HEAD~2 && " + g +
+       "branch other HEAD~2");
+    auto r = repo::open(dir);
+    check(r.has_value(), "writer: the repository opens");
+    if (!r) return;
+    const oid one = *r->resolve("HEAD~2"), two = *r->resolve("HEAD~1"), three = *r->resolve("HEAD");
+    auto at = [&](const std::string& ref) { return ref_target(*r, ref); };
+    auto refs = [&] { return git_out(dir, {"for-each-ref", "--format=%(refname) %(objectname)"}); };
+    // The UI thread's loop, until `done` (or a few seconds).
+    auto pump = [&](const std::function<bool()>& done)
+    {
+        for (int i = 0; i < 2000 && !done(); ++i)
+        {
+            ui.run();
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        return done();
+    };
+    // A little longer, for anything delivered twice.
+    auto drain = [&]
+    {
+        for (int i = 0; i < 50; ++i)
+        {
+            ui.run();
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    };
+    // The barrier: the worker stops after the write, before the post, until
+    // released.
+    struct barrier
+    {
+        std::promise<void> reached, release;
+        std::shared_future<void> released = release.get_future().share();
+        std::future<void> arrived = reached.get_future();
+        bool wait()
+        {
+            return arrived.wait_for(std::chrono::seconds(20)) == std::future_status::ready;
+        }
+    };
+
+    {
+        ref_journal j;
+        history_writer w(ui, dir, j);
+        auto b = std::make_shared<barrier>();
+        w.after_write = [b]
+        {
+            b->reached.set_value();
+            b->released.wait();
+        };
+        int delivered = 0;
+        const history_edit move{.reflog = "tortilla: move topic",
+                                .moves = {{"refs/heads/topic", one, three}}};
+        check(w.begin(), "writer: the first edit is accepted");
+        w.apply("Move", "Move topic", move, journal_use::record, false,
+                [&](const history_outcome&) { ++delivered; });
+        check(b->wait() && at("refs/heads/topic") == three,
+              "writer: (barrier) the refs moved, the outcome not yet posted");
+        const std::string before = refs();
+        // A second edit, and an Undo, meanwhile: both refused.
+        check(w.busy() && !w.begin(), "writer: a second edit is refused while one is outstanding");
+        check(!w.begin(), "writer: so is an Undo");
+        check(refs() == before && at("refs/heads/other") == one,
+              "writer: and the refused requests touch no ref");
+        b->release.set_value();
+        check(pump([&] { return delivered > 0; }), "writer: the outcome is delivered");
+        drain();
+        check(delivered == 1, "writer: exactly once");
+        check(j.undo_count() == 1 && j.next_undo()->label == "Move topic" && !w.busy(),
+              "writer: the edit is in the journal, once, and the writer is free");
+
+        // Now the Undo is accepted, and its outcome recorded too.
+        w.after_write = nullptr;
+        auto u = j.undo_edit();
+        check(u && w.begin(), "writer: Undo is accepted once the edit is handled");
+        if (u)
+            w.apply("Undo Move topic", "Move topic", *u, journal_use::undo, false,
+                    [&](const history_outcome&) { ++delivered; });
+        check(pump([&] { return delivered == 2; }) && at("refs/heads/topic") == one &&
+                  j.undo_count() == 0 && j.redo_count() == 1,
+              "writer: Undo's outcome is recorded");
+
+        // A replay given up (failed, or the user said no) frees the writer.
+        check(w.begin(), "writer: a new edit is accepted");
+        const std::string unchanged = refs();
+        bool replayed = false;
+        w.prepare(
+            [&](const repo&) -> std::function<void()>
+            {
+                return [&]
+                {
+                    replayed = true;
+                    w.cancel();
+                };
+            });
+        check(pump([&] { return replayed; }) && !w.busy() && refs() == unchanged,
+              "writer: a replay given up frees it, nothing written");
+    }
+
+    // A partial failure: two refs to move, the first moved and left there
+    // (as apply_edit reports refs it couldn't put back). Held at the barrier,
+    // a second edit refused; the moved ref is a one-way journal step, once.
+    {
+        sh(g + "branch -f topic HEAD~2 && " + g + "branch -f other HEAD~2");
+        ref_journal j;
+        history_writer w(ui, dir, j);
+        w.write = [](const repo& rp, const history_edit& e,
+                     bool) -> std::expected<std::string, apply_failure>
+        {
+            history_edit first{.reflog = e.reflog, .moves = {e.moves.front()}};
+            if (!apply_edit(rp, first)) return std::unexpected(apply_failure{"first failed"});
+            return std::unexpected(apply_failure{"other can't be written", first});
+        };
+        auto b = std::make_shared<barrier>();
+        w.after_write = [b]
+        {
+            b->reached.set_value();
+            b->released.wait();
+        };
+        int delivered = 0;
+        bool failed = false;
+        const history_edit both{
+            .reflog = "tortilla: move both",
+            .moves = {{"refs/heads/topic", one, two}, {"refs/heads/other", one, two}}};
+        check(w.begin(), "writer partial: the edit is accepted");
+        w.apply("Move", "Move both", both, journal_use::record, false,
+                [&](const history_outcome& o)
+                {
+                    ++delivered;
+                    failed = !o.applied;
+                });
+        check(b->wait() && at("refs/heads/topic") == two && at("refs/heads/other") == one,
+              "writer partial: (barrier) one ref moved, the other not");
+        const std::string before = refs();
+        check(!w.begin() && refs() == before,
+              "writer partial: a second edit is refused, untouched");
+        b->release.set_value();
+        pump([&] { return delivered > 0; });
+        drain();
+        check(delivered == 1 && failed, "writer partial: the failure is delivered, once");
+        check(j.undo_count() == 1 && j.next_undo()->one_way &&
+                  j.next_undo()->label == "Move both (in part)" && !w.busy(),
+              "writer partial: what moved is a one-way journal step");
+        w.write = [](const repo& rp, const history_edit& e, bool s)
+        { return apply_edit(rp, e, s); };
+        w.after_write = nullptr;
+        auto u = j.undo_edit();
+        check(u && w.begin(), "writer partial: its Undo is accepted");
+        if (u)
+            w.apply("Undo", "Move both (in part)", *u, journal_use::undo, false,
+                    [&](const history_outcome&) { ++delivered; });
+        check(pump([&] { return delivered == 2; }) && at("refs/heads/topic") == one &&
+                  j.undo_count() == 0 && j.redo_count() == 0,
+              "writer partial: undone, the ref is back, and nothing to redo");
+    }
+
+    // The window closed mid-write: the writer goes while its write is held
+    // at the barrier. The write finishes, and the window is never called.
+    {
+        sh(g + "branch -f topic HEAD~2");
+        int delivered = 0;
+        {
+            ref_journal j;
+            auto w = std::make_unique<history_writer>(ui, dir, j);
+            auto b = std::make_shared<barrier>();
+            w->after_write = [b]
+            {
+                b->reached.set_value();
+                b->released.wait();
+            };
+            check(w->begin(), "writer closed: the edit is accepted");
+            w->apply(
+                "Move", "Move topic",
+                {.reflog = "tortilla: move topic", .moves = {{"refs/heads/topic", one, three}}},
+                journal_use::record, false, [&](const history_outcome&) { ++delivered; });
+            check(b->wait(), "writer closed: (barrier) the write is under way");
+            std::thread release(
+                [b]
+                {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                    b->release.set_value();
+                });
+            w.reset();  // waits for the write
+            release.join();
+        }
+        drain();
+        check(delivered == 0 && at("refs/heads/topic") == three,
+              "writer closed: the write finished, and the gone window was never called");
+    }
+}
+
 }  // namespace
 
-void run_journal_tests(const std::string& root)
+void run_journal_tests(rap::ui& ui, const std::string& root)
 {
     ref_journal_tests(root);
     journal_worktree_tests(root);
     partial_move_tests(root);
+    history_writer_tests(ui, root);
 }
 
 }  // namespace tortilla::test

@@ -114,6 +114,8 @@ void log_window::history_items(menu& m, const std::vector<size_t>& sel)
         why = found.error();
     else if (found->checked_out)
         why = busy(repo_);
+    // One edit at a time (history_writer): the rest wait for it.
+    if (history_edit_busy()) why = std::string(_("another edit is under way"));
     // The edits' own rule (a commit in SVN, a merge, another worktree...),
     // shown: each plan checks it again, whichever way it's asked for.
     auto why_not = [&](const std::vector<oid>& which, bool replays) -> std::optional<std::string>
@@ -440,6 +442,11 @@ bool log_window::reorder_rows(const std::vector<size_t>& rows, size_t destinatio
                               rap::drop_action action)
 {
     if (picked_ || repo_.bare() || rows.empty()) return false;
+    if (history_edit_busy())
+    {
+        set_sync_notice(_("Can't reorder: another edit is under way"), false);
+        return false;
+    }
     // Newest first, as the rows run.
     std::vector<size_t> sorted = rows;
     std::ranges::sort(sorted);
@@ -595,12 +602,20 @@ void log_window::start_history_edit(const std::string& title, edit_maker make,
                                     std::optional<rebase_todo> fallback, std::string label,
                                     journal_use use)
 {
-    if (!edit_worker_) edit_worker_ = std::make_unique<repo_worker>(ui_, repo_.workdir());
+    if (!edit_writer_)
+        edit_writer_ = std::make_unique<history_writer>(ui_, repo_.workdir(), journal_);
+    // One at a time, from here until its outcome is in the journal: another
+    // is refused untouched (its buttons and menu items are greyed meanwhile).
+    if (!edit_writer_->begin())
+        return set_sync_notice(
+            rap::i18n::format(_("{0}: not done, another history edit is still under way."), title),
+            false);
+    update_undo_buttons();
     status_->set_text(rap::i18n::format(_("{0}..."), title));
     if (label.empty()) label = title;
-    edit_worker_->submit(
+    edit_writer_->prepare(
         [this, title, make = std::move(make), fallback = std::move(fallback), label,
-         use](repo& r, const repo_worker::progress&) -> std::function<void()>
+         use](const repo& r) -> std::function<void()>
         {
             auto e = make(r);
             // Refused before asking about local changes: a branch checked
@@ -622,6 +637,8 @@ void log_window::history_replayed(const std::string& title,
     update_status();
     if (!e)
     {
+        // Nothing written: free for the next.
+        cancel_history_edit();
         const replay_failure& f = e.error();
         if (f.conflict && fallback)
             return choose(title, f.message + "\n" + _("Nothing was changed."),
@@ -643,55 +660,43 @@ void log_window::history_replayed(const std::string& title,
                         _("Your changes are put aside, the files follow the branch, and your "
                           "changes come back."),
                         [this, title, edit = *e, label, use]
-                        { apply_history_edit(title, edit, true, label, use); }}});
+                        { apply_history_edit(title, edit, true, label, use); }}},
+                      [this] { cancel_history_edit(); });
     apply_history_edit(title, std::move(*e), false, std::move(label), use);
 }
 
+void log_window::cancel_history_edit()
+{
+    if (edit_writer_) edit_writer_->cancel();
+    update_undo_buttons();
+}
+
+// The write, on the edit's own worker: its outcome always comes back, and
+// is in the journal (history_writer) before history_applied sees it.
 void log_window::apply_history_edit(const std::string& title, history_edit e, bool stash,
                                     std::string label, journal_use use)
 {
-    if (!edit_worker_) edit_worker_ = std::make_unique<repo_worker>(ui_, repo_.workdir());
-    edit_worker_->submit(
-        [this, title, e = std::move(e), stash, label = std::move(label),
-         use](repo& r, const repo_worker::progress&) -> std::function<void()>
-        {
-            auto applied = apply_edit(r, e, stash);
-            return [this, title, e, applied = std::move(applied), label, use]
-            {
-                if (!applied)
-                {
-                    // Refs it moved all the same and couldn't put back: a
-                    // one-way step of their own: Undo puts them back, and nothing
-                    // redoes it (their files never followed them).
-                    if (!applied.error().moved.moves.empty())
-                    {
-                        journal_.record(rap::i18n::format(_("{0} (in part)"), label),
-                                        applied.error().moved, true);
-                        update_undo_buttons();
-                    }
-                    reload();
-                    return ui_.message(window_.get(),
-                                       {.icon = rap::message_spec::icon::error,
-                                        .title = title,
-                                        .text = rap::i18n::format(_("{0} failed."), title),
-                                        .detail = applied.error().message});
-                }
-                if (!applied->empty())
-                    ui_.message(window_.get(), {.icon = rap::message_spec::icon::warning,
-                                                .title = title,
-                                                .text = *applied});
-                switch (use)
-                {
-                case journal_use::record: journal_.record(label, e); break;
-                case journal_use::undo: journal_.undone(); break;
-                case journal_use::redo: journal_.redone(); break;
-                }
-                update_undo_buttons();
-                set_sync_notice(rap::i18n::format(_("{0}: done"), title), false);
-                reload();
-                if (e.pushed && use != journal_use::undo) offer_force_push(e);
-            };
-        });
+    edit_writer_->apply(title, std::move(label), std::move(e), use, stash,
+                        [this](const history_outcome& o) { history_applied(o); });
+}
+
+void log_window::history_applied(const history_outcome& o)
+{
+    update_undo_buttons();
+    reload();
+    if (!o.applied)
+        // Refs it moved all the same and couldn't put back are a one-way
+        // step of their own in the journal already: Undo puts them back.
+        return ui_.message(window_.get(), {.icon = rap::message_spec::icon::error,
+                                           .title = o.title,
+                                           .text = rap::i18n::format(_("{0} failed."), o.title),
+                                           .detail = o.applied.error().message});
+    if (!o.applied->empty())
+        ui_.message(
+            window_.get(),
+            {.icon = rap::message_spec::icon::warning, .title = o.title, .text = *o.applied});
+    set_sync_notice(rap::i18n::format(_("{0}: done"), o.title), false);
+    if (o.edit.pushed && o.use != journal_use::undo) offer_force_push(o.edit);
 }
 
 // -- Undo and Redo ----------------------------------------------------------
@@ -706,6 +711,12 @@ void log_window::step_journal(bool redo)
 {
     const journal_step* step = redo ? journal_.next_redo() : journal_.next_undo();
     if (!step || picked_) return;
+    // An edit under way: refused before anything is checked or dropped.
+    if (history_edit_busy())
+        return set_sync_notice(
+            rap::i18n::format(_("{0}: not done, another history edit is still under way."),
+                              redo ? _("Redo") : _("Undo")),
+            false);
     const std::optional<history_edit> e = redo ? journal_.redo_edit() : journal_.undo_edit();
     const std::string title = rap::i18n::format(redo ? _("Redo {0}") : _("Undo {0}"), step->label);
     if (const auto why = why_stale(repo_, *e))
@@ -733,8 +744,9 @@ void log_window::update_undo_buttons()
     if (!undo_ || !redo_) return;
     const journal_step* u = journal_.next_undo();
     const journal_step* r = journal_.next_redo();
-    undo_->set_enabled(u && !picked_);
-    redo_->set_enabled(r && !picked_);
+    const bool busy = history_edit_busy();
+    undo_->set_enabled(u && !picked_ && !busy);
+    redo_->set_enabled(r && !picked_ && !busy);
     undo_->set_tooltip(u ? rap::i18n::format(_("Undo {0} (Ctrl+Z)"), u->label)
                          : std::string(_("Nothing to undo")));
     redo_->set_tooltip(r ? rap::i18n::format(_("Redo {0} (Ctrl+Y)"), r->label)
