@@ -340,7 +340,7 @@ if(NOT MSVC)
     target_compile_options(tortilla_git PUBLIC -Wno-missing-field-initializers)
 endif()
 
-add_executable(tortilla-tests tests/log_model_test.cpp tests/raw_client.cpp)
+add_executable(tortilla-tests tests/log_model_test.cpp tests/journal_tests.cpp tests/raw_client.cpp)
 target_link_libraries(tortilla-tests PRIVATE tortilla_git rapport::rapport)
 
 add_executable(tortilla-icon-preview tools/icon_preview.cpp)
