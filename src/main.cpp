@@ -109,6 +109,7 @@
 #include "ui/trust_repository.h"
 #include "ui/welcome_window.h"
 #include "ui/windows.h"
+#include "util/notices.h"
 #include "util/repo_path.h"
 #include "util/restart_explorer.h"
 
@@ -390,6 +391,31 @@ int main(int argc, char** argv)
             (*ui)->run();
         }
         if (!go_on) return 1;
+
+        // What a write said after its window on this repository closed
+        // [util/notices.h], shown once before going on.
+        if (auto r = tortilla::repo::open(path))
+        {
+            std::string detail;
+            for (const std::string& n :
+                 tortilla::take_notices(tortilla::notices_dir(), r->workdir()))
+                detail += (detail.empty() ? "" : "\n\n") + n;
+            if (!detail.empty())
+            {
+                bool seen = false;
+                (*ui)->message(nullptr,
+                               {.icon = rap::message_spec::icon::warning,
+                                .title = _("Tortilla"),
+                                .text = _("A change made here ended after its window was closed:"),
+                                .detail = detail},
+                               [&](rap::dialog_role)
+                               {
+                                   seen = true;
+                                   (*ui)->quit();
+                               });
+                if (!seen) (*ui)->run();
+            }
+        }
     }
 
     // Windows of a repository carry its colour on the taskbar.

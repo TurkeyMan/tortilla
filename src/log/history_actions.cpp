@@ -11,6 +11,7 @@
 #include "ui/menu_items.h"
 #include "ui/menu_text.h"
 #include "ui/progress_dialog.h"
+#include "util/notices.h"
 
 #include <algorithm>
 
@@ -598,19 +599,40 @@ void log_window::transplant_rows(const std::vector<oid>& commits,
         });
 }
 
-void log_window::start_history_edit(const std::string& title, edit_maker make,
-                                    std::optional<rebase_todo> fallback, std::string label,
-                                    journal_use use)
+void log_window::show_notices()
+{
+    std::string detail;
+    for (const std::string& n : take_notices(notices_dir(), repo_.workdir()))
+        detail += (detail.empty() ? "" : "\n\n") + n;
+    if (detail.empty()) return;
+    ui_.message(window_.get(), {.icon = rap::message_spec::icon::warning,
+                                .title = _("Tortilla"),
+                                .text = _("A change made here ended after its window was closed:"),
+                                .detail = detail});
+}
+
+bool log_window::claim_history_writer(const std::string& title)
 {
     if (!edit_writer_)
         edit_writer_ = std::make_unique<history_writer>(ui_, repo_.workdir(), journal_);
     // One at a time, from here until its outcome is in the journal: another
     // is refused untouched (its buttons and menu items are greyed meanwhile).
     if (!edit_writer_->begin())
-        return set_sync_notice(
+    {
+        set_sync_notice(
             rap::i18n::format(_("{0}: not done, another history edit is still under way."), title),
             false);
+        return false;
+    }
     update_undo_buttons();
+    return true;
+}
+
+void log_window::start_history_edit(const std::string& title, edit_maker make,
+                                    std::optional<rebase_todo> fallback, std::string label,
+                                    journal_use use)
+{
+    if (!claim_history_writer(title)) return;
     status_->set_text(rap::i18n::format(_("{0}..."), title));
     if (label.empty()) label = title;
     edit_writer_->prepare(

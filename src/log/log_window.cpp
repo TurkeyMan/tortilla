@@ -553,6 +553,12 @@ void log_window::build()
     update_dates_button();
     update_undo_buttons();
     update_ref_button();
+    // What a write said after its window closed, once this one is up.
+    ui_.post(
+        [this, alive = std::weak_ptr<bool>(alive_)]
+        {
+            if (alive.lock()) show_notices();
+        });
     forge_splitter_->on_moved([this] { fit_files(); });
     if (auto saved = settings::get().value("log.actionIcons"); !saved.empty())
         log_.set_action_icon_style(action_icon_style(std::clamp(std::atoi(saved.c_str()), 0, 3)));

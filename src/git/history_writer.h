@@ -1,17 +1,22 @@
-// History edits' own worker [git/history_edit.h], apart from repo_worker's
-// newest-only reads: an edit, once accepted, is never replaced or dropped,
-// and its outcome reaches the journal exactly once, a partial failure's too.
+// The log window's writes to the refs that go in its journal [git/ref_journal.h]
+// (history edits [git/history_edit.h], their Undo and Redo, labels dragged,
+// branches and tags deleted), on a worker of their own, apart from
+// repo_worker's newest-only reads: a write, once accepted, is never replaced
+// or dropped, and its outcome reaches the journal exactly once, a partial
+// failure's too.
 //
-// One edit at a time: begin() claims the writer, and it stays claimed from
-// the replay, through the question about local changes, to the write; it's
-// free again once the write's outcome is in the journal, or when the edit is
-// given up before anything is written (cancel()). Meanwhile another edit, an
-// Undo or a Redo is refused, and nothing is touched.
+// One at a time: begin() claims the writer, and it stays claimed from the
+// replay, through the question about local changes, to the write; it's free
+// again once the write's outcome is in the journal, or when the edit is
+// given up before anything is written (cancel()). Meanwhile any other of
+// them is refused, and nothing is touched.
 //
-// The window closing during an edit: a write already accepted still runs to
-// its end on the worker (the destructor waits for it), and its outcome, with
-// no journal left to go in, is written to stderr instead; the window is
-// never called. A replay not yet written is just dropped: nothing changed.
+// The window closing during a write: a write already accepted still runs to
+// its end on the worker (the destructor waits for it), and the window is
+// never called. Its outcome, with no journal left to go in, goes to stderr;
+// a warning or failure (local changes left in the stash, refs left moved)
+// is saved as a notice too [util/notices.h], for the next window on the
+// repository. A replay not yet written is just dropped: nothing changed.
 #pragma once
 
 #include "git/history_edit.h"
@@ -23,12 +28,14 @@
 #include <condition_variable>
 #include <deque>
 #include <expected>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace tortilla
 {
@@ -48,9 +55,12 @@ struct history_outcome
 {
     std::string title;  // "Reword"
     std::string label;  // its journal step's ("Reword 1a2b3c4d")
-    history_edit edit;
+    history_edit edit;  // ref commands: the refs as they moved
     journal_use use = journal_use::record;
     std::expected<std::string, apply_failure> applied;
+    // git ref commands (run_commands) rather than apply_edit: what moved is
+    // an ordinary step, even when a later command failed.
+    bool commands = false;
 };
 
 // The journal's side of an outcome: the step recorded, undone or redone; or,
@@ -58,6 +68,10 @@ struct history_outcome
 // ("Reword 1a2b3c4d (in part)"): Undo puts them back and nothing redoes them
 // (their files never followed). True when the journal changed.
 bool record_outcome(ref_journal&, const history_outcome&);
+
+// An outcome told without its window: what it was, its warning or failure in
+// full, and the refs a failure left moved.
+std::string orphan_text(const history_outcome&);
 
 class history_writer
 {
@@ -69,10 +83,9 @@ public:
     history_writer(rap::ui&, std::string path, ref_journal& journal);
     ~history_writer();
 
-    // An edit is outstanding: claimed and its outcome not yet handled.
+    // A write is outstanding: claimed and its outcome not yet handled.
     bool busy() const { return busy_; }
-    // Claims the writer for a new edit; false (refused) while one is
-    // outstanding.
+    // Claims the writer; false (refused) while a write is outstanding.
     bool begin();
     // The claimed edit given up before writing: refused, failed to replay,
     // or the question about local changes declined.
@@ -85,11 +98,19 @@ public:
     // outcome recorded in the journal, the writer freed, and `done` called.
     void apply(std::string title, std::string label, history_edit, journal_use, bool stash,
                std::function<void(const history_outcome&)> done);
+    // The claimed write as git commands (git branch, git tag, git
+    // update-ref), one after another until one fails; `refs`: those they
+    // change, whose moves are the journal step. Then as apply().
+    void run_commands(std::string title, std::string label,
+                      std::vector<std::vector<std::string>> commands, std::vector<std::string> refs,
+                      std::function<void(const history_outcome&)> done);
 
-    // For tests: the write itself (apply_edit), and a hook run on the
-    // worker after it, before its outcome is posted to the UI thread.
+    // For tests: the write itself (apply_edit), a hook run on the worker
+    // after a write, before its outcome is posted to the UI thread, and
+    // where an orphaned outcome's notice goes.
     write_fn write;
     std::function<void()> after_write;
+    std::filesystem::path notices;
 
     struct job
     {
@@ -108,8 +129,11 @@ public:
 
 private:
     void submit(job);
+    // On the worker, once written: the outcome to the UI thread.
+    void deliver(history_outcome, std::function<void(const history_outcome&)> done);
 
     rap::ui& ui_;
+    std::string path_;
     ref_journal& journal_;
     bool busy_ = false;
     std::shared_ptr<state> state_ = std::make_shared<state>();

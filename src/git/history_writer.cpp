@@ -1,6 +1,8 @@
 #include "history_writer.h"
 
+#include "git/command.h"
 #include "i18n.h"
+#include "util/notices.h"
 
 #include <cstdio>
 
@@ -10,27 +12,29 @@ namespace
 {
 
 // An outcome with no window left to take it: on stderr, so a write is never
-// silent, with the refs a failure left moved named for putting back by hand.
-void log_orphan(const history_outcome& o)
+// silent; and a warning or failure saved for the next window on the
+// repository too, as a GUI launch on Windows has no stderr.
+void log_orphan(const history_outcome& o, const std::filesystem::path& notices,
+                const std::string& repo)
 {
-    if (o.applied)
-    {
-        std::fprintf(stderr, "tortilla: %s: done after its window closed (not in Undo)\n",
-                     o.label.c_str());
-        return;
-    }
-    std::fprintf(stderr, "tortilla: %s: failed after its window closed: %s\n", o.label.c_str(),
-                 o.applied.error().message.c_str());
-    for (const ref_move& m : o.applied.error().moved.moves)
-        std::fprintf(stderr, "tortilla:   %s left at %s (was %s)\n", m.ref.c_str(),
-                     m.to ? m.to->hex().c_str() : "(deleted)",
-                     m.from ? m.from->hex().c_str() : "(none)");
+    const std::string text = orphan_text(o);
+    std::fprintf(stderr, "tortilla: %s\n", text.c_str());
+    const bool plain = o.applied && o.applied->empty();
+    if (!plain && !save_notice(notices, repo, text))
+        std::fprintf(stderr, "tortilla: (this couldn't be saved for the next window)\n");
 }
 
 }  // namespace
 
 bool record_outcome(ref_journal& journal, const history_outcome& o)
 {
+    // Ref commands: whatever moved is a step, done or failed part way.
+    if (o.commands)
+    {
+        if (o.edit.moves.empty()) return false;
+        journal.record(o.label, o.edit);
+        return true;
+    }
     if (!o.applied)
     {
         const history_edit& moved = o.applied.error().moved;
@@ -47,14 +51,38 @@ bool record_outcome(ref_journal& journal, const history_outcome& o)
     return true;
 }
 
+std::string orphan_text(const history_outcome& o)
+{
+    if (o.applied)
+    {
+        std::string text = rap::i18n::format(_("{0}: done, after its window was closed."), o.label);
+        if (!o.applied->empty()) text += "\n" + *o.applied;
+        return text;
+    }
+    std::string text = rap::i18n::format(_("{0}: failed, after its window was closed."), o.label) +
+                       "\n" + o.applied.error().message;
+    const history_edit& moved = o.commands ? o.edit : o.applied.error().moved;
+    if (!moved.moves.empty())
+    {
+        text += "\n" + std::string(_("These refs were left moved:"));
+        for (const ref_move& m : moved.moves)
+            text += "\n  " + rap::i18n::format(_("{0}: now {1}, was {2}"), m.ref,
+                                               m.to ? m.to->hex() : std::string(_("deleted")),
+                                               m.from ? m.from->hex() : std::string(_("none")));
+    }
+    return text;
+}
+
 history_writer::history_writer(rap::ui& ui, std::string path, ref_journal& journal)
     : write([](const repo& r, const history_edit& e, bool stash)
             { return apply_edit(r, e, stash); })
+    , notices(notices_dir())
     , ui_(ui)
+    , path_(std::move(path))
     , journal_(journal)
 {
     thread_ = std::thread(
-        [state = state_, path = std::move(path)]
+        [state = state_, path = path_]
         {
             auto opened = repo::open(path);
             const repo* r = opened ? &*opened : nullptr;
@@ -84,7 +112,7 @@ history_writer::~history_writer()
     state_->wake.notify_all();
     thread_.join();
     // Written, and its post not handled (it never will be now).
-    if (state_->undelivered) log_orphan(*state_->undelivered);
+    if (state_->undelivered) log_orphan(*state_->undelivered, notices, path_);
     state_->undelivered.reset();
 }
 
@@ -125,6 +153,31 @@ void history_writer::prepare(std::function<std::function<void()>(const repo&)> r
             }});
 }
 
+void history_writer::deliver(history_outcome o, std::function<void(const history_outcome&)> done)
+{
+    // Held until the UI thread takes it, or, the writer gone first, its
+    // destructor: one or the other, never both.
+    {
+        std::lock_guard lock(state_->mutex);
+        state_->undelivered = std::move(o);
+    }
+    ui_.post(
+        [this, state = state_, done = std::move(done)]
+        {
+            std::optional<history_outcome> got;
+            {
+                std::lock_guard lock(state->mutex);
+                if (state->stop) return;
+                got = std::move(state->undelivered);
+                state->undelivered.reset();
+            }
+            if (!got) return;
+            record_outcome(journal_, *got);
+            busy_ = false;
+            if (done) done(*got);
+        });
+}
+
 void history_writer::apply(std::string title, std::string label, history_edit e, journal_use use,
                            bool stash, std::function<void(const history_outcome&)> done)
 {
@@ -134,8 +187,8 @@ void history_writer::apply(std::string title, std::string label, history_edit e,
                       .use = use,
                       .applied = {}};
     submit({.run =
-                [this, &ui = ui_, state = state_, write = this->write, after = this->after_write,
-                 o = std::move(o), stash, done = std::move(done)](const repo* r) mutable
+                [this, write = this->write, after = this->after_write, o = std::move(o), stash,
+                 done = std::move(done)](const repo* r) mutable
             {
                 if (r)
                     o.applied = write(*r, o.edit, stash);
@@ -143,26 +196,55 @@ void history_writer::apply(std::string title, std::string label, history_edit e,
                     o.applied =
                         std::unexpected(apply_failure{_("The repository can't be opened.")});
                 if (after) after();
+                deliver(std::move(o), std::move(done));
+            },
+            .writes = true});
+}
+
+void history_writer::run_commands(std::string title, std::string label,
+                                  std::vector<std::vector<std::string>> commands,
+                                  std::vector<std::string> refs,
+                                  std::function<void(const history_outcome&)> done)
+{
+    history_outcome o{.title = std::move(title),
+                      .label = std::move(label),
+                      .edit = {},
+                      .use = journal_use::record,
+                      .applied = {},
+                      .commands = true};
+    submit({.run =
+                [this, after = this->after_write, o = std::move(o), commands = std::move(commands),
+                 refs = std::move(refs), done = std::move(done)](const repo* r) mutable
+            {
+                o.edit.reflog = "tortilla: " + o.label;
+                if (!r)
+                    o.applied =
+                        std::unexpected(apply_failure{_("The repository can't be opened.")});
+                else
                 {
-                    std::lock_guard lock(state->mutex);
-                    state->undelivered = std::move(o);
-                }
-                ui.post(
-                    [this, state, done]
+                    // The refs as they were, then each command until one fails.
+                    for (const std::string& name : refs)
+                        o.edit.moves.push_back({name, ref_target(*r, name), std::nullopt});
+                    std::string output;
+                    bool ok = true;
+                    for (const auto& args : commands)
                     {
-                        std::optional<history_outcome> got;
-                        {
-                            std::lock_guard lock(state->mutex);
-                            // Gone: its destructor logged the outcome.
-                            if (state->stop) return;
-                            got = std::move(state->undelivered);
-                            state->undelivered.reset();
-                        }
-                        if (!got) return;
-                        record_outcome(journal_, *got);
-                        busy_ = false;
-                        if (done) done(*got);
-                    });
+                        output += command_line(args) + "\n";
+                        const git_result run =
+                            run_git(path_, args, git_output::all, git_prompts::never);
+                        output += run.output;
+                        if (!(ok = run.ok())) break;
+                    }
+                    std::erase_if(o.edit.moves,
+                                  [&](ref_move& m)
+                                  {
+                                      m.to = ref_target(*r, m.ref);
+                                      return m.to == m.from;
+                                  });
+                    if (!ok) o.applied = std::unexpected(apply_failure{output, o.edit});
+                }
+                if (after) after();
+                deliver(std::move(o), std::move(done));
             },
             .writes = true});
 }

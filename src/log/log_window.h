@@ -419,6 +419,13 @@ private:
                             journal_use);
     void history_applied(const history_outcome&);
     bool history_edit_busy() const { return edit_writer_ && edit_writer_->busy(); }
+    // Claims the writer for a journaled write (a history edit, Undo or Redo,
+    // a ref command with a journal label); false, said, while one is
+    // outstanding.
+    bool claim_history_writer(const std::string& title);
+    // Notices of writes that ended after a window on this repository closed
+    // [util/notices.h], shown once.
+    void show_notices();
     // The claimed edit given up before anything was written.
     void cancel_history_edit();
     // A question first when the commits are on the upstream already.

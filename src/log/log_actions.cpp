@@ -113,35 +113,29 @@ void log_window::run_git_commands(const std::string& title, std::vector<arg_list
 void log_window::run_ref_commands(const std::string& title, std::vector<arg_list> commands,
                                   std::string label)
 {
-    // A journal step while a history edit is outstanding would land under
-    // its Undo or Redo: refused, nothing run.
-    if (!label.empty() && history_edit_busy())
-        return set_sync_notice(
-            rap::i18n::format(_("{0}: not done, another history edit is still under way."), title),
-            false);
-    // The refs as they were, for the journal: what moved is a step, even
-    // when a later command failed.
-    std::vector<ref_move> moves;
-    if (!label.empty())
-        for (const arg_list& args : commands)
-            if (auto name = ref_changed_by(args))
-                moves.push_back({*name, ref_target(repo_, *name), std::nullopt});
-    run_quietly(title, std::move(commands),
-                [this, label, moves](bool, const std::string&) mutable
-                {
-                    std::erase_if(moves,
-                                  [&](ref_move& m)
-                                  {
-                                      m.to = ref_target(repo_, m.ref);
-                                      return m.to == m.from;
-                                  });
-                    if (!moves.empty())
-                    {
-                        journal_.record(label, {.reflog = "tortilla: " + label, .moves = moves});
-                        update_undo_buttons();
-                    }
-                    refs_changed();
-                });
+    if (label.empty())
+        return run_quietly(title, std::move(commands),
+                           [this](bool, const std::string&) { refs_changed(); });
+    // A journal step: through the history writer, one write at a time, so
+    // it never lands under an Undo or Redo under way, and its outcome is
+    // recorded whatever comes after. What moved is a step, even when a
+    // later command failed.
+    if (!claim_history_writer(title)) return;
+    std::vector<std::string> refs;
+    for (const arg_list& args : commands)
+        if (auto name = ref_changed_by(args)) refs.push_back(*name);
+    edit_writer_->run_commands(
+        title, label, std::move(commands), std::move(refs),
+        [this](const history_outcome& o)
+        {
+            update_undo_buttons();
+            if (!o.applied)
+                ui_.message(window_.get(), {.icon = rap::message_spec::icon::error,
+                                            .title = o.title,
+                                            .text = rap::i18n::format(_("{0} failed."), o.title),
+                                            .detail = o.applied.error().message});
+            refs_changed();
+        });
 }
 
 void log_window::run_quietly(const std::string& title, std::vector<arg_list> commands,

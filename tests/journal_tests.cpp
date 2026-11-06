@@ -4,6 +4,9 @@
 #include "git/ref_journal.h"
 #include "shell.h"
 #include "test_support.h"
+#include "util/notices.h"
+
+#include <rapport/sys.h>
 
 #include <chrono>
 #include <filesystem>
@@ -420,26 +423,104 @@ void history_writer_tests(rap::ui& ui, const std::string& root)
               "writer partial: undone, the ref is back, and nothing to redo");
     }
 
-    // The window closed mid-write: the writer goes while its write is held
-    // at the barrier. The write finishes, and the window is never called.
+    // The other way round: a journaled ref command (a label dragged) first,
+    // held at the barrier with its ref moved; meanwhile an Undo, an edit and
+    // a second ref command are all refused, untouched. The command's step is
+    // recorded once, on top, above the step before it, and Undo takes it.
     {
-        sh(g + "branch -f topic HEAD~2");
+        sh(g + "branch -f topic HEAD~2 && " + g + "branch -f other HEAD~2");
+        ref_journal j;
+        history_writer w(ui, dir, j);
+        int delivered = 0;
+        auto count = [&](const history_outcome&) { ++delivered; };
+        check(w.begin(), "writer commands: an earlier edit is accepted");
+        w.apply("Move", "Move other",
+                {.reflog = "tortilla: move other", .moves = {{"refs/heads/other", one, two}}},
+                journal_use::record, false, count);
+        check(pump([&] { return delivered == 1; }) && j.undo_count() == 1,
+              "writer commands: (fixture) a step in the journal first");
+        auto b = std::make_shared<barrier>();
+        w.after_write = [b]
+        {
+            b->reached.set_value();
+            b->released.wait();
+        };
+        bool failed = true;
+        check(w.begin(), "writer commands: the ref command is accepted");
+        w.run_commands("Move Branch", "Move topic", {{"branch", "-f", "topic", three.hex()}},
+                       {"refs/heads/topic"},
+                       [&](const history_outcome& o)
+                       {
+                           ++delivered;
+                           failed = !o.applied;
+                       });
+        check(b->wait() && at("refs/heads/topic") == three,
+              "writer commands: (barrier) the command moved its ref, not yet posted");
+        const std::string before = refs();
+        check(!w.begin(), "writer commands: an Undo meanwhile is refused");
+        check(!w.begin(), "writer commands: so is an edit");
+        check(!w.begin(), "writer commands: and a second ref command");
+        check(refs() == before && at("refs/heads/other") == two,
+              "writer commands: the refused requests touch no ref");
+        b->release.set_value();
+        pump([&] { return delivered == 2; });
+        drain();
+        check(delivered == 2 && !failed, "writer commands: its outcome is delivered once");
+        check(j.undo_count() == 2 && j.next_undo()->label == "Move topic" &&
+                  !j.next_undo()->one_way,
+              "writer commands: its step is recorded once, on top");
+        w.after_write = nullptr;
+        auto u = j.undo_edit();
+        check(u && w.begin(), "writer commands: Undo is accepted after");
+        if (u) w.apply("Undo", "Move topic", *u, journal_use::undo, false, count);
+        check(pump([&] { return delivered == 3; }) && at("refs/heads/topic") == one &&
+                  at("refs/heads/other") == two && j.next_undo() &&
+                  j.next_undo()->label == "Move other",
+              "writer commands: Undo takes the command's step, the one before stays");
+
+        // A command that fails part way: what moved before it is the step.
+        check(w.begin(), "writer commands: a failing series is accepted");
+        w.run_commands(
+            "Delete", "Move and fail",
+            {{"branch", "-f", "topic", three.hex()}, {"branch", "-f", "other", "no-such-revision"}},
+            {"refs/heads/topic", "refs/heads/other"},
+            [&](const history_outcome& o)
+            {
+                ++delivered;
+                failed = !o.applied;
+            });
+        check(pump([&] { return delivered == 4; }) && failed && j.next_undo() &&
+                  j.next_undo()->label == "Move and fail" && j.next_undo()->edit.moves.size() == 1,
+              "writer commands: a failure part way records what moved");
+    }
+
+    // The window closed mid-write: the writer goes while its write is held
+    // at the barrier. The write finishes, and the window is never called. A
+    // plain success needs no notice; a warning (local changes left in the
+    // stash) or a failure (refs left moved) is saved, in full, for the next
+    // window on the repository, which takes it once.
+    const std::filesystem::path notes = rap::sys::path_from_utf8(root + "/journal-notices");
+    auto close_mid_write = [&](const std::string& label, history_writer::write_fn write)
+    {
+        sh(g + "branch -f topic HEAD~2 && " + g + "branch -f other HEAD~2");
         int delivered = 0;
         {
             ref_journal j;
             auto w = std::make_unique<history_writer>(ui, dir, j);
+            w->notices = notes;
+            if (write) w->write = std::move(write);
             auto b = std::make_shared<barrier>();
             w->after_write = [b]
             {
                 b->reached.set_value();
                 b->released.wait();
             };
-            check(w->begin(), "writer closed: the edit is accepted");
-            w->apply(
-                "Move", "Move topic",
-                {.reflog = "tortilla: move topic", .moves = {{"refs/heads/topic", one, three}}},
-                journal_use::record, false, [&](const history_outcome&) { ++delivered; });
-            check(b->wait(), "writer closed: (barrier) the write is under way");
+            check(w->begin(), ("writer closed: the edit is accepted, " + label).c_str());
+            w->apply("Move", label,
+                     {.reflog = "tortilla: move",
+                      .moves = {{"refs/heads/topic", one, three}, {"refs/heads/other", one, two}}},
+                     journal_use::record, false, [&](const history_outcome&) { ++delivered; });
+            check(b->wait(), ("writer closed: (barrier) the write is under way, " + label).c_str());
             std::thread release(
                 [b]
                 {
@@ -450,9 +531,52 @@ void history_writer_tests(rap::ui& ui, const std::string& root)
             release.join();
         }
         drain();
-        check(delivered == 0 && at("refs/heads/topic") == three,
-              "writer closed: the write finished, and the gone window was never called");
-    }
+        check(
+            delivered == 0 && at("refs/heads/topic") == three,
+            ("writer closed: the write finished, the gone window never called, " + label).c_str());
+    };
+    // `r->workdir()` ends with a separator, `dir` doesn't: the same repository.
+    auto take = [&] { return take_notices(notes, r->workdir()); };
+
+    close_mid_write("Move plainly", nullptr);
+    check(take().empty(), "writer closed: a plain success leaves no notice");
+
+    const std::string warning = "Your local changes didn't go back cleanly; they're kept in the "
+                                "stash (1a2b3c4d).\nerror: conflict in a.txt";
+    close_mid_write("Move with a warning",
+                    [&](const repo& rp, const history_edit& e,
+                        bool s) -> std::expected<std::string, apply_failure>
+                    {
+                        auto applied = apply_edit(rp, e, s);
+                        if (!applied) return applied;
+                        return warning;
+                    });
+    check(take_notices(notes, root + "/elsewhere").empty(),
+          "writer closed: another repository's window doesn't take the notice");
+    auto got = take();
+    check(got.size() == 1 && got[0].find("Move with a warning") != std::string::npos &&
+              got[0].find(warning) != std::string::npos &&
+              got[0].find(" UTC\n") != std::string::npos,
+          "writer closed: a success with a warning leaves its full text, with the time");
+    check(take().empty(), "writer closed: taken once, the notice is gone");
+
+    close_mid_write("Move part way",
+                    [&](const repo& rp, const history_edit& e,
+                        bool) -> std::expected<std::string, apply_failure>
+                    {
+                        history_edit first{.reflog = e.reflog, .moves = {e.moves.front()}};
+                        if (!apply_edit(rp, first))
+                            return std::unexpected(apply_failure{"first failed"});
+                        return std::unexpected(apply_failure{"other can't be written", first});
+                    });
+    got = take();
+    check(got.size() == 1 && got[0].find("Move part way") != std::string::npos &&
+              got[0].find("other can't be written") != std::string::npos &&
+              got[0].find("refs/heads/topic") != std::string::npos &&
+              got[0].find(three.hex()) != std::string::npos &&
+              got[0].find(one.hex()) != std::string::npos,
+          "writer closed: a failure leaves the refs it left moved, with both ends");
+    check(take().empty(), "writer closed: and is taken once");
 }
 
 }  // namespace
