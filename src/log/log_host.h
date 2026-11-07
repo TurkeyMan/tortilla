@@ -19,6 +19,8 @@
 namespace tortilla
 {
 
+class settings_changes;  // settings.h
+
 // What a `tortilla log` was asked: its path made absolute (log_request_path),
 // so the host never reads it from its own folder.
 struct log_request
@@ -80,6 +82,8 @@ enum class log_open_in
 };
 log_open_in log_open_in_setting();
 void set_log_open_in_setting(log_open_in);
+// The same, with Settings' other choices, as one save.
+void set_log_open_in_setting(settings_changes&, log_open_in);
 
 // False when TORTILLA_NO_LOG_HOST says so.
 bool log_host_enabled();

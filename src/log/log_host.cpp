@@ -91,10 +91,17 @@ log_open_in log_open_in_setting()
 
 void set_log_open_in_setting(log_open_in where)
 {
+    settings_changes changes;
+    set_log_open_in_setting(changes, where);
+    settings::get().apply(changes);
+}
+
+void set_log_open_in_setting(settings_changes& changes, log_open_in where)
+{
     if (where == log_open_in::window)
-        settings::get().set("log.openIn", "window");
+        changes.set("log.openIn", "window");
     else
-        settings::get().remove("log.openIn");
+        changes.remove("log.openIn");
 }
 
 bool log_host_enabled()

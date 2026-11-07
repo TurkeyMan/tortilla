@@ -57,14 +57,23 @@ ssh_client saved_ssh_client()
     return {.command = s.value("ssh.command"), .variant = s.value("ssh.variant")};
 }
 
+void save_ssh_client(settings_changes& s, const ssh_client& c)
+{
+    s.set("ssh.command", c.command);
+    s.set("ssh.variant", c.command.empty() ? "" : c.variant);
+}
+
+void use_ssh_client(const ssh_client& c)
+{
+    std::lock_guard lock(g_mutex);
+    g_environment = environment_for(c);
+}
+
 void save_ssh_client(const ssh_client& c)
 {
     settings_changes s;
-    s.set("ssh.command", c.command);
-    s.set("ssh.variant", c.command.empty() ? "" : c.variant);
-    settings::get().apply(s);
-    std::lock_guard lock(g_mutex);
-    g_environment = environment_for(c);
+    save_ssh_client(s, c);
+    if (settings::get().apply(s)) use_ssh_client(c);
 }
 
 std::vector<std::pair<std::string, std::string>> ssh_environment()
