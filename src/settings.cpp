@@ -1,5 +1,7 @@
 #include "settings.h"
 
+#include "util/replaced_file.h"
+
 #include <rapport/sys.h>
 
 #include <chrono>
@@ -126,26 +128,20 @@ void parse(std::FILE* f, values& out)
 // can't be read, so an update doesn't replace what it couldn't see.
 std::optional<values> read_file(const fs::path& file)
 {
-    for (int attempt = 0;; ++attempt)
+    std::FILE* f = open_replaced_file(
+        file, [&] { return rap::sys::fopen(file, "rb"); }, 20, std::chrono::milliseconds(10));
+    if (!f)
     {
-        if (std::FILE* f = rap::sys::fopen(file, "rb"))
-        {
-            values out;
-            parse(f, out);
-            const bool ok = !std::ferror(f);
-            std::fclose(f);
-            if (ok) return out;
-        }
-        else
-        {
-            std::error_code ec;
-            if (!fs::exists(file, ec) && !ec) return values{};
-        }
-        // On Windows, an open can meet a rename by a writer that isn't
-        // holding the lock (one where locks don't work): try again shortly.
-        if (attempt == 20) return std::nullopt;
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        std::error_code ec;
+        if (!fs::exists(file, ec) && !ec) return values{};
+        return std::nullopt;
     }
+    values out;
+    parse(f, out);
+    const bool ok = !std::ferror(f);
+    std::fclose(f);
+    if (!ok) return std::nullopt;
+    return out;
 }
 
 #ifdef _WIN32
