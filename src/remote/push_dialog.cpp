@@ -232,7 +232,8 @@ void push_dialog::push()
     settings_changes s;
     if (!url) s.set(key + ".remote", all_remotes() ? all_remotes_label : targets.front());
     s.set(key + ".all", all ? "1" : "0");
-    settings::get().apply(s);
+    if (const settings::saved done = settings::get().apply(s); !done)
+        report_unsaved_settings(ui_, nullptr, done.error);
 
     std::vector<std::string> options;
     if (tags_->checked() && !all) options.push_back("--tags");

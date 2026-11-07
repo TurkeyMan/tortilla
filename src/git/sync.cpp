@@ -153,6 +153,11 @@ sync_when prefetch_setting()
     return when_setting("sync.prefetch", sync_when::unmetered);
 }
 
+void set_prefetch_setting(settings_changes& s, sync_when w)
+{
+    s.set("sync.prefetch", std::string(when_word(w)));
+}
+
 void set_prefetch_setting(sync_when w)
 {
     settings::get().set("sync.prefetch", std::string(when_word(w)));
@@ -161,6 +166,11 @@ void set_prefetch_setting(sync_when w)
 sync_when check_setting()
 {
     return when_setting("sync.check", sync_when::always);
+}
+
+void set_check_setting(settings_changes& s, sync_when w)
+{
+    s.set("sync.check", std::string(when_word(w)));
 }
 
 void set_check_setting(sync_when w)
@@ -173,6 +183,11 @@ bool fast_forward_others_setting()
     return flag_setting("sync.fastForwardOthers", true);
 }
 
+void set_fast_forward_others_setting(settings_changes& s, bool on)
+{
+    s.set("sync.fastForwardOthers", on ? "1" : "0");
+}
+
 void set_fast_forward_others_setting(bool on)
 {
     settings::get().set("sync.fastForwardOthers", on ? "1" : "0");
@@ -181,6 +196,11 @@ void set_fast_forward_others_setting(bool on)
 bool fast_forward_current_setting()
 {
     return flag_setting("sync.fastForwardCurrent", false);
+}
+
+void set_fast_forward_current_setting(settings_changes& s, bool on)
+{
+    s.set("sync.fastForwardCurrent", on ? "1" : "0");
 }
 
 void set_fast_forward_current_setting(bool on)

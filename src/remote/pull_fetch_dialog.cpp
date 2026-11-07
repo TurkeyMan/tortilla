@@ -42,10 +42,6 @@ std::vector<std::string> url_history()
     return settings::get().history("pull.urls");
 }
 
-void remember_url(const std::string& url)
-{
-    settings::get().add_to_history("pull.urls", url);
-}
 
 }  // namespace
 
@@ -240,10 +236,11 @@ void pull_fetch_dialog::ok()
     const std::string key = (pull_ ? "pull." : "fetch.") + workdir_;
     settings_changes s;
     if (!url) s.set(key + ".remote", all ? all_remotes_label : where);
-    if (url) remember_url(where);
+    if (url) s.add_to_history("pull.urls", where);
     s.set(key + ".rebase", rebase_->checked() && !rebase_from_config_ ? "1" : "0");
     if (pull_) s.set(key + ".ffonly", ff_only_->checked() ? "1" : "0");
-    settings::get().apply(s);
+    if (const settings::saved done = settings::get().apply(s); !done)
+        report_unsaved_settings(ui_, nullptr, done.error);
 
     std::vector<std::string> options;
     if (depth_->checked())

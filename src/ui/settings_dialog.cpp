@@ -24,6 +24,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <memory>
+#include <optional>
 
 namespace tortilla
 {
@@ -759,15 +760,17 @@ void show_settings(rap::ui& ui, rap::window* parent, const std::string& repo_dir
             if (keep->appearance && role != rap::dialog_role::ok) ui.set_color_scheme(appearance());
             if (role == rap::dialog_role::ok)
             {
-                settings& settings = settings::get();
+                // All of it saved as one update, or none of it.
+                settings_changes changes;
+                std::optional<ssh_client> ssh;
                 if (keep->appearance)
                 {
                     const int i = std::clamp(keep->appearance->current(), 0, 2);
                     const std::string_view v = appearance_value(k_appearance_choices[i]);
                     if (v.empty())
-                        settings.remove(k_appearance_setting);
+                        changes.remove(k_appearance_setting);
                     else
-                        settings.set(k_appearance_setting, std::string(v));
+                        changes.set(k_appearance_setting, std::string(v));
                 }
                 if (keep->language)
                 {
@@ -775,36 +778,31 @@ void show_settings(rap::ui& ui, rap::window* parent, const std::string& repo_dir
                     const std::string tag =
                         i > 0 && size_t(i) < keep->language_tags.size() ? keep->language_tags[size_t(i)] : "";
                     if (tag.empty())
-                        settings.remove(k_language_setting);
+                        changes.remove(k_language_setting);
                     else
-                        settings.set(k_language_setting, tag);
+                        changes.set(k_language_setting, tag);
                 }
                 if (keep->icon_style)
-                    settings.set(
-                        "log.actionIcons",
-                        std::to_string(
-                            int(k_icon_styles[std::clamp(keep->icon_style->current(), 0, 3)])));
+                    changes.set("log.actionIcons",
+                                std::to_string(int(
+                                    k_icon_styles[std::clamp(keep->icon_style->current(), 0, 3)])));
                 if (keep->menu_entries)
                 {
                     using namespace shell_menu;
                     auto save = [&](std::string_view key, shows where)
                     {
                         if (auto ids = keep->menu_entries->saved_list(where))
-                            settings.set(std::string(key), *ids);
+                            changes.set(std::string(key), *ids);
                         else
-                            settings.remove(std::string(key));
+                            changes.remove(std::string(key));
                     };
                     save(k_top_setting, shows::top);
                     save(k_shift_setting, shows::shift);
                     save(k_hidden_setting, shows::hidden);
-#ifdef TORTILLA_FM_PROGRAM
-                    // PCManFM's menu is files, not an extension reading these.
-                    fm_actions::update_user_set(saved_placements());
-#endif
                     if (keep->hide_outside->checked())
-                        settings.set(std::string(k_hide_outside_setting), "1");
+                        changes.set(std::string(k_hide_outside_setting), "1");
                     else
-                        settings.remove(std::string(k_hide_outside_setting));
+                        changes.remove(std::string(k_hide_outside_setting));
                     // One a line in the box; tab-separated in the file.
                     std::string paths;
                     const std::string text = keep->no_menu->text();
@@ -822,20 +820,21 @@ void show_settings(rap::ui& ui, rap::window* parent, const std::string& repo_dir
                         at = end + 1;
                     }
                     if (paths.empty())
-                        settings.remove(std::string(k_no_menu_setting));
+                        changes.remove(std::string(k_no_menu_setting));
                     else
-                        settings.set(std::string(k_no_menu_setting), paths);
+                        changes.set(std::string(k_no_menu_setting), paths);
                 }
                 if (keep->diff_tool_select)
                 {
                     // A detected tool is saved as the custom command it stands for.
                     const int choice = keep->diff_tool_select->current();
                     if (choice >= 2 && choice < keep->custom_index())
-                        save_diff_settings(diff_mode::custom,
+                        save_diff_settings(changes, diff_mode::custom,
                                            keep->tools[size_t(choice - 2)].command,
                                            keep->tools[size_t(choice - 2)].folders);
                     else
-                        save_diff_settings(choice >= 2 ? diff_mode::custom
+                        save_diff_settings(changes,
+                                           choice >= 2 ? diff_mode::custom
                                                        : diff_mode(std::max(choice, 0)),
                                            keep->diff_command->text());
                 }
@@ -844,19 +843,20 @@ void show_settings(rap::ui& ui, rap::window* parent, const std::string& repo_dir
                     // A detected tool is saved as the custom command it stands for.
                     const int choice = keep->image_select->current();
                     if (choice >= 2 && choice < keep->image_custom_index())
-                        save_image_settings(image_mode::custom,
+                        save_image_settings(changes, image_mode::custom,
                                             keep->image_tools[size_t(choice - 2)].command);
                     else
-                        save_image_settings(choice >= 2 ? image_mode::custom
+                        save_image_settings(changes,
+                                            choice >= 2 ? image_mode::custom
                                                         : image_mode(std::max(choice, 0)),
                                             keep->image_command->text());
                 }
                 if (keep->merge_select)
                 {
                     const int choice = keep->merge_select->current();
-                    save_merge_command(choice >= 0 && choice < keep->merge_custom_index()
-                                           ? keep->merge_tools[size_t(choice)].command
-                                           : keep->merge_command->text());
+                    save_merge_command(changes, choice >= 0 && choice < keep->merge_custom_index()
+                                                    ? keep->merge_tools[size_t(choice)].command
+                                                    : keep->merge_command->text());
                 }
                 if (keep->ssh_select)
                 {
@@ -864,22 +864,38 @@ void show_settings(rap::ui& ui, rap::window* parent, const std::string& repo_dir
                     // Custom leaves the variant to git.
                     const int choice = keep->ssh_select->current();
                     if (choice >= 1 && choice < keep->ssh_custom_index())
-                        save_ssh_client(keep->ssh_clients[size_t(choice - 1)]);
+                        ssh = keep->ssh_clients[size_t(choice - 1)];
                     else if (choice == keep->ssh_custom_index())
-                        save_ssh_client({.command = keep->ssh_command->text()});
+                        ssh = ssh_client{.command = keep->ssh_command->text()};
                     else
-                        save_ssh_client({});
+                        ssh = ssh_client{};
                 }
                 if (keep->sync_check)
                 {
                     auto when = [](rap::drop_down* d)
                     { return sync_when(std::clamp(d->current(), 0, 2)); };
-                    set_check_setting(when(keep->sync_check));
-                    set_prefetch_setting(when(keep->sync_prefetch));
-                    set_fast_forward_others_setting(keep->sync_others->checked());
-                    set_fast_forward_current_setting(keep->sync_current->checked());
+                    set_check_setting(changes, when(keep->sync_check));
+                    set_prefetch_setting(changes, when(keep->sync_prefetch));
+                    set_fast_forward_others_setting(changes, keep->sync_others->checked());
+                    set_fast_forward_current_setting(changes, keep->sync_current->checked());
                 }
-                if (saved) saved();
+                if (ssh) save_ssh_client(changes, *ssh);
+                if (const settings::saved done = settings::get().apply(changes); !done)
+                {
+                    // Nothing saved: what was shown live goes back to what is.
+                    if (keep->appearance) ui.set_color_scheme(appearance());
+                    report_unsaved_settings(ui, nullptr, done.error);
+                }
+                else
+                {
+                // What reads the settings, once they are saved.
+#ifdef TORTILLA_FM_PROGRAM
+                    // PCManFM's menu is files, not an extension reading these.
+                    if (keep->menu_entries) fm_actions::update_user_set(saved_placements());
+#endif
+                    if (ssh) use_ssh_client(*ssh);
+                    if (saved) saved();
+                }
             }
             if (closed) closed();
             ui.post([keep] {});  // destroy after this callback returns
@@ -887,6 +903,14 @@ void show_settings(rap::ui& ui, rap::window* parent, const std::string& repo_dir
     st->page_tabs->set_current(int(first));
     settings::get().restore_window("settings.window", *st->window);
     st->window->show();
+}
+
+void report_unsaved_settings(rap::ui& ui, rap::window* parent, const std::string& error)
+{
+    ui.message(parent, {.icon = rap::message_spec::icon::warning,
+                        .title = _("Tortilla"),
+                        .text = _("Your choices couldn't be saved. The settings are as they were."),
+                        .detail = error});
 }
 
 }  // namespace tortilla

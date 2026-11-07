@@ -14,6 +14,8 @@
 namespace tortilla
 {
 
+class settings_changes;  // settings.h
+
 // -- settings -----------------------------------------------------------------
 
 // When to do something that uses the network unasked.
@@ -26,16 +28,20 @@ enum class sync_when
 // Downloading remote changes in the background (the prefetch below).
 sync_when prefetch_setting();
 void set_prefetch_setting(sync_when);
+void set_prefetch_setting(settings_changes&, sync_when);
 // Asking the forge (or the remote, with ls-remote) what has changed.
 sync_when check_setting();
 void set_check_setting(sync_when);
+void set_check_setting(settings_changes&, sync_when);
 // Moving forward branches that aren't checked out; on by default.
 bool fast_forward_others_setting();
 void set_fast_forward_others_setting(bool);
+void set_fast_forward_others_setting(settings_changes&, bool);
 // Moving the checked-out branch forward when the working tree is clean;
 // off by default.
 bool fast_forward_current_setting();
 void set_fast_forward_current_setting(bool);
+void set_fast_forward_current_setting(settings_changes&, bool);
 
 // Whether the connection is metered (a phone's hotspot, a capped plan).
 bool on_metered_network();

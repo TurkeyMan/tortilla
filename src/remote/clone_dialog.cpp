@@ -8,6 +8,7 @@
 #include "settings.h"
 #include "ui/progress_dialog.h"
 #include "ui/repo_icon.h"
+#include "ui/settings_dialog.h"
 #include "ui/windows.h"
 
 #include <rapport/sys.h>
@@ -28,10 +29,6 @@ std::vector<std::string> url_history()
     return settings::get().history("clone.urls");
 }
 
-void remember_url(const std::string& url)
-{
-    settings::get().add_to_history("clone.urls", url);
-}
 
 }  // namespace
 
@@ -184,8 +181,11 @@ void clone_dialog::ok()
         return refuse(rap::i18n::format(_("“{0}” isn't a valid branch name."), branch_name_->text()));
     if (origin_->checked() && !bare_->checked() && origin_name_->text().empty())
         return refuse(_("Enter the origin's name."));
-    remember_url(url);
-    settings::get().set("clone.recursive", recursive_->checked() ? "1" : "0");
+    settings_changes choices;
+    choices.add_to_history("clone.urls", url);
+    choices.set("clone.recursive", recursive_->checked() ? "1" : "0");
+    if (const settings::saved done = settings::get().apply(choices); !done)
+        report_unsaved_settings(ui_, nullptr, done.error);
 
     git_command c{"clone", "--progress"};
     if (recursive_->checked() && !bare_->checked()) c.push_back("--recursive");

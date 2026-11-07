@@ -15,6 +15,8 @@
 namespace tortilla
 {
 
+class settings_changes;  // settings.h
+
 enum class diff_mode
 {
     builtin,
@@ -30,6 +32,9 @@ std::string diff_command();
 // commit) or only files (git opens it for each changed file in turn).
 bool diff_folders();
 void save_diff_settings(diff_mode, const std::string& command, bool folders = true);
+// The same, among other changes saved together.
+void save_diff_settings(settings_changes&, diff_mode, const std::string& command,
+                        bool folders = true);
 
 // Comparing images [Settings > Diff Viewer]: image files in a comparison go
 // to a tool of their own (IfritView, or a command with the placeholders
@@ -45,6 +50,7 @@ enum class image_mode
 image_mode saved_image_mode();
 std::string image_command();
 void save_image_settings(image_mode, const std::string& command);
+void save_image_settings(settings_changes&, image_mode, const std::string& command);
 // The command image files are compared with, placeholders and all; "" when
 // they go to the text tool (or IfritView isn't there after all).
 std::string image_diff_command();
