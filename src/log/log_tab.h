@@ -40,6 +40,8 @@
 namespace tortilla
 {
 
+class settings_changes;
+
 class log_tab
 {
 public:
@@ -109,8 +111,9 @@ public:
     bool key(const rap::key_event&);
     // The column sizes and the like, and the options (log.walk.* and the
     // rest), kept for next time.
-    void save_view_settings();
-    void save_options();
+    // Added to `st`, for the window to save with the rest as one update.
+    void save_view_settings(settings_changes& st);
+    void save_options(settings_changes&);
     // What View Patch shows of the selection: one commit's patch as git show
     // has it, or the working tree's changes; a log of a path, that path's
     // part. No arguments for nothing (several commits, or no page).
@@ -272,6 +275,7 @@ private:
     // The filter, and what the forge knows, to the model for the next load.
     void apply_branches();
     void save_branches();
+    void save_branches(settings_changes&);  // with the options, as one save
     void restore_branches();
     std::string branches_key(const char* what, bool shared) const;
     // "Pull requests + 2 pinned · tips only", for the status bar.

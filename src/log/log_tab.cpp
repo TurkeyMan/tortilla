@@ -320,10 +320,9 @@ std::string log_tab::path_text(size_t limit) const
 // Splitter panes, column widths and visibility persist across runs, as
 // TortoiseGit's do (LogDlgSizer1/2 and the column state, spec 1.3 and 1.4);
 // the window's size and place are the window's (log_window).
-void log_tab::save_view_settings()
+void log_tab::save_view_settings(settings_changes& st)
 {
     if (!page_) return;
-    settings& st = settings::get();
     st.set_numbers("log.panes", page_->splitter->sizes());
     st.set_numbers("log.panes.details", page_->details_splitter->sizes());
     st.set_numbers("log.columns", page_->commit_list->column_widths());
@@ -334,7 +333,7 @@ void log_tab::save_view_settings()
         return v;
     };
     st.set_numbers("log.columns.order", order(page_->commit_list->column_order()));
-    files_.save_layout();
+    files_.save_layout(st);
     std::string visible;
     for (size_t i = 0; i < log_model::column_count; ++i)
         visible += page_->commit_list->column_visible(i) ? '1' : '0';
@@ -343,11 +342,10 @@ void log_tab::save_view_settings()
 
 // What's shown is per repository, as All Branches is in TortoiseGit [spec
 // 1.9.7]; the rest apply everywhere.
-void log_tab::save_options()
+void log_tab::save_options(settings_changes& st)
 {
-    settings& st = settings::get();
     auto flag = [](bool b) { return std::string(b ? "1" : "0"); };
-    save_branches();
+    save_branches(st);
     std::string history;
     for (const std::string& r : ref_history_) history += (history.empty() ? "" : " ") + r;
     st.set("log.refHistory." + repo_.workdir(), history);
@@ -381,9 +379,13 @@ void log_tab::apply_view_settings()
         page_->splitter->set_sizes(v);
     if (auto v = st.numbers("log.panes.details"); v.size() == 2)
         page_->details_splitter->set_sizes(v);
-    // Obsolete horizontal/inner forge dividers have no meaning in the tabbed area.
-    st.remove("log.panes.forge");
-    st.remove("log.panes.forge.parts");
+    // Obsolete horizontal/inner forge dividers have no meaning in the tabbed
+    // area. Dropped together, and only when there (each save takes the
+    // writer lock and replaces the file).
+    settings_changes obsolete;
+    for (const char* key : {"log.panes.forge", "log.panes.forge.parts"})
+        if (!st.value(key).empty()) obsolete.remove(key);
+    st.apply(obsolete);
     if (auto v = st.numbers("log.columns"); !v.empty()) page_->commit_list->set_column_widths(v);
     // The lists ignore an order that doesn't fit their columns.
     auto order = [](const std::vector<float>& v)
@@ -1069,7 +1071,13 @@ constexpr std::string_view k_no_pins = "none";
 
 void log_tab::save_branches()
 {
-    settings& st = settings::get();
+    settings_changes st;
+    save_branches(st);
+    settings::get().apply(st);
+}
+
+void log_tab::save_branches(settings_changes& st)
+{
     const show_preset preset = refs_before_follow_.value_or(before_pick_.value_or(show_.preset));
     st.set(branches_key("show", false), std::string(preset_key(preset)));
     st.set(branches_key("tipsOnly", false), show_.tips_only ? "1" : "0");

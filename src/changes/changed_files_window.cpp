@@ -92,8 +92,10 @@ void changed_files_window::build()
     window_->on_close_request(
         [this]
         {
-            settings::get().save_window("changedFiles.window", *window_);
-            files_.save_layout();
+            settings_changes layout;
+            layout.save_window("changedFiles.window", *window_);
+            files_.save_layout(layout);
+            settings::get().apply(layout);
             if (closed_) closed_();
             return true;
         });

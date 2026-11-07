@@ -55,12 +55,13 @@ bool diff_folders()
 
 void save_diff_settings(diff_mode mode, const std::string& command, bool folders)
 {
-    settings& st = settings::get();
+    settings_changes st;
     st.set("diff.mode", mode == diff_mode::builtin ? "builtin"
                         : mode == diff_mode::git   ? "git"
                                                   : "custom");
     st.set("diff.command", command);
     st.set("diff.folders", folders ? "1" : "0");
+    settings::get().apply(st);
 }
 
 image_mode saved_image_mode()
@@ -79,11 +80,12 @@ std::string image_command()
 
 void save_image_settings(image_mode mode, const std::string& command)
 {
-    settings& st = settings::get();
+    settings_changes st;
     st.set("image.mode", mode == image_mode::text        ? "text"
                          : mode == image_mode::ifritview ? "ifritview"
                                                          : "custom");
     st.set("image.command", command);
+    settings::get().apply(st);
 }
 
 std::string image_diff_command()

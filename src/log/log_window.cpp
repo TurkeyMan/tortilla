@@ -450,8 +450,12 @@ bool log_window::close_tab(const std::string& id)
             });
         return true;
     }
-    tab.save_view_settings();
-    tab.save_options();
+    {
+        settings_changes st;
+        tab.save_view_settings(st);
+        tab.save_options(st);
+        settings::get().apply(st);
+    }
     tab.drop_page();
     stack_->remove(id);
     strip_->remove(id);
@@ -609,20 +613,22 @@ void log_window::pick_commits(const std::string& purpose, const std::string& lab
 
 void log_window::closing()
 {
+    settings_changes st;  // one save for all of it, the shown tab's last
     // (A window its tabs were moved out of wasn't the user's to close.)
-    if (!emptied_) settings::get().save_window("log.window", *window_);
+    if (!emptied_) st.save_window("log.window", *window_);
     log_tab* now = current_tab();
     for (const auto& t : tabs_)
         if (t.get() != now)
         {
-            t->save_view_settings();
-            t->save_options();
+            t->save_view_settings(st);
+            t->save_options(st);
         }
     if (now)
     {
-        now->save_view_settings();
-        now->save_options();
+        now->save_view_settings(st);
+        now->save_options(st);
     }
+    settings::get().apply(st);
     close_patch();
 }
 

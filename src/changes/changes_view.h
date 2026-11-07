@@ -24,6 +24,7 @@
 namespace tortilla
 {
 
+class settings_changes;
 class temp_dir;  // git/temp_files.h
 
 // git's empty tree: what a root commit is compared with.
@@ -82,6 +83,8 @@ public:
     // them all [TortoiseGit, spec 5.2.6].
     rap::layout::list list(std::string settings_key, bool checkboxes = false);
     void save_layout() const;
+    // With the window's own layout, as one save.
+    void save_layout(settings_changes&) const;
     void restore_layout();
     // The list's columns as they are, in memory: for a list built again in
     // another window (the log's page), which carries them across.
