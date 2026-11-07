@@ -1682,7 +1682,10 @@ void settings_across_processes(const std::string& scratch)
         const int count = 40;
         const std::string exe = rap::sys::path_to_utf8(rap::sys::executable_path());
         std::atomic<bool> stop{false};
-        std::atomic<int> reads{0}, torn{0};
+        // An open that fails isn't a document seen: on Windows one can meet
+        // a rename in progress. It's counted apart, and only a document read
+        // in part fails the check.
+        std::atomic<int> reads{0}, torn{0}, unopened{0};
         std::thread reader(
             [&]
             {
@@ -1691,10 +1694,16 @@ void settings_across_processes(const std::string& scratch)
                     std::string text;
                     {
                         std::ifstream in(file, std::ios::binary);
-                        text.assign(std::istreambuf_iterator<char>(in), {});
+                        if (in.is_open())
+                        {
+                            text.assign(std::istreambuf_iterator<char>(in), {});
+                            ++reads;
+                            if (!text.starts_with("!first=1\n") || !text.ends_with("~last=1\n"))
+                                ++torn;
+                        }
+                        else
+                            ++unopened;
                     }
-                    ++reads;
-                    if (!text.starts_with("!first=1\n") || !text.ends_with("~last=1\n")) ++torn;
                     std::this_thread::sleep_for(std::chrono::milliseconds(1));
                 }
             });
@@ -1743,8 +1752,10 @@ void settings_across_processes(const std::string& scratch)
                 want.push_back(std::string(tag) + "-" + std::to_string(i));
         std::sort(want.begin(), want.end());
         check(entries == want, "settings: two processes adding to one history both keep theirs");
-        check(reads > 0 && torn == 0,
-              "settings: a reader meanwhile only ever sees a whole document");
+        const std::string seen = "settings: a reader meanwhile only ever sees a whole document (" +
+                                 std::to_string(reads) + " read, " + std::to_string(torn) +
+                                 " in part, " + std::to_string(unopened) + " opens failed)";
+        check(reads > 0 && torn == 0, seen.c_str());
         bool leftovers = false;
         for (const auto& e : fs::directory_iterator(dir))
             if (e.path().extension() == ".tmp") leftovers = true;
