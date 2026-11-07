@@ -595,7 +595,7 @@ void log_window::closing()
 // lets apps place windows (not on Wayland).
 void log_window::save_layout()
 {
-    settings& st = settings::get();
+    settings_changes st;  // one save for all of it
     st.save_window("log.window", *window_);
     st.set_numbers("log.panes", splitter_->sizes());
     st.set_numbers("log.panes.details", details_splitter_->sizes());
@@ -609,7 +609,7 @@ void log_window::save_layout()
         return v;
     };
     st.set_numbers("log.columns.order", order(commit_list_->column_order()));
-    files_.save_layout();
+    files_.save_layout(st);
     std::string visible;
     for (size_t i = 0; i < log_model::column_count; ++i)
         visible += commit_list_->column_visible(i) ? '1' : '0';
@@ -618,7 +618,7 @@ void log_window::save_layout()
     // Options. What's shown is per repository, as All Branches is in
     // TortoiseGit [spec 1.9.7]; the rest apply everywhere.
     auto flag = [](bool b) { return std::string(b ? "1" : "0"); };
-    save_branches();
+    save_branches(st);
     std::string history;
     for (const std::string& r : ref_history_) history += (history.empty() ? "" : " ") + r;
     st.set("log.refHistory." + repo_.workdir(), history);
@@ -635,6 +635,7 @@ void log_window::save_layout()
     st.set("log.filter.regex", flag(filter_.regex));
     st.set("log.filter.caseSensitive", flag(filter_.case_sensitive));
     st.set("log.jumpType", std::to_string(jump_type_->current()));
+    settings::get().apply(st);
 }
 
 void log_window::restore_layout()
@@ -1291,7 +1292,13 @@ constexpr std::string_view k_no_pins = "none";
 
 void log_window::save_branches()
 {
-    settings& st = settings::get();
+    settings_changes st;
+    save_branches(st);
+    settings::get().apply(st);
+}
+
+void log_window::save_branches(settings_changes& st)
+{
     const show_preset preset = refs_before_follow_.value_or(before_pick_.value_or(show_.preset));
     st.set(branches_key("show", false), std::string(preset_key(preset)));
     st.set(branches_key("tipsOnly", false), show_.tips_only ? "1" : "0");

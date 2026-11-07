@@ -59,9 +59,10 @@ ssh_client saved_ssh_client()
 
 void save_ssh_client(const ssh_client& c)
 {
-    settings& s = settings::get();
+    settings_changes s;
     s.set("ssh.command", c.command);
     s.set("ssh.variant", c.command.empty() ? "" : c.variant);
+    settings::get().apply(s);
     std::lock_guard lock(g_mutex);
     g_environment = environment_for(c);
 }

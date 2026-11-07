@@ -385,8 +385,10 @@ void pull_request_dialog::create()
         title_->focus();
         return;
     }
-    settings::get().set("pr.browse", browse_->checked() ? "1" : "0");
-    settings::get().set("pr.draft", draft_->checked() ? "1" : "0");
+    settings_changes choices;
+    choices.set("pr.browse", browse_->checked() ? "1" : "0");
+    choices.set("pr.draft", draft_->checked() ? "1" : "0");
+    settings::get().apply(choices);
     if (local_.empty() || !needs_push_ || (on_forge_ && !push_->checked())) return send();
     // The branch first, then (if that worked) the pull request.
     std::vector<std::string> push{"push"};

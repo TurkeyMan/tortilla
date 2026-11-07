@@ -282,9 +282,10 @@ void worktree_window::build()
     window_->on_finished(
         [this](rap::dialog_role)
         {
-            settings& st = settings::get();
+            settings_changes st;
             st.save_window("worktrees.window", *window_);
             st.set_numbers("worktrees.columns", list_->column_widths());
+            settings::get().apply(st);
             if (closed_) closed_();
         });
     reload();

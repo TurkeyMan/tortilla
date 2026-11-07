@@ -314,12 +314,13 @@ void repo_browser::build()
     window_->on_close_request(
         [this]
         {
-            settings& st = settings::get();
+            settings_changes st;
             st.save_window("repoBrowser.window", *window_);
             st.set_numbers("repoBrowser.columns", list_->column_widths());
             st.set_numbers("repoBrowser.panes", splitter_->sizes());
             st.set_numbers("repoBrowser.sort",
                            {float(rows_->sort_column), rows_->descending ? 1.f : 0.f});
+            settings::get().apply(st);
             if (closed_) closed_();
             return true;
         });

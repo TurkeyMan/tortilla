@@ -106,8 +106,10 @@ void changes_window::build()
     const bool one_folder = one_folder_;
     auto close = [this]
     {
-        settings::get().save_window("changes.window", *window_);
-        files_.save_layout();
+        settings_changes layout;
+        layout.save_window("changes.window", *window_);
+        files_.save_layout(layout);
+        settings::get().apply(layout);
         if (closed_) closed_();
     };
     window_ = create_window(

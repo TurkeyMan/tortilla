@@ -48,10 +48,13 @@ fs::path with_suffix(const fs::path& file, const std::string& suffix)
 
 // The lock writers hold across processes while they read, change and
 // replace the file: a file of its own beside it, since the settings file
-// is replaced, never written in place. Released on close, so also when a
-// process dies holding it. Where the filesystem can't lock (some network
-// shares), writers go ahead unlocked: the file is still always whole, but a
-// change made at the same moment by another process may be lost.
+// is replaced, never written in place. Taking it waits, with no timeout,
+// for the writer holding it: that one holds it only to read, write and
+// rename one small file. Released on close, so also when a process dies
+// holding it. Where the filesystem can't lock (some network shares), or the
+// lock file can't be opened, writers go ahead unlocked: the file is still
+// always whole, but a change made at the same moment by another process
+// may be lost.
 class writer_lock
 {
 public:

@@ -373,12 +373,13 @@ void browse_refs::build()
     window_->on_finished(
         [this](rap::dialog_role)
         {
-            settings& st = settings::get();
+            settings_changes st;
             st.save_window("browseRefs.window", *window_);
             st.remove("browseRefs.columns");
             st.set_numbers("browseRefs.columns.v2", list_->column_widths());
             st.set_numbers("browseRefs.panes", splitter_->sizes());
             st.set_numbers("browseRefs.sort", {float(rows_->sort_column), rows_->descending ? 1.f : 0.f});
+            settings::get().apply(st);
             if (!done_ && picked_) std::exchange(picked_, {})(std::string());
             if (closed_) closed_();
         });

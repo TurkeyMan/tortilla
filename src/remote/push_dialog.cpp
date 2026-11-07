@@ -229,9 +229,10 @@ void push_dialog::push()
         targets.push_back(remotes_[size_t(remote_->current() - first_remote())]);
 
     const std::string key = "push." + workdir_;
-    settings& s = settings::get();
+    settings_changes s;
     if (!url) s.set(key + ".remote", all_remotes() ? all_remotes_label : targets.front());
     s.set(key + ".all", all ? "1" : "0");
+    settings::get().apply(s);
 
     std::vector<std::string> options;
     if (tags_->checked() && !all) options.push_back("--tags");

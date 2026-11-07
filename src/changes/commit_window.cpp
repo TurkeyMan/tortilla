@@ -635,9 +635,11 @@ std::vector<std::string> commit_window::restore(const std::vector<std::string>& 
 
 void commit_window::close(bool committed)
 {
-    settings::get().save_window("commit.window", *window_);
-    settings::get().set_numbers("commit.panes", splitter_->sizes());
-    files_.save_layout();
+    settings_changes layout;
+    layout.save_window("commit.window", *window_);
+    layout.set_numbers("commit.panes", splitter_->sizes());
+    files_.save_layout(layout);
+    settings::get().apply(layout);
     window_->close();
     if (closed_) closed_(committed);
 }
