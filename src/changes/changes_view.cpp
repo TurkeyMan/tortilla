@@ -135,8 +135,14 @@ void sane_widths(std::vector<float>& widths)
 // Column widths and order, as the user left them.
 void changes_view::save_layout() const
 {
+    settings_changes st;
+    save_layout(st);
+    settings::get().apply(st);
+}
+
+void changes_view::save_layout(settings_changes& st) const
+{
     if (!list_ || settings_key_.empty()) return;
-    settings& st = settings::get();
     std::vector<float> widths = list_->column_widths();
     sane_widths(widths);
     st.set_numbers(settings_key_ + ".columns", widths);

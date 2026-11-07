@@ -291,10 +291,11 @@ void blame_window::build()
     window_->on_close_request(
         [this]
         {
-            settings& st = settings::get();
+            settings_changes st;
             st.save_window("blame.window", *window_);
             st.set_numbers("blame.columns", list_->column_widths());
             st.set_numbers("blame.panes", splitter_->sizes());
+            settings::get().apply(st);
             if (closed_) closed_();
             return true;
         });

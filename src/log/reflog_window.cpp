@@ -167,9 +167,10 @@ void reflog_window::build()
     window_->on_finished(
         [this](rap::dialog_role)
         {
-            settings& st = settings::get();
+            settings_changes st;
             st.save_window("refLog.window", *window_);
             st.set_numbers("refLog.columns", list_->column_widths());
+            settings::get().apply(st);
             if (closed_) closed_();
         });
     reload();

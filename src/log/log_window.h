@@ -81,6 +81,7 @@ private:
     // The filter, and what the forge knows, to the model for the next load.
     void apply_branches();
     void save_branches();
+    void save_branches(settings_changes&);  // with the layout, as one save
     void restore_branches();
     std::string branches_key(const char* what, bool shared) const;
     // "Pull requests + 2 pinned · tips only", for the status bar.
