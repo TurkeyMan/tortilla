@@ -421,10 +421,17 @@ void forge_panel::fit_parts(bool pr, bool lists)
 {
     build_body_->set_visible(lists);
     const parts state = !lists ? parts::one : pr ? parts::pr_and_lists : parts::lists;
+    parts_retry_ = {};  // this call stands for one put off
     if (state == parts_state_) return;
     float total = 0;
     for (float s : parts_->sizes()) total += s;
-    if (state != parts::one && total <= 0) return;  // not laid out yet: next time
+    if (state != parts::one && total <= 0)
+    {
+        // Not laid out yet: tried again until it is, whether or not
+        // anything else changes meanwhile.
+        parts_retry_ = host_.ui.timer(50, false, [this, pr, lists] { fit_parts(pr, lists); });
+        return;
+    }
     parts_state_ = state;
     if (state == parts::pr_and_lists)
     {

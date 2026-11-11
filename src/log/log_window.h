@@ -12,6 +12,7 @@
 #include "git/repo_worker.h"
 #include "git/sync.h"
 #include "log/forge_panel.h"
+#include "log/forge_share.h"
 #include "log/log_model.h"
 #include "rebase/rebase_window.h"
 
@@ -361,7 +362,7 @@ private:
     rap::splitter* details_splitter_ = nullptr;
     rap::splitter* forge_splitter_ = nullptr;
     std::vector<float> forge_sizes_;            // as last shown, for showing it again
-    float forge_total_ = 0;                     // the width its share was last fitted to
+    forge_share forge_share_;                   // what its share was last fitted to
     rap::subscription forge_width_watch_;       // while it's shown
     bool forge_panel_visible_ = false;
     void forge_panel_shown(bool);

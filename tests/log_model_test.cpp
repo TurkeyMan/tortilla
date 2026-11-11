@@ -46,6 +46,7 @@
 #include "git/tree_list.h"
 #include "git/worktrees.h"
 #include "i18n.h"
+#include "log/forge_share.h"
 #include "log/log_model.h"
 #include "log/ref_labels.h"
 #include "journal_tests.h"
@@ -5474,6 +5475,36 @@ int main(int argc, char** argv)
     tortilla::test::run_journal_tests(**ui, argv[1]);
     libgit2_parity_tests(argv[1]);
     libgit2_dialog_parity_tests(argv[1]);
+
+    // The forge column's share of the window: its splitter's width followed
+    // through the window's, which every backend reports as laid out (Win32's
+    // splitter reports the sizes last asked of it, which don't move).
+    {
+        using tortilla::forge_share;
+        forge_share share;
+        check(share.moved(1400) && share.width_now(1400, 1360) == 1360,
+              "forge share: before any fit, the splitter's own width");
+        // Never dragged: a third, at most 480.
+        check(forge_share::side(1360, {}) == 1360.f / 3 && forge_share::side(1760, {}) == 480,
+              "forge share: undragged, a third of the width, 480 at most");
+        share.fitted(1360, 1400);
+        check(!share.moved(1400) && !share.moved(1400.5f), "forge share: the same width isn't a change");
+        check(share.moved(1000) && share.width_now(1000, 1360) == 960,
+              "forge share: a narrower window takes from the splitter what it loses, the sizes asked or not");
+        check(share.width_now(1800, 1360) == 1760, "forge share: a wider window gives it what it gains");
+        check(forge_share::side(share.width_now(1000, 1360), {}) == 320,
+              "forge share: undragged, narrowed, a third of what's left");
+        // Dragged to 900 + 460: that share, as the window grows and shrinks.
+        const std::vector<float> dragged{900, 460};
+        const float wider = share.width_now(1800, 1360), narrower = share.width_now(1000, 1360);
+        check(std::abs(forge_share::side(1360, dragged) - 460) < 0.01f &&
+                  std::abs(forge_share::side(wider, dragged) - 1760.f * 460 / 1360) < 0.01f &&
+                  std::abs(forge_share::side(narrower, dragged) - 960.f * 460 / 1360) < 0.01f,
+              "forge share: dragged, its share kept as the window grows and shrinks");
+        // A drag fits it anew: later changes count from there.
+        share.fitted(1300, 1400);
+        check(share.width_now(1200, 1300) == 1100, "forge share: after a drag, changes count from the drag");
+    }
 
     std::printf("%s\n", failures ? "FAILED" : "all passed");
     return failures ? 1 : 0;

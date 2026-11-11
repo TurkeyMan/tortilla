@@ -567,8 +567,9 @@ void log_window::build()
             if (forge_panel_visible_)
             {
                 forge_sizes_ = forge_splitter_->sizes();
-                forge_total_ = 0;
-                for (float s : forge_sizes_) forge_total_ += s;
+                float total = 0;
+                for (float s : forge_sizes_) total += s;
+                forge_share_.fitted(total, window_->size().w);
             }
             fit_files();
         });
@@ -942,14 +943,15 @@ void log_window::forge_panel_shown(bool on)
 
 void log_window::keep_forge_share(bool showing)
 {
-    float total = 0;
-    for (float s : forge_splitter_->sizes()) total += s;
-    if (total <= 0 || (!showing && std::abs(total - forge_total_) < 1)) return;
-    forge_total_ = total;
-    const bool dragged = forge_sizes_.size() == 2 && forge_sizes_[0] > 0 && forge_sizes_[1] > 0;
-    const float side = dragged ? total * forge_sizes_[1] / (forge_sizes_[0] + forge_sizes_[1])
-                               : std::min(total / 3, 480.f);
+    const float window_w = window_->size().w;
+    if (window_w <= 0 || (!showing && !forge_share_.moved(window_w))) return;
+    float measured = 0;
+    for (float s : forge_splitter_->sizes()) measured += s;
+    const float total = forge_share_.width_now(window_w, measured);
+    if (total <= 0) return;  // not laid out yet: the next tick
+    const float side = forge_share::side(total, forge_sizes_);
     forge_splitter_->set_sizes({total - side, side});
+    forge_share_.fitted(total, window_w);
     if (!showing) fit_files();
 }
 

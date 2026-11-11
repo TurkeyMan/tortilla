@@ -186,6 +186,7 @@ private:
         lists,         // only the build's line above
     };
     parts parts_state_ = parts::unknown;
+    rap::subscription parts_retry_;  // a place put off until there's a layout
     rap::widget* top_spacer_ = nullptr;
     rap::widget* build_body_ = nullptr;
     rap::widget* build_part_ = nullptr;
