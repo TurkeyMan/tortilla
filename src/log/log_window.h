@@ -361,8 +361,11 @@ private:
     rap::splitter* details_splitter_ = nullptr;
     rap::splitter* forge_splitter_ = nullptr;
     std::vector<float> forge_sizes_;            // as last shown, for showing it again
+    float forge_total_ = 0;                     // the width its share was last fitted to
+    rap::subscription forge_width_watch_;       // while it's shown
     bool forge_panel_visible_ = false;
     void forge_panel_shown(bool);
+    void keep_forge_share(bool showing);
     void fit_files();
     rap::subscription fit_timer_;
 

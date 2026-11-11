@@ -153,24 +153,6 @@ std::string clean_body(std::string_view body)
     return out;
 }
 
-// Its first `lines` lines; `cut` when there's more.
-std::string first_lines(const std::string& text, size_t lines, bool& cut)
-{
-    size_t at = 0;
-    for (size_t n = 0; n < lines; ++n)
-    {
-        at = text.find('\n', at);
-        if (at == std::string::npos)
-        {
-            cut = false;
-            return text;
-        }
-        ++at;
-    }
-    cut = true;
-    return text.substr(0, at ? at - 1 : 0);
-}
-
 std::string names(const std::vector<std::string>& who)
 {
     std::string out;
@@ -422,6 +404,48 @@ void forge_panel::with_token(const forge_remote& r,
         .detach();
 }
 
+void forge_panel::built()
+{
+    parts_->on_moved(
+        [this]
+        {
+            if (parts_state_ == parts::pr_and_lists) part_sizes_ = parts_->sizes();
+        });
+}
+
+// The divider between the PR (and the build's line) and the build's lists.
+// With a PR, where it was last dragged to, else two fifths of the height
+// for the lists; without one, the build's line as high as it needs and the
+// lists the rest. The upper part takes what the window gains or loses.
+void forge_panel::fit_parts(bool pr, bool lists)
+{
+    build_body_->set_visible(lists);
+    const parts state = !lists ? parts::one : pr ? parts::pr_and_lists : parts::lists;
+    if (state == parts_state_) return;
+    float total = 0;
+    for (float s : parts_->sizes()) total += s;
+    if (state != parts::one && total <= 0) return;  // not laid out yet: next time
+    parts_state_ = state;
+    if (state == parts::pr_and_lists)
+    {
+        if (part_sizes_.size() == 2)
+            parts_->set_sizes(part_sizes_);
+        else
+            parts_->set_sizes({total * 0.6f, total * 0.4f});
+    }
+    else if (state == parts::lists)
+    {
+        // The line: a mark's height, and the box's spacing around it.
+        const float line = float(k_mark_size) + 14;
+        parts_->set_sizes({line, std::max(total - line, line)});
+    }
+}
+
+void forge_panel::set_part_sizes(std::vector<float> sizes)
+{
+    if (sizes.size() == 2 && sizes[0] > 0 && sizes[1] > 0) part_sizes_ = std::move(sizes);
+}
+
 rap::node forge_panel::layout()
 {
     using namespace rap::layout;
@@ -437,206 +461,212 @@ rap::node forge_panel::layout()
     auto background = [](rap::painter& p, rap::size_f size)
     { p.rect({0, 0, size.w, size.h}, 0, rap::paint{rap::theme_color::window}, std::nullopt); };
     return vbox{
-        scroll{vbox{
-                   // Pull request
-                   vbox{
-                       label{}.wrap().selectable().bind(pr_title_),
-                       hbox{
-                           canvas{}
-                               .focusable(false)
-                               .on_paint(
-                                   [this, background](rap::painter& p, rap::size_f size)
-                                   {
-                                       background(p, size);
-                                       if (!picture_) return;
-                                       // Whole and in shape if laid out
-                                       // smaller than asked.
-                                       const float iw = float(picture_->width()),
-                                                   ih = float(picture_->height());
-                                       p.image(*picture_, {0, 0, iw, ih},
-                                               rap::fit_inside({0, 0, size.w, size.h}, iw, ih));
-                                   })
-                               .width(rap::extent{k_picture_size, rap::extent::unit::px})
-                               .height(rap::extent{k_picture_size, rap::extent::unit::px})
-                               .bind(pr_avatar_),
-                           label{}.ellipsize().bind(pr_author_).stretch(),
-                       },
-                       hbox{
-                           mark(pr_merge_mark_,
+        splitter{
+            vertical,
+            // Above the divider: the PR, then the build's line under it.
+            vbox{
+                // Pull request
+                vbox{
+                    label{}.wrap().selectable().bind(pr_title_),
+                    hbox{
+                        canvas{}
+                            .focusable(false)
+                            .on_paint(
                                 [this, background](rap::painter& p, rap::size_f size)
                                 {
                                     background(p, size);
-                                    paint_mark(p, size, merge_mark_state_,
-                                               mergeable(merge_mark_kind_));
-                                }),
-                           label{}.wrap().bind(pr_merge_).stretch(),
-                       },
-                       hbox{
-                           mark(pr_checks_mark_,
-                                [this, background](rap::painter& p, rap::size_f size)
+                                    if (!picture_) return;
+                                    // Whole and in shape if laid out
+                                    // smaller than asked.
+                                    const float iw = float(picture_->width()),
+                                                ih = float(picture_->height());
+                                    p.image(*picture_, {0, 0, iw, ih},
+                                            rap::fit_inside({0, 0, size.w, size.h}, iw, ih));
+                                })
+                            .width(rap::extent{k_picture_size, rap::extent::unit::px})
+                            .height(rap::extent{k_picture_size, rap::extent::unit::px})
+                            .bind(pr_avatar_),
+                        label{}.ellipsize().bind(pr_author_).stretch(),
+                    },
+                    hbox{
+                        mark(pr_merge_mark_,
+                             [this, background](rap::painter& p, rap::size_f size)
+                             {
+                                 background(p, size);
+                                 paint_mark(p, size, merge_mark_state_,
+                                            mergeable(merge_mark_kind_));
+                             }),
+                        label{}.wrap().bind(pr_merge_).stretch(),
+                    },
+                    hbox{
+                        mark(pr_checks_mark_,
+                             [this, background](rap::painter& p, rap::size_f size)
+                             {
+                                 background(p, size);
+                                 paint_mark(p, size, checks_mark_state_);
+                             }),
+                        label{}.wrap().bind(pr_checks_).stretch(),
+                    },
+                    label{}.wrap().selectable().bind(pr_reviews_),
+                    // The description takes what the part has left, and
+                    // scrolls: as a label, a long one widened the column
+                    // past the window.
+                    text_view{}.read_only().compact().bind(pr_body_).height(3_lines).stretch(),
+                    label{}.wrap().bind(pr_also_),
+                    hbox{
+                        button{""}
+                            .bind(pr_buttons_[0])
+                            .on_click(
+                                [this]
                                 {
-                                    background(p, size);
-                                    paint_mark(p, size, checks_mark_state_);
+                                    if (pr_actions_.size() > 0 && pr_actions_[0])
+                                        pr_actions_[0]();
                                 }),
-                           label{}.wrap().bind(pr_checks_).stretch(),
-                       },
-                       label{}.wrap().selectable().bind(pr_reviews_),
-                       // The description in a view of its own, which scrolls: as
-                       // a label, a long one widened the column past the window.
-                       text_view{}.read_only().compact().bind(pr_body_).height(5_lines),
-                       text_view{}
-                           .read_only()
-                           .compact()
-                           .visible(false)
-                           .bind(pr_body_all_)
-                           .height(16_lines),
-                       label{_("More...")}
-                           .link(
-                               [this]
-                               {
-                                   pr_body_->set_visible(false);
-                                   pr_body_all_->set_visible(true);
-                                   pr_more_->set_visible(false);
-                               })
-                           .bind(pr_more_),
-                       label{}.wrap().bind(pr_also_),
-                       hbox{
-                           button{""}
-                               .bind(pr_buttons_[0])
-                               .on_click(
-                                   [this]
-                                   {
-                                       if (pr_actions_.size() > 0 && pr_actions_[0])
-                                           pr_actions_[0]();
-                                   }),
-                           button{""}
-                               .bind(pr_buttons_[1])
-                               .on_click(
-                                   [this]
-                                   {
-                                       if (pr_actions_.size() > 1 && pr_actions_[1])
-                                           pr_actions_[1]();
-                                   }),
-                           button{""}
-                               .bind(pr_buttons_[2])
-                               .on_click(
-                                   [this]
-                                   {
-                                       if (pr_actions_.size() > 2 && pr_actions_[2])
-                                           pr_actions_[2]();
-                                   }),
-                           spacer{},
-                       },
-                   }
-                       .handle(pr_part_),
-                   vbox{separator{}}.handle(separator_),
-                   // Build
-                   vbox{
-                       hbox{
-                           mark(build_mark_,
-                                [this, background](rap::painter& p, rap::size_f size)
+                        button{""}
+                            .bind(pr_buttons_[1])
+                            .on_click(
+                                [this]
                                 {
-                                    background(p, size);
-                                    paint_mark(p, size, build_mark_state_);
+                                    if (pr_actions_.size() > 1 && pr_actions_[1])
+                                        pr_actions_[1]();
                                 }),
-                           label{}.ellipsize().bind(build_summary_).stretch(),
-                           label{_("Show all")}
-                               .link(
-                                   [this]
-                                   {
-                                       matrix_open_ = !matrix_open_;
-                                       matrix_opened_by_user_ = true;
-                                       update_build();
-                                   })
-                               .bind(build_toggle_),
-                       },
-                       list{matrix_model::columns(), matrix_.get()}
-                           .headers(false)
-                           .compact()
-                           .selection(rap::selection_mode::single)
-                           .bind(matrix_list_)
-                           .on_selection_changed(
-                               [this]
-                               {
-                                   const auto sel = matrix_list_->selection();
-                                   if (sel.size() != 1 || sel.front() >= matrix_->rows.size())
-                                       return;
-                                   const auto& row = matrix_->rows[sel.front()];
-                                   if (row.kind != matrix_model::row::job) return;
-                                   ask_failure(row.w, row.j);
-                               })
-                           .on_activate(
-                               [this](size_t r)
-                               {
-                                   if (!sha_ || r >= matrix_->rows.size()) return;
-                                   auto it = builds_.find(*sha_);
-                                   if (it == builds_.end()) return;
-                                   const auto& row = matrix_->rows[r];
-                                   const ci_workflow& w = it->second.ci.workflows[row.w];
-                                   const std::string url = row.kind == matrix_model::row::job
-                                                               ? w.jobs[row.j].url
-                                                               : w.url;
-                                   if (!url.empty()) rap::sys::open_url(url);
-                               })
-                           .height(10_lines),
-                       // Why the selected job failed.
-                       vbox{
-                           text_view{}.read_only().compact().bind(failure_title_).height(3_lines),
-                           list{annotation_model::columns(), annotation_list_.get()}
-                               .headers(false)
-                               .compact()
-                               .selection(rap::selection_mode::single)
-                               .bind(annotations_)
-                               .on_activate(
-                                   [this](size_t r)
-                                   {
-                                       if (r < annotation_list_->rows.size() &&
-                                           !annotation_list_->rows[r].url.empty())
-                                           rap::sys::open_url(annotation_list_->rows[r].url);
-                                   })
-                               .height(4_lines),
-                           text_view{}.read_only().monospace().wrap(false).bind(log_tail_).height(
-                               12_lines),
-                           label{_("Open the full log")}
-                               .link(
-                                   [this]
-                                   {
-                                       if (!full_log_url_.empty())
-                                           rap::sys::open_url(full_log_url_);
-                                   })
-                               .bind(full_log_),
-                       }
-                           .handle(failure_part_),
-                       // The artifacts the runs left.
-                       vbox{
-                           list{artifact_model::columns(), artifact_list_.get()}
-                               .compact()
-                               .selection(rap::selection_mode::single)
-                               .bind(artifacts_)
-                               .on_selection_changed(
-                                   [this]
-                                   {
-                                       const auto sel = artifacts_->selection();
-                                       download_->set_enabled(
-                                           !downloading_ && sel.size() == 1 &&
-                                           sel.front() < artifact_list_->rows.size() &&
-                                           !artifact_list_->rows[sel.front()].expired);
-                                   })
-                               .on_activate([this](size_t) { download_selected(); })
-                               .height(5_lines),
-                           hbox{
-                               button{_("_Download...")}.bind(download_).enabled(false).on_click(
-                                   [this] { download_selected(); }),
-                               progress_bar{}.bind(download_progress_).stretch(),
-                               spacer{},
-                           },
-                           label{}.wrap().selectable().bind(download_status_),
-                       }
-                           .handle(artifact_part_),
-                   }
-                       .handle(build_part_),
-                   spacer{},
-               }}
+                        button{""}
+                            .bind(pr_buttons_[2])
+                            .on_click(
+                                [this]
+                                {
+                                    if (pr_actions_.size() > 2 && pr_actions_[2])
+                                        pr_actions_[2]();
+                                }),
+                        spacer{},
+                    },
+                }
+                    .stretch()
+                    .handle(pr_part_),
+                // Build
+                vbox{
+                    hbox{
+                        mark(build_mark_,
+                             [this, background](rap::painter& p, rap::size_f size)
+                             {
+                                 background(p, size);
+                                 paint_mark(p, size, build_mark_state_);
+                             }),
+                        label{}.ellipsize().bind(build_summary_).stretch(),
+                        label{_("Show all")}
+                            .link(
+                                [this]
+                                {
+                                    matrix_open_ = !matrix_open_;
+                                    matrix_opened_by_user_ = true;
+                                    update_build();
+                                })
+                            .bind(build_toggle_),
+                    },
+                }
+                    .handle(build_part_),
+                // Without a PR, holds the build's line at the top.
+                vbox{spacer{}}.stretch().handle(top_spacer_),
+            },
+            // Below it: the build's checks, why a job failed, its artifacts;
+            // hidden while there's none of that to show.
+            vbox{
+                list{matrix_model::columns(), matrix_.get()}
+                    .headers(false)
+                    .compact()
+                    .selection(rap::selection_mode::single)
+                    .bind(matrix_list_)
+                    .on_selection_changed(
+                        [this]
+                        {
+                            const auto sel = matrix_list_->selection();
+                            if (sel.size() != 1 || sel.front() >= matrix_->rows.size())
+                                return;
+                            const auto& row = matrix_->rows[sel.front()];
+                            if (row.kind != matrix_model::row::job) return;
+                            ask_failure(row.w, row.j);
+                        })
+                    .on_activate(
+                        [this](size_t r)
+                        {
+                            if (!sha_ || r >= matrix_->rows.size()) return;
+                            auto it = builds_.find(*sha_);
+                            if (it == builds_.end()) return;
+                            const auto& row = matrix_->rows[r];
+                            const ci_workflow& w = it->second.ci.workflows[row.w];
+                            const std::string url = row.kind == matrix_model::row::job
+                                                        ? w.jobs[row.j].url
+                                                        : w.url;
+                            if (!url.empty()) rap::sys::open_url(url);
+                        })
+                    .height(4_lines)
+                    .stretch(2),
+                // Why the selected job failed.
+                vbox{
+                    text_view{}.read_only().compact().bind(failure_title_).height(3_lines),
+                    list{annotation_model::columns(), annotation_list_.get()}
+                        .headers(false)
+                        .compact()
+                        .selection(rap::selection_mode::single)
+                        .bind(annotations_)
+                        .on_activate(
+                            [this](size_t r)
+                            {
+                                if (r < annotation_list_->rows.size() &&
+                                    !annotation_list_->rows[r].url.empty())
+                                    rap::sys::open_url(annotation_list_->rows[r].url);
+                            })
+                        .height(4_lines),
+                    text_view{}
+                        .read_only()
+                        .monospace()
+                        .wrap(false)
+                        .bind(log_tail_)
+                        .height(4_lines)
+                        .stretch(3),
+                    label{_("Open the full log")}
+                        .link(
+                            [this]
+                            {
+                                if (!full_log_url_.empty())
+                                    rap::sys::open_url(full_log_url_);
+                            })
+                        .bind(full_log_),
+                }
+                    .stretch(3)
+                    .handle(failure_part_),
+                // The artifacts the runs left.
+                vbox{
+                    list{artifact_model::columns(), artifact_list_.get()}
+                        .compact()
+                        .selection(rap::selection_mode::single)
+                        .bind(artifacts_)
+                        .on_selection_changed(
+                            [this]
+                            {
+                                const auto sel = artifacts_->selection();
+                                download_->set_enabled(
+                                    !downloading_ && sel.size() == 1 &&
+                                    sel.front() < artifact_list_->rows.size() &&
+                                    !artifact_list_->rows[sel.front()].expired);
+                            })
+                        .on_activate([this](size_t) { download_selected(); })
+                        .height(4_lines)
+                        .stretch(),
+                    hbox{
+                        button{_("_Download...")}.bind(download_).enabled(false).on_click(
+                            [this] { download_selected(); }),
+                        progress_bar{}.bind(download_progress_).stretch(),
+                        spacer{},
+                    },
+                    label{}.wrap().selectable().bind(download_status_),
+                }
+                    .stretch()
+                    .handle(artifact_part_),
+            }
+                .handle(build_body_),
+        }
+            .bind(parts_)
             .stretch(),
     }
         .width(30_ch)
@@ -939,28 +969,14 @@ void forge_panel::update_pull_request()
             pr_reviews_->set_text(text.empty() ? std::string(_("No reviews yet")) : text);
         }
 
-        // Its description's first lines; More... shows the rest.
+        // Its description, all of it, scrolling in its view.
         if (!pr.body_known)
-        {
             pr_body_->set_text(_("Asking for its description..."));
-            pr_body_->set_visible(true);
-            pr_body_all_->set_visible(false);
-            pr_more_->set_visible(false);
-        }
         else if (pr_url_ != pr.url + pr.head_sha || pr_body_text_ != clean_body(pr.body))
         {
             pr_body_text_ = clean_body(pr.body);
-            // All of it, scrolling in the short view; More... shows the tall
-            // one when it's likely longer than the short one shows.
-            bool cut = false;
-            first_lines(pr_body_text_, 5, cut);
-            const std::string text =
-                pr_body_text_.empty() ? std::string(_("No description.")) : pr_body_text_;
-            pr_body_->set_text(text);
-            pr_body_all_->set_text(text);
-            pr_body_->set_visible(true);
-            pr_body_all_->set_visible(false);
-            pr_more_->set_visible(cut || pr_body_text_.size() > 5 * 50);
+            pr_body_->set_text(pr_body_text_.empty() ? std::string(_("No description."))
+                                                     : pr_body_text_);
         }
         pr_url_ = pr.url + pr.head_sha;
 
@@ -1018,7 +1034,7 @@ void forge_panel::update_build()
         bool head = false;
         return pull_request_of(*sha_, head, nullptr) != nullptr;
     }();
-    separator_->set_visible(shown && pr_shown);
+    top_spacer_->set_visible(!pr_shown);
     if (const bool visible = shown || pr_shown; visible != visible_)
     {
         visible_ = visible;
@@ -1030,6 +1046,7 @@ void forge_panel::update_build()
     if (!shown)
     {
         failure_part_->set_visible(false);
+        fit_parts(pr_shown, false);
         return;
     }
 
@@ -1041,6 +1058,7 @@ void forge_panel::update_build()
         matrix_list_->set_visible(false);
         artifact_part_->set_visible(false);
         failure_part_->set_visible(false);
+        fit_parts(pr_shown, false);
         build_mark_->invalidate();
         return;
     }
@@ -1077,7 +1095,9 @@ void forge_panel::update_build()
     }
     update_failure();
 
-    artifact_part_->set_visible(b->artifacts_known && !b->artifacts.empty());
+    const bool artifacts = b->artifacts_known && !b->artifacts.empty();
+    artifact_part_->set_visible(artifacts);
+    fit_parts(pr_shown, matrix_open_ || artifacts);
     if (b->artifacts_known && artifact_list_->rows.size() != b->artifacts.size())
     {
         artifact_list_->rows = b->artifacts;

@@ -58,6 +58,13 @@ public:
 
     // The column, for the window's layout.
     rap::node layout();
+    // Once the window's built: follows the divider between the PR's part
+    // and the build's.
+    void built();
+    // Those parts' heights as the divider was last dragged with both shown,
+    // put back whenever both show again; for saving. Empty: as they stretch.
+    const std::vector<float>& part_sizes() const { return part_sizes_; }
+    void set_part_sizes(std::vector<float> sizes);
 
     // The open pull requests and the forge remotes, as pr_watch last heard;
     // which commits are each one's is worked out on a worker.
@@ -102,6 +109,7 @@ private:
     void update();
     void update_pull_request();
     void update_build();
+    void fit_parts(bool pr, bool lists);
     void update_failure();
     void update_watch();
     void ask_details(const pr_entry&);
@@ -162,13 +170,24 @@ private:
     rap::canvas* pr_checks_mark_ = nullptr;
     rap::label* pr_checks_ = nullptr;
     rap::label* pr_reviews_ = nullptr;
-    rap::text_view* pr_body_ = nullptr;      // its first lines
-    rap::text_view* pr_body_all_ = nullptr;  // taller, after More...
-    rap::label* pr_more_ = nullptr;
+    rap::text_view* pr_body_ = nullptr;
     rap::label* pr_also_ = nullptr;
     std::array<rap::button*, 3> pr_buttons_{};
     std::vector<std::function<void()>> pr_actions_;
-    rap::widget* separator_ = nullptr;
+    rap::splitter* parts_ = nullptr;  // the PR and the build's line; the build's lists
+    std::vector<float> part_sizes_;
+    // What the divider has above and below it: fit_parts sets its place
+    // again only when this changes.
+    enum class parts
+    {
+        unknown,
+        one,           // nothing below it
+        pr_and_lists,  // a PR above
+        lists,         // only the build's line above
+    };
+    parts parts_state_ = parts::unknown;
+    rap::widget* top_spacer_ = nullptr;
+    rap::widget* build_body_ = nullptr;
     rap::widget* build_part_ = nullptr;
     rap::canvas* build_mark_ = nullptr;
     rap::label* build_summary_ = nullptr;

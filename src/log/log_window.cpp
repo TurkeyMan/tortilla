@@ -18,6 +18,7 @@
 #include <rapport/sys.h>
 
 #include <algorithm>
+#include <cmath>
 #include <ctime>
 #include <filesystem>
 #include <numeric>
@@ -559,7 +560,19 @@ void log_window::build()
         {
             if (alive.lock()) show_notices();
         });
-    forge_splitter_->on_moved([this] { fit_files(); });
+    forge_splitter_->on_moved(
+        [this]
+        {
+            // The share it's dragged to is the one it keeps.
+            if (forge_panel_visible_)
+            {
+                forge_sizes_ = forge_splitter_->sizes();
+                forge_total_ = 0;
+                for (float s : forge_sizes_) forge_total_ += s;
+            }
+            fit_files();
+        });
+    forge_panel_->built();
     if (auto saved = settings::get().value("log.actionIcons"); !saved.empty())
         log_.set_action_icon_style(action_icon_style(std::clamp(std::atoi(saved.c_str()), 0, 3)));
     restore_layout();
@@ -601,6 +614,8 @@ void log_window::save_layout()
     st.set_numbers("log.panes.details", details_splitter_->sizes());
     if (forge_panel_visible_) forge_sizes_ = forge_splitter_->sizes();
     if (!forge_sizes_.empty()) st.set_numbers("log.panes.forge", forge_sizes_);
+    if (!forge_panel_->part_sizes().empty())
+        st.set_numbers("log.panes.forge.parts", forge_panel_->part_sizes());
     st.set_numbers("log.columns", commit_list_->column_widths());
     auto order = [](const std::vector<size_t>& o)
     {
@@ -652,6 +667,7 @@ void log_window::restore_layout()
         splitter_->set_sizes(v);
     if (auto v = st.numbers("log.panes.details"); v.size() == 2) details_splitter_->set_sizes(v);
     if (auto v = st.numbers("log.panes.forge"); v.size() == 2) forge_sizes_ = v;
+    if (auto v = st.numbers("log.panes.forge.parts"); v.size() == 2) forge_panel_->set_part_sizes(v);
     if (auto v = st.numbers("log.columns"); !v.empty()) commit_list_->set_column_widths(v);
     // The lists ignore an order that doesn't fit their columns.
     auto order = [](const std::vector<float>& v)
@@ -903,24 +919,38 @@ void log_window::update_pull_requests()
     forge_panel_->set_pull_requests(pr_watch_->pull_requests(), pr_watch_->remotes());
 }
 
-// The forge panel's column keeps the width it was last given.
+// The forge panel's column keeps its share of the width: the share it was
+// last dragged to (else a third, about 60 characters at most), as it shows
+// and as the window's size changes while it's shown. Rapport's splitter
+// keeps a dragged pane's pixels instead, so at a narrower window the
+// column took the commit's text and files down to their least.
 void log_window::forge_panel_shown(bool on)
 {
     if (!on && forge_panel_visible_) forge_sizes_ = forge_splitter_->sizes();
     forge_panel_visible_ = on;
-    if (on && forge_sizes_.size() == 2 && forge_sizes_[0] > 0 && forge_sizes_[1] > 0)
-        forge_splitter_->set_sizes(forge_sizes_);
-    else if (on)
+    forge_width_watch_ = {};
+    if (on)
     {
-        // The first time, a third of the width (about 60 characters at
-        // most); its least is the column's own width, 30 characters.
-        float total = 0;
-        for (float s : forge_splitter_->sizes()) total += s;
-        const float side = std::min(total / 3, 480.f);
-        if (side > 0) forge_splitter_->set_sizes({total - side, side});
+        keep_forge_share(true);
+        // Rapport has no word of the window's size changing: looked at
+        // while the column's shown.
+        forge_width_watch_ = ui_.timer(200, true, [this] { keep_forge_share(false); });
     }
     // The file list's width changes with it, once the layout's done.
     fit_timer_ = ui_.timer(50, false, [this] { fit_files(); });
+}
+
+void log_window::keep_forge_share(bool showing)
+{
+    float total = 0;
+    for (float s : forge_splitter_->sizes()) total += s;
+    if (total <= 0 || (!showing && std::abs(total - forge_total_) < 1)) return;
+    forge_total_ = total;
+    const bool dragged = forge_sizes_.size() == 2 && forge_sizes_[0] > 0 && forge_sizes_[1] > 0;
+    const float side = dragged ? total * forge_sizes_[1] / (forge_sizes_[0] + forge_sizes_[1])
+                               : std::min(total / 3, 480.f);
+    forge_splitter_->set_sizes({total - side, side});
+    if (!showing) fit_files();
 }
 
 // The file list's Path column takes what its other columns leave.
