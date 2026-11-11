@@ -6,6 +6,7 @@
 #include "settings.h"
 #include "ui/progress_dialog.h"
 #include "ui/repo_icon.h"
+#include "ui/settings_dialog.h"
 #include "util/repo_path.h"
 
 #include <rapport/sys.h>
@@ -107,11 +108,13 @@ void clean_up(rap::ui& ui, rap::window* parent, std::vector<std::string> paths,
             o.submodules = keep->submodules->checked();
             const bool trash = keep->trash->checked();
             const bool dry_run = keep->dry_run->checked();
-            settings& set = settings::get();
+            settings_changes set;
             set.set("cleanup.files", std::to_string(int(o.files)));
             set.set("cleanup.directories", o.directories ? "1" : "0");
             set.set("cleanup.trash", trash ? "1" : "0");
             set.set("cleanup.submodules", o.submodules ? "1" : "0");
+            if (const settings::saved saved = settings::get().apply(set); !saved)
+                report_unsaved_settings(ui, nullptr, saved.error);
 
             // A dry run, or for good: git clean in the progress dialog.
             if (dry_run || !trash)

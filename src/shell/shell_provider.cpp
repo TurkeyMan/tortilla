@@ -15,6 +15,7 @@
 #include "git/badges.h"
 #include "git/svn.h"
 #include "menu_table.h"
+#include "util/replaced_file.h"
 
 #include <rapport/shell.h>
 
@@ -575,7 +576,11 @@ struct menu_settings
 menu_settings read_settings()
 {
     menu_settings out;
-    std::ifstream in(settings_file());
+    // Settings replaces the file by renaming a new one over it: an open that
+    // meets that is tried again, so the menu isn't built from no settings.
+    const fs::path file = settings_file();
+    std::ifstream in = tortilla::open_replaced_file(
+        file, [&] { return std::ifstream(file); }, 10, std::chrono::milliseconds(5));
     for (std::string line; std::getline(in, line);)
     {
         const size_t eq = line.find('=');

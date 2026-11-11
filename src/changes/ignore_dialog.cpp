@@ -8,6 +8,7 @@
 #include "i18n.h"
 #include "settings.h"
 #include "ui/repo_icon.h"
+#include "ui/settings_dialog.h"
 #include "util/repo_path.h"
 
 #include <rapport/sys.h>
@@ -198,9 +199,12 @@ void show_ignore_dialog(rap::ui& ui, std::vector<std::string> paths, bool by_ext
             auto s = weak.lock();
             if (!s) return;
             if (role != rap::dialog_role::ok) return s->finish(false);
-            settings::get().set(by_extension ? "ignore.maskScope" : "ignore.nameScope",
-                                std::to_string(s->scope->current()));
-            settings::get().set("ignore.where", std::to_string(s->target->current()));
+            settings_changes choices;
+            choices.set(by_extension ? "ignore.maskScope" : "ignore.nameScope",
+                        std::to_string(s->scope->current()));
+            choices.set("ignore.where", std::to_string(s->target->current()));
+            if (const settings::saved saved = settings::get().apply(choices); !saved)
+                report_unsaved_settings(s->ui, nullptr, saved.error);
             if (const std::string error = s->write(); !error.empty())
                 return s->fail(_("Couldn't add to the ignore list."), error);
             if (s->stop_tracking && s->stop_tracking->checked())

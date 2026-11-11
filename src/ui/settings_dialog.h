@@ -27,4 +27,9 @@ void show_settings(rap::ui&, rap::window* parent, const std::string& repo_dir,
                   settings_page first = settings_page::general, std::function<void()> saved = {},
                   std::function<void()> closed = {});
 
+// Says that choices weren't saved, and why (`error`, from settings::apply).
+// The settings are as they were; what was chosen still applies to what the
+// user asked for now.
+void report_unsaved_settings(rap::ui&, rap::window* parent, const std::string& error);
+
 }  // namespace tortilla

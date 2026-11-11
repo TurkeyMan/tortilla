@@ -16,6 +16,8 @@
 namespace tortilla
 {
 
+class settings_changes;  // settings.h
+
 struct detected_merge_tool
 {
     std::string name, command;
@@ -27,6 +29,7 @@ std::vector<detected_merge_tool> detect_merge_tools();
 std::string merge_command();
 std::string saved_merge_command();
 void save_merge_command(const std::string&);
+void save_merge_command(settings_changes&, const std::string&);
 
 // A conflicted file's sides, written beside it.
 struct conflict_sides

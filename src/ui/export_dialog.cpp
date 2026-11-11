@@ -6,6 +6,7 @@
 #include "settings.h"
 #include "ui/progress_dialog.h"
 #include "ui/repo_icon.h"
+#include "ui/settings_dialog.h"
 
 #include <rapport/sys.h>
 
@@ -211,8 +212,11 @@ void export_revision(rap::ui& ui, rap::window* parent, const std::string& workdi
             // git runs in the repository, so a relative path is taken from
             // the suggested folder instead, as it was shown.
             const fs::path out = (dir / rap::sys::path_from_utf8(typed)).lexically_normal();
-            settings::get().set("export.dir", rap::sys::path_to_utf8(out.parent_path()));
-            settings::get().set("export.folder", zip ? "0" : "1");
+            settings_changes choices;
+            choices.set("export.dir", rap::sys::path_to_utf8(out.parent_path()));
+            choices.set("export.folder", zip ? "0" : "1");
+            if (const settings::saved saved = settings::get().apply(choices); !saved)
+                report_unsaved_settings(ui, nullptr, saved.error);
 
             // Writing over what's there asks first, unless the file chooser
             // just did.

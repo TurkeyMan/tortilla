@@ -17,6 +17,8 @@
 namespace tortilla
 {
 
+class settings_changes;  // settings.h
+
 struct ssh_client
 {
     std::string name;
@@ -27,6 +29,10 @@ struct ssh_client
 
 ssh_client saved_ssh_client();
 void save_ssh_client(const ssh_client&);
+// The same, among other changes saved together; use_ssh_client() once they
+// are, for the gits started after.
+void save_ssh_client(settings_changes&, const ssh_client&);
+void use_ssh_client(const ssh_client&);
 
 // What git uses when tortilla doesn't choose: core.sshCommand for
 // `repo_dir`, else GIT_SSH_COMMAND or GIT_SSH from tortilla's environment;

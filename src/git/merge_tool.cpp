@@ -93,6 +93,11 @@ std::string saved_merge_command()
     return settings::get().value("merge.command");
 }
 
+void save_merge_command(settings_changes& s, const std::string& c)
+{
+    s.set("merge.command", c);
+}
+
 void save_merge_command(const std::string& c)
 {
     settings::get().set("merge.command", c);

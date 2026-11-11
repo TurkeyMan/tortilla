@@ -7,6 +7,7 @@
 #include "settings.h"
 #include "ui/progress_dialog.h"
 #include "ui/repo_icon.h"
+#include "ui/settings_dialog.h"
 #include "ui/windows.h"
 #include "util/strings.h"
 
@@ -385,8 +386,11 @@ void pull_request_dialog::create()
         title_->focus();
         return;
     }
-    settings::get().set("pr.browse", browse_->checked() ? "1" : "0");
-    settings::get().set("pr.draft", draft_->checked() ? "1" : "0");
+    settings_changes choices;
+    choices.set("pr.browse", browse_->checked() ? "1" : "0");
+    choices.set("pr.draft", draft_->checked() ? "1" : "0");
+    if (const settings::saved saved = settings::get().apply(choices); !saved)
+        report_unsaved_settings(ui_, nullptr, saved.error);
     if (local_.empty() || !needs_push_ || (on_forge_ && !push_->checked())) return send();
     // The branch first, then (if that worked) the pull request.
     std::vector<std::string> push{"push"};
