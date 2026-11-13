@@ -191,7 +191,8 @@ void log_window::refs_changed()
             update_pull_requests();
             if (pr_watch_) pr_watch_->nudge();  // a push or fetch may have changed them
             recheck_changes();
-            if (auto sel = commit_list_->selection(); sel.size() == 1) show_commit(sel.front());
+            if (auto sel = page_->commit_list->selection(); sel.size() == 1)
+                show_commit(sel.front());
         });
 }
 
@@ -257,7 +258,7 @@ void log_window::difftool(std::vector<std::string> revisions, std::vector<std::s
 
 menu log_window::context_menu(std::optional<size_t> clicked)
 {
-    auto sel = commit_list_->selection();
+    auto sel = page_->commit_list->selection();
     if (sel.empty()) return {};
 
     const bool has_wc = !repo_.bare();
@@ -842,7 +843,7 @@ menu log_window::context_menu(std::optional<size_t> clicked)
     if (sel.size() == 1 && log_.refs_of(sel.front()))
         copy.children.push_back(copy_item(_("Tag/branch names"), copy_ref_names));
     m.push_back(std::move(copy));
-    m.push_back(item(_("Search _log messages..."), [this] { search_->focus(); }));
+    m.push_back(item(_("Search _log messages..."), [this] { page_->search->focus(); }));
     if (sel.size() == 1)
         if (const commit* c = log_.commit(sel.front()))
             m.push_back(item(_("Show branches this commit is _on"),
@@ -1060,7 +1061,7 @@ menu log_window::cell_menu(size_t row, size_t column, rap::point_f at)
 void log_window::row_activated(size_t row)
 {
     // A double-click on a label (its press was just now, on this row).
-    auto press = std::exchange(last_label_press_, std::nullopt);
+    auto press = std::exchange(page_->last_label_press, std::nullopt);
     if (!press || press->row != row ||
         std::chrono::steady_clock::now() - press->at > std::chrono::seconds(1))
         return;
@@ -1258,11 +1259,11 @@ rap::list::cell_drag log_window::label_drag()
         .begin = [this](size_t row, size_t column,
                         rap::point_f at) -> std::optional<rap::list::cell_drag_start>
         {
-            last_label_press_.reset();
+            page_->last_label_press.reset();
             if (column != log_model::message) return std::nullopt;
             auto ref = log_.label_at(row, at.x);
             if (ref)
-                last_label_press_ =
+                page_->last_label_press =
                     label_press{row, ref->full_name, std::chrono::steady_clock::now()};
             // Remote branches would need a force push: not by dragging; nor a
             // branch another worktree has checked out (its files would change).

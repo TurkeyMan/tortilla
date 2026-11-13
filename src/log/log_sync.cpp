@@ -126,11 +126,12 @@ void log_window::update_sync_badge()
                               : !failures_.empty() ? fetch_badge::failure
                               : count              ? fetch_badge::changes
                                                    : fetch_badge::none;
-    if (badge != badge_shown_ || (badge == fetch_badge::changes && count != badge_count_))
+    if (badge != page_->badge_shown ||
+        (badge == fetch_badge::changes && count != page_->badge_count))
     {
-        fetch_->set_icon(fetch_icon(badge, count));
-        badge_shown_ = badge;
-        badge_count_ = count;
+        page_->fetch->set_icon(fetch_icon(badge, count));
+        page_->badge_shown = badge;
+        page_->badge_count = count;
     }
 
     std::string tip = _("Fetch from every remote, and fast-forward the branches behind them");
@@ -141,20 +142,20 @@ void log_window::update_sync_badge()
     // Repositories the forge hid from no one: signing in may show more.
     if (pr_watch_)
         for (const forge_remote& h : pr_watch_->hints()) tip += "\n" + hint_text(h);
-    fetch_->set_tooltip(tip);
+    page_->fetch->set_tooltip(tip);
 }
 
 void log_window::set_sync_notice(std::string text, bool failure)
 {
     notice_ = std::move(text);
-    status_mark_->set_visible(failure && !notice_.empty());
-    status_mark_->invalidate();
+    page_->status_mark->set_visible(failure && !notice_.empty());
+    page_->status_mark->invalidate();
     update_status();
     notice_timer_ = ui_.timer(10000, false,
                               [this]
                               {
                                   notice_.clear();
-                                  status_mark_->set_visible(false);
+                                  page_->status_mark->set_visible(false);
                                   update_status();
                               });
 }
@@ -167,9 +168,9 @@ void log_window::sync(const std::string& only)
 {
     if (syncing_) return;
     syncing_ = true;
-    fetch_->set_enabled(false);
-    status_->set_text(only.empty() ? std::string(_("Fetching from the remotes…"))
-                                   : rap::i18n::format(_("Fetching {0}..."), only));
+    page_->fetch->set_enabled(false);
+    page_->status->set_text(only.empty() ? std::string(_("Fetching from the remotes…"))
+                                         : rap::i18n::format(_("Fetching {0}..."), only));
     // The forge's view too, at once (a forge action asks it itself).
     if (only.empty() && pr_watch_) pr_watch_->refresh();
     auto run = sync_run_ = std::make_shared<sync_state>();
@@ -257,7 +258,7 @@ void log_window::sync_finished(const std::shared_ptr<sync_state>& run)
 {
     if (run == sync_run_) sync_run_.reset();
     syncing_ = false;
-    fetch_->set_enabled(true);
+    page_->fetch->set_enabled(true);
     last_output_.clear();
     std::vector<std::string> failed;
     fetch_failure kind = fetch_failure::none;
@@ -304,7 +305,7 @@ void log_window::sync_finished(const std::shared_ptr<sync_state>& run)
 
 void log_window::start_sync_watch()
 {
-    status_mark_->set_cursor(rap::cursor::pointer);
+    page_->status_mark->set_cursor(rap::cursor::pointer);
     update_sync_badge();
     if (pr_watch_) pr_watch_->want_branch_tips(allowed_now(check_setting()));
     // A first look a little after opening, once the log has loaded.
@@ -470,28 +471,28 @@ void log_window::show_branch_hint(const current_state& s)
     const std::string key = s.branch + ' ' + s.upstream + ' ' + std::to_string(s.behind);
     if (s.behind <= 0 || s.upstream.empty() || key == hint_hidden_ || picked_)
     {
-        hint_bar_->set_visible(false);
+        page_->hint_bar->set_visible(false);
         return;
     }
     const size_t n = size_t(s.behind);
     if (s.ahead == 0)
-        hint_text_->set_text(rap::i18n::format(
+        page_->hint_text->set_text(rap::i18n::format(
             N_("{0} is {1} commit behind {2}", "{0} is {1} commits behind {2}", n), s.branch, n,
             s.upstream));
     else
-        hint_text_->set_text(rap::i18n::format(
+        page_->hint_text->set_text(rap::i18n::format(
             N_("{0} is {1} commit behind {2}, with {3} of its own: they have diverged",
                "{0} is {1} commits behind {2}, with {3} of its own: they have diverged", n),
             s.branch, n, s.upstream, s.ahead));
-    hint_ff_->set_visible(s.ahead == 0);
-    hint_pull_->set_visible(s.ahead != 0);
-    hint_bar_->set_visible(true);
+    page_->hint_ff->set_visible(s.ahead == 0);
+    page_->hint_pull->set_visible(s.ahead != 0);
+    page_->hint_bar->set_visible(true);
 }
 
 // git refuses if uncommitted changes are in the way, and says why.
 void log_window::fast_forward_current()
 {
-    hint_bar_->set_visible(false);
+    page_->hint_bar->set_visible(false);
     run_quietly(_("Fast-forward"), {{"merge", "--ff-only", "@{u}"}},
                 [this](bool, const std::string&) { reload(); });
 }

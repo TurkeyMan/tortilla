@@ -14,6 +14,7 @@
 #include "log/forge_panel.h"
 #include "log/forge_share.h"
 #include "log/log_model.h"
+#include "log/log_page.h"
 #include "rebase/rebase_window.h"
 
 #include "ui/diff_window.h"
@@ -179,26 +180,10 @@ private:
     void set_sync_notice(std::string text, bool failure);
     void keep_pull_dialog();
     // The button's icon: the desktop's download icon unbadged (drawn where
-    // there are no named icons, Windows), or drawn with its badge: changes
-    // waiting (a dot with their count), a remote that failed (a red "!"),
-    // or no network (greyed, Offline).
-    enum class fetch_badge
-    {
-        none,
-        changes,
-        failure,
-        offline,
-    };
+    // there are no named icons, Windows), or drawn with its badge
+    // (log_page.h).
     static rap::icon fetch_icon(fetch_badge = fetch_badge::none, size_t count = 0);
-    fetch_badge badge_shown_ = fetch_badge::none;
-    size_t badge_count_ = 0;
     static void paint_failure_mark(rap::painter&, rap::size_f);
-    rap::button* fetch_ = nullptr;
-    rap::canvas* status_mark_ = nullptr;
-    rap::widget* hint_bar_ = nullptr;
-    rap::label* hint_text_ = nullptr;
-    rap::button* hint_ff_ = nullptr;
-    rap::button* hint_pull_ = nullptr;
     bool syncing_ = false;
     // The remotes' branches as last heard, by remote: the forge's answer, or
     // ls-remote's.
@@ -244,13 +229,6 @@ private:
     // do with uncommitted changes), a remote one opens Create Branch for a
     // local branch tracking it. The label comes from the last press, which
     // label_drag's begin sees.
-    struct label_press
-    {
-        size_t row;
-        std::string full_name;
-        std::chrono::steady_clock::time_point at;
-    };
-    std::optional<label_press> last_label_press_;
     void row_activated(size_t row);
     enum class switch_mode
     {
@@ -329,46 +307,30 @@ private:
     std::function<void()> closed_;
     std::function<void(std::vector<commit>)> picked_;
     std::string pick_purpose_;
-    rap::button* ok_ = nullptr;
-    rap::button* cancel_ = nullptr;
     void update_pick_button();
+    // The widgets and what lives as long as they do. After window_, so it
+    // goes first (the date pop-up before the window it's over).
+    std::unique_ptr<log_page> page_;
 
-    // Widgets
-    rap::menu_button* ref_button_ = nullptr;
-    rap::entry_action* dates_ = nullptr;
-    // The date pop-up, while open, and its pickers.
-    std::unique_ptr<rap::window> dates_popup_;
-    rap::date_picker* from_ = nullptr;
-    rap::date_picker* to_ = nullptr;
     rap::date loaded_from_, loaded_to_;  // the dates loaded, without limits
-    rap::entry* search_ = nullptr;
-    rap::drop_down* jump_type_ = nullptr;
-    rap::list* commit_list_ = nullptr;
-    rap::text_view* details_ = nullptr;
-    rap::canvas* avatar_canvas_ = nullptr;
-    rap::label* status_ = nullptr;
-    rap::check* only_path_ = nullptr;
-    rap::entry* path_filter_ = nullptr;
+    // What the widgets say, kept here: the "Only changes to" box, the jump
+    // combo's choice, and the text in the filter box (filter_.text is what's
+    // applied) and the path filter box.
+    bool only_path_ = true;
+    int jump_type_ = 0;
+    std::string search_text_;
+    std::string path_filter_text_;
     // The preset chosen, while following a file's renames walks from HEAD
     // instead: restored after, and what's saved.
     std::optional<show_preset> refs_before_follow_;
-    rap::button* statistics_ = nullptr;
-    rap::menu_button* walk_ = nullptr;
-    rap::menu_button* view_ = nullptr;
-    rap::progress_bar* progress_ = nullptr;
-    rap::splitter* splitter_ = nullptr;
     // Under the list: the commit's text over its files, and the forge panel
     // beside both, a column of its own (shown when it has something to say).
-    rap::splitter* details_splitter_ = nullptr;
-    rap::splitter* forge_splitter_ = nullptr;
-    std::vector<float> forge_sizes_;            // as last shown, for showing it again
-    forge_share forge_share_;                   // what its share was last fitted to
-    rap::subscription forge_width_watch_;       // while it's shown
+    std::vector<float> forge_sizes_;  // as last shown, for showing it again
+    forge_share forge_share_;         // what its share was last fitted to
     bool forge_panel_visible_ = false;
     void forge_panel_shown(bool);
     void keep_forge_share(bool showing);
     void fit_files();
-    rap::subscription fit_timer_;
 
     // Options
     walk_options walk_options_;
@@ -380,7 +342,6 @@ private:
     // The file list's view from those and the path filter box.
     void update_file_view();
     std::optional<int64_t> since_, until_;  // explicit date limits
-    rap::subscription filter_timer_, pulse_timer_, path_filter_timer_;
     // Reloading when something else changes the repository.
     void watch_repository();
     std::string repository_state() const;
@@ -443,8 +404,6 @@ private:
     ref_journal journal_;
     // After the journal, so gone first (waiting for a write under way).
     std::unique_ptr<history_writer> edit_writer_;
-    rap::tool_button* undo_ = nullptr;
-    rap::tool_button* redo_ = nullptr;
     void step_journal(bool redo);
     void update_undo_buttons();
     static rap::icon undo_icon(bool redo);

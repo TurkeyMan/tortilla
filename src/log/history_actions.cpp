@@ -633,7 +633,7 @@ void log_window::start_history_edit(const std::string& title, edit_maker make,
                                     journal_use use)
 {
     if (!claim_history_writer(title)) return;
-    status_->set_text(rap::i18n::format(_("{0}..."), title));
+    page_->status->set_text(rap::i18n::format(_("{0}..."), title));
     if (label.empty()) label = title;
     edit_writer_->prepare(
         [this, title, make = std::move(make), fallback = std::move(fallback), label,
@@ -763,16 +763,16 @@ void log_window::step_journal(bool redo)
 
 void log_window::update_undo_buttons()
 {
-    if (!undo_ || !redo_) return;
+    if (!page_->undo || !page_->redo) return;
     const journal_step* u = journal_.next_undo();
     const journal_step* r = journal_.next_redo();
     const bool busy = history_edit_busy();
-    undo_->set_enabled(u && !picked_ && !busy);
-    redo_->set_enabled(r && !picked_ && !busy);
-    undo_->set_tooltip(u ? rap::i18n::format(_("Undo {0} (Ctrl+Z)"), u->label)
-                         : std::string(_("Nothing to undo")));
-    redo_->set_tooltip(r ? rap::i18n::format(_("Redo {0} (Ctrl+Y)"), r->label)
-                         : std::string(_("Nothing to redo")));
+    page_->undo->set_enabled(u && !picked_ && !busy);
+    page_->redo->set_enabled(r && !picked_ && !busy);
+    page_->undo->set_tooltip(u ? rap::i18n::format(_("Undo {0} (Ctrl+Z)"), u->label)
+                               : std::string(_("Nothing to undo")));
+    page_->redo->set_tooltip(r ? rap::i18n::format(_("Redo {0} (Ctrl+Y)"), r->label)
+                               : std::string(_("Nothing to redo")));
 }
 
 // The desktop's undo and redo arrows, else drawn: a hooked arrow in the
