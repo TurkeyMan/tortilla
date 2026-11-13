@@ -119,8 +119,9 @@ target_include_directories(tortilla_git PUBLIC src)
 target_link_libraries(tortilla_git PUBLIC ${TORTILLA_LIBGIT2} rapport::rapport)
 target_compile_features(tortilla_git PUBLIC cxx_std_23)
 
-add_executable(tortilla
-    src/main.cpp
+# The app but main(): its windows, which the tests build too (on the null
+# backend).
+add_library(tortilla_app STATIC
     src/log/log_window.cpp
     src/log/log_tab.cpp
     src/log/log_tab_page.cpp
@@ -181,7 +182,10 @@ add_executable(tortilla
     src/ui/git_missing.cpp
     src/ui/trust_repository.cpp
     src/changes/rename_dialog.cpp)
-target_link_libraries(tortilla PRIVATE rapport::rapport tortilla_git)
+target_link_libraries(tortilla_app PUBLIC rapport::rapport tortilla_git)
+
+add_executable(tortilla src/main.cpp)
+target_link_libraries(tortilla PRIVATE rapport::rapport tortilla_app)
 if(WIN32)
     enable_language(RC)
     target_sources(tortilla PRIVATE data/windows/tortilla.rc)
@@ -239,7 +243,7 @@ file(READ ${TORTILLA_MASCOT_PNG} TORTILLA_MASCOT HEX)
 string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," TORTILLA_MASCOT "${TORTILLA_MASCOT}")
 file(GENERATE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/mascot.cpp CONTENT
      "#include <cstddef>\n#include <cstdint>\nnamespace tortilla\n{\nextern const uint8_t k_mascot_png[] = {${TORTILLA_MASCOT}};\nextern const size_t k_mascot_png_size = sizeof k_mascot_png;\n}\n")
-target_sources(tortilla PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/mascot.cpp)
+target_sources(tortilla_app PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/mascot.cpp)
 
 # The icon at each size, whole and split into its shell and the rest,
 # built in too: windows tint the shell per repository, and carry the icon
@@ -259,11 +263,11 @@ foreach(n 16 20 24 32 40 48 64 256)
 endforeach()
 file(GENERATE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/icon_layers.cpp CONTENT
      "#include \"ui/repo_icon.h\"\nnamespace tortilla\n{\nnamespace\n{\n${TORTILLA_ICON_LAYERS}}\nextern const std::vector<icon_layers> k_icon_layers = {\n${TORTILLA_ICON_TABLE}};\n}\n")
-target_sources(tortilla PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/icon_layers.cpp)
+target_sources(tortilla_app PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/icon_layers.cpp)
 # The one version: the About box's, the packages' and the installer's
 # (.github/ci reads it from the project() line above), and tortilla.exe's
 # version resource, which wants it as four numbers.
-target_compile_definitions(tortilla PRIVATE TORTILLA_VERSION="${PROJECT_VERSION}")
+target_compile_definitions(tortilla_app PUBLIC TORTILLA_VERSION="${PROJECT_VERSION}")
 if(WIN32)
     target_compile_definitions(tortilla PRIVATE
         TORTILLA_VERSION_NUMBERS=${PROJECT_VERSION_MAJOR},${PROJECT_VERSION_MINOR},${PROJECT_VERSION_PATCH},0)
@@ -313,8 +317,8 @@ if(UNIX AND NOT APPLE)
     set(fm_condition ${CMAKE_INSTALL_FULL_LIBEXECDIR}/tortilla/fm-condition)
     set(fm_defines TORTILLA_FM_CONDITION="${fm_condition}"
                    TORTILLA_FM_PROGRAM="${CMAKE_INSTALL_FULL_BINDIR}/tortilla")
-    target_sources(tortilla PRIVATE src/shell/fm_actions.cpp)
-    target_compile_definitions(tortilla PRIVATE ${fm_defines})
+    target_sources(tortilla_app PRIVATE src/shell/fm_actions.cpp)
+    target_compile_definitions(tortilla_app PUBLIC ${fm_defines})
     add_executable(tortilla-fm-actions tools/make_fm_actions.cpp src/shell/fm_actions.cpp)
     target_include_directories(tortilla-fm-actions PRIVATE src)
     target_link_libraries(tortilla-fm-actions PRIVATE rapport::rapport)
@@ -344,8 +348,9 @@ if(NOT MSVC)
     target_compile_options(tortilla_git PUBLIC -Wno-missing-field-initializers)
 endif()
 
-add_executable(tortilla-tests tests/log_model_test.cpp tests/journal_tests.cpp tests/raw_client.cpp)
-target_link_libraries(tortilla-tests PRIVATE tortilla_git rapport::rapport)
+add_executable(tortilla-tests tests/log_model_test.cpp tests/journal_tests.cpp tests/raw_client.cpp
+               tests/log_page_tests.cpp)
+target_link_libraries(tortilla-tests PRIVATE tortilla_app rapport::rapport)
 
 add_executable(tortilla-icon-preview tools/icon_preview.cpp)
 target_link_libraries(tortilla-icon-preview PRIVATE tortilla_git rapport::rapport)

@@ -56,11 +56,16 @@ public:
     forge_panel(const forge_panel&) = delete;
     forge_panel& operator=(const forge_panel&) = delete;
 
-    // The column, for the window's layout.
+    // The column, for the window's layout: shown or hidden as it last was.
+    // Called again for each page the log builds.
     rap::node layout();
     // Once the window's built: follows the divider between the PR's part
-    // and the build's.
+    // and the build's, draws what's known, and, the column shown, says so
+    // (host::shown).
     void built();
+    // The page going: its widgets forgotten and their timers stopped. What
+    // the panel knows, and its asking, carry on for the next page.
+    void unbind();
     // Those parts' heights as the divider was last dragged with both shown,
     // put back whenever both show again; for saving. Empty: as they stretch.
     const std::vector<float>& part_sizes() const { return part_sizes_; }
@@ -153,6 +158,7 @@ private:
     rap::subscription poll_timer_, download_timer_;
     std::chrono::steady_clock::time_point poll_after_{};  // the answer the poll timer follows
     bool downloading_ = false;
+    bool download_pulsing_ = false;  // its size unknown: the bar says it's busy
     std::shared_ptr<std::atomic<bool>> download_cancel_;
 
     std::unique_ptr<matrix_model> matrix_;

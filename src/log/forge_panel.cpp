@@ -411,6 +411,38 @@ void forge_panel::built()
         {
             if (parts_state_ == parts::pr_and_lists) part_sizes_ = parts_->sizes();
         });
+    // A page built again: what's known drawn, a download under way with it.
+    const bool shown = visible_;
+    update();
+    if (shown && visible_ && host_.shown) host_.shown(true);
+    if (downloading_)
+    {
+        download_->set_enabled(false);
+        download_progress_->set_visible(true);
+        if (download_pulsing_)
+            download_timer_ = host_.ui.timer(100, true, [this] { download_progress_->pulse(); });
+    }
+}
+
+void forge_panel::unbind()
+{
+    parts_retry_ = {};
+    download_timer_ = {};
+    // The next page's divider is placed anew, and its description set.
+    parts_state_ = parts::unknown;
+    pr_url_.clear();
+    pr_body_text_.clear();
+    root_ = pr_part_ = top_spacer_ = build_body_ = build_part_ = failure_part_ = artifact_part_ =
+        nullptr;
+    pr_title_ = pr_author_ = pr_merge_ = pr_checks_ = pr_reviews_ = pr_also_ = build_summary_ =
+        build_toggle_ = full_log_ = download_status_ = nullptr;
+    pr_avatar_ = pr_merge_mark_ = pr_checks_mark_ = build_mark_ = nullptr;
+    pr_body_ = failure_title_ = log_tail_ = nullptr;
+    pr_buttons_ = {};
+    parts_ = nullptr;
+    matrix_list_ = annotations_ = artifacts_ = nullptr;
+    download_ = nullptr;
+    download_progress_ = nullptr;
 }
 
 // The divider between the PR (and the build's line) and the build's lists.
@@ -677,7 +709,7 @@ rap::node forge_panel::layout()
             .stretch(),
     }
         .width(30_ch)
-        .visible(false)
+        .visible(visible_)
         .handle(root_);
 }
 
@@ -1394,7 +1426,7 @@ void forge_panel::ask_failure(size_t workflow, size_t job)
                                failures_[id] = *got;
                            else
                                failure_errors_[id] = got.error();
-                           update_failure();
+                           if (root_) update_failure();
                        };
                    });
     }
@@ -1425,17 +1457,22 @@ void forge_panel::download_selected()
             if (!alive.lock() || chosen.empty()) return;
             const std::string to = chosen.front();
             downloading_ = true;
-            download_->set_enabled(false);
-            download_progress_->set_visible(true);
-            download_status_->set_text(
-                a.size ? rap::i18n::format(_("Downloading {0} ({1})..."), a.name, size_text(a.size))
-                       : rap::i18n::format(_("Downloading {0}..."), a.name));
             // The bar fills as the bytes come, when the forge says how many;
             // else it says it's busy.
-            download_progress_->set_fraction(0);
-            if (!a.size)
-                download_timer_ =
-                    host_.ui.timer(100, true, [this] { download_progress_->pulse(); });
+            download_pulsing_ = !a.size;
+            if (root_)
+            {
+                download_->set_enabled(false);
+                download_progress_->set_visible(true);
+                download_status_->set_text(
+                    a.size ? rap::i18n::format(_("Downloading {0} ({1})..."), a.name,
+                                               size_text(a.size))
+                           : rap::i18n::format(_("Downloading {0}..."), a.name));
+                download_progress_->set_fraction(0);
+                if (download_pulsing_)
+                    download_timer_ =
+                        host_.ui.timer(100, true, [this] { download_progress_->pulse(); });
+            }
             download_cancel_ = std::make_shared<std::atomic<bool>>(false);
             auto progress = [this, alive = std::weak_ptr<bool>(alive_), &ui = host_.ui,
                              size = a.size, last = std::make_shared<int>(-1)](
@@ -1449,7 +1486,7 @@ void forge_panel::download_selected()
                 ui.post(
                     [this, alive, percent]
                     {
-                        if (alive.lock() && downloading_)
+                        if (alive.lock() && downloading_ && download_progress_)
                             download_progress_->set_fraction(float(percent) / 100);
                     });
             };
@@ -1461,8 +1498,9 @@ void forge_panel::download_selected()
                                download_artifact(kind, a, to, token, cancel.get(), progress);
                            return [this, error, to]
                            {
-                               downloading_ = false;
+                               downloading_ = download_pulsing_ = false;
                                download_timer_.reset();
+                               if (!root_) return;
                                download_progress_->set_visible(false);
                                download_status_->set_text(
                                    error.empty()

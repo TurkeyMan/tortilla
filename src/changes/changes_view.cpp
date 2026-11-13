@@ -161,6 +161,23 @@ void changes_view::restore_layout()
     list_->set_column_order(order);
 }
 
+changes_view::column_state changes_view::view_state() const
+{
+    column_state v;
+    if (!list_) return v;
+    v.widths = list_->column_widths();
+    sane_widths(v.widths);
+    v.order = list_->column_order();
+    return v;
+}
+
+void changes_view::apply_view_state(const column_state& v)
+{
+    if (!list_) return;
+    if (!v.widths.empty()) list_->set_column_widths(v.widths);
+    if (!v.order.empty()) list_->set_column_order(v.order);
+}
+
 void changes_view::fit_path(float width)
 {
     if (!list_ || width <= 0) return;
@@ -181,12 +198,29 @@ void changes_view::fit_path(float width)
 
 void changes_view::set_source(changes_source s)
 {
+    if (s.what != source_.what || s.hash != source_.hash || s.parent != source_.parent)
+        select_paths_.clear();
     source_ = std::move(s);
 }
 
 void changes_view::set_files(std::vector<file_change> files, bool show_unversioned)
 {
     model_.set(std::move(files), show_unversioned);
+    if (select_paths_.empty() || !list_ || model_.files().empty()) return;
+    std::vector<size_t> rows;
+    for (size_t r = 0; r < model_.files().size(); ++r)
+        if (std::ranges::find(select_paths_, model_.files()[r].path) != select_paths_.end())
+            rows.push_back(r);
+    select_paths_.clear();
+    if (rows.empty()) return;
+    list_->select(rows);
+    list_->set_current(rows.front());
+    list_->scroll_to(rows.front());
+}
+
+void changes_view::select_paths_when_set(std::vector<std::string> paths)
+{
+    select_paths_ = std::move(paths);
 }
 
 void changes_view::set_counts(size_t first, const std::vector<file_change>& files)

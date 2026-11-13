@@ -492,6 +492,11 @@ void log_tab::loaded(const std::string& error)
         }
     }
     show_selection();
+    if (show_selected_ && page_)
+    {
+        show_selected_ = false;
+        selection_changed();
+    }
     update_status();
     update_pull_requests();
     // The refs may have moved: what a sync would bring, and the current
@@ -652,7 +657,7 @@ void log_tab::restore_selection()
     put_back(keep);
 }
 
-std::optional<log_tab::kept_selection> log_tab::keep_selection() const
+std::optional<kept_selection> log_tab::keep_selection() const
 {
     if (!page_ || !log_.row_count()) return std::nullopt;
     kept_selection keep;
@@ -1518,6 +1523,7 @@ void log_tab::open_settings(settings_page page)
                               std::atoi(settings::get().value("log.actionIcons", "1").c_str());
                           log_.set_action_icon_style(action_icon_style(std::clamp(style, 0, 3)));
                           if (pr_watch_) pr_watch_->want_branch_tips(allowed_now(check_setting()));
+                          if (pr_watch_ && !polls_) arm_poll();
                       }));
 }
 

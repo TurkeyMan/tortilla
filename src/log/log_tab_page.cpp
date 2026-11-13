@@ -69,7 +69,7 @@ rap::node log_tab::build_page()
             tool_button{undo_icon(true), _("Redo")}
                 .bind(page_->redo)
                 .on_click([this] { step_journal(true); }),
-            entry{}
+            entry{search_text_}
                 .bind(page_->search)
                 .clearable()
                 // Emptied (its clear button), at once.
@@ -255,7 +255,7 @@ rap::node log_tab::build_page()
             // The selected commit's files, by path: a second after
             // typing stops, at once on Enter, cleared by Escape (the
             // window's keys) [spec 1.11.2].
-            entry{}
+            entry{path_filter_text_}
                 .bind(page_->path_filter)
                 .placeholder(std::string("   ") + _("Filter paths"))
                 .on_changed(
@@ -305,7 +305,7 @@ rap::node log_tab::build_page()
     };
 }
 
-void log_tab::bind_page()
+void log_tab::bind_page(std::optional<log_view_state> view)
 {
     if (!page_) return;
     // Clicked, the status bar's "!" says what git said.
@@ -326,13 +326,95 @@ void log_tab::bind_page()
             fit_files();
         });
     forge_panel_->built();
-    apply_view_settings();
+    if (view)
+        apply_view(*view);
+    else
+        apply_view_settings();
     refresh_page();
+    // Built again: the commit's text and files shown, once there are rows.
+    if (view && log_.loading())
+        show_selected_ = true;
+    else if (view)
+        selection_changed();
     page_->fit_timer = ui_.timer(300, false, [this] { fit_files(); });
+}
+
+log_view_state log_tab::capture_view()
+{
+    log_view_state v;
+    if (!page_) return v;
+    flush_filters();
+    // Still to be put back (a load under way), or as it is.
+    v.selection = kept_ ? kept_ : keep_selection();
+    v.panes = page_->splitter->sizes();
+    v.details_panes = page_->details_splitter->sizes();
+    v.column_widths = page_->commit_list->column_widths();
+    v.column_order = page_->commit_list->column_order();
+    for (size_t i = 0; i < log_model::column_count; ++i)
+        v.column_visible.push_back(page_->commit_list->column_visible(i));
+    v.files = files_.view_state();
+    for (size_t row : files_.selection())
+        if (row < files_.files().size()) v.selected_files.push_back(files_.files()[row].path);
+    using focus = log_view_state::focus;
+    v.focused = page_->commit_list->has_focus()   ? focus::commits
+                : page_->search->has_focus()      ? focus::search
+                : page_->path_filter->has_focus() ? focus::path_filter
+                : files_.has_focus()              ? focus::files
+                                                  : focus::none;
+    return v;
+}
+
+// Sizes of 0 (a window not laid out yet) say nothing: left as built.
+void log_tab::apply_view(const log_view_state& v)
+{
+    auto sized = [](const std::vector<float>& sizes)
+    {
+        float total = 0;
+        for (float s : sizes) total += s;
+        return sizes.size() == 2 && total > 0;
+    };
+    if (sized(v.panes)) page_->splitter->set_sizes(v.panes);
+    if (sized(v.details_panes)) page_->details_splitter->set_sizes(v.details_panes);
+    if (!v.column_widths.empty()) page_->commit_list->set_column_widths(v.column_widths);
+    if (!v.column_order.empty()) page_->commit_list->set_column_order(v.column_order);
+    for (size_t i = 0; i < v.column_visible.size(); ++i)
+        page_->commit_list->set_column_visible(i, v.column_visible[i]);
+    files_.apply_view_state(v.files);
+    // The files come back once the selection is shown again (show_commit).
+    if (!v.selected_files.empty()) files_.select_paths_when_set(v.selected_files);
+    if (v.selection) kept_ = v.selection;
+    using focus = log_view_state::focus;
+    switch (v.focused)
+    {
+    case focus::commits: page_->commit_list->focus(); break;
+    case focus::search: page_->search->focus(); break;
+    case focus::path_filter: page_->path_filter->focus(); break;
+    case focus::files: files_.focus(); break;
+    case focus::none: break;
+    }
+}
+
+void log_tab::flush_filters()
+{
+    if (search_text_ != filter_.text) apply_filter();
+    if (page_ && page_->path_filter_timer) update_file_view();
 }
 
 void log_tab::drop_page()
 {
+    if (!page_) return;
+    flush_filters();
+    // The forge column's divider, kept as it would be on hiding it.
+    if (forge_panel_visible_)
+    {
+        const auto sizes = page_->forge_splitter->sizes();
+        float total = 0;
+        for (float s : sizes) total += s;
+        if (total > 0) forge_sizes_ = sizes;
+    }
+    forge_panel_->unbind();
+    files_.unbind();
+    show_selected_ = false;
     page_.reset();
 }
 

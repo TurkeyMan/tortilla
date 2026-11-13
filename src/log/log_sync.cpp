@@ -322,15 +322,25 @@ void log_tab::start_sync_watch()
 {
     update_sync_badge();
     if (pr_watch_) pr_watch_->want_branch_tips(allowed_now(check_setting()));
-    // A first look a little after opening, once the log has loaded.
-    poll_timer_ = ui_.timer(5000, false, [this] { poll_remotes(); });
+    arm_poll();
+}
+
+// A first look a little after opening (or after the setting allowed it
+// again), once the log has loaded. Never while the setting says never:
+// open_settings arms it again when that changes.
+void log_tab::arm_poll()
+{
+    polls_ = check_setting() != sync_when::never;
+    if (polls_) poll_timer_ = ui_.timer(5000, false, [this] { poll_remotes(); });
 }
 
 // Remotes the forge didn't answer for: ls-remote, rarely.
 void log_tab::poll_remotes()
 {
-    poll_timer_ = ui_.timer(k_poll_ms, false, [this] { poll_remotes(); });
-    const bool allowed = allowed_now(check_setting());
+    const sync_when when = check_setting();
+    polls_ = when != sync_when::never;
+    if (polls_) poll_timer_ = ui_.timer(k_poll_ms, false, [this] { poll_remotes(); });
+    const bool allowed = allowed_now(when);
     if (pr_watch_) pr_watch_->want_branch_tips(allowed);
     if (!allowed || polling_) return;
     polling_ = true;

@@ -17,6 +17,7 @@
 #include "log/forge_share.h"
 #include "log/log_model.h"
 #include "log/log_page.h"
+#include "log/log_view_state.h"
 #include "log/tab_host.h"
 #include "rebase/rebase_window.h"
 
@@ -50,10 +51,17 @@ public:
     // Cancel close. Null while it's in none.
     void set_host(tab_host* host) { host_ = host; }
     // Its page: the layout to build (into a fresh log_page), then, once
-    // built, its settings applied and everything drawn from the state.
+    // built, everything drawn from the state, and the panes, columns and
+    // the rest as `view` had them (a page built again: capture_view), or,
+    // without, as the settings have them.
     rap::node build_page();
-    void bind_page();
-    // The page's own (its date pop-up and timers) gone, before its widgets.
+    void bind_page(std::optional<log_view_state> view = std::nullopt);
+    // What the page shows that the state doesn't say, for the page built
+    // after it; the filters typed and not yet applied are applied first.
+    log_view_state capture_view();
+    // The page's own (its date pop-up and timers) gone, and the forge
+    // panel's and file list's hold on its widgets, before its widgets go:
+    // the filters typed are applied, and the work goes on without a page.
     void drop_page();
     // The loading, watching and asking of the forge begun, once there's a
     // page and a window. `all_branches` starts with All Branches.
@@ -232,7 +240,9 @@ private:
     // every ten minutes). Compared with the local refs on a worker, and then
     // downloaded into refs/prefetch/ if allowed.
     void start_sync_watch();
+    void arm_poll();
     void poll_remotes();
+    bool polls_ = false;  // poll_timer_ is armed
     void tips_heard(std::map<std::string, remote_tips, std::less<>> tips);
     void recheck_changes();
     void prefetch(const std::string& remote);
@@ -379,6 +389,11 @@ private:
     std::unique_ptr<log_page> page_;
 
     rap::date loaded_from_, loaded_to_;  // the dates loaded, without limits
+    // The page's view as `view` has it (bind_page).
+    void apply_view(const log_view_state& view);
+    // The filter box's and path filter's text applied now, not after their
+    // delay: for a page going.
+    void flush_filters();
     // What the widgets say, kept here: the "Only changes to" box, the jump
     // combo's choice, and the text in the filter box (filter_.text is what's
     // applied) and the path filter box.
@@ -479,16 +494,11 @@ private:
     std::shared_ptr<rap::image> avatar_;
     avatars avatars_{ui_};
 
-    // The selection across a reload, by commit (rows move): put back, and
-    // the current row scrolled into view, once loading finishes.
-    struct kept_selection
-    {
-        std::vector<oid> commits;
-        bool working_tree = false;
-        std::optional<oid> current;  // nullopt with working_tree: that row
-        std::optional<float> offset;  // the current row's place in the view, if shown
-    };
+    // The selection across a reload (or a page built again): put back once
+    // loading finishes.
     std::optional<kept_selection> kept_;
+    // A page built while loading: what's selected is shown once it's loaded.
+    bool show_selected_ = false;
     // One rule wherever the rows are repopulated (a filter, a reload): the
     // selection kept, and the current row left where it was on screen, or
     // centred when it can't be.

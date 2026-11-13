@@ -82,6 +82,23 @@ public:
     rap::layout::list list(std::string settings_key, bool checkboxes = false);
     void save_layout() const;
     void restore_layout();
+    // The list's columns as they are, in memory: for a list built again in
+    // another window (the log's page), which carries them across.
+    struct column_state
+    {
+        std::vector<float> widths;
+        std::vector<size_t> order;
+    };
+    column_state view_state() const;
+    void apply_view_state(const column_state&);
+    // The list gone with its window: the files and the rest are kept for the
+    // next list() built.
+    void unbind() { list_ = nullptr; }
+    bool has_focus() const { return list_ && list_->has_focus(); }
+    void focus()
+    {
+        if (list_) list_->focus();
+    }
     // Path as wide as the other columns leave of `width` (the list's, in
     // logical px), so they keep to its right edge without sideways scrolling.
     // For a window that knows when its list's width changes (rapport's lists
@@ -91,6 +108,10 @@ public:
     void set_source(changes_source);
     const changes_source& source() const { return source_; }
     void set_files(std::vector<file_change>, bool show_unversioned = true);
+    // These files selected once a set of files that has them is set (the
+    // log's page built again: its files arrive after it), unless the source
+    // changes first.
+    void select_paths_when_set(std::vector<std::string> paths);
     void set_counts(size_t first, const std::vector<file_change>&);
     void clear() { set_files({}); }
     // Which files show, and which are greyed (the Log dialog's).
@@ -144,6 +165,7 @@ private:
     rap::list* list_ = nullptr;
     std::string settings_key_;
     changes_source source_;
+    std::vector<std::string> select_paths_;
     std::shared_ptr<git_process> difftool_;
     // For callbacks that may outlive the list (the merge tool runs on).
     std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
