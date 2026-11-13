@@ -298,4 +298,10 @@ std::unique_ptr<rap::window> create_window(rap::ui& ui, const rap::window_spec& 
     return w;
 }
 
+repo_identity current_repo_identity(rap::ui& ui)
+{
+    if (!g_icon) g_icon = icon_of(ui, std::nullopt);
+    return {g_icon, g_app_id};
+}
+
 }  // namespace tortilla

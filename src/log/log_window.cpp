@@ -44,6 +44,9 @@ void log_window::build()
     // (rap::layout's window: log_window::window is the tab's parent.)
     window_ = create_window(
         ui_, rap::layout::window{tab_->title_text(), {tab_->build_page()}}.size(140_ch, 50_lines));
+    // The tab's icon; its app id is the window's from the start (create_window),
+    // never changed after, as the taskbar would regroup it.
+    if (tab_->identity().icon) window_->set_icon(tab_->identity().icon);
     window_->on_close_request(
         [this]
         {

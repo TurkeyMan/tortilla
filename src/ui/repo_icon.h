@@ -37,4 +37,15 @@ void use_repo_icon(rap::ui&, const std::string& path, bool outer = false);
 std::unique_ptr<rap::window> create_window(rap::ui&, const rap::window_spec&,
                                            rap::window* parent = nullptr);
 
+// What tells a repository's windows apart: their icon, and the app id that
+// groups them on the taskbar ("" for Tortilla's own group).
+struct repo_identity
+{
+    rap::icon icon;
+    std::string app_id;
+};
+// The identity use_repo_icon chose, which create_window gives windows; with
+// none chosen, Tortilla's own icon.
+repo_identity current_repo_identity(rap::ui&);
+
 }  // namespace tortilla

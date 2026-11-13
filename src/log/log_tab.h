@@ -22,6 +22,7 @@
 #include "rebase/rebase_window.h"
 
 #include "ui/diff_window.h"
+#include "ui/repo_icon.h"
 #include "ui/settings_dialog.h"
 
 #include <rapport/rapport.h>
@@ -70,6 +71,9 @@ public:
     // The window's title while it shows this tab: the repository's folder, or
     // the path the history is limited to [spec 1.9.7].
     std::string title_text() const;
+    // Its repository's icon and taskbar group, the window's while it shows
+    // the tab; the tab's own, so they go where it goes.
+    const repo_identity& identity() const { return identity_; }
     // A key pressed in the window; true if it was the tab's.
     bool key(const rap::key_event&);
     // The column sizes and the like, and the options (log.walk.* and the
@@ -364,6 +368,7 @@ private:
     std::string filter_cue() const;
 
     rap::ui& ui_;
+    repo_identity identity_;
     // Expires with the log, for dialogs that outlive it (their reload).
     std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
     // A git-svn repository's: whether git svn is installed, for SVN DCommit
