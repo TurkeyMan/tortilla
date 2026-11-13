@@ -411,17 +411,11 @@ void forge_panel::built()
         {
             if (parts_state_ == parts::pr_and_lists) part_sizes_ = parts_->sizes();
         });
-    // A page built again: what's known drawn, a download under way with it.
+    // A page built again: what's known drawn, a download's line with it.
     const bool shown = visible_;
     update();
     if (shown && visible_ && host_.shown) host_.shown(true);
-    if (downloading_)
-    {
-        download_->set_enabled(false);
-        download_progress_->set_visible(true);
-        if (download_pulsing_)
-            download_timer_ = host_.ui.timer(100, true, [this] { download_progress_->pulse(); });
-    }
+    show_download();
 }
 
 void forge_panel::unbind()
@@ -1456,23 +1450,12 @@ void forge_panel::download_selected()
         {
             if (!alive.lock() || chosen.empty()) return;
             const std::string to = chosen.front();
-            downloading_ = true;
             // The bar fills as the bytes come, when the forge says how many;
             // else it says it's busy.
-            download_pulsing_ = !a.size;
-            if (root_)
-            {
-                download_->set_enabled(false);
-                download_progress_->set_visible(true);
-                download_status_->set_text(
-                    a.size ? rap::i18n::format(_("Downloading {0} ({1})..."), a.name,
-                                               size_text(a.size))
-                           : rap::i18n::format(_("Downloading {0}..."), a.name));
-                download_progress_->set_fraction(0);
-                if (download_pulsing_)
-                    download_timer_ =
-                        host_.ui.timer(100, true, [this] { download_progress_->pulse(); });
-            }
+            download_started(a.size ? rap::i18n::format(_("Downloading {0} ({1})..."), a.name,
+                                                        size_text(a.size))
+                                    : rap::i18n::format(_("Downloading {0}..."), a.name),
+                             !a.size);
             download_cancel_ = std::make_shared<std::atomic<bool>>(false);
             auto progress = [this, alive = std::weak_ptr<bool>(alive_), &ui = host_.ui,
                              size = a.size, last = std::make_shared<int>(-1)](
@@ -1486,8 +1469,7 @@ void forge_panel::download_selected()
                 ui.post(
                     [this, alive, percent]
                     {
-                        if (alive.lock() && downloading_ && download_progress_)
-                            download_progress_->set_fraction(float(percent) / 100);
+                        if (alive.lock()) download_progressed(float(percent) / 100);
                     });
             };
             with_token(remote,
@@ -1496,21 +1478,47 @@ void forge_panel::download_selected()
                        {
                            const std::string error =
                                download_artifact(kind, a, to, token, cancel.get(), progress);
-                           return [this, error, to]
-                           {
-                               downloading_ = download_pulsing_ = false;
-                               download_timer_.reset();
-                               if (!root_) return;
-                               download_progress_->set_visible(false);
-                               download_status_->set_text(
-                                   error.empty()
-                                       ? rap::i18n::format(_("Saved {0}"), to)
-                                       : rap::i18n::format(_("Couldn't download it: {0}"), error));
-                               const auto sel = artifacts_->selection();
-                               download_->set_enabled(sel.size() == 1);
-                           };
+                           return [this, error, to] { download_ended(to, error); };
                        });
         });
+}
+
+// A download's state is the panel's, drawn when there's a page: a page
+// built meanwhile shows where it's got to, or how it ended.
+void forge_panel::download_started(std::string text, bool pulsing)
+{
+    downloading_ = true;
+    download_pulsing_ = pulsing;
+    download_fraction_ = 0;
+    download_text_ = std::move(text);
+    show_download();
+}
+
+void forge_panel::download_progressed(float fraction)
+{
+    if (!downloading_) return;
+    download_fraction_ = fraction;
+    if (download_progress_) download_progress_->set_fraction(fraction);
+}
+
+void forge_panel::download_ended(const std::string& to, const std::string& error)
+{
+    downloading_ = download_pulsing_ = false;
+    download_text_ = error.empty() ? rap::i18n::format(_("Saved {0}"), to)
+                                   : rap::i18n::format(_("Couldn't download it: {0}"), error);
+    show_download();
+}
+
+void forge_panel::show_download()
+{
+    if (!downloading_ || !download_pulsing_) download_timer_.reset();
+    if (!root_) return;
+    download_status_->set_text(download_text_);
+    download_progress_->set_visible(downloading_);
+    download_progress_->set_fraction(download_fraction_);
+    if (downloading_ && download_pulsing_ && !download_timer_)
+        download_timer_ = host_.ui.timer(100, true, [this] { download_progress_->pulse(); });
+    download_->set_enabled(!downloading_ && artifacts_->selection().size() == 1);
 }
 
 }  // namespace tortilla

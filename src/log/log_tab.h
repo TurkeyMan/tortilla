@@ -103,6 +103,18 @@ public:
     void pick_commits(const std::string& purpose, const std::string& label,
                       std::function<void(std::vector<commit>)> chosen);
 
+    // Tests only. The null backend fires a timer as soon as its queue
+    // reaches it, so the remotes' poll, which arms itself again on every
+    // tick, would never let it empty: while set, the poll's timer is handed
+    // to `arm` (the test fires it, or not), and each tick says whether the
+    // setting allowed asking the remotes.
+    struct poll_hooks
+    {
+        std::function<rap::subscription(log_tab&, std::function<void()> tick)> arm;
+        std::function<void(log_tab&, bool allowed)> ticked;
+    };
+    static inline poll_hooks* poll_hooks_for_tests = nullptr;
+
 private:
     // The window, as the parent of dialogs and messages; null while there's
     // none.
@@ -244,9 +256,8 @@ private:
     // every ten minutes). Compared with the local refs on a worker, and then
     // downloaded into refs/prefetch/ if allowed.
     void start_sync_watch();
-    void arm_poll();
+    void arm_poll(int ms);
     void poll_remotes();
-    bool polls_ = false;  // poll_timer_ is armed
     void tips_heard(std::map<std::string, remote_tips, std::less<>> tips);
     void recheck_changes();
     void prefetch(const std::string& remote);

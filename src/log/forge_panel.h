@@ -159,6 +159,14 @@ private:
     std::chrono::steady_clock::time_point poll_after_{};  // the answer the poll timer follows
     bool downloading_ = false;
     bool download_pulsing_ = false;  // its size unknown: the bar says it's busy
+    float download_fraction_ = 0;
+    // Under the artifacts: what's downloading, where it was saved, or why not.
+    std::string download_text_;
+    void download_started(std::string text, bool pulsing);
+    void download_progressed(float fraction);
+    void download_ended(const std::string& to, const std::string& error);
+    void show_download();
+    friend struct forge_panel_test;  // tests/log_page_tests.cpp
     std::shared_ptr<std::atomic<bool>> download_cancel_;
 
     std::unique_ptr<matrix_model> matrix_;
