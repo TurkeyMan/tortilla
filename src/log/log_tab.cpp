@@ -3,9 +3,7 @@
 #include "branch/browse_refs.h"
 
 #include "git/command.h"
-#include "git/git_install.h"
 #include "git/lfs.h"
-#include "git/patch_text.h"
 #include "git/svn.h"
 #include "i18n.h"
 #include "settings.h"
@@ -231,15 +229,6 @@ std::string log_tab::path_text(size_t limit) const
         text = text.substr(0, head) + "…" + text.substr(tail);
     }
     return text;
-}
-
-// View Patch's window closed with the log, on for next time.
-void log_tab::close_patch()
-{
-    if (!patch_) return;
-    patch_viewer p = std::move(*patch_);
-    patch_.reset();  // first, so its closing leaves the setting on
-    p.close();
 }
 
 // Splitter panes, column widths and visibility persist across runs, as
@@ -484,10 +473,10 @@ void log_tab::loaded(const std::string& error)
     }
     // View Patch as it was left, once the log is there to follow; not
     // while picking commits for another window.
-    if (!patch_restored_)
+    if (!patch_restored_ && host_)
     {
         patch_restored_ = true;
-        if (!picked_ && settings::get().value("log.viewPatch") == "1") show_patch(true);
+        if (!picked_ && settings::get().value("log.viewPatch") == "1") host_->show_patch(true);
     }
 
     // Without explicit limits the pickers show the range actually loaded.
@@ -726,7 +715,7 @@ void log_tab::selection_changed()
     }
     update_status();
     update_pick_button();
-    update_patch();
+    if (host_) host_->selection_moved(*this);
 }
 
 void log_tab::update_pick_button()
@@ -1488,79 +1477,34 @@ rap::menu log_tab::view_menu()
                    selection_changed();
                }),
         rap::menu_item::separator(),
-        toggle(_("View _Patch"), patch_.has_value(), [this] { show_patch(!patch_); }),
+        toggle(_("View _Patch"), host_ && host_->patch_shown(),
+               [this]
+               {
+                   if (host_) host_->show_patch(!host_->patch_shown());
+               }),
         rap::menu_item::separator(),
         {.label = _("_Settings..."), .action = [this] { open_settings(settings_page::general); }},
     };
 }
 
-void log_tab::show_patch(bool on)
+log_tab::patch_source log_tab::patch_request() const
 {
-    settings::get().set("log.viewPatch", on ? "1" : "0");
-    if (on == patch_.has_value()) return;
-    if (!on)
+    patch_source r{.title = _("View Patch"),
+                   .dir = repo_.workdir().empty() ? repo_.git_dir() : repo_.workdir()};
+    if (!page_) return r;
+    const auto sel = page_->commit_list->selection();
+    if (sel.size() == 1 && log_.is_working_tree(sel.front()))
     {
-        patch_viewer p = std::move(*patch_);
-        patch_.reset();
-        return p.close();
+        r.title = _("Working tree changes");
+        r.args = {"diff", "HEAD"};
     }
-    // Closed by the user: off, and so next time. (Closed with the log, or
-    // from the menu, patch_ has gone already.)
-    patch_ = open_patch_viewer(ui_, _("View Patch"),
-                               [this, alive = std::weak_ptr<bool>(alive_)]
-                               {
-                                   if (!alive.lock() || !patch_) return;
-                                   patch_.reset();
-                                   settings::get().set("log.viewPatch", "0");
-                               });
-    update_patch();
-}
-
-// One commit's patch as git show has it, or the working tree's changes; a
-// log of a path, that path's part. Nothing for several. git runs off the
-// UI thread, a moment after the selection settles.
-void log_tab::update_patch()
-{
-    if (!patch_) return;
-    patch_timer_ = ui_.timer(
-        100, false,
-        [this]
-        {
-            if (!patch_ || !page_) return;
-            const auto sel = page_->commit_list->selection();
-            std::string title = _("View Patch");
-            std::vector<std::string> args;
-            if (sel.size() == 1 && log_.is_working_tree(sel.front()))
-            {
-                title = _("Working tree changes");
-                args = {"diff", "HEAD"};
-            }
-            else if (const commit* c = sel.size() == 1 ? log_.commit(sel.front()) : nullptr)
-            {
-                title = c->id.hex(8) + " " + c->summary;
-                args = {"show", "--format=fuller", c->id.hex()};
-            }
-            if (!args.empty() && path_limited()) args.insert(args.end(), {"--", rel_path_});
-            const unsigned gen = ++patch_generation_;
-            if (args.empty()) return patch_->show(title, {});
-            std::thread(
-                [this, &ui = ui_, gen, title, args, alive = std::weak_ptr<bool>(alive_),
-                 dir = repo_.workdir().empty() ? repo_.git_dir() : repo_.workdir()]
-                {
-                    // libgit2's patch without git.
-                    const auto own = git_installed() ? std::nullopt : patch_in_process(dir, args);
-                    auto r = std::make_shared<git_result>(
-                        own ? git_result{.exit_code = 0, .output = *own}
-                            : run_git(dir, args, git_output::stdout_only));
-                    ui.post(
-                        [this, gen, title, r, alive]
-                        {
-                            if (!alive.lock() || !patch_ || gen != patch_generation_) return;
-                            patch_->show(title, r->ok() ? std::move(r->output) : std::string());
-                        });
-                })
-                .detach();
-        });
+    else if (const commit* c = sel.size() == 1 ? log_.commit(sel.front()) : nullptr)
+    {
+        r.title = c->id.hex(8) + " " + c->summary;
+        r.args = {"show", "--format=fuller", c->id.hex()};
+    }
+    if (!r.args.empty() && path_limited()) r.args.insert(r.args.end(), {"--", rel_path_});
+    return r;
 }
 
 void log_tab::open_settings(settings_page page)

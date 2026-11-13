@@ -1,7 +1,13 @@
 #include "log_window.h"
 
+#include "git/command.h"
+#include "git/git_install.h"
+#include "git/patch_text.h"
+#include "i18n.h"
 #include "settings.h"
 #include "ui/repo_icon.h"
+
+#include <thread>
 
 namespace tortilla
 {
@@ -57,7 +63,7 @@ void log_window::closing()
     settings::get().save_window("log.window", *window_);
     tab_->save_view_settings();
     tab_->save_options();
-    tab_->close_patch();
+    close_patch();
 }
 
 void log_window::tab_changed(log_tab& tab)
@@ -70,6 +76,69 @@ void log_window::finish(bool)
     closing();
     window_->close();
     if (closed_) closed_();
+}
+
+void log_window::show_patch(bool on)
+{
+    settings::get().set("log.viewPatch", on ? "1" : "0");
+    if (on == patch_.has_value()) return;
+    if (!on) return close_patch();
+    // Closed by the user: off, and so next time. (Closed with the window, or
+    // from the menu, patch_ has gone already.)
+    patch_ = open_patch_viewer(ui_, _("View Patch"),
+                               [this, alive = std::weak_ptr<bool>(alive_)]
+                               {
+                                   if (!alive.lock() || !patch_) return;
+                                   patch_.reset();
+                                   settings::get().set("log.viewPatch", "0");
+                               });
+    update_patch();
+}
+
+void log_window::close_patch()
+{
+    if (!patch_) return;
+    patch_viewer p = std::move(*patch_);
+    patch_.reset();  // first, so its closing leaves the setting as it is
+    p.close();
+}
+
+void log_window::selection_moved(log_tab& tab)
+{
+    if (&tab == tab_.get()) update_patch();
+}
+
+// git runs off the UI thread, a moment after the selection settles.
+void log_window::update_patch()
+{
+    if (!patch_) return;
+    patch_timer_ = ui_.timer(
+        100, false,
+        [this]
+        {
+            if (!patch_ || !tab_) return;
+            log_tab::patch_source source = tab_->patch_request();
+            const unsigned gen = ++patch_generation_;
+            if (source.args.empty()) return patch_->show(source.title, {});
+            std::thread(
+                [this, &ui = ui_, gen, source = std::move(source),
+                 alive = std::weak_ptr<bool>(alive_)]
+                {
+                    // libgit2's patch without git.
+                    const auto own =
+                        git_installed() ? std::nullopt : patch_in_process(source.dir, source.args);
+                    auto r = std::make_shared<git_result>(
+                        own ? git_result{.exit_code = 0, .output = *own}
+                            : run_git(source.dir, source.args, git_output::stdout_only));
+                    ui.post(
+                        [this, gen, title = source.title, r, alive]
+                        {
+                            if (!alive.lock() || !patch_ || gen != patch_generation_) return;
+                            patch_->show(title, r->ok() ? std::move(r->output) : std::string());
+                        });
+                })
+                .detach();
+        });
 }
 
 }  // namespace tortilla

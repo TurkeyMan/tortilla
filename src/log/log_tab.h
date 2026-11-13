@@ -68,8 +68,16 @@ public:
     // rest), kept for next time.
     void save_view_settings();
     void save_options();
-    // View Patch's window closed with the log (on for next time).
-    void close_patch();
+    // What View Patch shows of the selection: one commit's patch as git show
+    // has it, or the working tree's changes; a log of a path, that path's
+    // part. No arguments for nothing (several commits, or no page).
+    struct patch_source
+    {
+        std::string title;
+        std::vector<std::string> args;  // git's
+        std::string dir;                // where git runs
+    };
+    patch_source patch_request() const;
 
     // Shows the history from `rev` (a ref or commit) instead of HEAD.
     void start_at(const std::string& rev);
@@ -334,14 +342,9 @@ private:
 
     rap::menu walk_menu();
     rap::menu view_menu();
-    // View Patch [spec 1.9.5]: the selection's patch in a window of its
-    // own, following the selection; whether it's open is kept across runs.
-    std::optional<patch_viewer> patch_;
-    unsigned patch_generation_ = 0;  // drops a patch the selection has left
-    rap::subscription patch_timer_;
+    // View Patch as it was left (log.viewPatch), opened once the log has
+    // first loaded.
     bool patch_restored_ = false;
-    void show_patch(bool);
-    void update_patch();
     // The Show menu: presets, toggles, pins and hidden, labels, and the
     // revision to start from (start_menu).
     rap::menu show_menu();
