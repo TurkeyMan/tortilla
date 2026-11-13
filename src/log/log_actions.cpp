@@ -107,7 +107,7 @@ std::optional<std::string> ref_changed_by(const arg_list& args)
 void log_window::run_git_commands(const std::string& title, std::vector<arg_list> commands)
 {
     run_progress_dialog(ui_, window_.get(), title, repo_.workdir(), std::move(commands),
-                        [this](bool) { reload(); });
+                        guarded([this](bool) { reload(); }));
 }
 
 void log_window::run_ref_commands(const std::string& title, std::vector<arg_list> commands,
@@ -191,6 +191,7 @@ void log_window::refs_changed()
             update_pull_requests();
             if (pr_watch_) pr_watch_->nudge();  // a push or fetch may have changed them
             recheck_changes();
+            if (!page_) return;
             if (auto sel = page_->commit_list->selection(); sel.size() == 1)
                 show_commit(sel.front());
         });
@@ -204,22 +205,23 @@ void log_window::confirm_then_run(const std::string& question, const std::string
                  .title = title,
                  .text = question,
                  .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
-                [this, title, commands, label](rap::dialog_role r)
-                {
-                    if (r != rap::dialog_role::yes) return;
-                    // Deleting local branches and tags only touches refs.
-                    const bool refs_only = std::ranges::all_of(
-                        commands,
-                        [](const arg_list& a)
-                        {
-                            return !a.empty() &&
-                                   (a[0] == "branch" || a[0] == "tag" || a[0] == "update-ref");
-                        });
-                    if (refs_only)
-                        run_ref_commands(title, commands, label);
-                    else
-                        run_git_commands(title, commands);
-                });
+                guarded(
+                    [this, title, commands, label](rap::dialog_role r)
+                    {
+                        if (r != rap::dialog_role::yes) return;
+                        // Deleting local branches and tags only touches refs.
+                        const bool refs_only = std::ranges::all_of(
+                            commands,
+                            [](const arg_list& a)
+                            {
+                                return !a.empty() &&
+                                       (a[0] == "branch" || a[0] == "tag" || a[0] == "update-ref");
+                            });
+                        if (refs_only)
+                            run_ref_commands(title, commands, label);
+                        else
+                            run_git_commands(title, commands);
+                    }));
 }
 
 // Comparing revisions with the tool the Diff Viewer page chose (compare.h).
@@ -251,13 +253,14 @@ void log_window::difftool(std::vector<std::string> revisions, std::vector<std::s
             paths.push_back(files.front().path);
         }
     }
-    difftool_ =
-        compare_revisions(ui_, window_.get(), repo_.workdir(), std::move(revisions),
-                          std::move(paths), [this] { open_settings(settings_page::diff_viewer); });
+    difftool_ = compare_revisions(ui_, window_.get(), repo_.workdir(), std::move(revisions),
+                                  std::move(paths),
+                                  guarded([this] { open_settings(settings_page::diff_viewer); }));
 }
 
 menu log_window::context_menu(std::optional<size_t> clicked)
 {
+    if (!page_) return {};
     auto sel = page_->commit_list->selection();
     if (sel.empty()) return {};
 
@@ -270,7 +273,7 @@ menu log_window::context_menu(std::optional<size_t> clicked)
     auto bisect = [this](bisect_step step, std::vector<std::string> revs)
     {
         run_bisect(ui_, window_.get(), repo_.workdir(), step, std::move(revs),
-                   [this](bool) { reload(); });
+                   guarded([this](bool) { reload(); }));
     };
     const std::string current = repo_.head_name();
     const std::string cur = "\"" + menu_text(current) + "\"";
@@ -411,12 +414,16 @@ menu log_window::context_menu(std::optional<size_t> clicked)
                                  [this]
                                  {
                                      update_submodules(ui_, window_.get(), repo_.workdir(),
-                                                       repo_.workdir(), [this](bool) { reload(); });
+                                                       repo_.workdir(),
+                                                       guarded([this](bool) { reload(); }));
                                  }));
             separator(m);
-            m.push_back(item(
-                _("_Clean up..."), "cleanup", [this]
-                { clean_up(ui_, window_.get(), {repo_.workdir()}, [this](bool) { reload(); }); }));
+            m.push_back(item(_("_Clean up..."), "cleanup",
+                             [this]
+                             {
+                                 clean_up(ui_, window_.get(), {repo_.workdir()},
+                                          guarded([this](bool) { reload(); }));
+                             }));
             separator(m);
         }
 
@@ -652,8 +659,8 @@ menu log_window::context_menu(std::optional<size_t> clicked)
                                  {
                                      std::function<void(rap::window*)> save;
                                      if (series)
-                                         save = [this, range](rap::window* viewer)
-                                         { save_patch_series(viewer, range); };
+                                         save = guarded([this, range](rap::window* viewer)
+                                                        { save_patch_series(viewer, range); });
                                      show_unified_diff(ui_, title, repo_.workdir(),
                                                        format_patch_args(range), {},
                                                        std::move(save));
@@ -929,7 +936,8 @@ void log_window::create_branch(const commit& c, const std::string& name, bool sw
 // a stash of thousands of files is slow to show and to apply).
 void log_window::stash_changes()
 {
-    tortilla::stash_changes(ui_, window_.get(), repo_.workdir(), [this](bool) { reload(); });
+    tortilla::stash_changes(ui_, window_.get(), repo_.workdir(),
+                            guarded([this](bool) { reload(); }));
 }
 
 void log_window::create_tag(const commit& c)
@@ -1029,17 +1037,18 @@ void log_window::move_ref(const ref& ref, const commit& target)
         args = {"tag", "--force", ref.name, to};
 
     const std::string title = tag ? _("Move Tag") : _("Move Branch");
-    ui_.message(
-        window_.get(),
-        {.icon = rap::message_spec::icon::question,
-         .title = title,
-         .text = text,
-         .detail = detail,
-         .buttons = {rap::dialog_role::ok, rap::dialog_role::cancel}},
-        [this, title, args, label = rap::i18n::format(_("Move {0}"), ref.name)](rap::dialog_role r)
-        {
-            if (r == rap::dialog_role::ok) run_ref_commands(title, {args}, label);
-        });
+    ui_.message(window_.get(),
+                {.icon = rap::message_spec::icon::question,
+                 .title = title,
+                 .text = text,
+                 .detail = detail,
+                 .buttons = {rap::dialog_role::ok, rap::dialog_role::cancel}},
+                guarded(
+                    [this, title, args,
+                     label = rap::i18n::format(_("Move {0}"), ref.name)](rap::dialog_role r)
+                    {
+                        if (r == rap::dialog_role::ok) run_ref_commands(title, {args}, label);
+                    }));
 }
 
 // A right-click on a label makes the menu about that label (checkout,
@@ -1123,13 +1132,13 @@ void log_window::choose(const std::string& title, const std::string& question,
     for (choice& c : choices)
     {
         rows.push_back(button{c.label}.on_click(
-            [this, weak, act = std::move(c.act)]
+            [&ui = ui_, weak, act = guarded(std::move(c.act))]() mutable
             {
                 auto s = weak.lock();
                 if (!s) return;
                 s->chosen = true;
                 s->window->close();
-                ui_.post([s] {});  // destroyed after this click returns
+                ui.post([s] {});  // destroyed after this click returns
                 act();
             }));
         rows.push_back(label{"   " + c.description});
@@ -1139,13 +1148,14 @@ void log_window::choose(const std::string& title, const std::string& question,
     rap::node box{rap::spec::box{rap::orientation::vertical, std::move(rows), false, {}}, {}};
     st->window =
         create_window(ui_, dialog{title, {std::move(box)}}.resizable(false), window_.get());
+    if (cancelled) cancelled = guarded(std::move(cancelled));
     st->window->on_finished(
-        [this, st, cancelled = std::move(cancelled)](rap::dialog_role) mutable
+        [&ui = ui_, st, cancelled = std::move(cancelled)](rap::dialog_role) mutable
         {
             if (!st) return;  // fired once only
             auto keep = std::move(st);
             if (!keep->chosen && cancelled) cancelled();
-            ui_.post([keep] {});
+            ui.post([keep] {});
         });
     st->window->show();
 }
@@ -1238,17 +1248,20 @@ void log_window::offer_stash_pop()
             window_.get(),
             {.icon = rap::message_spec::icon::question,
              .title = _("Stash"),
-             .text = rap::i18n::format(_("A stash was made here:\n\u201c{0}\u201d\n\nApply it now?"), subject),
-             .detail = clean ? ""
-                             : _("You have uncommitted changes. If the stash changes the same files, "
-                                 "git won't apply it and it stays in the stash list."),
+             .text = rap::i18n::format(
+                 _("A stash was made here:\n\u201c{0}\u201d\n\nApply it now?"), subject),
+             .detail = clean
+                           ? ""
+                           : _("You have uncommitted changes. If the stash changes the same files, "
+                               "git won't apply it and it stays in the stash list."),
              .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
-            [this, ref](rap::dialog_role r)
-            {
-                if (r == rap::dialog_role::yes)
-                    run_quietly(_("Stash Pop"), {{"stash", "pop", ref}},
-                                [this](bool, const std::string&) { reload(); });
-            });
+            guarded(
+                [this, ref](rap::dialog_role r)
+                {
+                    if (r == rap::dialog_role::yes)
+                        run_quietly(_("Stash Pop"), {{"stash", "pop", ref}},
+                                    [this](bool, const std::string&) { reload(); });
+                }));
         return;  // the newest only
     }
 }
@@ -1290,7 +1303,7 @@ rap::list::cell_drag log_window::label_drag()
 void log_window::reset_to(const commit& c)
 {
     tortilla::reset_to(ui_, window_.get(), repo_.workdir(), repo_.head_name(), c.id.hex(),
-                       c.summary, [this](bool) { reload(); });
+                       c.summary, guarded([this](bool) { reload(); }));
 }
 
 // TortoiseGit's Merge dialog, reduced to its main options.
@@ -1387,7 +1400,7 @@ void log_window::compare_change_sets(const std::string& a, const std::string& b)
                     difftool_ = compare_files(
                         ui_, window_.get(), rap::sys::path_to_utf8((*patches)[0]),
                         rap::sys::path_to_utf8((*patches)[1]),
-                        [this] { open_settings(settings_page::diff_viewer); }, remove);
+                        guarded([this] { open_settings(settings_page::diff_viewer); }), remove);
                 });
         })
         .detach();
@@ -1415,10 +1428,10 @@ void log_window::edit_notes(const commit& c)
             .size(60_ch, 10_lines),
         window_.get());
     st->window->on_finished(
-        [this, st, hash, alive = std::weak_ptr<bool>(alive_)](rap::dialog_role role)
+        [this, &ui = ui_, st, hash, alive = std::weak_ptr<bool>(alive_)](rap::dialog_role role)
         {
             const std::string text = st->text->text();
-            ui_.post([st] {});  // the window goes after this returns
+            ui.post([st] {});  // the window goes after this returns
             if (role != rap::dialog_role::ok || !alive.lock()) return;
             // From a file, so the note keeps its lines exactly as typed.
             // Its own name: two notes edited at once don't share a file.
@@ -1453,8 +1466,9 @@ void log_window::open_rebase(const std::string& upstream, const rebase_todo* tod
             // Closed without starting, nothing moved.
             if (raw->acted()) reload();
             // Destroyed after the close callback has returned.
-            ui_.post([this, raw]
-                     { std::erase_if(rebases_, [raw](auto& r) { return r.get() == raw; }); });
+            ui_.post(
+                guarded([this, raw]
+                        { std::erase_if(rebases_, [raw](auto& r) { return r.get() == raw; }); }));
         });
     raw->show();
     rebases_.push_back(std::move(*w));

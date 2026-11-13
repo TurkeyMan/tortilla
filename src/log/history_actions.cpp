@@ -147,19 +147,20 @@ void log_window::history_items(menu& m, const std::vector<size_t>& sel)
                     ui_, window_.get(), _("Reword"),
                     rap::i18n::format(_("The message of {0}:"), commit_label(repo_, c)),
                     commit ? commit->message : std::string(), warning,
-                    [this, h, c, hash](std::string text)
-                    {
-                        text = tidy_message(text);
-                        if (text.empty())
-                            return ui_.message(window_.get(),
-                                               {.icon = rap::message_spec::icon::error,
-                                                .title = _("Reword"),
-                                                .text = _("A commit needs a message.")});
-                        start_history_edit(
-                            _("Reword"),
-                            from_plan(h, plan_reword(h, c, text), "tortilla: reword " + hash), {},
-                            rap::i18n::format(_("Reword {0}"), hash));
-                    });
+                    guarded(
+                        [this, h, c, hash](std::string text)
+                        {
+                            text = tidy_message(text);
+                            if (text.empty())
+                                return ui_.message(window_.get(),
+                                                   {.icon = rap::message_spec::icon::error,
+                                                    .title = _("Reword"),
+                                                    .text = _("A commit needs a message.")});
+                            start_history_edit(
+                                _("Reword"),
+                                from_plan(h, plan_reword(h, c, text), "tortilla: reword " + hash),
+                                {}, rap::i18n::format(_("Reword {0}"), hash));
+                        }));
             }));
 
         // Into the commit below: its message and this one's, to edit.
@@ -176,20 +177,21 @@ void log_window::history_items(menu& m, const std::vector<size_t>& sel)
                     rap::i18n::format(_("The message of {0} with {1} squashed in:"),
                                       commit_label(repo_, into), c.hex(8)),
                     combined_message(repo_, {into, c}), warning,
-                    [this, h, c, into](std::string text)
-                    {
-                        text = tidy_message(strip_squash_separators(text, 2));
-                        if (text.empty())
-                            return ui_.message(window_.get(),
-                                               {.icon = rap::message_spec::icon::error,
-                                                .title = _("Squash"),
-                                                .text = _("A commit needs a message.")});
-                        start_history_edit(
-                            _("Squash"),
-                            from_plan(h, plan_fold(h, c, into, text),
-                                      "tortilla: squash " + c.hex(8) + " into " + into.hex(8)),
-                            {}, rap::i18n::format(_("Squash {0}"), c.hex(8)));
-                    });
+                    guarded(
+                        [this, h, c, into](std::string text)
+                        {
+                            text = tidy_message(strip_squash_separators(text, 2));
+                            if (text.empty())
+                                return ui_.message(window_.get(),
+                                                   {.icon = rap::message_spec::icon::error,
+                                                    .title = _("Squash"),
+                                                    .text = _("A commit needs a message.")});
+                            start_history_edit(
+                                _("Squash"),
+                                from_plan(h, plan_fold(h, c, into, text),
+                                          "tortilla: squash " + c.hex(8) + " into " + into.hex(8)),
+                                {}, rap::i18n::format(_("Squash {0}"), c.hex(8)));
+                        }));
             }));
 
         // Fixup into an earlier commit: this one's changes, that one's message.
@@ -294,22 +296,24 @@ void log_window::history_items(menu& m, const std::vector<size_t>& sel)
                                                "{0} commits become one, with this message:", n),
                                             n),
                           combined_message(repo_, oldest_first), warning,
-                          [this, h, commits, n](std::string text)
-                          {
-                              text = tidy_message(strip_squash_separators(text, n));
-                              if (text.empty())
-                                  return ui_.message(window_.get(),
-                                                     {.icon = rap::message_spec::icon::error,
-                                                      .title = _("Combine to One Commit"),
-                                                      .text = _("A commit needs a message.")});
-                              start_history_edit(
-                                  _("Combine to One Commit"),
-                                  from_plan(h, plan_combine(h, commits, text),
-                                            "tortilla: combine " + std::to_string(n) + " commits"),
-                                  {},
-                                  rap::i18n::format(
-                                      N_("Combine {0} commit", "Combine {0} commits", n), n));
-                          });
+                          guarded(
+                              [this, h, commits, n](std::string text)
+                              {
+                                  text = tidy_message(strip_squash_separators(text, n));
+                                  if (text.empty())
+                                      return ui_.message(window_.get(),
+                                                         {.icon = rap::message_spec::icon::error,
+                                                          .title = _("Combine to One Commit"),
+                                                          .text = _("A commit needs a message.")});
+                                  start_history_edit(
+                                      _("Combine to One Commit"),
+                                      from_plan(h, plan_combine(h, commits, text),
+                                                "tortilla: combine " + std::to_string(n) +
+                                                    " commits"),
+                                      {},
+                                      rap::i18n::format(
+                                          N_("Combine {0} commit", "Combine {0} commits", n), n));
+                              }));
                   }));
     }
 
@@ -331,20 +335,22 @@ void log_window::history_items(menu& m, const std::vector<size_t>& sel)
                          .title = _("Drop"),
                          .text = question,
                          .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
-                        [this, h, commits, n](rap::dialog_role r)
-                        {
-                            if (r != rap::dialog_role::yes) return;
-                            const auto plan = plan_drop(h, commits);
-                            start_history_edit(
-                                _("Drop"),
-                                from_plan(h, plan,
-                                          "tortilla: drop " + std::to_string(n) +
-                                              (n == 1 ? " commit" : " commits")),
-                                fallback_of(plan),
-                                n == 1 ? rap::i18n::format(_("Drop {0}"), commits.front().hex(8))
-                                       : rap::i18n::format(
-                                             N_("Drop {0} commit", "Drop {0} commits", n), n));
-                        });
+                        guarded(
+                            [this, h, commits, n](rap::dialog_role r)
+                            {
+                                if (r != rap::dialog_role::yes) return;
+                                const auto plan = plan_drop(h, commits);
+                                start_history_edit(
+                                    _("Drop"),
+                                    from_plan(h, plan,
+                                              "tortilla: drop " + std::to_string(n) +
+                                                  (n == 1 ? " commit" : " commits")),
+                                    fallback_of(plan),
+                                    n == 1 ? rap::i18n::format(_("Drop {0}"),
+                                                               commits.front().hex(8))
+                                           : rap::i18n::format(
+                                                 N_("Drop {0} commit", "Drop {0} commits", n), n));
+                            }));
         }));
 
     // Move to another branch (committed on the wrong one), or a new one.
@@ -370,23 +376,24 @@ void log_window::history_items(menu& m, const std::vector<size_t>& sel)
                         N_("Move {0} commit off {1}, onto:", "Move {0} commits off {1}, onto:", n),
                         n, h.name()),
                     branches, warning,
-                    [this, h, commits, n](move_target t)
-                    {
-                        const std::string reflog = "tortilla: move " + std::to_string(n) +
-                                                   (n == 1 ? " commit" : " commits") + " to " +
-                                                   t.branch;
-                        start_history_edit(
-                            _("Move Commits to Branch"),
-                            [h, commits, t, reflog](const repo& r)
-                            {
-                                return move_commits(r, h, commits, "refs/heads/" + t.branch,
-                                                    t.create, reflog);
-                            },
-                            {},
-                            rap::i18n::format(
-                                N_("Move {0} commit to {1}", "Move {0} commits to {1}", n), n,
-                                t.branch));
-                    });
+                    guarded(
+                        [this, h, commits, n](move_target t)
+                        {
+                            const std::string reflog = "tortilla: move " + std::to_string(n) +
+                                                       (n == 1 ? " commit" : " commits") + " to " +
+                                                       t.branch;
+                            start_history_edit(
+                                _("Move Commits to Branch"),
+                                [h, commits, t, reflog](const repo& r)
+                                {
+                                    return move_commits(r, h, commits, "refs/heads/" + t.branch,
+                                                        t.create, reflog);
+                                },
+                                {},
+                                rap::i18n::format(
+                                    N_("Move {0} commit to {1}", "Move {0} commits to {1}", n), n,
+                                    t.branch));
+                        }));
             }));
     }
 
@@ -433,7 +440,7 @@ void log_window::confirm_history_edit(const std::string& title, const std::strin
          .title = title,
          .text = text,
          .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
-        [go = std::move(go)](rap::dialog_role r)
+        [go = guarded(std::move(go))](rap::dialog_role r) mutable
         {
             if (r == rap::dialog_role::yes) go();
         });
@@ -633,7 +640,7 @@ void log_window::start_history_edit(const std::string& title, edit_maker make,
                                     journal_use use)
 {
     if (!claim_history_writer(title)) return;
-    page_->status->set_text(rap::i18n::format(_("{0}..."), title));
+    if (page_) page_->status->set_text(rap::i18n::format(_("{0}..."), title));
     if (label.empty()) label = title;
     edit_writer_->prepare(
         [this, title, make = std::move(make), fallback = std::move(fallback), label,
@@ -763,7 +770,7 @@ void log_window::step_journal(bool redo)
 
 void log_window::update_undo_buttons()
 {
-    if (!page_->undo || !page_->redo) return;
+    if (!page_ || !page_->undo || !page_->redo) return;
     const journal_step* u = journal_.next_undo();
     const journal_step* r = journal_.next_redo();
     const bool busy = history_edit_busy();
@@ -811,10 +818,11 @@ void log_window::offer_force_push(const history_edit& e)
                      short_branch(branch), args[2], e.lease->hex(8)),
                  .detail = command_line(args),
                  .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
-                [this, args](rap::dialog_role r)
-                {
-                    if (r == rap::dialog_role::yes) run_git_commands(_("Force Push"), {args});
-                });
+                guarded(
+                    [this, args](rap::dialog_role r)
+                    {
+                        if (r == rap::dialog_role::yes) run_git_commands(_("Force Push"), {args});
+                    }));
 }
 
 }  // namespace tortilla

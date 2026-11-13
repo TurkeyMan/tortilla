@@ -26,6 +26,7 @@
 #include <chrono>
 #include <filesystem>
 #include <memory>
+#include <type_traits>
 
 namespace tortilla
 {
@@ -58,8 +59,38 @@ private:
     log_window(rap::ui&, repo, std::string path);
 
     void build();
+    // `f`, called only while this log is there: for what can call back after
+    // it has gone (dialogs and windows of its own, posts to the UI thread).
+    // Dead, it does nothing and returns what a default value would.
+    template <class F>
+    auto guarded(F f) const
+    {
+        return [alive = std::weak_ptr<bool>(alive_), f = std::move(f)](auto&&... args) mutable
+        {
+            using result = decltype(f(std::forward<decltype(args)>(args)...));
+            if (!alive.lock())
+            {
+                if constexpr (std::is_void_v<result>)
+                    return;
+                else
+                    return result{};
+            }
+            return f(std::forward<decltype(args)>(args)...);
+        };
+    }
+
+    // The state changes, and the page (while there is one) drawn from it:
+    // what draws begins with `if (!page_) return`. refresh_page draws all
+    // of it again.
+    void refresh_page();
     void reload();
     void loaded(const std::string& error);
+    // While loading, a progress bar replaces Statistics, Walk Behavior and
+    // View [spec 1.2].
+    void show_loading(bool loading);
+    // The selection kept across a load put back, or, opened, the commit
+    // checked out.
+    void show_selection();
     void restore_selection();
     void selection_changed();
     void show_commit(size_t row);
@@ -178,6 +209,9 @@ private:
     void fast_forward_current();
     // A sync's warning in the status bar, for a while.
     void set_sync_notice(std::string text, bool failure);
+    void show_notice();
+    // The Fetch button greyed while a sync runs.
+    void show_sync_state();
     void keep_pull_dialog();
     // The button's icon: the desktop's download icon unbadged (drawn where
     // there are no named icons, Windows), or drawn with its badge
@@ -193,6 +227,7 @@ private:
     std::map<std::string, remote_result, std::less<>> failures_;
     std::string last_output_;  // the last fetch's, for the status bar's "!"
     std::string notice_;
+    bool notice_failure_ = false;  // with the red "!"
     rap::subscription notice_timer_, poll_timer_;
     std::vector<std::string> prefetching_;
     bool rechecking_ = false, recheck_again_ = false, polling_ = false;
@@ -307,7 +342,9 @@ private:
     std::function<void()> closed_;
     std::function<void(std::vector<commit>)> picked_;
     std::string pick_purpose_;
+    std::string pick_label_;  // OK's, while picking
     void update_pick_button();
+    void show_pick_mode();
     // The widgets and what lives as long as they do. After window_, so it
     // goes first (the date pop-up before the window it's over).
     std::unique_ptr<log_page> page_;

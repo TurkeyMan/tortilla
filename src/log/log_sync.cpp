@@ -117,6 +117,7 @@ void log_window::show_sync_output()
 
 void log_window::update_sync_badge()
 {
+    if (!page_) return;
     // No network at all is the system's to say: Offline, not the remotes'
     // failures. Connected, any remote's failure is red.
     const size_t count = std::accumulate(
@@ -148,16 +149,29 @@ void log_window::update_sync_badge()
 void log_window::set_sync_notice(std::string text, bool failure)
 {
     notice_ = std::move(text);
-    page_->status_mark->set_visible(failure && !notice_.empty());
-    page_->status_mark->invalidate();
+    notice_failure_ = failure;
+    show_notice();
     update_status();
     notice_timer_ = ui_.timer(10000, false,
                               [this]
                               {
                                   notice_.clear();
-                                  page_->status_mark->set_visible(false);
+                                  show_notice();
                                   update_status();
                               });
+}
+
+void log_window::show_notice()
+{
+    if (!page_) return;
+    page_->status_mark->set_visible(notice_failure_ && !notice_.empty());
+    page_->status_mark->invalidate();
+}
+
+void log_window::show_sync_state()
+{
+    if (!page_) return;
+    page_->fetch->set_enabled(!syncing_);
 }
 
 // Every remote fetched side by side, a git each, the leading one (the hot
@@ -168,9 +182,10 @@ void log_window::sync(const std::string& only)
 {
     if (syncing_) return;
     syncing_ = true;
-    page_->fetch->set_enabled(false);
-    page_->status->set_text(only.empty() ? std::string(_("Fetching from the remotes…"))
-                                         : rap::i18n::format(_("Fetching {0}..."), only));
+    show_sync_state();
+    if (page_)
+        page_->status->set_text(only.empty() ? std::string(_("Fetching from the remotes…"))
+                                             : rap::i18n::format(_("Fetching {0}..."), only));
     // The forge's view too, at once (a forge action asks it itself).
     if (only.empty() && pr_watch_) pr_watch_->refresh();
     auto run = sync_run_ = std::make_shared<sync_state>();
@@ -258,7 +273,7 @@ void log_window::sync_finished(const std::shared_ptr<sync_state>& run)
 {
     if (run == sync_run_) sync_run_.reset();
     syncing_ = false;
-    page_->fetch->set_enabled(true);
+    show_sync_state();
     last_output_.clear();
     std::vector<std::string> failed;
     fetch_failure kind = fetch_failure::none;
@@ -305,7 +320,6 @@ void log_window::sync_finished(const std::shared_ptr<sync_state>& run)
 
 void log_window::start_sync_watch()
 {
-    page_->status_mark->set_cursor(rap::cursor::pointer);
     update_sync_badge();
     if (pr_watch_) pr_watch_->want_branch_tips(allowed_now(check_setting()));
     // A first look a little after opening, once the log has loaded.
@@ -468,6 +482,7 @@ void log_window::update_branch_hint()
 
 void log_window::show_branch_hint(const current_state& s)
 {
+    if (!page_) return;
     const std::string key = s.branch + ' ' + s.upstream + ' ' + std::to_string(s.behind);
     if (s.behind <= 0 || s.upstream.empty() || key == hint_hidden_ || picked_)
     {
@@ -492,7 +507,7 @@ void log_window::show_branch_hint(const current_state& s)
 // git refuses if uncommitted changes are in the way, and says why.
 void log_window::fast_forward_current()
 {
-    page_->hint_bar->set_visible(false);
+    if (page_) page_->hint_bar->set_visible(false);
     run_quietly(_("Fast-forward"), {{"merge", "--ff-only", "@{u}"}},
                 [this](bool, const std::string&) { reload(); });
 }
