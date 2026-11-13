@@ -4,7 +4,7 @@
 // its upstream. Nothing here asks the user anything: git runs with
 // git_prompts::never, and a remote that wants a password fails, shown on
 // the button.
-#include "log_window.h"
+#include "log_tab.h"
 #include "ref_labels.h"
 
 #include "git/remotes.h"
@@ -43,7 +43,7 @@ constexpr int k_poll_ms = 10 * 60 * 1000;
 
 }  // namespace
 
-rap::icon log_window::fetch_icon(fetch_badge badge, size_t count)
+rap::icon log_tab::fetch_icon(fetch_badge badge, size_t count)
 {
     // A down arrow into a tray, in the theme's text colour (grey offline),
     // and the badge top right.
@@ -87,7 +87,7 @@ rap::icon log_window::fetch_icon(fetch_badge badge, size_t count)
     return icon;
 }
 
-void log_window::paint_failure_mark(rap::painter& p, rap::size_f s)
+void log_tab::paint_failure_mark(rap::painter& p, rap::size_f s)
 {
     // (A canvas has no background of its own on every toolkit.)
     p.rect({0, 0, s.w, s.h}, 0, paint{rap::theme_color::window}, std::nullopt);
@@ -97,7 +97,7 @@ void log_window::paint_failure_mark(rap::painter& p, rap::size_f s)
 }
 
 // What git said, the failures' first: the status bar's "!" clicked.
-void log_window::show_sync_output()
+void log_tab::show_sync_output()
 {
     std::string text, detail;
     for (const auto& [remote, failure] : failures_)
@@ -108,14 +108,14 @@ void log_window::show_sync_output()
     for (const remote_changes& c : changes_) text += (text.empty() ? "" : "\n") + changes_text(c);
     if (failures_.empty()) detail = last_output_;
     if (text.empty()) text = _("Nothing to bring from the remotes.");
-    ui_.message(window_.get(), {.icon = failures_.empty() ? rap::message_spec::icon::info
-                                                          : rap::message_spec::icon::warning,
-                                .title = _("Fetch"),
-                                .text = text,
-                                .detail = detail});
+    ui_.message(parent(), {.icon = failures_.empty() ? rap::message_spec::icon::info
+                                                     : rap::message_spec::icon::warning,
+                           .title = _("Fetch"),
+                           .text = text,
+                           .detail = detail});
 }
 
-void log_window::update_sync_badge()
+void log_tab::update_sync_badge()
 {
     if (!page_) return;
     // No network at all is the system's to say: Offline, not the remotes'
@@ -146,7 +146,7 @@ void log_window::update_sync_badge()
     page_->fetch->set_tooltip(tip);
 }
 
-void log_window::set_sync_notice(std::string text, bool failure)
+void log_tab::set_sync_notice(std::string text, bool failure)
 {
     notice_ = std::move(text);
     notice_failure_ = failure;
@@ -161,14 +161,14 @@ void log_window::set_sync_notice(std::string text, bool failure)
                               });
 }
 
-void log_window::show_notice()
+void log_tab::show_notice()
 {
     if (!page_) return;
     page_->status_mark->set_visible(notice_failure_ && !notice_.empty());
     page_->status_mark->invalidate();
 }
 
-void log_window::show_sync_state()
+void log_tab::show_sync_state()
 {
     if (!page_) return;
     page_->fetch->set_enabled(!syncing_);
@@ -178,7 +178,7 @@ void log_window::show_sync_state()
 // repository) started first: the log reloads when it's done, and again when
 // the rest are. Branches behind a remote's upstreams move as soon as that
 // remote is fetched.
-void log_window::sync(const std::string& only)
+void log_tab::sync(const std::string& only)
 {
     if (syncing_) return;
     syncing_ = true;
@@ -246,8 +246,8 @@ void log_window::sync(const std::string& only)
         .detach();
 }
 
-void log_window::remote_synced(const std::shared_ptr<sync_state>& run, const std::string& remote,
-                               remote_result result, std::vector<std::string> moved)
+void log_tab::remote_synced(const std::shared_ptr<sync_state>& run, const std::string& remote,
+                            remote_result result, std::vector<std::string> moved)
 {
     for (std::string& m : moved) run->moved.push_back(std::move(m));
     if (result.failure == fetch_failure::none)
@@ -269,7 +269,7 @@ void log_window::remote_synced(const std::shared_ptr<sync_state>& run, const std
     if (last) sync_finished(run);
 }
 
-void log_window::sync_finished(const std::shared_ptr<sync_state>& run)
+void log_tab::sync_finished(const std::shared_ptr<sync_state>& run)
 {
     if (run == sync_run_) sync_run_.reset();
     syncing_ = false;
@@ -318,7 +318,7 @@ void log_window::sync_finished(const std::shared_ptr<sync_state>& run)
 
 // -- before the click ---------------------------------------------------------
 
-void log_window::start_sync_watch()
+void log_tab::start_sync_watch()
 {
     update_sync_badge();
     if (pr_watch_) pr_watch_->want_branch_tips(allowed_now(check_setting()));
@@ -327,7 +327,7 @@ void log_window::start_sync_watch()
 }
 
 // Remotes the forge didn't answer for: ls-remote, rarely.
-void log_window::poll_remotes()
+void log_tab::poll_remotes()
 {
     poll_timer_ = ui_.timer(k_poll_ms, false, [this] { poll_remotes(); });
     const bool allowed = allowed_now(check_setting());
@@ -367,7 +367,7 @@ void log_window::poll_remotes()
         .detach();
 }
 
-void log_window::tips_heard(std::map<std::string, remote_tips, std::less<>> tips)
+void log_tab::tips_heard(std::map<std::string, remote_tips, std::less<>> tips)
 {
     update_sync_badge();  // the watch's hints may have changed
     if (tips.empty() || !allowed_now(check_setting())) return;
@@ -377,7 +377,7 @@ void log_window::tips_heard(std::map<std::string, remote_tips, std::less<>> tips
 
 // The remotes' branches as last heard against the repository's copies of
 // them, on a worker; then the ones that differ downloaded ahead of a click.
-void log_window::recheck_changes()
+void log_tab::recheck_changes()
 {
     if (known_tips_.empty()) return;
     if (rechecking_)
@@ -423,7 +423,7 @@ void log_window::recheck_changes()
 }
 
 // Only a speed-up: refs/remotes/ stays as it is, and the click still fetches.
-void log_window::prefetch(const std::string& remote)
+void log_tab::prefetch(const std::string& remote)
 {
     if (syncing_ || std::ranges::find(prefetching_, remote) != prefetching_.end()) return;
     prefetching_.push_back(remote);
@@ -446,7 +446,7 @@ void log_window::prefetch(const std::string& remote)
         .detach();
 }
 
-void log_window::contact_result(const std::string& remote, remote_result result)
+void log_tab::contact_result(const std::string& remote, remote_result result)
 {
     if (result.failure == fetch_failure::none)
         failures_.erase(remote);
@@ -457,7 +457,7 @@ void log_window::contact_result(const std::string& remote, remote_result result)
 
 // -- the current branch -------------------------------------------------------
 
-void log_window::update_branch_hint()
+void log_tab::update_branch_hint()
 {
     if (repo_.workdir().empty()) return;  // a bare repository checks nothing out
     const bool after_sync = std::exchange(after_sync_, false);
@@ -480,7 +480,7 @@ void log_window::update_branch_hint()
         .detach();
 }
 
-void log_window::show_branch_hint(const current_state& s)
+void log_tab::show_branch_hint(const current_state& s)
 {
     if (!page_) return;
     const std::string key = s.branch + ' ' + s.upstream + ' ' + std::to_string(s.behind);
@@ -505,7 +505,7 @@ void log_window::show_branch_hint(const current_state& s)
 }
 
 // git refuses if uncommitted changes are in the way, and says why.
-void log_window::fast_forward_current()
+void log_tab::fast_forward_current()
 {
     if (page_) page_->hint_bar->set_visible(false);
     run_quietly(_("Fast-forward"), {{"merge", "--ff-only", "@{u}"}},

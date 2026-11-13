@@ -122,6 +122,8 @@ target_compile_features(tortilla_git PUBLIC cxx_std_23)
 add_executable(tortilla
     src/main.cpp
     src/log/log_window.cpp
+    src/log/log_tab.cpp
+    src/log/log_tab_page.cpp
     src/log/log_actions.cpp
     src/log/log_sync.cpp
     src/log/forge_panel.cpp

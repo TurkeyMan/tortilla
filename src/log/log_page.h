@@ -1,5 +1,5 @@
 // The log's page: its widgets, as built, and what lives only as long as
-// they do. The log's state is kept apart from it (log_window), so the page
+// they do. The log's state is kept apart from it (log_tab), so the page
 // can be drawn again from that state.
 #pragma once
 
@@ -12,6 +12,9 @@
 
 namespace tortilla
 {
+
+// The author's picture, top right of the details, in logical px.
+inline constexpr int k_avatar_size = 96;
 
 // The Fetch button's badge: changes waiting (a dot with their count), a
 // remote that failed (a red "!"), or no network (greyed, Offline).

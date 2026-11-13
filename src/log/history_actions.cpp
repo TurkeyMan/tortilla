@@ -2,7 +2,7 @@
 // rewords, drops, folds and moves commits of its branch in place, without a
 // rebase, and dragging commits reorders them. The edit is made on a worker
 // and applied there, and goes in the window's journal for Undo and Redo.
-#include "log_window.h"
+#include "log_tab.h"
 
 #include "log/branch_filter.h"
 #include "log/history_dialogs.h"
@@ -81,19 +81,19 @@ std::optional<std::string> busy(const repo& r)
 
 }  // namespace
 
-std::string log_window::mainline_ref() const
+std::string log_tab::mainline_ref() const
 {
     return merge_base_branch(repo_, show_.pins, {});
 }
 
-std::string log_window::pushed_warning(const branch_history& h) const
+std::string log_tab::pushed_warning(const branch_history& h) const
 {
     return rap::i18n::format(
         _("Some of these commits are on {0} already: after this, {1} needs a force push."),
         short_branch(h.upstream), h.name());
 }
 
-void log_window::history_items(menu& m, const std::vector<size_t>& sel)
+void log_tab::history_items(menu& m, const std::vector<size_t>& sel)
 {
     if (repo_.bare() || picked_) return;
     // Commits only, oldest last as the rows run.
@@ -144,7 +144,7 @@ void log_window::history_items(menu& m, const std::vector<size_t>& sel)
             {
                 const auto commit = repo_.lookup(c);
                 history_message_dialog(
-                    ui_, window_.get(), _("Reword"),
+                    ui_, parent(), _("Reword"),
                     rap::i18n::format(_("The message of {0}:"), commit_label(repo_, c)),
                     commit ? commit->message : std::string(), warning,
                     guarded(
@@ -152,7 +152,7 @@ void log_window::history_items(menu& m, const std::vector<size_t>& sel)
                         {
                             text = tidy_message(text);
                             if (text.empty())
-                                return ui_.message(window_.get(),
+                                return ui_.message(parent(),
                                                    {.icon = rap::message_spec::icon::error,
                                                     .title = _("Reword"),
                                                     .text = _("A commit needs a message.")});
@@ -173,7 +173,7 @@ void log_window::history_items(menu& m, const std::vector<size_t>& sel)
             {
                 const oid into = h.line[*at + 1];
                 history_message_dialog(
-                    ui_, window_.get(), _("Squash into the Commit Below"),
+                    ui_, parent(), _("Squash into the Commit Below"),
                     rap::i18n::format(_("The message of {0} with {1} squashed in:"),
                                       commit_label(repo_, into), c.hex(8)),
                     combined_message(repo_, {into, c}), warning,
@@ -182,7 +182,7 @@ void log_window::history_items(menu& m, const std::vector<size_t>& sel)
                         {
                             text = tidy_message(strip_squash_separators(text, 2));
                             if (text.empty())
-                                return ui_.message(window_.get(),
+                                return ui_.message(parent(),
                                                    {.icon = rap::message_spec::icon::error,
                                                     .title = _("Squash"),
                                                     .text = _("A commit needs a message.")});
@@ -291,7 +291,7 @@ void log_window::history_items(menu& m, const std::vector<size_t>& sel)
                       for (auto it = h.line.rbegin(); it != h.line.rend(); ++it)
                           if (std::ranges::contains(commits, *it)) oldest_first.push_back(*it);
                       history_message_dialog(
-                          ui_, window_.get(), _("Combine to One Commit"),
+                          ui_, parent(), _("Combine to One Commit"),
                           rap::i18n::format(N_("{0} commit becomes one, with this message:",
                                                "{0} commits become one, with this message:", n),
                                             n),
@@ -301,7 +301,7 @@ void log_window::history_items(menu& m, const std::vector<size_t>& sel)
                               {
                                   text = tidy_message(strip_squash_separators(text, n));
                                   if (text.empty())
-                                      return ui_.message(window_.get(),
+                                      return ui_.message(parent(),
                                                          {.icon = rap::message_spec::icon::error,
                                                           .title = _("Combine to One Commit"),
                                                           .text = _("A commit needs a message.")});
@@ -330,7 +330,7 @@ void log_window::history_items(menu& m, const std::vector<size_t>& sel)
                                 "Drop {0} commits from {1}? Their changes go with them.", n),
                              n, h.name());
             if (!warning.empty()) question += "\n\n" + warning;
-            ui_.message(window_.get(),
+            ui_.message(parent(),
                         {.icon = rap::message_spec::icon::question,
                          .title = _("Drop"),
                          .text = question,
@@ -371,7 +371,7 @@ void log_window::history_items(menu& m, const std::vector<size_t>& sel)
                 for (const std::string& b : repo_.branch_names(true, false, false))
                     if (b != h.name()) branches.push_back(b);
                 move_commits_dialog(
-                    ui_, window_.get(),
+                    ui_, parent(),
                     rap::i18n::format(
                         N_("Move {0} commit off {1}, onto:", "Move {0} commits off {1}, onto:", n),
                         n, h.name()),
@@ -427,15 +427,14 @@ void log_window::history_items(menu& m, const std::vector<size_t>& sel)
     }
 }
 
-void log_window::confirm_history_edit(const std::string& title, const std::string& question,
-                                      bool pushed, const branch_history& h,
-                                      std::function<void()> go)
+void log_tab::confirm_history_edit(const std::string& title, const std::string& question,
+                                   bool pushed, const branch_history& h, std::function<void()> go)
 {
     std::string text = question;
     if (pushed) text += (text.empty() ? "" : "\n\n") + pushed_warning(h);
     if (text.empty()) return go();
     ui_.message(
-        window_.get(),
+        parent(),
         {.icon = pushed ? rap::message_spec::icon::warning : rap::message_spec::icon::question,
          .title = title,
          .text = text,
@@ -446,8 +445,8 @@ void log_window::confirm_history_edit(const std::string& title, const std::strin
         });
 }
 
-bool log_window::reorder_rows(const std::vector<size_t>& rows, size_t destination,
-                              rap::drop_action action)
+bool log_tab::reorder_rows(const std::vector<size_t>& rows, size_t destination,
+                           rap::drop_action action)
 {
     if (picked_ || repo_.bare() || rows.empty()) return false;
     if (history_edit_busy())
@@ -522,9 +521,9 @@ bool log_window::reorder_rows(const std::vector<size_t>& rows, size_t destinatio
     return false;  // the reload shows the new order
 }
 
-void log_window::transplant_rows(const std::vector<oid>& commits,
-                                 const std::expected<branch_history, std::string>& source,
-                                 size_t destination, bool copy)
+void log_tab::transplant_rows(const std::vector<oid>& commits,
+                              const std::expected<branch_history, std::string>& source,
+                              size_t destination, bool copy)
 {
     auto refuse = [&](const std::string& why)
     {
@@ -606,19 +605,19 @@ void log_window::transplant_rows(const std::vector<oid>& commits,
         });
 }
 
-void log_window::show_notices()
+void log_tab::show_notices()
 {
     std::string detail;
     for (const std::string& n : take_notices(notices_dir(), repo_.workdir()))
         detail += (detail.empty() ? "" : "\n\n") + n;
     if (detail.empty()) return;
-    ui_.message(window_.get(), {.icon = rap::message_spec::icon::warning,
-                                .title = _("Tortilla"),
-                                .text = _("A change made here ended after its window was closed:"),
-                                .detail = detail});
+    ui_.message(parent(), {.icon = rap::message_spec::icon::warning,
+                           .title = _("Tortilla"),
+                           .text = _("A change made here ended after its window was closed:"),
+                           .detail = detail});
 }
 
-bool log_window::claim_history_writer(const std::string& title)
+bool log_tab::claim_history_writer(const std::string& title)
 {
     if (!edit_writer_)
         edit_writer_ = std::make_unique<history_writer>(ui_, repo_.workdir(), journal_);
@@ -635,9 +634,9 @@ bool log_window::claim_history_writer(const std::string& title)
     return true;
 }
 
-void log_window::start_history_edit(const std::string& title, edit_maker make,
-                                    std::optional<rebase_todo> fallback, std::string label,
-                                    journal_use use)
+void log_tab::start_history_edit(const std::string& title, edit_maker make,
+                                 std::optional<rebase_todo> fallback, std::string label,
+                                 journal_use use)
 {
     if (!claim_history_writer(title)) return;
     if (page_) page_->status->set_text(rap::i18n::format(_("{0}..."), title));
@@ -658,10 +657,10 @@ void log_window::start_history_edit(const std::string& title, edit_maker make,
         });
 }
 
-void log_window::history_replayed(const std::string& title,
-                                  std::expected<history_edit, replay_failure> e, tree_effect effect,
-                                  std::optional<rebase_todo> fallback, std::string label,
-                                  journal_use use)
+void log_tab::history_replayed(const std::string& title,
+                               std::expected<history_edit, replay_failure> e, tree_effect effect,
+                               std::optional<rebase_todo> fallback, std::string label,
+                               journal_use use)
 {
     update_status();
     if (!e)
@@ -676,7 +675,7 @@ void log_window::history_replayed(const std::string& title,
                               "to resolve it."),
                             [this, todo = *fallback] { open_rebase(todo.onto->hex(), &todo); }}});
         return ui_.message(
-            window_.get(),
+            parent(),
             {.icon = rap::message_spec::icon::error,
              .title = title,
              .text = f.message.empty() ? std::string(_("It can't be done.")) : f.message});
@@ -694,7 +693,7 @@ void log_window::history_replayed(const std::string& title,
     apply_history_edit(title, std::move(*e), false, std::move(label), use);
 }
 
-void log_window::cancel_history_edit()
+void log_tab::cancel_history_edit()
 {
     if (edit_writer_) edit_writer_->cancel();
     update_undo_buttons();
@@ -702,27 +701,27 @@ void log_window::cancel_history_edit()
 
 // The write, on the edit's own worker: its outcome always comes back, and
 // is in the journal (history_writer) before history_applied sees it.
-void log_window::apply_history_edit(const std::string& title, history_edit e, bool stash,
-                                    std::string label, journal_use use)
+void log_tab::apply_history_edit(const std::string& title, history_edit e, bool stash,
+                                 std::string label, journal_use use)
 {
     edit_writer_->apply(title, std::move(label), std::move(e), use, stash,
                         [this](const history_outcome& o) { history_applied(o); });
 }
 
-void log_window::history_applied(const history_outcome& o)
+void log_tab::history_applied(const history_outcome& o)
 {
     update_undo_buttons();
     reload();
     if (!o.applied)
         // Refs it moved all the same and couldn't put back are a one-way
         // step of their own in the journal already: Undo puts them back.
-        return ui_.message(window_.get(), {.icon = rap::message_spec::icon::error,
-                                           .title = o.title,
-                                           .text = rap::i18n::format(_("{0} failed."), o.title),
-                                           .detail = o.applied.error().message});
+        return ui_.message(parent(), {.icon = rap::message_spec::icon::error,
+                                      .title = o.title,
+                                      .text = rap::i18n::format(_("{0} failed."), o.title),
+                                      .detail = o.applied.error().message});
     if (!o.applied->empty())
         ui_.message(
-            window_.get(),
+            parent(),
             {.icon = rap::message_spec::icon::warning, .title = o.title, .text = *o.applied});
     set_sync_notice(rap::i18n::format(_("{0}: done"), o.title), false);
     if (o.edit.pushed && o.use != journal_use::undo) offer_force_push(o.edit);
@@ -736,7 +735,7 @@ void log_window::history_applied(const history_outcome& o)
 // since is never overwritten; the step is dropped instead. A branch checked
 // out in another worktree since is refused there (apply_edit's rule), the
 // step kept for when it isn't.
-void log_window::step_journal(bool redo)
+void log_tab::step_journal(bool redo)
 {
     const journal_step* step = redo ? journal_.next_redo() : journal_.next_undo();
     if (!step || picked_) return;
@@ -756,7 +755,7 @@ void log_window::step_journal(bool redo)
             journal_.forget_undo();
         update_undo_buttons();
         return ui_.message(
-            window_.get(),
+            parent(),
             {.icon = rap::message_spec::icon::warning,
              .title = redo ? _("Redo") : _("Undo"),
              .text = rap::i18n::format(_("{0} can't be done: {1}"), title, *why),
@@ -768,7 +767,7 @@ void log_window::step_journal(bool redo)
         {}, step->label, redo ? journal_use::redo : journal_use::undo);
 }
 
-void log_window::update_undo_buttons()
+void log_tab::update_undo_buttons()
 {
     if (!page_ || !page_->undo || !page_->redo) return;
     const journal_step* u = journal_.next_undo();
@@ -784,7 +783,7 @@ void log_window::update_undo_buttons()
 
 // The desktop's undo and redo arrows, else drawn: a hooked arrow in the
 // text colour, turning back (undo) or forward (redo).
-rap::icon log_window::undo_icon(bool redo)
+rap::icon log_tab::undo_icon(bool redo)
 {
     rap::icon icon = rap::icon::drawn(
         [redo](rap::painter& p, rap::size_f s)
@@ -803,13 +802,13 @@ rap::icon log_window::undo_icon(bool redo)
     return icon;
 }
 
-void log_window::offer_force_push(const history_edit& e)
+void log_tab::offer_force_push(const history_edit& e)
 {
     const std::string branch = e.moves.front().ref;
     if (!e.lease || !e.moves.front().to) return;
     auto args = force_push_args(e);
     if (args.empty()) return;
-    ui_.message(window_.get(),
+    ui_.message(parent(),
                 {.icon = rap::message_spec::icon::question,
                  .title = _("Force Push"),
                  .text = rap::i18n::format(
