@@ -855,7 +855,7 @@ menu log_tab::context_menu(std::optional<size_t> clicked)
     if (sel.size() == 1 && log_.refs_of(sel.front()))
         copy.children.push_back(copy_item(_("Tag/branch names"), copy_ref_names));
     m.push_back(std::move(copy));
-    m.push_back(item(_("Search _log messages..."), [this] { page_->search->focus(); }));
+    m.push_back(item(_("Search _log messages..."), [this] { focus_filter(); }));
     if (sel.size() == 1)
         if (const commit* c = log_.commit(sel.front()))
             m.push_back(item(_("Show branches this commit is _on"),

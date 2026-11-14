@@ -3034,6 +3034,7 @@ int main(int argc, char** argv)
 
     int ui_argc = 1;
     rap::load_options opts{.backend = "null"};
+    opts.look.density = rap::density::compact;
     auto ui = rap::ui::load(ui_argc, argv, opts);
     if (!ui)
     {

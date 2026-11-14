@@ -17,6 +17,7 @@
 #include "log/forge_share.h"
 #include "log/log_model.h"
 #include "log/log_page.h"
+#include "log/log_toolbar.h"
 #include "log/log_view_state.h"
 #include "log/tab_host.h"
 #include "rebase/rebase_window.h"
@@ -151,6 +152,22 @@ public:
 
 private:
     friend struct log_tab_test;
+    friend class log_window;
+    log_toolbar_state toolbar_;
+    std::string dates_tip_;
+    bool focus_filter_on_show_ = false;
+    rap::subscription filter_timer_;
+    void toolbar_changed()
+    {
+        if (host_) host_->toolbar_changed(*this);
+    }
+    void focus_filter()
+    {
+        if (host_) host_->focus_filter(*this);
+    }
+    bool filter_focused() const { return host_ && host_->filter_focused(*this); }
+    void edit_filter(const std::string& text);
+
     std::optional<log_view_state> carried_view_;
 
     // The window, as the parent of dialogs and messages; null while there's

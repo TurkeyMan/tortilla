@@ -257,6 +257,7 @@ int main(int argc, char** argv)
             m && std::strcmp(m, tortilla::k_askpass_never) == 0)
             return 1;
         rap::load_options askpass;
+        askpass.look.density = rap::density::compact;
         askpass.look.color_scheme = tortilla::appearance();
         auto ui = rap::ui::load(argc, argv, askpass);
         if (!ui) return 1;
@@ -280,6 +281,7 @@ int main(int argc, char** argv)
     // another program: one listing of the temporary folder.
     tortilla::sweep_temp_dirs();
     rap::load_options opts;
+    opts.look.density = rap::density::compact;
     std::string command = "log";
     bool named = false;  // a command was given (else the log, or the welcome window)
     bool all_branches = false;

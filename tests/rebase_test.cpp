@@ -169,7 +169,7 @@ int main(int argc, char** argv)
     }
     std::string root = argv[1];
     int ui_argc = 1;
-    auto ui = rap::ui::load(ui_argc, argv, {.backend = "null"});
+    auto ui = rap::ui::load(ui_argc, argv, {.backend = "null", .look = {.density = rap::density::compact}});
     if (!ui) return 2;
 
     {

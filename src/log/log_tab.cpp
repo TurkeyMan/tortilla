@@ -626,7 +626,7 @@ void log_tab::show_selection()
 void log_tab::refresh_page()
 {
     if (!page_) return;
-    page_->search->set_placeholder(filter_cue());
+    toolbar_changed();
     show_pick_mode();
     show_loading(log_.loading());
     show_sync_state();
@@ -1005,6 +1005,7 @@ void log_tab::pick_commits(const std::string& purpose, const std::string& label,
     picked_ = std::move(chosen);
     pick_purpose_ = purpose;
     pick_label_ = label;
+    update_undo_buttons();
     if (host_) host_->tab_changed(*this);
     show_pick_mode();
     update_pick_button();
@@ -1187,7 +1188,6 @@ std::string log_tab::show_summary() const
 
 void log_tab::update_ref_button()
 {
-    if (!page_) return;
     std::string text, full;
     switch (show_.preset)
     {
@@ -1220,8 +1220,9 @@ void log_tab::update_ref_button()
         }
         break;
     }
-    page_->ref_button->set_text(text);
-    page_->ref_button->set_tooltip(full.empty() ? text : full);
+    toolbar_.branch = text;
+    toolbar_.branch_tip = full.empty() ? text : full;
+    toolbar_changed();
 }
 
 // What the log shows: a preset, two toggles that go with any of them, the
@@ -1385,7 +1386,7 @@ rap::menu log_tab::filter_menu()
                       [this, bit]
                       {
                           filter_.fields ^= bit;
-                          page_->search->set_placeholder(filter_cue());
+                          toolbar_changed();
                           apply_filter();
                       });
     };
@@ -1402,7 +1403,7 @@ rap::menu log_tab::filter_menu()
              [this]
          {
              filter_.fields = ~filter_.fields & filter_all;
-             page_->search->set_placeholder(filter_cue());
+             toolbar_changed();
              apply_filter();
          }},
         {.label = _("All"),
@@ -1410,7 +1411,7 @@ rap::menu log_tab::filter_menu()
              [this]
          {
              filter_.fields = filter_all;
-             page_->search->set_placeholder(filter_cue());
+             toolbar_changed();
              apply_filter();
          }},
         rap::menu_item::separator(),
@@ -1432,16 +1433,26 @@ rap::menu log_tab::filter_menu()
     };
 }
 
+void log_tab::edit_filter(const std::string& text)
+{
+    search_text_ = text;
+    if (text.empty() && !filter_.text.empty())
+        apply_filter();
+    else
+        schedule_filter();
+}
+
 // Typing filters after a second; Enter filters at once [spec 1.9.2].
 void log_tab::schedule_filter()
 {
     if (!page_) return apply_filter();
-    page_->filter_timer = ui_.timer(1000, false, [this] { apply_filter(); });
+    filter_timer_ = ui_.timer(1000, false, guarded([this] { apply_filter(); }));
 }
 
 void log_tab::apply_filter()
 {
-    if (page_) page_->filter_timer.reset();
+    filter_timer_.reset();
+    toolbar_changed();
     filter_.text = search_text_;
     const auto keep = keep_selection();
     std::string error = log_.set_filter(filter_);
@@ -1690,13 +1701,15 @@ std::string date_text(rap::date d)
 // Held down while the dates limit the log, the tooltip saying how.
 void log_tab::update_dates_button()
 {
-    if (!page_ || !page_->dates) return;
     const bool limited = since_ || until_;
-    page_->dates->set_checked(limited);
-    if (!limited) return page_->dates->set_tooltip(_("Date range: all dates"));
+    if (!limited)
+        dates_tip_ = _("Date range: all dates");
+    else
+    {
     const rap::date from = local_date(since_.value_or(0)), to = local_date(until_.value_or(0));
-    page_->dates->set_tooltip(
-        rap::i18n::format(_("Date range: {0} to {1}"), date_text(from), date_text(to)));
+        dates_tip_ = rap::i18n::format(_("Date range: {0} to {1}"), date_text(from), date_text(to));
+    }
+    toolbar_changed();
 }
 
 // The From and To pickers in a small window of their own, beside the log
