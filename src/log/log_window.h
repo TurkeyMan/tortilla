@@ -5,11 +5,13 @@
 // of their own, dropped into other log windows).
 #pragma once
 
+#include "log/log_host.h"
 #include "log/log_tab.h"
 #include "log/tab_host.h"
 
 #include <rapport/rapport.h>
 
+#include <cstdint>
 #include <expected>
 #include <functional>
 #include <memory>
@@ -32,7 +34,23 @@ public:
     open(rap::ui&, const std::string& path, bool all_branches = false, bool outer = false);
     ~log_window();
 
-    void show() { window_->show(); }
+    // Shown, and brought to the front if it's open already.
+    void show();
+    // A log another `tortilla log` handed over (log/log_host.h), opened as
+    // it asked: unless r.new_window, a tab of forward_target() (or that
+    // window's tab showing it already, selected, as open_tab does), the
+    // window brought to the front; otherwise, or with no such window, a log
+    // window of its own, given to `keep`. r.select selected in it either
+    // way. The window it's in; the error says why the repository can't be
+    // shown (nothing opened then).
+    static std::expected<log_window*, std::string>
+    open_forwarded(rap::ui&, const log_request& r,
+                   const std::function<void(std::unique_ptr<log_window>)>& keep);
+    // The log window a log handed over goes into as a tab: of those that
+    // take tabs (not picking commits) and have no dialog open over them, the
+    // one shown, or its tab selected or a key pressed in it, last. Null when
+    // there's none.
+    static log_window* forward_target();
     // Shows the history from `rev` (a ref or commit) instead of HEAD; in
     // the tab the window opened with.
     void start_at(const std::string& rev) { tabs_.front()->start_at(rev); }
@@ -162,6 +180,11 @@ private:
     rap::document_tabs* strip_ = nullptr;
     rap::stack* stack_ = nullptr;
     std::function<void()> closed_;
+    // When it was last used (shown, a tab selected, a key pressed), in
+    // the order of all log windows': forward_target's choice. (rapport says
+    // nothing of a window's activation.)
+    uint64_t last_used_ = 0;
+    void used();
 };
 
 }  // namespace tortilla

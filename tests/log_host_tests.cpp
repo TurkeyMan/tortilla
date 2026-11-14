@@ -2,6 +2,7 @@
 
 #include "git/repo.h"
 #include "log/log_host.h"
+#include "settings.h"
 #include "test_support.h"
 #include "ui/window_identities.h"
 #include "util/repo_path.h"
@@ -86,7 +87,8 @@ void encoding_tests()
                         .select = "",
                         .all_branches = true,
                         .submodule = false,
-                        .welcome = true};
+                        .welcome = true,
+                        .new_window = true};
     const std::string m = encode(r);
     check(decode(m) == r, "log host: a request decodes as it was encoded");
     const log_request plain{};
@@ -101,14 +103,35 @@ void encoding_tests()
     check(!decode(m + "x") && !decode(m + std::string("\1\0\0\0x", 5)),
           "log host: nor one with anything after it");
     std::string other = m;
-    check(other.substr(4, 14) == "tortilla-log/2", "log host: the format is tortilla-log/2");
-    other[4 + 13] = '1';  // tortilla-log/2 -> tortilla-log/1, which carried a cwd
+    check(other.substr(4, 14) == "tortilla-log/3", "log host: the format is tortilla-log/3");
+    other[4 + 13] = '2';  // tortilla-log/3 -> tortilla-log/2, which had no new_window
     check(!decode(other), "log host: nor another format's");
     std::string flags = m;
     flags[flags.size() - 1] = 'y';
     check(!decode(flags), "log host: nor one whose flags aren't 0 or 1");
     check(!decode("") && !decode(std::string("\xff\xff\xff\xff", 4)),
           "log host: nor nothing, or a length past the end");
+}
+
+// log.openIn: a tab unless it says a window, which is all it keeps.
+void open_in_setting_tests()
+{
+    settings& s = settings::get();
+    const std::string was = s.value("log.openIn");
+    s.remove("log.openIn");
+    check(log_open_in_setting() == log_open_in::tab, "log host: new logs open in a tab, unset");
+    set_log_open_in_setting(log_open_in::window);
+    check(log_open_in_setting() == log_open_in::window && s.value("log.openIn") == "window",
+          "log host: set to a window, kept as one");
+    set_log_open_in_setting(log_open_in::tab);
+    check(log_open_in_setting() == log_open_in::tab && s.value("log.openIn", "unset") == "unset",
+          "log host: back to a tab, the default, nothing kept");
+    s.set("log.openIn", "elsewhere");
+    check(log_open_in_setting() == log_open_in::tab, "log host: a value it doesn't know: a tab");
+    if (was.empty())
+        s.remove("log.openIn");
+    else
+        s.set("log.openIn", was);
 }
 
 // The path handed over: absolute, and otherwise as given, so a link
@@ -782,6 +805,7 @@ void tracked_window_tests(rap::ui& ui)
 void run_log_host_tests(rap::ui& ui, const std::string& repo)
 {
     encoding_tests();
+    open_in_setting_tests();
     path_tests(repo);
     transport_tests();
     stalled_confirm_tests();

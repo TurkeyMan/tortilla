@@ -7,6 +7,7 @@
 #include "git/sync.h"
 #include "i18n.h"
 #include "log/action_icons.h"
+#include "log/log_host.h"
 #include "settings.h"
 #include "shell/fm_actions.h"
 #include "shell/menu_icons.h"
@@ -51,6 +52,9 @@ struct state
     // unvisited page saves nothing.
     rap::drop_down* icon_style = nullptr;
     rap::canvas* icon_preview = nullptr;
+    // Where a log opened while another is open goes (log.openIn), in
+    // log_open_in's order: a tab, a window.
+    rap::drop_down* open_logs_in = nullptr;
     // Language: the tag each choice saves ("" for the system's).
     rap::drop_down* language = nullptr;
     std::vector<std::string> language_tags;
@@ -206,6 +210,12 @@ rap::node general_page(std::shared_ptr<state> st)
                              }),
                      canvas{}.on_paint(preview).width(300_px).height(36_px).bind(st->icon_preview),
                  }},
+                {_("Open new logs in"),
+                 drop_down{{_("A tab of the current log window"), _("A new window")},
+                           log_open_in_setting() == log_open_in::window ? 1 : 0}
+                     .bind(st->open_logs_in)},
+                {"", label{_("For logs opened from outside Tortilla (the file manager's menu, "
+                             "the command line) while a log window is open.")}},
             }},
         spacer{},
     };
@@ -784,6 +794,9 @@ void show_settings(rap::ui& ui, rap::window* parent, const std::string& repo_dir
                         "log.actionIcons",
                         std::to_string(
                             int(k_icon_styles[std::clamp(keep->icon_style->current(), 0, 3)])));
+                if (keep->open_logs_in)
+                    set_log_open_in_setting(keep->open_logs_in->current() == 1 ? log_open_in::window
+                                                                               : log_open_in::tab);
                 if (keep->menu_entries)
                 {
                     using namespace shell_menu;

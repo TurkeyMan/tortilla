@@ -553,7 +553,11 @@ public:
         title = t;
         inner_->set_title(t);
     }
-    void show() override { inner_->show(); }
+    void show() override
+    {
+        ++shown;
+        inner_->show();
+    }
     void close() override
     {
         closed = true;
@@ -585,6 +589,7 @@ public:
     void set_menu_bar_visible(bool on) override { inner_->set_menu_bar_visible(on); }
     void on_key(std::function<bool(const rap::key_event&)> f) override
     {
+        key = f;
         inner_->on_key(std::move(f));
     }
     void on_finished(std::function<void(rap::dialog_role)> f) override
@@ -606,6 +611,9 @@ public:
     std::string title, app_id;
     rap::icon icon;
     bool closed = false;
+    int shown = 0;  // times show() was called: brought to the front, once open
+    // The window's keys, as the user would press them.
+    std::function<bool(const rap::key_event&)> key;
     // The close box's question (the null window never asks it).
     std::function<bool()> close_request;
     // A dialog's answer: OK, Cancel... (the null window never gives it).
@@ -2221,6 +2229,132 @@ void patch_identity_tests(rap::ui& ui, const std::string& first, const std::stri
     settings::get().set("log.viewPatch", "0");
 }
 
+// The subject of `rev`'s commit in the repository at `dir`.
+std::string subject_of(const std::string& dir, const std::string& rev)
+{
+    std::string s = run_git(dir, {"log", "-1", "--format=%s", rev}, git_output::stdout_only).output;
+    while (!s.empty() && (s.back() == '\n' || s.back() == '\r')) s.pop_back();
+    return s;
+}
+
+// The page a log window's tab shows, its log loaded and `summary`'s commit
+// selected (--select's), as the user would see it.
+bool selected_in(rap::ui& ui, const page& p, const std::string& summary)
+{
+    if (!loaded(ui, p)) return false;
+    return pump(
+        ui,
+        [&]
+        {
+            const auto row = row_of(*p.log, summary);
+            return row && p.commits->selected == std::vector<size_t>{*row};
+        },
+        5000);
+}
+
+// A log another `tortilla log` handed over (log.openIn, log_window::
+// open_forwarded): with no log window open, a window of its own; a new
+// window when it asks for one; otherwise a tab of the log window used last
+// (not one picking commits, nor one under a dialog), brought to the front,
+// or that window's tab showing it already, selected; --select in the tab as
+// in a window.
+void forward_tests(rap::ui& ui, const std::string& first, const std::string& second,
+                   const std::string& third)
+{
+    torn_off kept;  // the windows of their own it opens
+    check(!log_window::forward_target(), "log forward: no log window open, none to go into");
+
+    // -- no log window: one of its own, --select in it -----------------------
+    auto opened = log_window::open_forwarded(ui, {.path = first, .select = "HEAD~1"}, kept.keep);
+    check(opened && kept.windows.size() == 1 && *opened == kept.windows[0].get() &&
+              (*opened)->tabs().size() == 1,
+          "log forward: with no log window open, a window of its own");
+    if (!opened || kept.windows.size() != 1) return;
+    log_window* a = kept.windows[0].get();
+    built_window* ab = built_for(a->frame());
+    if (!ab || !ab->tabs) return check(false, "log forward: the first window's widgets");
+    check(selected_in(ui, page_in(*ab, 0, 0), subject_of(first, "HEAD~1")),
+          "log forward: --select's commit selected in the window");
+    const std::string a_first = a->tabs()[0]->id();
+
+    // -- log.openIn=window: a window of its own, one open or not -------------
+    auto own = log_window::open_forwarded(ui, {.path = second, .new_window = true}, kept.keep);
+    check(own && kept.windows.size() == 2 && *own == kept.windows[1].get() &&
+              a->tabs().size() == 1 && (*own)->tabs().size() == 1,
+          "log forward: asked for a window, a window of its own beside the one open");
+    if (kept.windows.size() != 2) return;
+    log_window* b = kept.windows[1].get();
+    check(log_window::forward_target() == b, "log forward: the window opened last is the one used");
+
+    // -- a tab of the window used last, brought to the front ------------------
+    // A key pressed in the first: used since.
+    check(bool(ab->window->key), "log forward: the window takes keys");
+    if (ab->window->key) ab->window->key(rap::key_event{.press = true, .key = rap::key::other});
+    check(log_window::forward_target() == a,
+          "log forward: a key pressed in it, that one's used last");
+    const int shown = ab->window->shown;
+    const size_t lists = ab->lists.size(), entries = ab->entries.size();
+    auto tabbed = log_window::open_forwarded(ui, {.path = third, .select = "HEAD~1"}, kept.keep);
+    check(tabbed && *tabbed == a && kept.windows.size() == 2 && a->tabs().size() == 2 &&
+              b->tabs().size() == 1 && a->current_tab() == a->tabs()[1].get() &&
+              ab->tabs->current_id == a->tabs()[1]->id() &&
+              a->tabs()[1]->repo_location().find(folder_name(third)) != std::string::npos,
+          "log forward: a new tab in the window used last, selected, and no window more");
+    check(ab->window->shown == shown + 1, "log forward: that window brought to the front");
+    if (a->tabs().size() != 2) return;
+    const std::string a_third = a->tabs()[1]->id();
+    page third_page = page_in(*ab, lists, entries);
+    check(third_page.commits && selected_in(ui, third_page, subject_of(third, "HEAD~1")),
+          "log forward: --select's commit selected in the tab");
+
+    // -- open there already: its tab selected, --select honoured there -------
+    ab->tabs->click(a_first);
+    check(a->current_tab() == a->tabs()[0].get(), "log forward: back to the first tab");
+    auto again = log_window::open_forwarded(ui, {.path = third, .select = "HEAD"}, kept.keep);
+    check(again && *again == a && a->tabs().size() == 2 && a->current_tab()->id() == a_third &&
+              ab->tabs->current_id == a_third && kept.windows.size() == 2,
+          "log forward: a repository open there already selects its tab");
+    check(selected_in(ui, third_page, subject_of(third, "HEAD")),
+          "log forward: and --select moves that tab's selection");
+
+    // -- not a repository: said, nothing opened ------------------------------
+    const std::string nowhere =
+        rap::sys::path_to_utf8(rap::sys::path_from_utf8(third).parent_path() / "no-such-repo");
+    auto failed = log_window::open_forwarded(ui, {.path = nowhere}, kept.keep);
+    check(!failed && !failed.error().empty() && a->tabs().size() == 2 && kept.windows.size() == 2,
+          "log forward: no repository there: why, and no tab or window");
+
+    // -- a window picking commits is passed over -----------------------------
+    {
+        auto picker = log_window::open(ui, first);
+        if (!picker) return check(false, "log forward: a window to pick commits");
+        (*picker)->pick_commits("Add", "Add", [](std::vector<commit>) {});
+        // Made last, so used last; but it takes no tabs.
+        check(log_window::forward_target() == a,
+              "log forward: a window picking commits isn't gone into");
+        auto past = log_window::open_forwarded(ui, {.path = second}, kept.keep);
+        check(past && *past == a && (*picker)->tabs().size() == 1 && a->tabs().size() == 3 &&
+                  kept.windows.size() == 2,
+              "log forward: the tab goes to the window used before it");
+        settle(ui);
+        picker->reset();
+        settle(ui);
+    }
+
+    // -- nor one with a dialog open over it ----------------------------------
+    {
+        const auto dialog = count_modal(a->frame());
+        check(log_window::forward_target() == b,
+              "log forward: a window under a dialog isn't gone into; the one used before it is");
+    }
+    check(log_window::forward_target() == a, "log forward: the dialog gone, it is again");
+
+    settle(ui);
+    kept.windows.clear();
+    settle(ui);
+    check(!log_window::forward_target(), "log forward: the windows gone, none to go into");
+}
+
 // Folders shown and remembered without trailing separators, a root's own
 // kept: "C:" alone is a folder on that drive, not its top.
 void folder_text_tests()
@@ -2332,6 +2466,10 @@ void run_log_page_tests(const std::string& root)
     native_dialog_tests(ui, repo, others[0], root);
     check(g_stale_calls == 0,
           "log tear-off: nothing reached a page's widgets after they went, in either window");
+
+    g_stale_calls = 0;
+    forward_tests(ui, repo, others[0], others[1]);
+    check(g_stale_calls == 0, "log forward: nothing reached a page's widgets after they went");
 
     log_tab::poll_hooks_for_tests = nullptr;
     loaded->reset();

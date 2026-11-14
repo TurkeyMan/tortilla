@@ -28,12 +28,18 @@ struct log_request
     bool all_branches = false;
     bool submodule = false;  // --submodule: the repository around the submodule at path
     bool welcome = false;    // nothing was given: the welcome window if there's no repository
+    // In a log window of its own rather than a tab (log.openIn, as the
+    // sender read it: the host read its settings as it started, and Settings
+    // may have changed them since, in another process).
+    bool new_window = false;
 
     bool operator==(const log_request&) const = default;
 };
 
 // The request as a message: each field its length (four bytes,
-// little-endian) and its bytes, after a tag naming the format.
+// little-endian) and its bytes, after a tag naming the format; the flags
+// (all_branches, submodule, welcome, new_window) one field, a '0' or '1'
+// each.
 std::string encode(const log_request&);
 // nullopt for anything that isn't a whole request in that format.
 std::optional<log_request> decode(std::string_view);
@@ -62,6 +68,18 @@ constexpr auto k_log_start_wait = std::chrono::milliseconds(3000);
 // takes a request; less than the asker waits, so a busy UI thread usually
 // answers in time. Past it the request is turned away.
 constexpr auto k_log_host_ui_wait = std::chrono::milliseconds(1500);
+
+// Where a log handed over to the host opens (Settings > General > Log,
+// log.openIn): a tab of the log window used last (log_window::
+// open_forwarded), or a window of its own. The first `tortilla log`'s own
+// log, the host's, has a window of its own either way.
+enum class log_open_in
+{
+    tab,
+    window,
+};
+log_open_in log_open_in_setting();
+void set_log_open_in_setting(log_open_in);
 
 // False when TORTILLA_NO_LOG_HOST says so.
 bool log_host_enabled();

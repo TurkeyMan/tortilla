@@ -200,24 +200,23 @@ std::string notices_for(const std::string& path)
 
 // A log another `tortilla log` handed to this one, the log windows' host
 // (log/log_host.h): opened as that process would have, from trusting the
-// repository to the window, except that a failure is said without ending
-// the host's other windows. Held meanwhile, so the host doesn't end while
-// it's asked or said.
+// repository to the window, except that it's a tab of the log window used
+// last unless the request says a window (log.openIn), and a failure is said
+// without ending the host's other windows. Held meanwhile, so the host
+// doesn't end while it's asked or said.
 void open_forwarded_log(rap::ui& ui, const tortilla::log_request& r)
 {
     const size_t opening = tortilla::windows::hold({});
     auto open = [&ui, r, opening]
     {
         tortilla::use_repo_icon(ui, r.path, r.submodule);
-        auto log = tortilla::log_window::open(ui, r.path, r.all_branches, r.submodule);
-        if (log)
-        {
-            if (!r.select.empty()) (*log)->select_commit(r.select);
-            tortilla::windows::keep(std::move(*log));
-        }
-        else if (r.welcome)
+        // A tab of the log window used last, or a window (log.openIn).
+        auto log = tortilla::log_window::open_forwarded(ui, r,
+                                                        [](std::unique_ptr<tortilla::log_window> w)
+                                                        { tortilla::windows::keep(std::move(w)); });
+        if (!log && r.welcome)
             tortilla::windows::keep(tortilla::welcome_window::open(ui));
-        else
+        else if (!log)
         {
             const size_t said = tortilla::windows::hold({});
             ui.message(nullptr,
@@ -402,11 +401,13 @@ int main(int argc, char** argv)
     std::unique_ptr<tortilla::log_host> claimed;
     if (hosting)
     {
-        auto start = tortilla::forward_or_claim({.path = tortilla::log_request_path(path),
-                                                 .select = select,
-                                                 .all_branches = all_branches,
-                                                 .submodule = submodule,
-                                                 .welcome = !named && args.empty()});
+        auto start = tortilla::forward_or_claim(
+            {.path = tortilla::log_request_path(path),
+             .select = select,
+             .all_branches = all_branches,
+             .submodule = submodule,
+             .welcome = !named && args.empty(),
+             .new_window = tortilla::log_open_in_setting() == tortilla::log_open_in::window});
         if (start.forwarded) return 0;
         claimed = std::move(start.host);
     }

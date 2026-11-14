@@ -31,7 +31,55 @@ std::map<const rap::window*, log_window*>& log_windows()
     return all;
 }
 
+// The last log_window::used() stamp given, counting up: the latest is the
+// window used last.
+uint64_t g_last_used = 0;
+
 }  // namespace
+
+std::expected<log_window*, std::string>
+log_window::open_forwarded(rap::ui& ui, const log_request& r,
+                           const std::function<void(std::unique_ptr<log_window>)>& keep)
+{
+    if (!r.new_window)
+        if (log_window* into = forward_target())
+        {
+            // As the + picker opens one: a tab, or the one there already.
+            auto tab = into->open_tab(r.path, r.all_branches, r.submodule);
+            if (!tab) return std::unexpected(tab.error());
+            if (!r.select.empty()) (*tab)->select_commit(r.select);
+            into->show();
+            return into;
+        }
+    auto log = open(ui, r.path, r.all_branches, r.submodule);
+    if (!log) return std::unexpected(log.error());
+    if (!r.select.empty()) (*log)->select_commit(r.select);
+    log_window* w = log->get();
+    keep(std::move(*log));
+    return w;
+}
+
+log_window* log_window::forward_target()
+{
+    log_window* best = nullptr;
+    for (const auto& [frame, w] : log_windows())
+        // Not under a dialog: the tab would show behind it, and the dialog's
+        // answer land in a tab no longer on show.
+        if (w->takes_tabs() && !modals_over(frame) && (!best || w->last_used_ > best->last_used_))
+            best = w;
+    return best;
+}
+
+void log_window::used()
+{
+    last_used_ = ++g_last_used;
+}
+
+void log_window::show()
+{
+    used();
+    window_->show();
+}
 
 std::expected<std::unique_ptr<log_window>, std::string>
 log_window::open(rap::ui& ui, const std::string& path, bool all_branches, bool outer)
@@ -106,6 +154,8 @@ void log_window::build(std::unique_ptr<log_tab> first, std::optional<placement> 
     window_->on_key(
         [this](const rap::key_event& e)
         {
+            // Typed in: the window in use, so far as rapport tells.
+            used();
             log_tab* tab = current_tab();
             return tab && tab->key(e);
         });
@@ -167,6 +217,7 @@ void log_window::show_tab(const std::string& id)
     if (it == tabs_.end()) return;
     log_tab& tab = **it;
     current_ = id;
+    used();
     stack_->show(id);
     window_->set_title(tab.title_text());
     if (tab.identity().icon) window_->set_icon(tab.identity().icon);

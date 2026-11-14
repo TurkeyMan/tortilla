@@ -1,5 +1,7 @@
 #include "log_host.h"
 
+#include "settings.h"
+
 #include <rapport/sys.h>
 
 #include <algorithm>
@@ -19,7 +21,7 @@ namespace
 
 // Names the format: a message from another version is turned away (and its
 // sender opens the window itself) rather than misread.
-constexpr std::string_view k_tag = "tortilla-log/2";
+constexpr std::string_view k_tag = "tortilla-log/3";
 
 void put(std::string& out, std::string_view field)
 {
@@ -54,7 +56,7 @@ std::string encode(const log_request& r)
     put(out, r.path);
     put(out, r.select);
     const char flags[] = {r.all_branches ? '1' : '0', r.submodule ? '1' : '0',
-                          r.welcome ? '1' : '0'};
+                          r.welcome ? '1' : '0', r.new_window ? '1' : '0'};
     put(out, std::string_view(flags, sizeof flags));
     return out;
 }
@@ -64,14 +66,15 @@ std::optional<log_request> decode(std::string_view in)
     const auto f = fields(in);
     if (!f || f->size() != 4 || (*f)[0] != k_tag) return std::nullopt;
     const std::string_view flags = (*f)[3];
-    if (flags.size() != 3) return std::nullopt;
+    if (flags.size() != 4) return std::nullopt;
     for (char c : flags)
         if (c != '0' && c != '1') return std::nullopt;
     return log_request{.path = std::string((*f)[1]),
                        .select = std::string((*f)[2]),
                        .all_branches = flags[0] == '1',
                        .submodule = flags[1] == '1',
-                       .welcome = flags[2] == '1'};
+                       .welcome = flags[2] == '1',
+                       .new_window = flags[3] == '1'};
 }
 
 std::string log_request_path(const std::string& path)
@@ -79,6 +82,19 @@ std::string log_request_path(const std::string& path)
     std::error_code ec;
     const std::filesystem::path at = std::filesystem::absolute(rap::sys::path_from_utf8(path), ec);
     return ec ? path : rap::sys::path_to_utf8(at);
+}
+
+log_open_in log_open_in_setting()
+{
+    return settings::get().value("log.openIn") == "window" ? log_open_in::window : log_open_in::tab;
+}
+
+void set_log_open_in_setting(log_open_in where)
+{
+    if (where == log_open_in::window)
+        settings::get().set("log.openIn", "window");
+    else
+        settings::get().remove("log.openIn");
 }
 
 bool log_host_enabled()
