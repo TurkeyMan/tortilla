@@ -139,10 +139,7 @@ public:
     static inline poll_hooks* poll_hooks_for_tests = nullptr;
     // Tests only: `f` as the tab's late work runs (guarded), for a window
     // opened from a post or a worker's result.
-    std::function<void()> later_for_tests(std::function<void()> f) const
-    {
-        return guarded(std::move(f));
-    }
+    std::function<void()> later_for_tests(std::function<void()> f) const;
 
 private:
     // The window, as the parent of dialogs and messages; null while there's
@@ -200,13 +197,9 @@ private:
         };
     }
     rap::menu tab_menu(rap::menu) const;
-    rap::list::cell_drag tab_drag(rap::list::cell_drag d) const
-    {
-        if (d.begin) d.begin = on_page(std::move(d.begin));
-        if (d.can_drop) d.can_drop = on_page(std::move(d.can_drop));
-        if (d.drop) d.drop = on_page(std::move(d.drop));
-        return d;
-    }
+    // Each of the drag's callbacks on_page (defined after the class: they
+    // use the deduced-return helpers).
+    rap::list::cell_drag tab_drag(rap::list::cell_drag d) const;
 
     // The state changes, and the page (while there is one) drawn from it:
     // what draws begins with `if (!page_) return`. refresh_page draws all
@@ -594,5 +587,19 @@ private:
     size_t history_pos_ = 0;
     bool navigating_ = false;
 };
+
+// After the class, where guarded() and on_page() have their return types.
+inline std::function<void()> log_tab::later_for_tests(std::function<void()> f) const
+{
+    return guarded(std::move(f));
+}
+
+inline rap::list::cell_drag log_tab::tab_drag(rap::list::cell_drag d) const
+{
+    if (d.begin) d.begin = on_page(std::move(d.begin));
+    if (d.can_drop) d.can_drop = on_page(std::move(d.can_drop));
+    if (d.drop) d.drop = on_page(std::move(d.drop));
+    return d;
+}
 
 }  // namespace tortilla
