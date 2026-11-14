@@ -14,6 +14,9 @@
 namespace tortilla::forge_detail
 {
 
+// Labels from REST arrays or GitHub GraphQL nodes; malformed colours stay absent.
+std::vector<pr_label> decode_labels(const json::value&);
+
 // Why a request failed, in words: no answer, or the forge's message.
 std::string failure(const rap::sys::http_response&, const std::optional<json::value>&);
 // GitHub's GraphQL endpoint on that host.

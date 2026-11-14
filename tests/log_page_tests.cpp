@@ -789,9 +789,14 @@ private:
             else if (std::holds_alternative<rap::spec::progress_bar>(n.spec))
                 mine = keep<kept_progress>();
             else if (std::holds_alternative<rap::spec::stack>(n.spec))
-                mine = b.stack = keep<kept_stack>(static_cast<rap::stack&>(w), b,
-                                                  [&backend = backend_](std::function<void()> f)
-                                                  { backend.post(std::move(f)); });
+            {
+                auto* stack = keep<kept_stack>(static_cast<rap::stack&>(w), b,
+                                               [&backend = backend_](std::function<void()> f)
+                                               { backend.post(std::move(f)); });
+                // Keep the frame's stack, not a nested chip surface's.
+                if (!b.stack) b.stack = stack;
+                mine = stack;
+            }
             core_.created(n, mine ? *mine : w);
         }
         void created(const rap::spec::dialog_button& b, rap::button& w) override

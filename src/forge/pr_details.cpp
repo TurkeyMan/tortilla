@@ -30,6 +30,7 @@ std::expected<pull_request, std::string> github_rest_details(const forge_repo& r
     note_budget(one);
     const auto j = json::parse(one.body);
     if (one.status != 200 || !j) return std::unexpected(failure(one, j));
+    pr.labels = decode_labels((*j)["labels"]);
     pr.body = (*j)["body"].str();
     pr.body_known = true;
     const auto reviews =
@@ -61,7 +62,7 @@ std::expected<pull_request, std::string> github_details(const forge_repo& r, pul
     if (token.empty()) return github_rest_details(r, std::move(pr));
     constexpr std::string_view query =
         "query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){"
-        "pullRequest(number:$number){body "
+        "pullRequest(number:$number){body labels(first:100){nodes{name color}} "
         "latestReviews(first:20){nodes{author{login} state}} "
         "reviewRequests(first:20){nodes{requestedReviewer{"
         "... on User{login} ... on Team{name} ... on Bot{login} ... on Mannequin{login}}}}}}}";
@@ -78,6 +79,7 @@ std::expected<pull_request, std::string> github_details(const forge_repo& r, pul
         for (const json::value& e : errors.elements())
             return std::unexpected(e["message"].str(_("GitHub refused the query.")));
     const json::value n = (*j)["data"]["repository"]["pullRequest"];
+    pr.labels = decode_labels(n["labels"]["nodes"]);
     pr.body = n["body"].str();
     pr.body_known = true;
     // Each reviewer's latest say, then who's still asked to review.

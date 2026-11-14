@@ -705,7 +705,7 @@ std::expected<pull_requests_reply, std::string> github_pulls(const forge_repo& r
         "viewerPermission "
         "pullRequests(states:OPEN,first:$first,orderBy:{field:UPDATED_AT,direction:DESC}){nodes{"
         "number title url isDraft headRefName headRefOid baseRefName reviewDecision mergeable "
-        "mergeStateStatus author{login avatarUrl} "
+        "mergeStateStatus author{login avatarUrl} labels(first:100){nodes{name color}} "
         "headRepository{name owner{login}} "
         "commits(last:1){nodes{commit{statusCheckRollup{state contexts(first:50){nodes{"
         "__typename ... on CheckRun{name status conclusion startedAt completedAt detailsUrl} "
@@ -786,6 +786,7 @@ std::expected<pull_requests_reply, std::string> github_pulls(const forge_repo& r
             pr.blocks.push_back(merge_block::review_required);
         if (merge.str_is("BEHIND")) pr.blocks.push_back(merge_block::behind);
         if (pr.blocked && pr.blocks.empty()) pr.blocks.push_back(merge_block::blocked_other);
+        pr.labels = forge_detail::decode_labels(n["labels"]["nodes"]);
         pr.author_avatar = n["author"]["avatarUrl"].str();
         // Its reviews and description are asked for when it's shown: in
         // this query, a hundred PRs' reviews take GitHub past its time limit.
@@ -814,7 +815,7 @@ gitlab_pulls(const forge_repo& r, std::string_view token, bool ask_access, bool 
 {
     const auto headers = api_headers(forge_kind::gitlab, token);
     const auto reply = forge_detail::http_get(
-        gitlab_project(r) + "/merge_requests?state=opened&per_page=100", {.headers = headers});
+        gitlab_project(r) + "/merge_requests?state=opened&per_page=100&with_labels_details=true", {.headers = headers});
     const auto j = json::parse(reply.body);
     if (hidden_reply(reply)) return pull_requests_reply{.access = repo_access::hidden};
     if (reply.status != 200 || !j) return std::unexpected(failure(reply, j));
@@ -844,6 +845,7 @@ gitlab_pulls(const forge_repo& r, std::string_view token, bool ask_access, bool 
         // A fork's merge request: its project isn't this one, and its path
         // would take another request; it's left unmatched.
         if (m["source_project_id"].integer() != m["target_project_id"].integer()) pr.head = {};
+        pr.labels = forge_detail::decode_labels(m["label_details"] ? m["label_details"] : m["labels"]);
         pr.author_avatar = m["author"]["avatar_url"].str();
         pr.body = m["description"].str();
         pr.body_known = true;
@@ -942,6 +944,7 @@ gitea_pulls(const forge_repo& r, std::string_view token, bool ask_access, bool a
                         .draft = p["draft"].boolean(),
                         .author = p["user"]["login"].str()};
         pr.conflicts = !p["mergeable"].boolean(true);  // Gitea's "not mergeable" is conflicts
+        pr.labels = forge_detail::decode_labels(p["labels"]);
         pr.author_avatar = p["user"]["avatar_url"].str();
         pr.body = p["body"].str();
         pr.body_known = true;
@@ -1090,6 +1093,7 @@ std::vector<pull_request> parse_github_rest_pulls(std::string_view text, const f
                         .author = p["user"]["login"].str(),
                         .merge_known = false,
                         .checks_known = false};
+        pr.labels = forge_detail::decode_labels(p["labels"]);
         // null: the fork's gone.
         pr.head = {.host = r.host,
                    .owner = head["repo"]["owner"]["login"].str(),
@@ -1971,6 +1975,31 @@ std::expected<forge_token, std::string> renew(forge_kind k, std::string_view hos
 // The helpers above, for ci.cpp and pr_details.cpp.
 namespace tortilla::forge_detail
 {
+std::vector<pr_label> decode_labels(const json::value& labels)
+{
+    std::vector<pr_label> out;
+    for (const json::value& v : labels.elements())
+    {
+        pr_label label{.name = v.kind() == json::value::type::string ? v.str() : v["name"].str()};
+        if (label.name.empty()) continue;
+        std::string hex = v["color"].str();
+        if (hex.starts_with('#')) hex.erase(0, 1);
+        unsigned rgb = 0;
+        bool valid = hex.size() == 6;
+        for (char c : hex)
+        {
+            const int digit = c >= '0' && c <= '9' ? c - '0' :
+                              c >= 'a' && c <= 'f' ? c - 'a' + 10 :
+                              c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
+            if (digit < 0) { valid = false; break; }
+            rgb = (rgb << 4) | unsigned(digit);
+        }
+        if (valid) label.color = rap::color{uint8_t(rgb >> 16), uint8_t(rgb >> 8), uint8_t(rgb)};
+        out.push_back(std::move(label));
+    }
+    return out;
+}
+
 
 std::string failure(const rap::sys::http_response& r, const std::optional<json::value>& j)
 {

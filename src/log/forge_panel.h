@@ -180,6 +180,11 @@ private:
     rap::widget* root_ = nullptr;
     rap::widget* pr_part_ = nullptr;
     rap::label* pr_title_ = nullptr;
+    rap::stack* pr_labels_ = nullptr;
+    std::vector<pr_label> labels_;
+    float labels_height_ = 24;
+    unsigned labels_generation_ = 0;
+    void layout_labels(float height);
     rap::canvas* pr_avatar_ = nullptr;
     rap::label* pr_author_ = nullptr;
     rap::canvas* pr_merge_mark_ = nullptr;

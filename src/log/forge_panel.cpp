@@ -421,6 +421,8 @@ void forge_panel::built()
 
 void forge_panel::unbind()
 {
+    pr_labels_ = nullptr;
+    ++labels_generation_;
     // Its widgets may be there a while yet (ui/page_guard.h): they reach
     // nothing of the panel from now on.
     page_guard_.close();
@@ -485,6 +487,51 @@ void forge_panel::set_part_sizes(std::vector<float> sizes)
     if (sizes.size() == 2 && sizes[0] > 0 && sizes[1] > 0) part_sizes_ = std::move(sizes);
 }
 
+// Rebuild only the chip surface when its measured wrapped height changes.
+void forge_panel::layout_labels(float height)
+{
+    if (!pr_labels_) return;
+    const unsigned generation = ++labels_generation_;
+    pr_labels_->set_visible(!labels_.empty());
+    labels_height_ = height;
+    std::string tooltip;
+    for (const auto& label : labels_)
+        tooltip += (tooltip.empty() ? "" : "\n") + label.name;
+    const auto old = pr_labels_->ids();
+    const std::string id = std::to_string(generation);
+    pr_labels_->add(id, rap::layout::canvas{}.focusable(false).tooltip(tooltip)
+        .height(rap::extent{height, rap::extent::unit::px})
+        .on_paint(page_guard_([this, generation](rap::painter& p, rap::size_f size)
+        {
+            p.rect({0, 0, size.w, size.h}, 0, rap::paint{rap::theme_color::window}, std::nullopt);
+            float x = 0, y = 0, row = 0;
+            for (const auto& label : labels_)
+            {
+                const auto fill = label.color.value_or(rap::color{224, 224, 224});
+                rap::text_style style;
+                style.fg = ink_on(fill);
+                const auto measured = p.measure(label.name, style);
+                const float width = std::min(size.w, measured.w + 10);
+                const float h = measured.h + 6;
+                if (x > 0 && x + width > size.w) { y += row + 3; x = 0; row = 0; }
+                p.rect({x, y, width, h}, 3, rap::paint{fill}, std::nullopt);
+                p.push_clip({x, y, width, h});
+                p.text({x + 5, y + 3}, label.name, style);
+                p.pop_clip();
+                x += width + 4;
+                row = std::max(row, h);
+            }
+            const float height = y + row;
+            if (height > 0 && std::abs(height - labels_height_) > 0.5f)
+                host_.ui.post(page_guard_([this, generation, height]
+                {
+                    if (generation == labels_generation_) layout_labels(height);
+                }));
+        })));
+    pr_labels_->show(id);
+    for (const auto& page : old) pr_labels_->remove(page);
+}
+
 rap::node forge_panel::layout()
 {
     using namespace rap::layout;
@@ -508,6 +555,7 @@ rap::node forge_panel::layout()
                 // Pull request
                 vbox{
                     label{}.wrap().selectable().bind(pr_title_),
+                    stack{}.homogeneous(false).bind(pr_labels_),
                     hbox{
                         canvas{}
                             .focusable(false)
@@ -940,6 +988,8 @@ void forge_panel::update_pull_request()
         who += rap::i18n::format(pr.draft ? _("Draft, into {0}") : _("Open, into {0}"),
                                  pr.base_branch);
         pr_author_->set_text(who);
+        labels_ = pr.labels;
+        layout_labels(labels_height_);
         if (!pr.author_avatar.empty()) ask_avatar(pr.author_avatar);
         auto picture = pictures_.find(pr.author_avatar);
         auto shown_picture = picture == pictures_.end() ? nullptr : picture->second;

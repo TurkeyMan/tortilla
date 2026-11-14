@@ -7,6 +7,8 @@
 // worker thread.
 #pragma once
 
+#include <rapport/widgets.h>
+
 #include <rapport/sys.h>
 
 #include <atomic>
@@ -180,6 +182,12 @@ struct pr_review
     verdict say = verdict::commented;
 };
 
+struct pr_label
+{
+    std::string name;
+    std::optional<rap::color> color;
+};
+
 struct pull_request
 {
     int number = 0;
@@ -214,6 +222,7 @@ struct pull_request
     // those asked to review).
     std::vector<pr_review> reviews;
     bool reviews_known = false;
+    std::vector<pr_label> labels;
 };
 
 // What the signed-in user (or no one) may do with a repository.

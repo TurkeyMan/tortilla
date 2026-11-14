@@ -2275,6 +2275,27 @@ int main(int argc, char** argv)
                   tortilla::api_root(forge_kind::gitea, "codeberg.org") ==
                       "https://codeberg.org/api/v1",
               "forge: API roots");
+        // API label shapes: GitHub/Gitea objects, GitLab names or details.
+        {
+            auto decode = [](std::string_view text)
+            { return tortilla::forge_detail::decode_labels(*tortilla::json::parse(text)); };
+            const auto github = decode(R"([{"name":"bug","color":"d73a4a"}])");
+            const auto gitea = decode(R"([{"name":"ready","color":"#00FF11"}])");
+            const auto gitlab = decode(R"(["frontend","needs review"])");
+            const auto details = decode(R"([{"name":"area","color":"#abcdef"}])");
+            const auto bad = decode(R"([{"name":"plain","color":"oops"},{"name":""}])");
+            check(github.size() == 1 && github[0].name == "bug" && github[0].color &&
+                      github[0].color->r == 0xd7 && github[0].color->b == 0x4a,
+                  "forge labels: GitHub colour");
+            check(gitea.size() == 1 && gitea[0].color && gitea[0].color->g == 255,
+                  "forge labels: Gitea colour");
+            check(gitlab.size() == 2 && gitlab[1].name == "needs review" && !gitlab[0].color,
+                  "forge labels: GitLab names");
+            check(details.size() == 1 && details[0].color && details[0].color->r == 0xab,
+                  "forge labels: GitLab details");
+            check(bad.size() == 1 && !bad[0].color && decode("null").empty(),
+                  "forge labels: absent or malformed colour and empty labels");
+        }
         // A remote's repository on its forge.
         {
             using tortilla::forge_repo;
