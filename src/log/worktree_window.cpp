@@ -166,7 +166,11 @@ private:
                     .initial_path = folder_->text()},
                    [this](std::vector<std::string> chosen)
                    {
-                       if (!chosen.empty()) folder_->set_text(chosen.front());
+                       if (!chosen.empty())
+                       {
+                           folder_->set_text(chosen.front());
+                           folder_changed();
+                       }
                    });
     }
 

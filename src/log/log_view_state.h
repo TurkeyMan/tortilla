@@ -1,12 +1,12 @@
-// What a log page shows that its tab's state doesn't say: the selection,
-// the panes, the columns and the focus, carried from the page that goes to
-// the one built after it (log_tab::capture_view, log_tab::bind_page). The
-// rest (the filter box's text, the jump combo, the forge column) is the
-// tab's own state, which a new page is drawn from.
+// The log view carried when a page is rebuilt or a tab moves to another
+// window: selection, panes, columns, focus and the filter row's input state.
+// Derived row values (branch, journal and fetch status) come from the tab's
+// repository and ongoing work when its new page is bound.
 #pragma once
 
 #include "changes/changes_view.h"
 #include "git/repo.h"
+#include "log/log_model.h"
 
 #include <optional>
 #include <string>
@@ -28,6 +28,11 @@ struct kept_selection
 struct log_view_state
 {
     std::optional<kept_selection> selection;
+    // Explicitly carried across a tear-off; pending text is flushed before capture.
+    std::string filter_text;
+    log_filter filter;
+    std::optional<int64_t> since, until;
+    int jump_type = 0;
     // The list over the rest, and the commit's text over its files; empty:
     // as built.
     std::vector<float> panes, details_panes;

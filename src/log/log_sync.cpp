@@ -118,7 +118,6 @@ void log_tab::show_sync_output()
 
 void log_tab::update_sync_badge()
 {
-    if (!page_) return;
     // No network at all is the system's to say: Offline, not the remotes'
     // failures. Connected, any remote's failure is red.
     const size_t count = std::accumulate(
@@ -128,13 +127,8 @@ void log_tab::update_sync_badge()
                               : !failures_.empty() ? fetch_badge::failure
                               : count              ? fetch_badge::changes
                                                    : fetch_badge::none;
-    if (badge != page_->badge_shown ||
-        (badge == fetch_badge::changes && count != page_->badge_count))
-    {
-        page_->fetch->set_icon(fetch_icon(badge, count));
-        page_->badge_shown = badge;
-        page_->badge_count = count;
-    }
+    toolbar_.badge = badge;
+    toolbar_.badge_count = count;
 
     std::string tip = _("Fetch from every remote, and fast-forward the branches behind them");
     if (badge == fetch_badge::offline) tip += "\n" + std::string(_("Offline"));
@@ -144,7 +138,8 @@ void log_tab::update_sync_badge()
     // Repositories the forge hid from no one: signing in may show more.
     if (pr_watch_)
         for (const forge_remote& h : pr_watch_->hints()) tip += "\n" + hint_text(h);
-    page_->fetch->set_tooltip(tip);
+    toolbar_.fetch_tip = tip;
+    toolbar_changed();
 }
 
 void log_tab::set_sync_notice(std::string text, bool failure)
@@ -171,8 +166,7 @@ void log_tab::show_notice()
 
 void log_tab::show_sync_state()
 {
-    if (!page_) return;
-    page_->fetch->set_enabled(!syncing_);
+    toolbar_changed();
 }
 
 // Every remote fetched side by side, a git each, the leading one (the hot

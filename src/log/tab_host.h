@@ -17,6 +17,10 @@ public:
     virtual rap::window* window() = 0;
     // The tab's title (log_tab::title_text, tab_title) has changed.
     virtual void tab_changed(log_tab&) = 0;
+    // The shared row is redrawn only for the current tab.
+    virtual void toolbar_changed(log_tab&) {}
+    virtual void focus_filter(log_tab&) {}
+    virtual bool filter_focused(const log_tab&) const { return false; }
     // OK (`ok`) or Cancel clicked: done with the tab, or, picking commits,
     // with the window (OK has handed them over first).
     virtual void finish(log_tab&, bool ok) = 0;

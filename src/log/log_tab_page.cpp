@@ -19,27 +19,6 @@ constexpr float k_avatar_least = 32;  // smaller than this, the author's picture
 // and KDE copy files with it.
 constexpr unsigned copy_drag_keys = rap::mod_ctrl;
 
-// TortoiseGit's jump buttons are green arrows (IDI_JUMPUP/IDI_JUMPDOWN).
-rap::icon jump_arrow(bool up)
-{
-    return rap::icon::drawn(
-        [up](rap::painter& p, rap::size_f s)
-        {
-            float w = s.w, h = s.h, cx = w / 2;
-            float tip = up ? h * 0.1f : h * 0.9f, base = up ? h * 0.55f : h * 0.45f;
-            float tail = up ? h * 0.9f : h * 0.1f;
-            rap::color green{0x2e, 0xa0, 0x43}, edge{0x1d, 0x6b, 0x2b};
-            p.polygon({{cx, tip},
-                       {w * 0.9f, base},
-                       {w * 0.65f, base},
-                       {w * 0.65f, tail},
-                       {w * 0.35f, tail},
-                       {w * 0.35f, base},
-                       {w * 0.1f, base}},
-                      rap::paint{green}, rap::paint{edge});
-        });
-}
-
 }  // namespace
 
 rap::node log_tab::build_page()
@@ -50,65 +29,6 @@ rap::node log_tab::build_page()
     page_ = std::make_unique<log_page>();
     page_guard_.open();
     return vbox{
-        // Filter bar [spec 1.2, row 1]
-        hbox{
-            // Sync, far left: its icon's badge says what the remotes
-            // have that the repository hasn't, or that a remote failed.
-            button{_("Fetch")}
-                .icon(fetch_icon())
-                .icon_only()
-                .bind(page_->fetch)
-                .on_click(on_page([this] { sync(); })),
-            menu_button{"HEAD"}
-                .bind(page_->ref_button)
-                .on_menu(on_page([this] { return show_menu(); }))
-                .width(22_ch),
-            // What this window did to the refs, undone and redone.
-            tool_button{undo_icon(false), _("Undo")}
-                .bind(page_->undo)
-                .on_click(on_page([this] { step_journal(false); })),
-            tool_button{undo_icon(true), _("Redo")}
-                .bind(page_->redo)
-                .on_click(on_page([this] { step_journal(true); })),
-            entry{search_text_}
-                .bind(page_->search)
-                .clearable()
-                // Emptied (its clear button), at once.
-                .on_changed(on_page(
-                    [this](const std::string& text)
-                    {
-                        search_text_ = text;
-                        if (text.empty() && !filter_.text.empty())
-                            apply_filter();
-                        else
-                            schedule_filter();
-                    }))
-                .on_activate(on_page([this] { apply_filter(); }))
-                // The dates [spec 1.9.3], rarely limited: a pop-up
-                // of their own from the box's end, the button held
-                // down while they are.
-                .trailing_action(calendar_icon(), _("Date range"),
-                                 on_page([this] { open_dates(); }), page_->dates)
-                // Which fields the text is looked for in, and how:
-                // TortoiseGit's magnifier at the box's start.
-                .leading_menu(rap::icon::named("edit-find-symbolic"), _("Filter options"),
-                              on_page([this] { return filter_menu(); }))
-                .stretch(),
-            drop_down{{_("Author Email"), _("Committer Email"), _("Merge Point"), _("Parent 1"),
-                       _("Parent 2"), _("Tag"), _("Tag (FF)"), _("Branch"), _("Branch (FF)"),
-                       _("Selection History")},
-                      jump_type_}
-                .bind(page_->jump_type)
-                .on_changed(on_page([this](int type) { jump_type_ = type; })),
-            button{_("Jump up (Alt+Up)")}
-                .icon(jump_arrow(true))
-                .icon_only()
-                .on_click(on_page([this] { jump(true); })),
-            button{_("Jump down (Alt+Down)")}
-                .icon(jump_arrow(false))
-                .icon_only()
-                .on_click(on_page([this] { jump(false); })),
-        },
         // The current branch behind its upstream, after a sync.
         hbox{
             label{}.bind(page_->hint_text).ellipsize().stretch(),
@@ -352,6 +272,11 @@ log_view_state log_tab::capture_view()
     log_view_state v;
     if (!page_) return v;
     flush_filters();
+    v.filter_text = search_text_;
+    v.filter = filter_;
+    v.since = since_;
+    v.until = until_;
+    v.jump_type = jump_type_;
     // Still to be put back (a load under way), or as it is.
     v.selection = kept_ ? kept_ : keep_selection();
     v.panes = page_->splitter->sizes();
@@ -364,8 +289,8 @@ log_view_state log_tab::capture_view()
     for (size_t row : files_.selection())
         if (row < files_.files().size()) v.selected_files.push_back(files_.files()[row].path);
     using focus = log_view_state::focus;
-    v.focused = page_->commit_list->has_focus()   ? focus::commits
-                : page_->search->has_focus()      ? focus::search
+    v.focused = page_->commit_list->has_focus()    ? focus::commits
+                : filter_focused()                 ? focus::search
                 : page_->path_filter->has_focus() ? focus::path_filter
                 : files_.has_focus()              ? focus::files
                                                   : focus::none;
@@ -375,6 +300,12 @@ log_view_state log_tab::capture_view()
 // Sizes of 0 (a window not laid out yet) say nothing: left as built.
 void log_tab::apply_view(const log_view_state& v)
 {
+    search_text_ = v.filter_text;
+    filter_ = v.filter;
+    since_ = v.since;
+    until_ = v.until;
+    jump_type_ = v.jump_type;
+    toolbar_changed();
     auto sized = [](const std::vector<float>& sizes)
     {
         float total = 0;
@@ -395,7 +326,10 @@ void log_tab::apply_view(const log_view_state& v)
     switch (v.focused)
     {
     case focus::commits: page_->commit_list->focus(); break;
-    case focus::search: page_->search->focus(); break;
+    case focus::search:
+        focus_filter_on_show_ = true;
+        focus_filter();
+        break;
     case focus::path_filter: page_->path_filter->focus(); break;
     case focus::files: files_.focus(); break;
     case focus::none: break;
@@ -404,6 +338,7 @@ void log_tab::apply_view(const log_view_state& v)
 
 void log_tab::flush_filters()
 {
+    filter_timer_.reset();
     if (search_text_ != filter_.text) apply_filter();
     if (page_ && page_->path_filter_timer) update_file_view();
 }
@@ -447,13 +382,23 @@ bool log_tab::key(const rap::key_event& e)
         step_journal(e.codepoint == 'y' || (e.modifiers & rap::mod_shift));
         return true;
     }
+    if (e.modifiers == rap::mod_ctrl && e.key == rap::key::character && e.codepoint == 'f')
+    {
+        focus_filter();
+        return true;
+    }
+    if (e.modifiers == rap::mod_alt && (e.key == rap::key::up || e.key == rap::key::down))
+    {
+        jump(e.key == rap::key::up);
+        return true;
+    }
     if (e.modifiers) return false;
     // Escape in the filter box clears it, at once.
-    if (e.key == rap::key::escape && page_->search->has_focus() && !search_text_.empty())
+    if (e.key == rap::key::escape && filter_focused() && !search_text_.empty())
     {
         search_text_.clear();
-        page_->search->set_text("");
-        if (!filter_.text.empty()) apply_filter();  // unless hearing it did
+        toolbar_changed();
+        if (!filter_.text.empty()) apply_filter();
         return true;
     }
     // Escape in the path filter box clears it [spec 1.11.2].

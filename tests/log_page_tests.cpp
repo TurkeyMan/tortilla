@@ -70,6 +70,16 @@ struct forge_panel_test
 // its labels, as far as busy_reason can tell.
 struct log_tab_test
 {
+    static void edit_filter(log_tab& t, const std::string& text) { t.edit_filter(text); }
+    static const std::string& search(const log_tab& t) { return t.search_text_; }
+    static const log_filter& filter(const log_tab& t) { return t.filter_; }
+    static show_preset preset(const log_tab& t) { return t.show_.preset; }
+    static int jump(const log_tab& t) { return t.jump_type_; }
+    static void branch(log_tab& t, std::string name)
+    {
+        t.toolbar_.branch = std::move(name);
+        t.toolbar_changed();
+    }
     static void hold_ref_command(log_tab& t, std::shared_ptr<git_process> p)
     {
         t.ref_command_ = std::move(p);
@@ -267,6 +277,8 @@ public:
         , placeholder(s.placeholder)
         , clearable(s.clearable)
     {
+        for (const auto& a : s.actions)
+            if (a.on_menu) menu = a.on_menu;
     }
     // The user's typing: the text, then the entry's word of it.
     void type(const std::string& text)
@@ -289,10 +301,19 @@ public:
         touch();
         placeholder = p;
     }
-    void on_changed(std::function<void(const std::string&)> f) override { changed = std::move(f); }
+    void on_changed(std::function<void(const std::string&)> f) override
+    {
+        changed = [this, f = std::move(f)](const std::string& v)
+        {
+            ++edits;
+            if (f) f(v);
+        };
+    }
     void on_activate(std::function<void()>) override {}
     std::string value, placeholder;
     bool clearable = false;
+    int edits = 0;
+    std::function<rap::menu()> menu;
     std::function<void(const std::string&)> changed;
 };
 
@@ -315,6 +336,65 @@ public:
     void on_click(std::function<void()> f) override { click = std::move(f); }
     std::function<void()> click;
     std::string text;  // as built
+};
+
+class kept_menu : public kept<rap::menu_button>
+{
+public:
+    void set_text(const std::string& t) override
+    {
+        touch();
+        text = t;
+        ++writes;
+    }
+    void set_icon(const rap::icon&) override { touch(); }
+    void set_pushed(bool) override { touch(); }
+    void on_menu(std::function<rap::menu()> f) override { menu = std::move(f); }
+    std::string text;
+    int writes = 0;
+    std::function<rap::menu()> menu;
+};
+
+class kept_drop_down : public kept<rap::drop_down>
+{
+public:
+    explicit kept_drop_down(const rap::spec::drop_down& s)
+        : items(s.items)
+        , value(s.current)
+    {
+    }
+    void set_items(std::vector<std::string> v) override
+    {
+        touch();
+        items = std::move(v);
+    }
+    int current() const override
+    {
+        touch();
+        return value;
+    }
+    void set_current(int v) override
+    {
+        touch();
+        value = v;
+    }
+    void on_changed(std::function<void(int)> f) override
+    {
+        changed = [this, f = std::move(f)](int v)
+        {
+            ++edits;
+            if (f) f(v);
+        };
+    }
+    void choose(int v)
+    {
+        value = v;
+        if (changed) changed(v);
+    }
+    std::vector<std::string> items;
+    int value;
+    int edits = 0;
+    std::function<void(int)> changed;
 };
 
 class kept_progress : public kept<rap::progress_bar>
@@ -346,6 +426,9 @@ struct built_window
     std::vector<kept_splitter*> splitters;
     std::vector<kept_entry*> entries;
     std::vector<kept_button*> buttons;
+    std::vector<kept_menu*> menus;
+    std::vector<kept_drop_down*> choices;
+    bool band_hbox = false;
     std::vector<std::function<void()>> poison;
     kept_window* window = nullptr;
     kept_tabs* tabs = nullptr;
@@ -652,6 +735,12 @@ public:
                                                rap::build_sink& sink) override
     {
         built_window& b = built.emplace_back();
+        if (const auto* box = std::get_if<rap::spec::box>(&spec.content.spec);
+            spec.base_surface && box && box->dir == rap::orientation::vertical &&
+            box->items.size() == 2)
+            if (const auto* row = std::get_if<rap::spec::box>(&box->items.front().spec))
+                b.band_hbox = row->dir == rap::orientation::horizontal && row->items.size() == 8 &&
+                              std::holds_alternative<rap::spec::stack>(box->items.back().spec);
         auto mine = std::make_unique<window_sink>(*this, sink, b);
         auto w = null().create_window(spec, parent, *mine);
         return std::make_unique<kept_window>(std::move(w), std::move(mine), b);
@@ -786,6 +875,16 @@ private:
                 b.buttons.push_back(button);
                 mine = button;
             }
+            else if (std::holds_alternative<rap::spec::menu_button>(n.spec))
+            {
+                b.menus.push_back(keep<kept_menu>());
+                mine = b.menus.back();
+            }
+            else if (const auto* s = std::get_if<rap::spec::drop_down>(&n.spec))
+            {
+                b.choices.push_back(keep<kept_drop_down>(*s));
+                mine = b.choices.back();
+            }
             else if (std::holds_alternative<rap::spec::progress_bar>(n.spec))
                 mine = keep<kept_progress>();
             else if (std::holds_alternative<rap::spec::stack>(n.spec))
@@ -838,10 +937,10 @@ private:
 
 keeping_backend* g_backend = nullptr;
 
-rap::backend* create_keeping(int abi, int* argc, char** argv, const rap::look_options&)
+rap::backend* create_keeping(int abi, int* argc, char** argv, const rap::look_options& look)
 {
     if (abi != rap::abi_version) return nullptr;
-    auto inner = rap::ui::load(*argc, argv, {.backend = "null"});
+    auto inner = rap::ui::load(*argc, argv, {.backend = "null", .look = look});
     if (!inner)
     {
         std::fprintf(stderr, "%s", inner.error().c_str());
@@ -855,6 +954,16 @@ class test_host : public tab_host
 {
 public:
     rap::window* w = nullptr;
+    rap::entry* search = nullptr;
+    void focus_filter(log_tab&) override
+    {
+        if (search) search->focus();
+    }
+    bool filter_focused(const log_tab&) const override { return search && search->has_focus(); }
+    void toolbar_changed(log_tab& t) override
+    {
+        if (w && search) search->set_text(log_tab_test::search(t));
+    }
     rap::window* window() override { return w; }
     void tab_changed(log_tab&) override {}
     void finish(log_tab&, bool) override {}
@@ -979,7 +1088,14 @@ void page_tests(rap::ui& ui, const std::string& repo,
     tab->set_host(&host);
     auto build = [&](std::optional<log_view_state> view)
     {
-        auto w = ui.create(rap::layout::window{"Log", {tab->build_page()}});
+        auto w = ui.create(rap::layout::window{
+            "Log",
+            {rap::layout::vbox{rap::layout::entry{log_tab_test::search(*tab)}
+                                   .clearable()
+                                   .bind(host.search)
+                                   .on_changed([&](const std::string& text)
+                                               { log_tab_test::edit_filter(*tab, text); }),
+                               tab->build_page()}}});
         host.w = w.get();
         tab->bind_page(std::move(view));
         return w;
@@ -1206,8 +1322,14 @@ page page_in(const built_window& b, size_t lists_from, size_t entries_from)
             p.files = b.lists[i];
             p.file_rows = f;
         }
+    for (kept_entry* e : b.entries)
+        if (e->clearable && !e->dead)
+        {
+            p.search = e;
+            break;
+        }
     for (size_t i = entries_from; i < b.entries.size(); ++i)
-        (b.entries[i]->clearable ? p.search : p.path_filter) = b.entries[i];
+        if (!b.entries[i]->clearable) p.path_filter = b.entries[i];
     return p;
 }
 
@@ -1317,9 +1439,8 @@ void tab_tests(rap::ui& ui, const std::string& first, const std::string& second,
               frame->title.find(folder_name(first)) != std::string::npos,
           "log tabs: closed, its tab and page go, and the one beside it shows");
     settle(ui);
-    pump(
-        ui, [] { return false; }, 300);
-    check(p2.commits->dead && p2.search->dead && !p1.commits->dead && !closed,
+    pump(ui, [] { return false; }, 300);
+    check(p2.commits->dead && !p2.search->dead && !p1.commits->dead && !closed,
           "log tabs: the closed tab's page went once the queue ran, the window stays");
 
     // -- + : the repository picker, then its tab -------------------------------
@@ -1465,6 +1586,8 @@ void tearoff_tests(rap::ui& ui, const std::string& first, const std::string& sec
     p2.commits->set_column_widths(widths);
     p2.commits->set_column_visible(log_model::hash, true);
     const std::vector<bool> visible = p2.commits->visible;
+    a->select_tab(two_id);
+    if (!ab.choices.empty()) ab.choices.front()->choose(4);
     p2.search->type("Make");  // typed, not yet applied: applied as it goes
     p2.commits->focus();
     log_model& two_log = *p2.log;
@@ -1520,7 +1643,10 @@ void tearoff_tests(rap::ui& ui, const std::string& first, const std::string& sec
               q2.search && q2.search->value == "Make" && q2.commits->widths == widths &&
               q2.commits->visible == visible && q2.commits->focused,
           "log tear-off: its selection, filter, columns and focus are as they were");
-    check(p2.commits->dead && p2.search->dead,
+    check(!bb->choices.empty() && bb->choices.front()->value == 4 && !ab.choices.empty() &&
+              ab.choices.front()->value != 4 && p2.search->value.empty(),
+          "log tear-off: destination row keeps jump state, source row shows its next tab");
+    check(p2.commits->dead && !p2.search->dead,
           "log tear-off: its page in the source went once the handler had returned");
     {
         const size_t windows = g_backend->built.size();
@@ -2109,6 +2235,126 @@ void identity_tests(rap::ui& ui, const std::string& first, const std::string& se
     settle(ui);
 }
 
+// A frame owns one row, while its selected tab supplies every value and action.
+void toolbar_tests(rap::ui& ui, const std::string& first, const std::string& second)
+{
+    auto opened = log_window::open(ui, first);
+    if (!opened) return check(false, "log row: window opens");
+    auto w = std::move(*opened);
+    auto& b = g_backend->built.back();
+    auto* one = w->current_tab();
+    auto p1 = page_in(b, 0, 0);
+    if (!loaded(ui, p1) || b.menus.empty() || b.choices.empty())
+        return check(false, "log row: widgets");
+    auto* search = p1.search;
+    auto* branch = b.menus.front();
+    auto* jump = b.choices.front();
+    check(b.band_hbox, "log row: window vbox starts with a single eight-control hbox above stack");
+    search->type("Add");
+    jump->choose(1);
+    log_tab_test::branch(*one, "one branch");
+    auto opened_two = w->open_tab(second);
+    if (!opened_two) return check(false, "log row: second tab opens");
+    auto* two = *opened_two;
+    check(log_tab_test::filter(*one).text == "Add",
+          "log row: switching flushes pending typed filter");
+    check(search->value.empty() && jump->value == 0,
+          "log row: second tab has its own filter and jump");
+    search->type("Make");
+    jump->choose(7);
+    log_tab_test::branch(*two, "two branch");
+    check(log_tab_test::search(*one) == "Add" && log_tab_test::jump(*one) == 1 &&
+              log_tab_test::search(*two) == "Make" && log_tab_test::jump(*two) == 7,
+          "log row: edits and choices apply only to the current tab");
+    auto type_menu = search->menu ? search->menu() : rap::menu{};
+    if (const auto* subject = find_item(type_menu, "Subject"); subject && subject->action)
+        subject->action();
+    const auto second_fields = log_tab_test::filter(*two).fields;
+    const auto second_cue = search->placeholder;
+    check(second_fields != log_tab_test::filter(*one).fields,
+          "log row: filter type action applies to the selected tab only");
+    const int edits = search->edits, choices = jump->edits;
+    w->select_tab(one->id());
+    check(search->value == "Add" && jump->value == 1 && branch->text == "one branch" &&
+              search->placeholder != second_cue,
+          "log row: first tab restores all row values");
+    const int writes = branch->writes;
+    log_tab_test::branch(*two, "hidden branch");
+    check(branch->writes == writes && branch->text == "one branch",
+          "log row: hidden state updates do not touch shared widgets");
+    w->select_tab(two->id());
+    check(search->value == "Make" && jump->value == 7 && branch->text == "hidden branch" &&
+              search->edits == edits && jump->edits == choices && search->placeholder == second_cue &&
+              log_tab_test::filter(*two).fields == second_fields,
+          "log row: switching back restores hidden updates without user edit handlers");
+    auto filter_menu = search->menu ? search->menu() : rap::menu{};
+    const auto* field = find_item(filter_menu, "Subject");
+    std::function<void()> kept_field = field ? field->action : std::function<void()>{};
+    const auto* dates = find_item(filter_menu, "Date range...");
+    std::function<void()> kept_dates = dates ? dates->action : std::function<void()>{};
+    auto branch_menu = branch->menu ? branch->menu() : rap::menu{};
+    std::function<void()> kept_branch;
+    if (const auto* all = find_item(branch_menu, "All branches")) kept_branch = all->action;
+    check(kept_field && kept_branch && kept_dates,
+          "log row: filter, dates and branch menu actions retained");
+    auto moved = w->detach(two->id());
+    check(moved && search->value == "Add" && jump->value == 1,
+          "log row: source row follows new current tab after detach");
+    const auto before = log_tab_test::filter(*two).fields;
+    const auto preset_before = log_tab_test::preset(*two);
+    const auto windows_before = g_backend->built.size();
+    if (kept_field) kept_field();
+    if (kept_branch) kept_branch();
+    if (kept_dates) kept_dates();
+    check(log_tab_test::filter(*two).fields == before &&
+              log_tab_test::preset(*two) == preset_before &&
+              g_backend->built.size() == windows_before,
+          "log row: old menu actions inert after move");
+    w->adopt(std::move(moved));
+    check(search->value == "Make" && jump->value == 7,
+          "log row: adopted tab restores filter and jump selection");
+    filter_menu = search->menu ? search->menu() : rap::menu{};
+    field = find_item(filter_menu, "Subject");
+    kept_field = field ? field->action : std::function<void()>{};
+    dates = find_item(filter_menu, "Date range...");
+    kept_dates = dates ? dates->action : std::function<void()>{};
+    branch_menu = branch->menu ? branch->menu() : rap::menu{};
+    kept_branch = {};
+    if (const auto* all = find_item(branch_menu, "All branches")) kept_branch = all->action;
+    const auto id = two->id();
+    w->close_tab(id);
+    settle(ui);
+    const auto fields = log_tab_test::filter(*one).fields;
+    const auto windows_after = g_backend->built.size();
+    if (kept_field) kept_field();
+    if (kept_dates) kept_dates();
+    if (kept_branch) kept_branch();
+    check(log_tab_test::filter(*one).fields == fields && g_stale_calls == 0 &&
+              g_backend->built.size() == windows_after,
+          "log row: retained menu inert after close, no poisoned widget calls");
+    search->focused = false;
+    check(b.window->key &&
+              b.window->key({.press = true,
+                             .key = rap::key::character,
+                             .codepoint = 'f',
+                             .modifiers = rap::mod_ctrl}) &&
+              search->focused,
+          "log row: Ctrl+F focuses the window-owned filter");
+    filter_menu = search->menu ? search->menu() : rap::menu{};
+    field = find_item(filter_menu, "Subject");
+    kept_field = field ? field->action : std::function<void()>{};
+    const auto last_fields = log_tab_test::filter(*one).fields;
+    const auto last_text = log_tab_test::search(*one);
+    if (b.window->close_request) b.window->close_request();
+    if (kept_field) kept_field();
+    search->type("closing");
+    check(log_tab_test::filter(*one).fields == last_fields &&
+              log_tab_test::search(*one) == last_text,
+          "log row: callbacks and kept menus inert while frame is closing");
+    w.reset();
+    settle(ui);
+}
+
 // A tab closed while a nested loop (a modal dialog's, say) runs the queue
 // before the toolkit gets to its page: the posts the window keeps the tab
 // for run, and the tab goes, while the page's widgets are still there.
@@ -2433,7 +2679,8 @@ void run_log_page_tests(const std::string& root)
     int argc = 1;
     char program[] = "tortilla-tests";
     char* argv[] = {program, nullptr};
-    auto loaded = rap::ui::load(argc, argv, {.backend = "tortilla-test"});
+    auto loaded = rap::ui::load(
+        argc, argv, {.backend = "tortilla-test", .look = {.density = rap::density::compact}});
     check(loaded && g_backend, "log page: the test's backend starts");
     if (!loaded || !g_backend) return;
     rap::ui& ui = **loaded;
@@ -2475,6 +2722,7 @@ void run_log_page_tests(const std::string& root)
     }
     g_stale_calls = 0;
     tab_tests(ui, repo, others[0], others[1]);
+    toolbar_tests(ui, repo, others[0]);
     recent_tests(root, repo, others[0]);
     identity_tests(ui, repo, others[0]);
     teardown_tests(ui, repo, others[0]);

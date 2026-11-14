@@ -37,14 +37,6 @@ struct label_press
 
 struct log_page
 {
-    // The filter bar.
-    rap::button* fetch = nullptr;
-    rap::menu_button* ref_button = nullptr;
-    rap::tool_button* undo = nullptr;
-    rap::tool_button* redo = nullptr;
-    rap::entry* search = nullptr;
-    rap::entry_action* dates = nullptr;
-    rap::drop_down* jump_type = nullptr;
     // The hint bar, when the current branch is behind its upstream.
     rap::widget* hint_bar = nullptr;
     rap::label* hint_text = nullptr;
@@ -74,14 +66,11 @@ struct log_page
     rap::date_picker* from = nullptr;
     rap::date_picker* to = nullptr;
 
-    // The badge the Fetch button has now.
-    fetch_badge badge_shown = fetch_badge::none;
-    size_t badge_count = 0;
     std::optional<label_press> last_label_press;
 
     // The page's own timers: the progress bar's pulse, the filters' delays,
     // and the file list fitted to its column.
-    rap::subscription pulse_timer, filter_timer, path_filter_timer, fit_timer;
+    rap::subscription pulse_timer, path_filter_timer, fit_timer;
     // The forge column's width watched while it's shown.
     rap::subscription forge_width_watch;
 };

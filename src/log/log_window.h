@@ -154,6 +154,37 @@ private:
 
     rap::window* window() override { return window_.get(); }
     void tab_changed(log_tab&) override;
+    void toolbar_changed(log_tab&) override;
+    void focus_filter(log_tab&) override;
+    bool filter_focused(const log_tab&) const override;
+    rap::node build_toolbar();
+    void render_toolbar();
+    rap::menu row_menu(rap::menu);
+    log_toolbar toolbar_;
+    // Resolve at invocation, never capture the tab selected during construction.
+    template <class F>
+    auto row_action(F f)
+    {
+        return [this, alive = std::weak_ptr<bool>(alive_), f = std::move(f)](auto&&... args) mutable
+        {
+            using result =
+                decltype(f(std::declval<log_tab&>(), std::forward<decltype(args)>(args)...));
+            log_tab* tab = alive.lock() && !closing_ && !emptied_ ? current_tab() : nullptr;
+            if (!tab)
+            {
+                if constexpr (std::is_void_v<result>)
+                    return;
+                else
+                    return result{};
+            }
+            const auto scope = tab->tab_scope();
+            if constexpr (std::is_same_v<result, rap::menu>)
+                return row_menu(tab->tab_menu(f(*tab, std::forward<decltype(args)>(args)...)));
+            else
+                return f(*tab, std::forward<decltype(args)>(args)...);
+        };
+    }
+
     void finish(log_tab&, bool ok) override;
     bool patch_shown() const override { return patch_.has_value(); }
     void show_patch(bool on) override;

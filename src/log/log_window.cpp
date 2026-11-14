@@ -35,6 +35,27 @@ std::map<const rap::window*, log_window*>& log_windows()
 // window used last.
 uint64_t g_last_used = 0;
 
+// TortoiseGit's jump buttons are green arrows (IDI_JUMPUP/IDI_JUMPDOWN).
+rap::icon jump_arrow(bool up)
+{
+    return rap::icon::drawn(
+        [up](rap::painter& p, rap::size_f s)
+        {
+            float w = s.w, h = s.h, cx = w / 2;
+            float tip = up ? h * 0.1f : h * 0.9f, base = up ? h * 0.55f : h * 0.45f;
+            float tail = up ? h * 0.9f : h * 0.1f;
+            rap::color green{0x2e, 0xa0, 0x43}, edge{0x1d, 0x6b, 0x2b};
+            p.polygon({{cx, tip},
+                       {w * 0.9f, base},
+                       {w * 0.65f, base},
+                       {w * 0.65f, tail},
+                       {w * 0.35f, tail},
+                       {w * 0.35f, base},
+                       {w * 0.1f, base}},
+                      rap::paint{green}, rap::paint{edge});
+        });
+}
+
 }  // namespace
 
 std::expected<log_window*, std::string>
@@ -112,6 +133,8 @@ log_window::log_window(rap::ui& ui)
 // before the window; the rest of the tabs after it.
 log_window::~log_window()
 {
+    closing_ = true;
+    alive_.reset();
     log_windows().erase(window_.get());
     for (auto& tab : tabs_) tab->drop_page();
 }
@@ -131,7 +154,9 @@ void log_window::build(std::unique_ptr<log_tab> first, std::optional<placement> 
     // pages go into the stack as the tabs come.
     window_ = create_window(
         ui_,
-        layout::window{first->title_text(), {layout::stack{}.bind(stack_)}}
+        layout::window{first->title_text(),
+                       {layout::vbox{build_toolbar(), layout::stack{}.bind(stack_).stretch()}}}
+            .base_surface()
             .size(140_ch, 50_lines)
             .tabs(layout::document_tabs{}
                       .on_select([this](const std::string& id) { show_tab(id); })
@@ -166,7 +191,7 @@ void log_window::build(std::unique_ptr<log_tab> first, std::optional<placement> 
             // Typed in: the window in use, so far as rapport tells.
             used();
             log_tab* tab = current_tab();
-            return tab && tab->key(e);
+            return !closing_ && tab && tab->key(e);
         });
     // Size and position persist across runs, as TortoiseGit's do; position
     // only where the platform lets apps place windows (not on Wayland). A
@@ -225,9 +250,12 @@ void log_window::show_tab(const std::string& id)
     auto it = find(id);
     if (it == tabs_.end()) return;
     log_tab& tab = **it;
+    if (auto* old = current_tab(); old && old != &tab) old->flush_filters();
     current_ = id;
+    render_toolbar();
     used();
     stack_->show(id);
+    if (std::exchange(tab.focus_filter_on_show_, false)) focus_filter(tab);
     window_->set_title(tab.title_text());
     if (tab.identity().icon) window_->set_icon(tab.identity().icon);
     // Its dialogs, and the windows its actions open, are its repository's
@@ -235,6 +263,115 @@ void log_window::show_tab(const std::string& id)
     set_repo_identity(window_.get(), tab.shared_identity());
     follow_patch(tab);
     update_patch();
+}
+
+rap::node log_window::build_toolbar()
+{
+    using namespace rap::layout;
+    using namespace rap::literals;
+    return hbox{
+        button{_("Fetch")}
+            .icon(log_tab::fetch_icon())
+            .icon_only()
+            .bind(toolbar_.fetch)
+            .on_click(row_action([](log_tab& t) { t.sync(); })),
+        menu_button{"HEAD"}
+            .bind(toolbar_.branch)
+            .on_menu(row_action([](log_tab& t) { return t.show_menu(); }))
+            .width(22_ch),
+        tool_button{log_tab::undo_icon(false), _("Undo")}
+            .bind(toolbar_.undo)
+            .on_click(row_action([](log_tab& t) { t.step_journal(false); })),
+        tool_button{log_tab::undo_icon(true), _("Redo")}
+            .bind(toolbar_.redo)
+            .on_click(row_action([](log_tab& t) { t.step_journal(true); })),
+        entry{}
+            .bind(toolbar_.search)
+            .clearable()
+            .on_changed(
+                row_action([](log_tab& t, const std::string& text) { t.edit_filter(text); }))
+            .on_activate(row_action([](log_tab& t) { t.apply_filter(); }))
+            .trailing_action(log_tab::calendar_icon(), _("Date range"),
+                             row_action([](log_tab& t) { t.open_dates(); }), toolbar_.dates)
+            .leading_menu(rap::icon::named("edit-find-symbolic"), _("Filter options"),
+                          row_action([](log_tab& t) { return t.filter_menu(); }))
+            .stretch(),
+        drop_down{{_("Author Email"), _("Committer Email"), _("Merge Point"), _("Parent 1"),
+                   _("Parent 2"), _("Tag"), _("Tag (FF)"), _("Branch"), _("Branch (FF)"),
+                   _("Selection History")},
+                  0}
+            .bind(toolbar_.jump_type)
+            .on_changed(row_action(
+                [](log_tab& t, int type)
+                {
+                    t.jump_type_ = type;
+                    t.toolbar_changed();
+                })),
+        button{_("Jump up (Alt+Up)")}
+            .icon(jump_arrow(true))
+            .icon_only()
+            .bind(toolbar_.up)
+            .on_click(row_action([](log_tab& t) { t.jump(true); })),
+        button{_("Jump down (Alt+Down)")}
+            .icon(jump_arrow(false))
+            .icon_only()
+            .bind(toolbar_.down)
+            .on_click(row_action([](log_tab& t) { t.jump(false); })),
+    };
+}
+
+rap::menu log_window::row_menu(rap::menu menu)
+{
+    for (auto& item : menu)
+    {
+        if (item.action)
+            item.action =
+                [this, alive = std::weak_ptr<bool>(alive_), action = std::move(item.action)]
+            {
+                if (alive.lock() && !closing_ && !emptied_) action();
+            };
+        item.children = row_menu(std::move(item.children));
+    }
+    return menu;
+}
+
+void log_window::toolbar_changed(log_tab& tab)
+{
+    if (!closing_ && !emptied_ && current_tab() == &tab) render_toolbar();
+}
+
+void log_window::render_toolbar()
+{
+    auto* tab = current_tab();
+    if (!tab || !toolbar_.search) return;
+    const auto& state = tab->toolbar_;
+    if (toolbar_.search->text() != tab->search_text_) toolbar_.search->set_text(tab->search_text_);
+    toolbar_.search->set_placeholder(tab->filter_cue());
+    toolbar_.jump_type->set_current(tab->jump_type_);
+    toolbar_.branch->set_text(state.branch);
+    toolbar_.branch->set_tooltip(state.branch_tip);
+    toolbar_.undo->set_enabled(state.undo);
+    toolbar_.redo->set_enabled(state.redo);
+    toolbar_.undo->set_tooltip(state.undo_tip);
+    toolbar_.redo->set_tooltip(state.redo_tip);
+    toolbar_.fetch->set_icon(log_tab::fetch_icon(state.badge, state.badge_count));
+    toolbar_.fetch->set_tooltip(state.fetch_tip);
+    toolbar_.fetch->set_enabled(!tab->syncing_);
+    // The original arrows remain available; jump itself handles absent selections.
+    toolbar_.up->set_enabled(state.up);
+    toolbar_.down->set_enabled(state.down);
+    toolbar_.dates->set_checked(tab->since_.has_value() || tab->until_.has_value());
+    toolbar_.dates->set_tooltip(tab->dates_tip_);
+}
+
+void log_window::focus_filter(log_tab& tab)
+{
+    if (!closing_ && current_tab() == &tab && toolbar_.search) toolbar_.search->focus();
+}
+
+bool log_window::filter_focused(const log_tab& tab) const
+{
+    return !closing_ && current_tab() == &tab && toolbar_.search && toolbar_.search->has_focus();
 }
 
 void log_window::select_tab(const std::string& id)
