@@ -103,6 +103,7 @@ log_tab::open(rap::ui& ui, const std::string& path, bool outer)
 
 log_tab::log_tab(rap::ui& ui, repo repo, std::string path)
     : ui_(ui)
+    , id_("t" + std::to_string(++next_id))
     , identity_(repo_identity_of(ui, repo))
     , repo_(std::move(repo))
     , path_(std::move(path))
@@ -205,6 +206,61 @@ std::string log_tab::title_text() const
 std::string log_tab::repo_location() const
 {
     return repo_.workdir().empty() ? repo_.git_dir() : repo_.workdir();
+}
+
+std::string log_tab::tab_title() const
+{
+    std::string dir = repo_location();
+    while (dir.size() > 1 && (dir.back() == '/' || dir.back() == '\\')) dir.pop_back();
+    std::string title = rap::sys::path_to_utf8(rap::sys::path_from_utf8(dir).filename());
+    if (title.empty()) title = dir;
+    if (path_limited()) title += "/" + path_text(40);
+    return title;
+}
+
+std::string log_tab::tab_tooltip() const
+{
+    std::string where = repo_location();
+    while (where.size() > 1 && where.back() == '/') where.pop_back();
+    if (path_limited()) where += "/" + rel_path_;
+    return rap::sys::path_to_utf8(rap::sys::path_from_utf8(where).make_preferred());
+}
+
+bool log_tab::shows(const log_tab& other) const
+{
+    std::error_code ec;
+    const std::string mine = repo_location(), theirs = other.repo_location();
+    const bool same_repo =
+        mine == theirs || std::filesystem::equivalent(rap::sys::path_from_utf8(mine),
+                                                      rap::sys::path_from_utf8(theirs), ec);
+    return same_repo && (path_limited() ? rel_path_ : std::string()) ==
+                            (other.path_limited() ? other.rel_path_ : std::string());
+}
+
+std::string log_tab::busy_reason() const
+{
+    if (history_edit_busy())
+        return rap::i18n::format(
+            _("{0}: a history edit is still being written. Close the tab once it has finished."),
+            tab_title());
+    if (ref_command_)
+        return rap::i18n::format(
+            _("{0}: git is still changing branches or tags. Close the tab once it has finished."),
+            tab_title());
+    if (!rebases_.empty())
+        return rap::i18n::format(
+            _("{0}: a rebase opened from this log is still open. Close it first."), tab_title());
+    return {};
+}
+
+void log_tab::stop()
+{
+    // What holds a weak alive_ (guarded() and the rest) is dead from now on.
+    alive_.reset();
+    watches_.clear();
+    poll_timer_ = {};
+    notice_timer_ = {};
+    host_ = nullptr;
 }
 
 bool log_tab::path_limited() const

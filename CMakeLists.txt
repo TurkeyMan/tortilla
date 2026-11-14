@@ -134,6 +134,7 @@ add_library(tortilla_app STATIC
     src/log/show_dialogs.cpp
     src/log/history_actions.cpp
     src/log/history_dialogs.cpp
+    src/log/open_repository_dialog.cpp
     src/ui/export_dialog.cpp
     src/changes/changes_view.cpp
     src/changes/changes_window.cpp

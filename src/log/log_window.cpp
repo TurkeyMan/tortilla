@@ -4,9 +4,11 @@
 #include "git/git_install.h"
 #include "git/patch_text.h"
 #include "i18n.h"
+#include "log/open_repository_dialog.h"
 #include "settings.h"
 #include "ui/repo_icon.h"
 
+#include <algorithm>
 #include <thread>
 
 namespace tortilla
@@ -17,68 +19,265 @@ log_window::open(rap::ui& ui, const std::string& path, bool all_branches, bool o
 {
     auto tab = log_tab::open(ui, path, outer);
     if (!tab) return std::unexpected(tab.error());
-    std::unique_ptr<log_window> w(new log_window(ui, std::move(*tab)));
-    w->build();
-    w->tab_->start(all_branches);
+    log_tab& first = **tab;
+    std::unique_ptr<log_window> w(new log_window(ui));
+    w->build(std::move(*tab));
+    first.start(all_branches);
+    remember_repository(first.repo_location());
     return w;
 }
 
-log_window::log_window(rap::ui& ui, std::unique_ptr<log_tab> tab)
+log_window::log_window(rap::ui& ui)
     : ui_(ui)
-    , tab_(std::move(tab))
 {
 }
 
-// The page's own (its date pop-up, over the window, and its timers) go
-// before the window; the rest of the tab after it.
+// The pages' own (their date pop-ups, over the window, and their timers) go
+// before the window; the rest of the tabs after it.
 log_window::~log_window()
 {
-    if (tab_) tab_->drop_page();
+    for (auto& tab : tabs_) tab->drop_page();
 }
 
-void log_window::build()
+void log_window::build(std::unique_ptr<log_tab> first)
 {
     using namespace rap::literals;
+    namespace layout = rap::layout;
 
-    tab_->set_host(this);
-    // (rap::layout's window: log_window::window is the tab's parent.)
+    // (rap::layout's window: log_window::window is the tabs' parent.) The
+    // pages go into the stack as the tabs come.
     window_ = create_window(
-        ui_, rap::layout::window{tab_->title_text(), {tab_->build_page()}}.size(140_ch, 50_lines));
-    // The tab's icon; its app id is the window's from the start (create_window),
-    // never changed after, as the taskbar would regroup it.
-    if (tab_->identity().icon) window_->set_icon(tab_->identity().icon);
+        ui_,
+        layout::window{first->title_text(), {layout::stack{}.bind(stack_)}}
+            .size(140_ch, 50_lines)
+            .tabs(layout::document_tabs{}
+                      .on_select([this](const std::string& id) { show_tab(id); })
+                      .on_close([this](const std::string& id) { close_tab(id); })
+                      .on_new([this] { new_tab(); })
+                      .on_reorder([this](const std::string& id, int index) { reorder(id, index); })
+                      .bind(strip_)));
+    // The first tab's icon; its app id is the window's from the start, and
+    // never changed after (as other tabs show), as the taskbar would regroup
+    // the window.
+    if (first->identity().icon) window_->set_icon(first->identity().icon);
+    if (!first->identity().app_id.empty()) window_->set_app_id(first->identity().app_id);
     window_->on_close_request(
         [this]
         {
+            if (closing_) return true;
+            closing_ = true;
             closing();
             if (closed_) closed_();
             return true;
         });
-    window_->on_key([this](const rap::key_event& e) { return tab_ && tab_->key(e); });
+    window_->on_key(
+        [this](const rap::key_event& e)
+        {
+            log_tab* tab = current_tab();
+            return tab && tab->key(e);
+        });
     // Size and position persist across runs, as TortoiseGit's do; position
     // only where the platform lets apps place windows (not on Wayland).
     settings::get().restore_window("log.window", *window_);
-    tab_->bind_page();
+    const std::string id = adopt(std::move(first)).id();
+    select_tab(id);
+}
+
+log_tab& log_window::adopt(std::unique_ptr<log_tab> tab, int index)
+{
+    log_tab& t = *tab;
+    t.set_host(this);
+    stack_->add(t.id(), t.build_page());
+    strip_->insert(index, strip_item(t));
+    auto at = index < 0 || size_t(index) >= tabs_.size() ? tabs_.end() : tabs_.begin() + index;
+    tabs_.insert(at, std::move(tab));
+    t.bind_page();
+    return t;
+}
+
+rap::document_tab log_window::strip_item(const log_tab& tab) const
+{
+    return {.id = tab.id(),
+            .title = tab.tab_title(),
+            .icon = tab.identity().icon,
+            .tooltip = tab.tab_tooltip()};
+}
+
+std::vector<std::unique_ptr<log_tab>>::iterator log_window::find(const std::string& id)
+{
+    return std::ranges::find_if(tabs_, [&](const auto& t) { return t->id() == id; });
+}
+
+log_tab* log_window::current_tab() const
+{
+    for (const auto& t : tabs_)
+        if (t->id() == current_) return t.get();
+    return nullptr;
+}
+
+void log_window::show_tab(const std::string& id)
+{
+    auto it = find(id);
+    if (it == tabs_.end()) return;
+    log_tab& tab = **it;
+    current_ = id;
+    stack_->show(id);
+    window_->set_title(tab.title_text());
+    if (tab.identity().icon) window_->set_icon(tab.identity().icon);
+    update_patch();
+}
+
+void log_window::select_tab(const std::string& id)
+{
+    if (find(id) == tabs_.end()) return;
+    strip_->select(id);
+    show_tab(id);
+}
+
+std::expected<log_tab*, std::string> log_window::open_tab(const std::string& path,
+                                                          bool all_branches, bool outer)
+{
+    auto opened = log_tab::open(ui_, path, outer);
+    if (!opened) return std::unexpected(opened.error());
+    // Open here already: that tab (and this one goes, never started).
+    for (const auto& t : tabs_)
+        if (t->shows(**opened))
+        {
+            select_tab(t->id());
+            return t.get();
+        }
+    log_tab& tab = adopt(std::move(*opened));
+    select_tab(tab.id());
+    tab.start(all_branches);
+    remember_repository(tab.repo_location());
+    return &tab;
+}
+
+void log_window::new_tab()
+{
+    if (picking_ || closing_) return;
+    open_repository_dialog(ui_, window_.get(),
+                           [this, alive = std::weak_ptr<bool>(alive_)](const std::string& path)
+                           {
+                               if (!alive.lock() || closing_) return;
+                               auto opened = open_tab(path);
+                               if (!opened)
+                                   ui_.message(window_.get(),
+                                               {.icon = rap::message_spec::icon::error,
+                                                .title = _("Open Repository"),
+                                                .text = opened.error()});
+                           });
+}
+
+bool log_window::close_tab(const std::string& id)
+{
+    auto it = find(id);
+    if (it == tabs_.end() || closing_) return false;
+    log_tab& tab = **it;
+    // What's being written isn't given up half done.
+    if (std::string why = tab.busy_reason(); !why.empty())
+    {
+        ui_.message(window_.get(), {.icon = rap::message_spec::icon::warning,
+                                    .title = _("Close Tab"),
+                                    .text = std::move(why)});
+        return false;
+    }
+    // The last: the window with it, once the strip's (or the page's)
+    // handler has returned.
+    if (tabs_.size() == 1)
+    {
+        ui_.post(
+            [this, alive = std::weak_ptr<bool>(alive_)]
+            {
+                if (alive.lock()) close_window();
+            });
+        return true;
+    }
+    tab.save_view_settings();
+    tab.save_options();
+    tab.drop_page();
+    stack_->remove(id);
+    strip_->remove(id);
+    std::shared_ptr<log_tab> gone(std::move(*it));
+    tabs_.erase(it);
+    gone->stop();
+    // Its page's widgets go once the event loop is next reached (this may
+    // be one of them calling), telling its models they're going as they
+    // go: the tab, with its models, goes after them.
+    ui_.post([&ui = ui_, gone] { ui.post([gone] {}); });
+    if (id == current_)
+    {
+        current_.clear();
+        show_tab(strip_->current());
+    }
+    return true;
+}
+
+void log_window::reorder(const std::string& id, int index)
+{
+    auto it = find(id);
+    if (it == tabs_.end() || index < 0) return;
+    index = std::min(index, int(tabs_.size()) - 1);
+    // Dragged, the strip has it there already; asked from here, it's moved.
+    const std::vector<std::string> ids = strip_->ids();
+    if (size_t(index) >= ids.size() || ids[size_t(index)] != id)
+    {
+        strip_->remove(id);
+        strip_->insert(index, strip_item(**it));
+        strip_->select(current_);
+    }
+    std::unique_ptr<log_tab> moved = std::move(*it);
+    tabs_.erase(it);
+    tabs_.insert(tabs_.begin() + index, std::move(moved));
+}
+
+void log_window::pick_commits(const std::string& purpose, const std::string& label,
+                              std::function<void(std::vector<commit>)> chosen)
+{
+    picking_ = true;
+    strip_->set_visible(false);
+    tabs_.front()->pick_commits(purpose, label, std::move(chosen));
 }
 
 void log_window::closing()
 {
     settings::get().save_window("log.window", *window_);
-    tab_->save_view_settings();
-    tab_->save_options();
+    log_tab* now = current_tab();
+    for (const auto& t : tabs_)
+        if (t.get() != now)
+        {
+            t->save_view_settings();
+            t->save_options();
+        }
+    if (now)
+    {
+        now->save_view_settings();
+        now->save_options();
+    }
     close_patch();
+}
+
+void log_window::close_window()
+{
+    if (closing_) return;
+    closing_ = true;
+    closing();
+    window_->close();
+    if (closed_) closed_();
 }
 
 void log_window::tab_changed(log_tab& tab)
 {
-    window_->set_title(tab.title_text());
+    if (strip_) strip_->update(strip_item(tab));
+    if (window_ && tab.id() == current_) window_->set_title(tab.title_text());
 }
 
-void log_window::finish(bool)
+// OK closes the tab, as Ctrl+W does; picking, OK (having handed over the
+// commits) and Cancel close the window.
+void log_window::finish(log_tab& tab, bool)
 {
-    closing();
-    window_->close();
-    if (closed_) closed_();
+    if (picking_) return close_window();
+    close_tab(tab.id());
 }
 
 void log_window::show_patch(bool on)
@@ -108,10 +307,11 @@ void log_window::close_patch()
 
 void log_window::selection_moved(log_tab& tab)
 {
-    if (&tab == tab_.get()) update_patch();
+    if (tab.id() == current_) update_patch();
 }
 
-// git runs off the UI thread, a moment after the selection settles.
+// git runs off the UI thread, a moment after the selection (or the tab)
+// settles.
 void log_window::update_patch()
 {
     if (!patch_) return;
@@ -119,8 +319,9 @@ void log_window::update_patch()
         100, false,
         [this]
         {
-            if (!patch_ || !tab_) return;
-            log_tab::patch_source source = tab_->patch_request();
+            log_tab* tab = current_tab();
+            if (!patch_ || !tab) return;
+            log_tab::patch_source source = tab->patch_request();
             const unsigned gen = ++patch_generation_;
             if (source.args.empty()) return patch_->show(source.title, {});
             std::thread(

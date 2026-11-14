@@ -292,14 +292,14 @@ rap::node log_tab::build_page()
                                 chosen.push_back(*c);
                         picked_(std::move(chosen));
                     }
-                    if (host_) host_->finish(true);
+                    if (host_) host_->finish(*this, true);
                 }),
             button{_("Cancel")}
                 .bind(page_->cancel)
                 .on_click(
                     [this]
                     {
-                        if (host_) host_->finish(false);
+                        if (host_) host_->finish(*this, false);
                     }),
         },
     };

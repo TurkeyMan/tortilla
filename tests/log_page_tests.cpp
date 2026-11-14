@@ -753,7 +753,7 @@ public:
     rap::window* w = nullptr;
     rap::window* window() override { return w; }
     void tab_changed(log_tab&) override {}
-    void finish(bool) override {}
+    void finish(log_tab&, bool) override {}
     bool patch_shown() const override { return false; }
     void show_patch(bool) override {}
     void selection_moved(log_tab&) override {}

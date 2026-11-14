@@ -1,6 +1,6 @@
 // What a log tab asks of the window it's in (log_window): a parent for its
-// dialogs, its title shown, the window closed by its OK and Cancel, and
-// View Patch, which is the window's.
+// dialogs, its title shown, the tab (or, picking, the window) closed by its
+// OK and Cancel, and View Patch, which is the window's.
 #pragma once
 
 #include <rapport/rapport.h>
@@ -15,11 +15,11 @@ class tab_host
 public:
     // The window, the parent of the tab's dialogs and messages.
     virtual rap::window* window() = 0;
-    // The tab's title (log_tab::title_text) has changed.
+    // The tab's title (log_tab::title_text, tab_title) has changed.
     virtual void tab_changed(log_tab&) = 0;
-    // OK (`ok`) or Cancel clicked: done with the window. Picking commits, OK
-    // has handed them over first.
-    virtual void finish(bool ok) = 0;
+    // OK (`ok`) or Cancel clicked: done with the tab, or, picking commits,
+    // with the window (OK has handed them over first).
+    virtual void finish(log_tab&, bool ok) = 0;
     // View Patch [spec 1.9.5]: a window of its own, following the selection
     // of the tab on show (log_tab::patch_request).
     virtual bool patch_shown() const = 0;

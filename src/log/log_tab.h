@@ -71,6 +71,25 @@ public:
     // The window's title while it shows this tab: the repository's folder, or
     // the path the history is limited to [spec 1.9.7].
     std::string title_text() const;
+    // Its document tab's: the repository's folder name, with the path the
+    // history is limited to after it, and as a tooltip where it is in full.
+    std::string tab_title() const;
+    std::string tab_tooltip() const;
+    // Its id among the document tabs: unique in the process ("t1", "t2"...),
+    // so it stays the same wherever the tab goes.
+    const std::string& id() const { return id_; }
+    // The repository's folder (a bare one's git folder).
+    std::string repo_location() const;
+    // Whether `other` shows what this does: the same repository, limited to
+    // the same path (or neither).
+    bool shows(const log_tab& other) const;
+    // Why the tab can't close now (a history edit being written, git moving
+    // a label, a rebase it opened); empty when it can.
+    std::string busy_reason() const;
+    // Gone from its window for good: what it started (watches, polls, the
+    // replies to its dialogs and threads) stops calling back. Its page has
+    // gone first (drop_page).
+    void stop();
     // Its repository's icon and taskbar group, the window's while it shows
     // the tab; the tab's own, so they go where it goes.
     const repo_identity& identity() const { return identity_; }
@@ -306,7 +325,6 @@ private:
     void open_settings(settings_page);
     bool path_limited() const;
     std::string path_text(size_t limit) const;
-    std::string repo_location() const;
     void update_walk_button();
     bool one_file() const;
     void apply_follow();
@@ -379,6 +397,8 @@ private:
     std::string filter_cue() const;
 
     rap::ui& ui_;
+    static inline unsigned next_id = 0;
+    std::string id_;
     repo_identity identity_;
     // Expires with the log, for dialogs that outlive it (their reload).
     std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
