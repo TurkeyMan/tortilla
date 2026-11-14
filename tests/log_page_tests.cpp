@@ -376,6 +376,17 @@ public:
     {
         reordered = std::move(f);
     }
+    void on_detach(detach_fn f) override { detached = std::move(f); }
+    void on_receive(receive_fn f) override { received = std::move(f); }
+    void set_group(const std::string& g) override
+    {
+        touch();
+        group = g;
+    }
+    void on_context_menu(std::function<rap::menu(const std::string&)> f) override
+    {
+        menu = std::move(f);
+    }
 
     // The user's clicks and keys, as the strip passes them on: a tab
     // clicked (Ctrl+Tab), its close box (Ctrl+W), + (Ctrl+T), a drag.
@@ -413,6 +424,11 @@ public:
     std::function<void(const std::string&)> selected, closed;
     std::function<void()> added;
     std::function<void(const std::string&, int)> reordered;
+    // Tearing off and dropping in: unset, a log window's tabs stay put.
+    detach_fn detached;
+    receive_fn received;
+    std::string group;
+    std::function<rap::menu(const std::string&)> menu;
 
 private:
     int index_of(const std::string& id) const
@@ -1142,6 +1158,8 @@ void tab_tests(rap::ui& ui, const std::string& first, const std::string& second,
     check(strip && stack && frame && strip->items.size() == 1 && w->tabs().size() == 1 &&
               stack->ids() == std::vector<std::string>{w->tabs()[0]->id()},
           "log tabs: a window's one tab, its page in the stack");
+    check(strip && !strip->detached && !strip->received && strip->group.empty(),
+          "log tabs: no tearing off or dropping in yet: a tab dragged out stays in its row");
     if (!strip || !stack || !frame || w->tabs().size() != 1) return;
     log_tab* one = w->tabs()[0].get();
     const std::string one_id = one->id();
