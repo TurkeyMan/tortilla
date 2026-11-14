@@ -5,6 +5,9 @@
 // and the forge panel's download line across a page built again; and
 // repositories as tabs of one log window, and the recent repositories.
 //
+// And tabs torn off into windows of their own, and dropped from one log
+// window into another.
+//
 // The null backend's widgets keep nothing (or, its entries, no callbacks),
 // so this test's backend wraps it and builds lists, splitters, entries,
 // labels, buttons, progress bars, stacks and document tabs itself, keeping
@@ -23,6 +26,7 @@
 #include "log/open_repository_dialog.h"
 #include "settings.h"
 #include "test_support.h"
+#include "ui/modal_dialogs.h"
 #include "ui/repo_icon.h"
 #include "ui/trust_repository.h"
 #include "util/repo_path.h"
@@ -60,6 +64,16 @@ struct forge_panel_test
     static rap::label* status(forge_panel& p) { return p.download_status_; }
     static rap::progress_bar* progress(forge_panel& p) { return p.download_progress_; }
     static rap::button* download(forge_panel& p) { return p.download_; }
+};
+
+// A log tab held busy, from outside (log_tab.h befriends it): git changing
+// its labels, as far as busy_reason can tell.
+struct log_tab_test
+{
+    static void hold_ref_command(log_tab& t, std::shared_ptr<git_process> p)
+    {
+        t.ref_command_ = std::move(p);
+    }
 };
 
 namespace test
@@ -636,6 +650,11 @@ public:
     {
         ++messages;
         last_message = m.text;
+        if (hold_dialogs)
+        {
+            held_messages.push_back(std::move(done));
+            return;
+        }
         if (answer)
         {
             if (done) done(*answer);
@@ -647,6 +666,11 @@ public:
                       std::function<void(std::vector<std::string>)> done) override
     {
         ++choosers;
+        if (hold_dialogs)
+        {
+            held_choosers.push_back(std::move(done));
+            return;
+        }
         if (choose)
         {
             std::vector<std::string> paths = std::move(*choose);
@@ -690,6 +714,11 @@ public:
     }
     void set_busy(bool on) override { null().set_busy(on); }
 
+    // While set, messages and file dialogs stay open (as a desktop's do
+    // until the user answers): their answers kept here, for the test to give.
+    bool hold_dialogs = false;
+    std::vector<std::function<void(rap::dialog_role)>> held_messages;
+    std::vector<std::function<void(std::vector<std::string>)>> held_choosers;
     // Messages shown (the null backend answers each with its first button).
     int messages = 0;
     std::string last_message;
@@ -1193,8 +1222,6 @@ void tab_tests(rap::ui& ui, const std::string& first, const std::string& second,
     check(strip && stack && frame && strip->items.size() == 1 && w->tabs().size() == 1 &&
               stack->ids() == std::vector<std::string>{w->tabs()[0]->id()},
           "log tabs: a window's one tab, its page in the stack");
-    check(strip && !strip->detached && !strip->received && strip->group.empty(),
-          "log tabs: no tearing off or dropping in yet: a tab dragged out stays in its row");
     if (!strip || !stack || !frame || w->tabs().size() != 1) return;
     log_tab* one = w->tabs()[0].get();
     const std::string one_id = one->id();
@@ -1305,6 +1332,455 @@ void tab_tests(rap::ui& ui, const std::string& first, const std::string& second,
                               { return r.find(folder_name(third)) != std::string::npos; }),
           "log tabs: a repository opened is remembered as recent");
     w.reset();
+    settle(ui);
+}
+
+// The windows torn off, kept here (as windows::hold keeps them in the app)
+// until the test lets them go; each one's closing heard.
+struct torn_off
+{
+    std::vector<std::unique_ptr<log_window>> windows;
+    std::vector<int> closed;  // by index: times its on_closed ran
+    std::function<void(std::unique_ptr<log_window>)> keep = [this](std::unique_ptr<log_window> w)
+    {
+        const size_t i = windows.size();
+        closed.push_back(0);
+        w->on_closed([this, i] { ++closed[i]; });
+        windows.push_back(std::move(w));
+    };
+};
+
+built_window* built_for(const rap::window* frame)
+{
+    for (built_window& b : g_backend->built)
+        if (b.window == frame) return &b;
+    return nullptr;
+}
+
+// A window's tabs, strip and stack as ids, and its current tab: what a
+// refusal leaves as it was.
+struct window_shape
+{
+    std::vector<std::string> tabs, strip, stack;
+    std::string current, shown;
+    bool operator==(const window_shape&) const = default;
+};
+
+window_shape shape_of(const log_window& w, const built_window& b)
+{
+    window_shape s;
+    for (const auto& t : w.tabs()) s.tabs.push_back(t->id());
+    s.strip = b.tabs->ids();
+    s.stack = b.stack->ids();
+    s.current = w.current_tab() ? w.current_tab()->id() : std::string();
+    s.shown = b.stack->shown();
+    return s;
+}
+
+bool has_ref(const log_model& log, const std::string& name)
+{
+    for (const auto& [id, refs] : log.refs())
+        for (const ref& r : refs)
+            if (r.name == name) return true;
+    return false;
+}
+
+bool git_in(const std::string& dir, std::vector<std::string> args)
+{
+    args.insert(args.begin(), {"-c", "user.name=Tortilla Test", "-c",
+                               "user.email=test@tortilla.invalid", "-c", "commit.gpgsign=false"});
+    return run_git(dir, args, git_output::stdout_only).ok();
+}
+
+const rap::menu_item* find_item(const rap::menu& m, std::string_view label);
+
+// Log tabs moved between windows: torn off into a window of their own (with
+// their selection, filter and columns), dropped into another window's strip
+// at a place, the window left empty closing after the handler, refusals
+// while busy, under a dialog or picking commits, and a tab's work going on
+// while it's between windows.
+void tearoff_tests(rap::ui& ui, const std::string& first, const std::string& second,
+                   const std::string& third)
+{
+    torn_off kept;
+    log_window::keep_for_tests = &kept.keep;
+    auto opened = log_window::open(ui, first);
+    check(opened.has_value(), "log tear-off: the window opens");
+    if (!opened) return;
+    std::unique_ptr<log_window> a = std::move(*opened);
+    built_window& ab = g_backend->built.back();
+    kept_tabs* strip = ab.tabs;
+    kept_window* a_frame = ab.window;
+    if (!strip || !ab.stack || !a_frame) return check(false, "log tear-off: the window's strip");
+    check(strip->group == "tortilla.log" && strip->detached && strip->received,
+          "log tear-off: a log window's tabs tear off and take drops, in the log windows' group");
+    log_tab* one = a->tabs()[0].get();
+    const std::string one_id = one->id();
+    page p1 = page_in(ab, 0, 0);
+    check(loaded(ui, p1), "log tear-off: the first tab's log loads");
+    size_t lists = ab.lists.size(), entries = ab.entries.size();
+    auto two_opened = a->open_tab(second);
+    if (!two_opened) return check(false, "log tear-off: a second tab");
+    log_tab* two = *two_opened;
+    const std::string two_id = two->id();
+    page p2 = page_in(ab, lists, entries);
+    check(loaded(ui, p2), "log tear-off: the second tab's log loads");
+    lists = ab.lists.size();
+    entries = ab.entries.size();
+    auto three_opened = a->open_tab(third);
+    if (!three_opened) return check(false, "log tear-off: a third tab");
+    const std::string three_id = (*three_opened)->id();
+    page p3 = page_in(ab, lists, entries);
+    check(loaded(ui, p3), "log tear-off: the third tab's log loads");
+    if (!p1.log || !p2.log || !p3.log || !p2.search) return;
+
+    // -- the middle tab, as the user left it, torn off ----------------------
+    const auto make_one = row_of(*p2.log, "Make one");
+    const auto beta = row_of(*p1.log, "Add beta");
+    if (!make_one || !beta) return check(false, "log tear-off: the tabs' commits are there");
+    p1.commits->click({*beta}, *beta);
+    p2.commits->click({*make_one}, *make_one);
+    std::vector<float> widths;
+    for (size_t i = 0; i < log_model::column_count; ++i) widths.push_back(40.f + float(i) * 3);
+    p2.commits->set_column_widths(widths);
+    p2.commits->set_column_visible(log_model::hash, true);
+    const std::vector<bool> visible = p2.commits->visible;
+    p2.search->type("Make");  // typed, not yet applied: applied as it goes
+    p2.commits->focus();
+    log_model& two_log = *p2.log;
+    // A menu taken on its page here, its action kept (as a toolkit's menu
+    // still open would keep it).
+    std::function<void()> kept_notes;
+    if (p2.commits->context)
+    {
+        const rap::menu menu = p2.commits->context(*make_one);
+        if (const rap::menu_item* item = find_item(menu, "Edit Notes")) kept_notes = item->action;
+    }
+    check(bool(kept_notes), "log tear-off: the tab's menu, its action kept");
+
+    rap::window* torn = strip->detached(two_id, rap::point_f{300, 200});
+    check(torn && kept.windows.size() == 1 && log_window::of(torn) == kept.windows[0].get(),
+          "log tear-off: torn off, a log window of its own is made and handed back");
+    if (!torn || kept.windows.size() != 1) return;
+    log_window& b = *kept.windows[0];
+    built_window* bb = built_for(torn);
+    if (!bb || !bb->tabs || !bb->stack) return check(false, "log tear-off: the new window's strip");
+    check(b.tabs().size() == 1 && b.tabs()[0].get() == two && b.current_tab() == two &&
+              bb->tabs->ids() == std::vector<std::string>{two_id} &&
+              bb->tabs->current_id == two_id && bb->stack->shown() == two_id &&
+              bb->tabs->group == "tortilla.log",
+          "log tear-off: the new window holds the tab, selected, its page on show");
+    check(a->tabs().size() == 2 && a->tabs()[0].get() == one &&
+              strip->ids() == std::vector<std::string>{one_id, three_id} &&
+              ab.stack->ids().size() == 2 && a->current_tab() &&
+              a->current_tab()->id() == three_id && !p1.commits->dead && !p3.commits->dead,
+          "log tear-off: the source keeps the other tabs, the current one still on show");
+    check(!a_frame->closed && kept.closed[0] == 0, "log tear-off: neither window closes");
+    check(bb->window->title.find(folder_name(second)) != std::string::npos &&
+              bool(bb->window->icon) && bb->window->app_id == two->identity().app_id &&
+              a_frame->title.find(folder_name(third)) != std::string::npos,
+          "log tear-off: the new window's title, icon and taskbar group are the tab's");
+    check(repo_identity_of(torn) == two->shared_identity() &&
+              repo_identity_of(a_frame) == a->current_tab()->shared_identity() &&
+              two->shared_identity() != a->current_tab()->shared_identity(),
+          "log tear-off: the new window is recorded as the tab's repository's, the source as "
+          "its tab on show's");
+    {
+        using namespace rap::layout;
+        auto asked = create_window(ui, dialog{"Q", {vbox{label{"?"}, buttons{ok}}}}, torn);
+        check(repo_identity_of(asked.get()) == two->shared_identity(),
+              "log tear-off: a dialog on the new window is the moved tab's repository's");
+    }
+    check(torn->size().w == a_frame->size().w && torn->size().h == a_frame->size().h,
+          "log tear-off: the new window is the source's size");
+    settle(ui);
+    page q2 = page_in(*bb, 0, 0);
+    check(q2.log == &two_log && q2.commits &&
+              q2.commits->selected == std::vector<size_t>{*row_of(two_log, "Make one")} &&
+              q2.search && q2.search->value == "Make" && q2.commits->widths == widths &&
+              q2.commits->visible == visible && q2.commits->focused,
+          "log tear-off: its selection, filter, columns and focus are as they were");
+    check(p2.commits->dead && p2.search->dead,
+          "log tear-off: its page in the source went once the handler had returned");
+    {
+        const size_t windows = g_backend->built.size();
+        const int said = g_backend->messages;
+        if (kept_notes) kept_notes();
+        settle(ui);
+        check(g_backend->built.size() == windows && g_backend->messages == said,
+              "log tear-off: an action kept from its menu in the source does nothing after "
+              "the move");
+        kept_notes = nullptr;
+    }
+
+    // -- dropped into another window at a place: the window it left closes ---
+    lists = ab.lists.size();
+    entries = ab.entries.size();
+    q2.commits->click({*row_of(two_log, "Make two")}, *row_of(two_log, "Make two"));
+    // Dropped from within the tab's own work (its scope open on the window
+    // it leaves, which empties): that window isn't put back as the tab's.
+    bool took = false;
+    two->later_for_tests(
+        [&]
+        {
+            took = strip->received(
+                {.id = two_id, .title = "", .icon = {}, .tooltip = "", .index = 1, .source = torn});
+        })();
+    check(repo_identity_of(torn) != two->shared_identity(),
+          "log tear-off: the window it left isn't put back as its repository's after its scope");
+    check(took && a->tabs().size() == 3 && a->tabs()[1].get() == two &&
+              strip->ids() == std::vector<std::string>{one_id, two_id, three_id} &&
+              a->current_tab() == two && strip->current_id == two_id &&
+              ab.stack->shown() == two_id && b.tabs().empty() && bb->tabs->ids().empty(),
+          "log tear-off: dropped into the first window at index 1, there and selected; gone "
+          "from the other");
+    check(repo_identity_of(a_frame) == two->shared_identity(),
+          "log tear-off: dropped in and selected, the window is recorded as its repository's");
+    check(!kept.closed[0] && !bb->window->closed && !q2.commits->dead && bb->window,
+          "log tear-off: the window it left is still there while the handler runs");
+    settle(ui);
+    check(kept.closed[0] == 1 && bb->window && bb->window->closed && q2.commits->dead,
+          "log tear-off: the window it left closes once the handler has returned");
+    check(log_window::of(torn) == &b, "log tear-off: closed, it's still a log window until freed");
+    page r2 = page_in(ab, lists, entries);
+    check(r2.log == &two_log && r2.commits &&
+              r2.commits->selected == std::vector<size_t>{*row_of(two_log, "Make two")} &&
+              r2.search && r2.search->value == "Make",
+          "log tear-off: dropped in, its selection and filter are as they were");
+    const bool none_in_closed =
+        !b.receive({.id = one_id, .index = 0, .source = a_frame}) && a->tabs().size() == 3;
+    check(none_in_closed, "log tear-off: a window its tabs left takes no more");
+    kept.windows[0].reset();
+    settle(ui);
+    check(!log_window::of(torn), "log tear-off: freed, it's no log window");
+    torn = nullptr;
+
+    // -- refused while busy: nothing changes --------------------------------
+    const window_shape before = shape_of(*a, ab);
+    log_tab_test::hold_ref_command(
+        *one, git_process::start(
+                  ui, first, {"--version"}, [](const std::string&) {}, [](int) {}));
+    check(!strip->detached(one_id, rap::point_f{10, 10}) && kept.windows.size() == 1 &&
+              shape_of(*a, ab) == before && !p1.commits->dead,
+          "log tear-off: refused while git changes its labels, the source as it was");
+    const int messages = g_backend->messages;
+    check(!strip->detached(one_id, std::nullopt), "log tear-off: refused from the menu too");
+    settle(ui);
+    check(g_backend->messages == messages + 1 &&
+              g_backend->last_message.find("Move the tab") != std::string::npos,
+          "log tear-off: from the menu, said why");
+    log_tab_test::hold_ref_command(*one, nullptr);
+
+    // A dialog open over the window: refused until it's gone.
+    {
+        using namespace rap::layout;
+        auto dialog_open = create_window(
+            ui, dialog{"Question", {vbox{label{"?"}, buttons{ok, cancel}}}}, a->frame());
+        check(!strip->detached(three_id, rap::point_f{10, 10}) && shape_of(*a, ab) == before,
+              "log tear-off: refused while a dialog is open over the window");
+    }
+    check(modals_over(a->frame()) == 0, "log tear-off: the dialog gone, none counted");
+
+    // Torn off again, then refused a drop back while busy there.
+    torn = strip->detached(three_id, std::nullopt);
+    check(torn && kept.windows.size() == 2 && a->tabs().size() == 2,
+          "log tear-off: from the menu (no place), torn off");
+    if (!torn || kept.windows.size() != 2) return;
+    log_window& c = *kept.windows[1];
+    built_window* cb = built_for(torn);
+    log_tab* three = c.tabs()[0].get();
+    if (!cb) return;
+    if (auto from = a_frame->position(); from && torn->position())
+        check(torn->position()->x == from->x + 32 && torn->position()->y == from->y + 32,
+              "log tear-off: from the menu, a little down and right of the source");
+    const window_shape c_before = shape_of(c, *cb), a_now = shape_of(*a, ab);
+    log_tab_test::hold_ref_command(
+        *three, git_process::start(
+                    ui, third, {"--version"}, [](const std::string&) {}, [](int) {}));
+    check(!strip->received({.id = three_id, .index = 0, .source = torn}) &&
+              shape_of(c, *cb) == c_before && shape_of(*a, ab) == a_now && !kept.closed[1],
+          "log tear-off: a busy tab's drop refused, both windows as they were");
+    log_tab_test::hold_ref_command(*three, nullptr);
+    check(!strip->received({.id = three_id, .index = 0, .source = a_frame}) &&
+              !strip->received({.id = "t-none", .index = 0, .source = torn}) &&
+              shape_of(c, *cb) == c_before,
+          "log tear-off: a drop from itself, or of a tab not there, refused");
+
+    // -- picking commits: no tearing off, no drops ---------------------------
+    {
+        auto picker = log_window::open(ui, first);
+        if (!picker) return check(false, "log tear-off: a window to pick commits");
+        built_window& pb = g_backend->built.back();
+        (*picker)->pick_commits("Add", "Add", [](std::vector<commit>) {});
+        const std::string pick_id = (*picker)->tabs()[0]->id();
+        const window_shape p_before = shape_of(**picker, pb);
+        check(pb.tabs->group.empty() && !pb.tabs->detached && !pb.tabs->received,
+              "log tear-off: a window picking commits has no group, and no tearing off");
+        check(!(*picker)->tear_off(pick_id, rap::point_f{1, 1}) && !(*picker)->detach(pick_id) &&
+                  shape_of(**picker, pb) == p_before,
+              "log tear-off: a window picking commits refuses to let its tab go");
+        check(!strip->received({.id = pick_id, .index = 0, .source = (*picker)->frame()}) &&
+                  shape_of(**picker, pb) == p_before && a->tabs().size() == 2,
+              "log tear-off: its tab isn't taken by another window");
+        check(!(*picker)->receive({.id = one_id, .index = 0, .source = a_frame}) &&
+                  a->tabs().size() == 2 && shape_of(**picker, pb) == p_before,
+              "log tear-off: and it takes none");
+        settle(ui);
+        picker->reset();
+        settle(ui);
+    }
+
+    // -- between windows: its work goes on, and lands ------------------------
+    // Taken out of the first window by hand, as a drop does before it
+    // lands: a commit made meanwhile reloads its log with no page or window.
+    // Taken out while on show, from within its own work: the window shows
+    // the other tab, and is that one's after the scope, not put back.
+    a->select_tab(one_id);
+    std::unique_ptr<log_tab> between;
+    one->later_for_tests([&] { between = a->detach(one_id); })();
+    check(a->current_tab() == two && repo_identity_of(a_frame) == two->shared_identity(),
+          "log tear-off: taken out within its own work, the window is the tab shown after's");
+    check(between && a->tabs().size() == 1 && strip->ids() == std::vector<std::string>{two_id},
+          "log tear-off: taken out of its window");
+    if (!between) return;
+    const bool committed = git_in(first, {"commit", "-q", "--allow-empty", "-m", "Add delta"});
+    check(committed && pump(ui, [&] { return !p1.log->loading() && row_of(*p1.log, "Add delta"); }),
+          "log tear-off: a commit made while it's between windows is loaded");
+    // A branch made meanwhile: its label known with no page to draw it on.
+    const bool branched = git_in(first, {"branch", "-q", "between"});
+    check(branched && pump(ui, [&] { return !p1.log->loading() && has_ref(*p1.log, "between"); }),
+          "log tear-off: a branch made while it's between windows is heard");
+    // Lands in the torn-off window, first.
+    const size_t c_lists = cb->lists.size(), c_entries = cb->entries.size();
+    c.adopt(std::move(between), 0);
+    check(c.tabs().size() == 2 && c.tabs()[0]->id() == one_id && c.current_tab() &&
+              c.current_tab()->id() == one_id &&
+              cb->tabs->ids() == std::vector<std::string>{one_id, three_id} &&
+              strip->ids() == std::vector<std::string>{two_id},
+          "log tear-off: landed in another window, first and selected; only that one holds it");
+    settle(ui);
+    page s1 = page_in(*cb, c_lists, c_entries);
+    check(s1.log == p1.log && s1.commits && row_of(*s1.log, "Add delta") &&
+              s1.commits->selected == std::vector<size_t>{*row_of(*s1.log, "Add beta")},
+          "log tear-off: landed, the new commit listed and its selection kept");
+    check(cb->window->title.find(folder_name(first)) != std::string::npos &&
+              repo_identity_of(torn) == c.current_tab()->shared_identity() &&
+              repo_identity_of(a_frame) == two->shared_identity(),
+          "log tear-off: landed, the window's title and repository are its");
+    // After landing: a reload reaches the new page, not the old.
+    const bool again = git_in(first, {"commit", "-q", "--allow-empty", "-m", "Add epsilon"});
+    check(again && pump(ui, [&] { return !s1.log->loading() && row_of(*s1.log, "Add epsilon"); }),
+          "log tear-off: a commit made after it landed is loaded");
+    settle(ui);
+    check(s1.commits->selected == std::vector<size_t>{*row_of(*s1.log, "Add beta")} &&
+              !s1.commits->dead && p1.commits->dead,
+          "log tear-off: reloaded in its new window, the selection kept");
+
+    // -- the rest closed --------------------------------------------------------
+    c.close_tab(three_id);
+    settle(ui);
+    c.close_tab(one_id);
+    settle(ui);
+    check(kept.closed[1] == 1, "log tear-off: the torn-off window's last tab closes it");
+    a->close_tab(two_id);
+    settle(ui);
+    a.reset();
+    kept.windows.clear();
+    settle(ui);
+    log_window::keep_for_tests = nullptr;
+}
+
+// A tab with a native message or file dialog open over its window (from
+// its file list's menu: Revert's question, Save revision to's picker)
+// doesn't move; answered or cancelled, it may.
+void native_dialog_tests(rap::ui& ui, const std::string& first, const std::string& second,
+                         const std::string& root)
+{
+    auto opened = log_window::open(ui, first);
+    if (!opened) return check(false, "log tear-off dialogs: the window opens");
+    std::unique_ptr<log_window> a = std::move(*opened);
+    built_window& ab = g_backend->built.back();
+    page p1 = page_in(ab, 0, 0);
+    check(loaded(ui, p1), "log tear-off dialogs: the log loads");
+    log_tab* one = a->tabs()[0].get();
+    const std::string one_id = one->id();
+    auto two = a->open_tab(second);
+    if (!two || !p1.log || !p1.files) return check(false, "log tear-off dialogs: a second tab");
+    a->select_tab(one_id);
+    // A commit's file, selected: its menu has Revert to this revision and
+    // Save revision to.
+    const auto beta = row_of(*p1.log, "Add beta");
+    if (!beta) return check(false, "log tear-off dialogs: the commit is there");
+    p1.commits->click({*beta}, *beta);
+    const bool files = pump(
+        ui, [&] { return p1.file_rows && p1.file_rows->row_count() > 0; }, 10000);
+    if (!files || !p1.files->context) return check(false, "log tear-off dialogs: its files");
+    p1.files->click({0}, 0);
+    const rap::menu menu = p1.files->context(size_t(0));
+    const rap::menu_item* save = find_item(menu, "Save revision to...");
+    const rap::menu_item* revert = find_item(menu, "Revert to this revision");
+    check(save && save->action && revert && revert->action,
+          "log tear-off dialogs: the file list's Save revision to and Revert");
+    if (!save || !save->action || !revert || !revert->action) return;
+    rap::window* frame = a->frame();
+    const window_shape before = shape_of(*a, ab);
+    g_backend->hold_dialogs = true;
+
+    // -- a file dialog --------------------------------------------------------
+    save->action();
+    check(g_backend->held_choosers.size() == 1 && modals_over(frame) == 1,
+          "log tear-off dialogs: Save revision to's file dialog open, counted over the window");
+    check(!a->detach(one_id) && !ab.tabs->detached(one_id, rap::point_f{5, 5}) &&
+              shape_of(*a, ab) == before,
+          "log tear-off dialogs: refused while the file dialog is open, the window as it was");
+    if (!g_backend->held_choosers.empty())
+    {
+        auto done = std::move(g_backend->held_choosers.front());
+        g_backend->held_choosers.clear();
+        done({});  // cancelled
+    }
+    check(modals_over(frame) == 0 && a->move_refusal(one_id).empty(),
+          "log tear-off dialogs: the file dialog cancelled, it may move");
+    save->action();
+    const std::string saved = root + "/saved-beta.txt";
+    if (!g_backend->held_choosers.empty())
+    {
+        auto done = std::move(g_backend->held_choosers.front());
+        g_backend->held_choosers.clear();
+        check(modals_over(frame) == 1, "log tear-off dialogs: asked again, counted again");
+        done({saved});  // chosen
+    }
+    check(modals_over(frame) == 0 && a->move_refusal(one_id).empty(),
+          "log tear-off dialogs: a file chosen, it may move");
+
+    // -- a message ------------------------------------------------------------
+    revert->action();
+    check(g_backend->held_messages.size() == 1 && modals_over(frame) == 1,
+          "log tear-off dialogs: Revert's question open, counted over the window");
+    check(!a->detach(one_id) && !ab.tabs->detached(one_id, rap::point_f{5, 5}) &&
+              shape_of(*a, ab) == before,
+          "log tear-off dialogs: refused while the question is open, the window as it was");
+    if (!g_backend->held_messages.empty())
+    {
+        auto done = std::move(g_backend->held_messages.front());
+        g_backend->held_messages.clear();
+        done(rap::dialog_role::no);
+    }
+    check(modals_over(frame) == 0 && a->move_refusal(one_id).empty(),
+          "log tear-off dialogs: the question answered, it may move");
+    // Gone unanswered (its window closed under it): not counted either.
+    revert->action();
+    check(modals_over(frame) == 1, "log tear-off dialogs: asked again");
+    g_backend->held_messages.clear();
+    check(modals_over(frame) == 0, "log tear-off dialogs: dropped unanswered, not counted");
+    g_backend->hold_dialogs = false;
+
+    settle(ui);
+    a->close_tab((*two)->id());
+    settle(ui);
+    a->close_tab(one_id);
+    settle(ui);
+    a.reset();
     settle(ui);
 }
 
@@ -1850,6 +2326,12 @@ void run_log_page_tests(const std::string& root)
     patch_identity_tests(ui, repo, others[0]);
     folder_text_tests();
     check(g_stale_calls == 0, "log tabs: nothing reached a page's widgets after they went");
+
+    g_stale_calls = 0;
+    tearoff_tests(ui, repo, others[0], others[1]);
+    native_dialog_tests(ui, repo, others[0], root);
+    check(g_stale_calls == 0,
+          "log tear-off: nothing reached a page's widgets after they went, in either window");
 
     log_tab::poll_hooks_for_tests = nullptr;
     loaded->reset();
