@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
+#include <map>
 #include <random>
 #include <string_view>
 #include <thread>
@@ -134,7 +135,6 @@ std::string g_app_id;
 // another's file. A short lock on "registry" keeps two starting processes
 // from taking the same colour.
 
-rap::sys::mapped_file g_held;  // ours, held until exit
 
 std::string hash_hex(const std::string& s)
 {
@@ -201,8 +201,9 @@ rap::color new_color(const std::vector<rap::color>& in_use)
     return best;
 }
 
-// The colour for the repository keyed `key`; nullopt: the icon's own.
-std::optional<rap::color> take_color(const std::string& key)
+// The colour for the repository keyed `key`; nullopt: the icon's own. Its
+// file, once locked, goes in `held`.
+std::optional<rap::color> take_color(const std::string& key, rap::sys::mapped_file& held)
 {
     namespace fs = std::filesystem;
     const fs::path dir = rap::sys::cache_dir("tortilla") / "colors";
@@ -262,9 +263,40 @@ std::optional<rap::color> take_color(const std::string& key)
     const std::string name = what + "-" + mine + "-" + std::to_string(current_pid());
     if (auto f = rap::sys::mapped_file::open(dir / name, rap::sys::mapped_file::mode::read_write);
         f && f->try_lock())
-        g_held = std::move(*f);
+        held = std::move(*f);
     registry->unlock();
     return color;
+}
+
+// A repository's colour, its file held while anything in this process
+// shows the repository: several at once, one per repository.
+struct color_lease
+{
+    rap::sys::mapped_file held;
+    std::optional<rap::color> color;
+};
+std::map<std::string, std::weak_ptr<color_lease>> g_leases;  // by repository folder
+std::shared_ptr<color_lease> g_lease;                         // use_repo_icon's, until exit
+
+std::shared_ptr<color_lease> lease_color(const std::string& dir)
+{
+    if (auto it = g_leases.find(dir); it != g_leases.end())
+        if (auto lease = it->second.lock()) return lease;
+    auto lease = std::make_shared<color_lease>();
+    lease->color = take_color(dir, lease->held);
+    g_leases[dir] = lease;
+    return lease;
+}
+
+// The folder that names a repository: its working tree's, or a bare one's.
+std::string repo_key(const repo& r)
+{
+    return r.bare() ? r.git_dir() : r.workdir();
+}
+
+std::string app_id_of(const std::string& dir, const std::optional<rap::color>& c)
+{
+    return c ? "Tortilla.Repository." + hash_hex(dir) : std::string();
 }
 
 }  // namespace
@@ -281,10 +313,17 @@ void use_repo_icon(rap::ui& ui, const std::string& path, bool outer)
         at = at.parent_path();
     auto r = repo::open(rap::sys::path_to_utf8(at));
     if (!r) return;
-    const std::string dir = r->bare() ? r->git_dir() : r->workdir();
-    const std::optional<rap::color> c = take_color(dir);
-    g_icon = icon_of(ui, c);
-    g_app_id = c ? "Tortilla.Repository." + hash_hex(dir) : std::string();
+    const std::string dir = repo_key(*r);
+    g_lease = lease_color(dir);
+    g_icon = icon_of(ui, g_lease->color);
+    g_app_id = app_id_of(dir, g_lease->color);
+}
+
+repo_identity repo_identity_of(rap::ui& ui, const repo& r)
+{
+    const std::string dir = repo_key(r);
+    auto lease = lease_color(dir);
+    return {icon_of(ui, lease->color), app_id_of(dir, lease->color), lease};
 }
 
 std::unique_ptr<rap::window> create_window(rap::ui& ui, const rap::window_spec& spec,

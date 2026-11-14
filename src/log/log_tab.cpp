@@ -103,7 +103,7 @@ log_tab::open(rap::ui& ui, const std::string& path, bool outer)
 
 log_tab::log_tab(rap::ui& ui, repo repo, std::string path)
     : ui_(ui)
-    , identity_(current_repo_identity(ui))
+    , identity_(repo_identity_of(ui, repo))
     , repo_(std::move(repo))
     , path_(std::move(path))
     , log_(ui)

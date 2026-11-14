@@ -37,13 +37,22 @@ void use_repo_icon(rap::ui&, const std::string& path, bool outer = false);
 std::unique_ptr<rap::window> create_window(rap::ui&, const rap::window_spec&,
                                            rap::window* parent = nullptr);
 
+class repo;
+
 // What tells a repository's windows apart: their icon, and the app id that
-// groups them on the taskbar ("" for Tortilla's own group).
+// groups them on the taskbar ("" for Tortilla's own group). `lease` holds
+// the repository's colour for as long as any copy of it is kept.
 struct repo_identity
 {
     rap::icon icon;
     std::string app_id;
+    std::shared_ptr<const void> lease;
 };
+// The repository's own identity, as use_repo_icon would choose it, without
+// changing what create_window gives windows: several repositories' at once
+// in one process (a log window's tabs). Repositories open in this process
+// keep the colour they have.
+repo_identity repo_identity_of(rap::ui&, const repo&);
 // The identity use_repo_icon chose, which create_window gives windows; with
 // none chosen, Tortilla's own icon.
 repo_identity current_repo_identity(rap::ui&);
