@@ -26,6 +26,8 @@ struct patch_viewer
 {
     std::function<void(const std::string& title, std::string text)> show;
     std::function<void()> close;
+    // Its window, while it's open; null after.
+    std::function<rap::window*()> window;
 };
 patch_viewer open_patch_viewer(rap::ui&, const std::string& title, std::function<void()> closed);
 

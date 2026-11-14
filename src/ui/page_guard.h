@@ -5,6 +5,8 @@
 // by then. Guarded, they never reach it.
 #pragma once
 
+#include <rapport/rapport.h>
+
 #include <memory>
 #include <type_traits>
 #include <utility>
@@ -38,6 +40,17 @@ public:
             }
             return f(std::forward<decltype(args)>(args)...);
         };
+    }
+    // The menu with each action, submenus' too, guarded: a menu kept past
+    // the page (by a toolkit, or anyone) does nothing.
+    rap::menu menu(rap::menu m) const
+    {
+        for (rap::menu_item& item : m)
+        {
+            if (item.action) item.action = (*this)(std::move(item.action));
+            item.children = menu(std::move(item.children));
+        }
+        return m;
     }
 
 private:

@@ -669,7 +669,7 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
     m.push_back({.label = _("Copy to clipboard"), .children = std::move(copy)});
     // Each action opens its windows as the host window's repository's
     // (ui/repo_icon.h), whichever the log windows' host opened since.
-    return in_repo_scope(host_.window(), std::move(m));
+    return in_repo_scope(host_.window(), list_guard_.menu(std::move(m)));
 }
 
 // Double-click: compare the file with the commit's parent (or, for the

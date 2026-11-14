@@ -344,14 +344,34 @@ std::optional<std::shared_ptr<const repo_identity>> repo_identity_of(rap::window
     return identities().recorded(window);
 }
 
+namespace
+{
+
+// `window` recorded as `id`'s, as if made in a scope of it with no parent:
+// created() replaces the record, and the window's on_destroyed
+// (track_window's) still lets it go.
+void record_as(rap::window* window, std::shared_ptr<const repo_identity> id)
+{
+    const identity_scope scope(identities(), std::move(id));
+    identities().created(window, nullptr);
+}
+
+// How many times set_repo_identity has said what each window is: a scope
+// that pointed a shared window elsewhere for a while puts it back only if
+// nothing has said since (the tab on show changed meanwhile, say).
+std::map<const void*, unsigned>& said()
+{
+    static auto* versions = new std::map<const void*, unsigned>;
+    return *versions;
+}
+
+}  // namespace
+
 void set_repo_identity(rap::window* window, std::shared_ptr<const repo_identity> id)
 {
     if (!window) return;
-    // Recorded as made in a scope of `id` with no parent: created() replaces
-    // the record, and the window's on_destroyed (track_window's) still lets
-    // it go.
-    const identity_scope scope(identities(), std::move(id));
-    identities().created(window, nullptr);
+    record_as(window, std::move(id));
+    ++said()[window];
 }
 
 repo_identity_scope::repo_identity_scope(rap::window* window)
@@ -373,13 +393,16 @@ repo_identity_scope::repo_identity_scope(std::shared_ptr<const repo_identity> id
     shared_was_ = identities().recorded(shared);
     if (!shared_was_) return;
     shared_ = shared;
-    set_repo_identity(shared, std::move(id));
+    shared_said_ = said()[shared];
+    record_as(shared, std::move(id));
 }
 
 repo_identity_scope::~repo_identity_scope()
 {
-    // Put back as it was, unless the window went meanwhile.
-    if (shared_ && identities().recorded(shared_)) set_repo_identity(shared_, *shared_was_);
+    // Put back as it was, unless the window went meanwhile, or was said to
+    // be another's since (set_repo_identity: the tab on show changed).
+    if (shared_ && identities().recorded(shared_) && said()[shared_] == shared_said_)
+        record_as(shared_, *shared_was_);
 }
 
 rap::menu in_repo_scope(rap::window* window, rap::menu m)

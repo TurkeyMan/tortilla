@@ -242,6 +242,7 @@ public:
         window_->close();
         closed();
     }
+    rap::window* frame() const { return window_.get(); }
 
 private:
     void loaded(int code)
@@ -420,6 +421,12 @@ patch_viewer open_patch_viewer(rap::ui& ui, const std::string& title, std::funct
                 [weak]
             {
                 if (auto s = weak.lock()) s->close();
+            },
+            .window =
+                [weak]() -> rap::window*
+            {
+                auto s = weak.lock();
+                return s ? s->frame() : nullptr;
             }};
 }
 

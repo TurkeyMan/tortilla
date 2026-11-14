@@ -300,6 +300,7 @@ public:
     void set_icon(const rap::icon&) override { touch(); }
     void on_click(std::function<void()> f) override { click = std::move(f); }
     std::function<void()> click;
+    std::string text;  // as built
 };
 
 class kept_progress : public kept<rap::progress_bar>
@@ -330,6 +331,7 @@ struct built_window
     std::vector<kept_list*> lists;
     std::vector<kept_splitter*> splitters;
     std::vector<kept_entry*> entries;
+    std::vector<kept_button*> buttons;
     std::vector<std::function<void()>> poison;
     kept_window* window = nullptr;
     kept_tabs* tabs = nullptr;
@@ -733,8 +735,13 @@ private:
             }
             else if (std::holds_alternative<rap::spec::label>(n.spec))
                 mine = keep<kept_label>();
-            else if (std::holds_alternative<rap::spec::button>(n.spec))
-                mine = keep<kept_button>();
+            else if (const auto* s = std::get_if<rap::spec::button>(&n.spec))
+            {
+                auto* button = keep<kept_button>();
+                button->text = s->text;
+                b.buttons.push_back(button);
+                mine = button;
+            }
             else if (std::holds_alternative<rap::spec::progress_bar>(n.spec))
                 mine = keep<kept_progress>();
             else if (std::holds_alternative<rap::spec::stack>(n.spec))
@@ -1463,7 +1470,7 @@ void identity_tests(rap::ui& ui, const std::string& first, const std::string& se
     check(strip && frame && loaded(ui, p1), "log identity: the first tab loads");
     if (!strip || !frame || !p1.log) return;
     log_tab* one = w->tabs()[0].get();
-    const size_t lists = b.lists.size(), entries = b.entries.size();
+    const size_t lists = b.lists.size(), entries = b.entries.size(), buttons = b.buttons.size();
     auto two_opened = w->open_tab(second);
     if (!two_opened) return check(false, "log identity: a second repository's tab");
     log_tab* two = *two_opened;
@@ -1546,8 +1553,31 @@ void identity_tests(rap::ui& ui, const std::string& first, const std::string& se
     settle(ui);
     check(bee.use_count() == held - 3, "log identity: so does the action's dialog");
 
-    strip->close_box(two->id());
+    // The tab on show changed during a tab's own work: the window is the one
+    // shown after it, not put back as it was.
+    ui.post(two->later_for_tests([&] { w->select_tab(two->id()); }));
     settle(ui);
+    check(w->current_tab() == two && repo_identity_of(w->frame()) == bee,
+          "log identity: a tab shown during a tab's work is the window's after it");
+    ui.post(two->later_for_tests([&] { w->select_tab(one->id()); }));
+    settle(ui);
+    check(w->current_tab() == one && repo_identity_of(w->frame()) == a,
+          "log identity: a tab left during its own work, the window is the one shown after it");
+
+    // The second, on show, closed by its OK: the first shows, and the
+    // window is the first's, not the closed tab's put back.
+    w->select_tab(two->id());
+    kept_button* ok = nullptr;
+    for (size_t i = buttons; i < b.buttons.size(); ++i)
+        if (b.buttons[i]->text == "OK") ok = b.buttons[i];
+    check(ok && ok->click, "log identity: the second tab's OK");
+    if (ok && ok->click) ok->click();
+    check(w->tabs().size() == 1 && w->current_tab() == one && repo_identity_of(w->frame()) == a,
+          "log identity: the tab on show closed by its OK, the window is the one shown after");
+    settle(ui);
+    check(repo_identity_of(w->frame()) == a,
+          "log identity: and still, once the closed tab has gone");
+
     strip->close_box(one->id());
     settle(ui);
     w.reset();
@@ -1573,6 +1603,26 @@ void teardown_tests(rap::ui& ui, const std::string& first, const std::string& se
     page p2 = page_in(b, lists, entries);
     check(loaded(ui, p2) && p2.files && p2.search, "log teardown: the second tab loads");
     if (!p2.log || !p2.files || !p2.search) return;
+    // Menus taken before the close, their actions kept (as a toolkit's menu
+    // still open would keep them): the commit list's Edit Notes, and the
+    // file list's Show log.
+    std::function<void()> kept_notes, kept_log;
+    if (const auto row = row_of(*p2.log, "Make two"); row && p2.commits->context)
+    {
+        p2.commits->click({*row}, *row);
+        const rap::menu commits_menu = p2.commits->context(*row);
+        if (const rap::menu_item* item = find_item(commits_menu, "Edit Notes"))
+            kept_notes = item->action;
+        pump(ui, [&] { return p2.file_rows && p2.file_rows->row_count() > 0; });
+        if (p2.files->context && p2.file_rows && p2.file_rows->row_count() > 0)
+        {
+            p2.files->click({0}, 0);
+            const rap::menu files_menu = p2.files->context(size_t(0));
+            if (const rap::menu_item* item = find_item(files_menu, "Show log"))
+                kept_log = item->action;
+        }
+    }
+    check(kept_notes && kept_log, "log teardown: the tab's menus, their actions kept");
     const std::weak_ptr<const repo_identity> tab_held = (*two)->shared_identity();
 
     std::vector<std::function<void()>> held;
@@ -1581,7 +1631,9 @@ void teardown_tests(rap::ui& ui, const std::string& first, const std::string& se
     settle(ui);
     pump(
         ui, [] { return false; }, 300);
-    check(held.size() == 1 && !p2.commits->dead && tab_held.expired(),
+    // (The file list's kept action holds the repository's identity, as
+    // its scope; the tab, gone, doesn't: checked once that goes, below.)
+    check(held.size() == 1 && !p2.commits->dead && tab_held.use_count() <= 1,
           "log teardown: the tab has gone, its page's widgets not yet");
     check(!p2.commits->model && !p2.files->model,
           "log teardown: its lists let go of its models first");
@@ -1589,6 +1641,17 @@ void teardown_tests(rap::ui& ui, const std::string& first, const std::string& se
     if (p2.commits->changed) p2.commits->changed();
     check(p2.commits->context && p2.commits->context(size_t(0)).empty(),
           "log teardown: its callbacks do nothing, its menus are empty");
+    // The actions kept from before: nothing opens, nothing's said.
+    const size_t windows = g_backend->built.size();
+    const int said = g_backend->messages;
+    if (kept_notes) kept_notes();
+    if (kept_log) kept_log();
+    settle(ui);
+    check(g_backend->built.size() == windows && g_backend->messages == said,
+          "log teardown: menu actions kept from before the close do nothing after it");
+    kept_notes = nullptr;
+    kept_log = nullptr;
+    check(tab_held.expired(), "log teardown: nothing holds the closed tab's identity after");
     if (p2.search->changed) p2.search->changed("Make");
     if (p2.files->changed) p2.files->changed();
     if (p2.files->context) p2.files->context(size_t(0));
@@ -1600,6 +1663,57 @@ void teardown_tests(rap::ui& ui, const std::string& first, const std::string& se
     settle(ui);
     w.reset();
     settle(ui);
+}
+
+// View Patch's window is the tab on show's: opened as the log loads (the
+// setting on), with another repository's windows the process default, and
+// following the tab on show after.
+void patch_identity_tests(rap::ui& ui, const std::string& first, const std::string& second)
+{
+    use_repo_icon(ui, first);  // the process's default: the first repository's
+    settings::get().set("log.viewPatch", "1");
+    const size_t before = g_backend->built.size();
+    auto opened = log_window::open(ui, second);
+    if (!opened) return check(false, "log patch: the window opens");
+    std::unique_ptr<log_window> w = std::move(*opened);
+    auto built_at = [&](rap::window* window) -> built_window*
+    {
+        for (built_window& b : g_backend->built)
+            if (b.window == window) return &b;
+        return nullptr;
+    };
+    built_window* b = built_at(w->frame());
+    check(b && loaded(ui, page_in(*b, 0, 0)), "log patch: the log loads");
+    if (!b) return;
+    settle(ui);
+    // The one window made since that isn't the log's: View Patch's.
+    auto viewer = [&]() -> kept_window*
+    {
+        kept_window* found = nullptr;
+        for (size_t i = before; i < g_backend->built.size(); ++i)
+            if (kept_window* k = g_backend->built[i].window; k && k != b->window) found = k;
+        return found;
+    };
+    log_tab* two = w->tabs()[0].get();
+    kept_window* patch = viewer();
+    check(patch && repo_identity_of(patch) == two->shared_identity() &&
+              patch->app_id == two->identity().app_id,
+          "log patch: View Patch, opened as the log loads, is the log's repository's");
+    auto one = w->open_tab(first);
+    check(one && loaded(ui, page_in(*b, 0, 0)), "log patch: a second tab");
+    if (!one || !patch) return;
+    check(viewer() == patch && repo_identity_of(patch) == (*one)->shared_identity(),
+          "log patch: it follows the tab on show");
+    w->select_tab(two->id());
+    check(repo_identity_of(patch) == two->shared_identity(), "log patch: and back");
+
+    b->tabs->close_box((*one)->id());
+    settle(ui);
+    b->tabs->close_box(two->id());
+    settle(ui);
+    w.reset();
+    settle(ui);
+    settings::get().set("log.viewPatch", "0");
 }
 
 // Folders shown and remembered without trailing separators, a root's own
@@ -1704,6 +1818,7 @@ void run_log_page_tests(const std::string& root)
     identity_tests(ui, repo, others[0]);
     teardown_tests(ui, repo, others[0]);
     trust_tests(ui, root, repo);
+    patch_identity_tests(ui, repo, others[0]);
     folder_text_tests();
     check(g_stale_calls == 0, "log tabs: nothing reached a page's widgets after they went");
 

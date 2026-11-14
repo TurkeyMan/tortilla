@@ -158,7 +158,7 @@ rap::menu log_tab::tab_menu(rap::menu m) const
 {
     for (rap::menu_item& item : m)
     {
-        if (item.action) item.action = as_tab(std::move(item.action));
+        if (item.action) item.action = on_page(std::move(item.action));
         item.children = tab_menu(std::move(item.children));
     }
     return m;

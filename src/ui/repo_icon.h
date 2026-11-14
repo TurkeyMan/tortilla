@@ -76,6 +76,7 @@ private:
     identity_scope scope_;
     rap::window* shared_ = nullptr;
     std::optional<std::shared_ptr<const repo_identity>> shared_was_;
+    unsigned shared_said_ = 0;  // set_repo_identity's count for it, as this began
 };
 
 // The menu with each action (submenus' too) run in `window`'s scope, as it

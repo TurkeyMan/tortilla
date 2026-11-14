@@ -180,15 +180,21 @@ private:
     // the tab there.
     repo_identity_scope tab_scope() const { return repo_identity_scope(identity_, parent()); }
     // `f` (a page's callback, a host's) run in tab_scope() whenever it runs,
-    // and a menu it returns with each action so too; while the tab is there
-    // (after, `f` is left to find that out itself).
+    // and a menu it returns with each action so too (tab_menu). Once the tab
+    // has gone, `f` never runs: nothing, or a default value (no menu).
     template <class F>
     auto as_tab(F f) const
     {
         return [this, alive = std::weak_ptr<bool>(alive_), f = std::move(f)](auto&&... args) mutable
         {
             using result = decltype(f(std::forward<decltype(args)>(args)...));
-            if (!alive.lock()) return f(std::forward<decltype(args)>(args)...);
+            if (!alive.lock())
+            {
+                if constexpr (std::is_void_v<result>)
+                    return;
+                else
+                    return result{};
+            }
             const repo_identity_scope scope = tab_scope();
             if constexpr (std::is_same_v<result, rap::menu>)
                 return tab_menu(f(std::forward<decltype(args)>(args)...));
@@ -196,6 +202,9 @@ private:
                 return f(std::forward<decltype(args)>(args)...);
         };
     }
+    // The menu with each action, submenus' too, run as the tab's and only
+    // while the page it was made on is there (on_page): kept past that, by a
+    // toolkit or anyone, it does nothing.
     rap::menu tab_menu(rap::menu) const;
     // Each of the drag's callbacks on_page (defined after the class: they
     // use the deduced-return helpers).

@@ -103,6 +103,7 @@ private:
     rap::subscription patch_timer_;
     void update_patch();
     void close_patch();
+    void follow_patch(const log_tab&);
 
     rap::ui& ui_;
     // Expires with the window, for what can call back after it has gone.

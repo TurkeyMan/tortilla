@@ -129,6 +129,7 @@ void log_window::show_tab(const std::string& id)
     // Its dialogs, and the windows its actions open, are its repository's
     // (ui/repo_icon.h); the window's taskbar group stays the first tab's.
     set_repo_identity(window_.get(), tab.shared_identity());
+    follow_patch(tab);
     update_patch();
 }
 
@@ -301,6 +302,10 @@ void log_window::show_patch(bool on)
     settings::get().set("log.viewPatch", on ? "1" : "0");
     if (on == patch_.has_value()) return;
     if (!on) return close_patch();
+    // The tab on show's, as it follows it (show_tab): whichever tab asked
+    // (one loaded hidden, or the menu), and whatever was opened since.
+    log_tab* tab = current_tab();
+    const repo_identity_scope scope(tab ? std::optional(tab->shared_identity()) : std::nullopt);
     // Closed by the user: off, and so next time. (Closed with the window, or
     // from the menu, patch_ has gone already.)
     patch_ = open_patch_viewer(ui_, _("View Patch"),
@@ -311,6 +316,16 @@ void log_window::show_patch(bool on)
                                    settings::get().set("log.viewPatch", "0");
                                });
     update_patch();
+}
+
+// View Patch's window is the tab on show's too: what its dialogs take, and
+// its icon (its taskbar group stays as it opened, as the log window's).
+void log_window::follow_patch(const log_tab& tab)
+{
+    rap::window* viewer = patch_ && patch_->window ? patch_->window() : nullptr;
+    if (!viewer) return;
+    set_repo_identity(viewer, tab.shared_identity());
+    if (tab.identity().icon) viewer->set_icon(tab.identity().icon);
 }
 
 void log_window::close_patch()
