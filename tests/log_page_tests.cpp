@@ -1422,17 +1422,25 @@ void trust_tests(rap::ui& ui, const std::string& root, const std::string& first)
     set_env("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1");
     set_env("GIT_CONFIG_COUNT", "");
     set_env("GIT_CONFIG_PARAMETERS", "");
-    const bool asks = untrusted_repository(refused).has_value();
-    if (!asks)
+    // Whether git itself refuses it decides: only where it opens the
+    // repository all the same (nothing here can make it refuse) is the
+    // question untestable, and said so, with why, rather than failed.
+    const git_result opens = run_git(refused, {"rev-parse", "--git-dir"});
+    bool asks = false;
+    if (opens.ok())
     {
-        // Trusted all the same: nothing here can make git refuse it, so the
-        // question can't be tested; said, with why, rather than failed.
         const git_result where =
             run_git(refused, {"config", "--show-origin", "--get-all", "safe.directory"});
-        const git_result opens = run_git(refused, {"rev-parse", "--git-dir"});
         std::printf("skip log trust: git opens the repository whatever its owner here, so the "
                     "trust question isn't tested\n  safe.directory: %s\n  rev-parse: %s\n",
                     where.output.c_str(), opens.output.c_str());
+    }
+    else
+    {
+        check(opens.output.find("safe.directory") != std::string::npos,
+              "log trust: git refuses the repository for its owner");
+        asks = untrusted_repository(refused).has_value();
+        check(asks, "log trust: Tortilla sees git refuse it, and asks");
     }
     if (asks)
     {
