@@ -12,6 +12,7 @@
 #include "remote/pull_fetch_dialog.h"
 #include "settings.h"
 #include "ui/menu_text.h"
+#include "ui/modal_dialogs.h"
 #include "ui/progress_dialog.h"
 #include "ui/repo_browser.h"
 #include "ui/repo_icon.h"
@@ -408,10 +409,11 @@ void browse_refs::reload(std::string select)
                                                  : m == 2 ? merged_filter::unmerged
                                                           : merged_filter::all);
     if (!loaded.error.empty())
-        ui_.message(window_.get(), {.icon = rap::message_spec::icon::error,
-                                    .title = "Tortilla",
-                                    .text = _("Couldn't list the references."),
-                                    .detail = loaded.error});
+        show_message(ui_, window_.get(),
+                     {.icon = rap::message_spec::icon::error,
+                      .title = "Tortilla",
+                      .text = _("Couldn't list the references."),
+                      .detail = loaded.error});
     // The kinds a picker offers [spec 10.3, 4].
     const unsigned k = options_.kinds;
     // Checking: branches alone.
@@ -684,10 +686,10 @@ rap::menu browse_refs::list_menu(std::optional<size_t>)
                      {
                          auto b = repo_browser::open(ui_, workdir_, e.full);
                          if (!b)
-                             return ui_.message(window_.get(),
-                                                {.icon = rap::message_spec::icon::error,
-                                                 .title = "Tortilla",
-                                                 .text = b.error()});
+                             return show_message(ui_, window_.get(),
+                                                 {.icon = rap::message_spec::icon::error,
+                                                  .title = "Tortilla",
+                                                  .text = b.error()});
                          windows::keep(std::move(*b));
                      }});
         if (e.local_branch() || e.remote_branch())
@@ -696,10 +698,10 @@ rap::menu browse_refs::list_menu(std::optional<size_t>)
                          {
                              auto log = reflog_window::open(ui_, workdir_, e.full);
                              if (!log)
-                                 return ui_.message(window_.get(),
-                                                    {.icon = rap::message_spec::icon::error,
-                                                     .title = "Tortilla",
-                                                     .text = log.error()});
+                                 return show_message(ui_, window_.get(),
+                                                     {.icon = rap::message_spec::icon::error,
+                                                      .title = "Tortilla",
+                                                      .text = log.error()});
                              // What it did there (a reset, a branch) shows here after.
                              (*log)->on_done(
                                  [this, alive = std::weak_ptr<bool>(alive_)]
@@ -818,7 +820,9 @@ void browse_refs::show_log(const std::string& rev)
     auto log = log_window::open(ui_, workdir_);
     if (!log)
     {
-        ui_.message(window_.get(), {.icon = rap::message_spec::icon::error, .title = "Tortilla", .text = log.error()});
+        show_message(
+            ui_, window_.get(),
+            {.icon = rap::message_spec::icon::error, .title = "Tortilla", .text = log.error()});
         return;
     }
     (*log)->start_at(rev);
@@ -833,7 +837,9 @@ void browse_refs::open_dialog(std::expected<std::unique_ptr<D>, std::string> dia
 {
     if (!dialog)
     {
-        ui_.message(window_.get(), {.icon = rap::message_spec::icon::error, .title = "Tortilla", .text = dialog.error()});
+        show_message(
+            ui_, window_.get(),
+            {.icon = rap::message_spec::icon::error, .title = "Tortilla", .text = dialog.error()});
         return;
     }
     (*dialog)->on_done(
@@ -850,7 +856,9 @@ void browse_refs::run_then_reload(const std::string& title, std::vector<std::vec
     for (const auto& args : commands)
         if (const git_result r = run_git(workdir_, args); !r.ok())
         {
-            ui_.message(window_.get(), {.icon = rap::message_spec::icon::error, .title = title, .text = r.output});
+            show_message(
+                ui_, window_.get(),
+                {.icon = rap::message_spec::icon::error, .title = title, .text = r.output});
             break;
         }
     reload();
@@ -894,8 +902,8 @@ void browse_refs::delete_refs(std::vector<const ref_entry*> sel)
         text += std::string("\n\n") + _("This action will remove the branches on the remote.");
         warn = true;
     }
-    ui_.message(
-        window_.get(),
+    show_message(
+        ui_, window_.get(),
         {.icon = warn ? rap::message_spec::icon::warning : rap::message_spec::icon::question,
          .title = "Tortilla",
          .text = text,
@@ -909,7 +917,8 @@ void browse_refs::delete_refs(std::vector<const ref_entry*> sel)
                 // One push per remote, deleting its branches together.
                 std::map<std::string, std::vector<std::string>> by_remote;
                 for (const ref_entry& e : refs)
-                    if (auto rb = split_remote(workdir_, e.full)) by_remote[rb->first].push_back(":refs/heads/" + rb->second);
+                    if (auto rb = split_remote(workdir_, e.full))
+                        by_remote[rb->first].push_back(":refs/heads/" + rb->second);
                 std::vector<git_command> commands;
                 for (auto& [remote, specs] : by_remote)
                 {
@@ -926,7 +935,8 @@ void browse_refs::delete_refs(std::vector<const ref_entry*> sel)
             }
             std::vector<std::string> args = refs.front().tag() ? std::vector<std::string>{"tag", "-d", "--"}
                                                                 : std::vector<std::string>{"branch", "-D", "--"};
-            for (const ref_entry& e : refs) args.push_back(e.tag() ? e.full.substr(10) : strip_ref_name(e.full));
+            for (const ref_entry& e : refs)
+                args.push_back(e.tag() ? e.full.substr(10) : strip_ref_name(e.full));
             run_then_reload(_("Delete"), {std::move(args)});
         });
 }
@@ -986,9 +996,11 @@ void browse_refs::rename(const ref_entry& e)
                  const std::string to = base + "/" + text;
                  if (!to.starts_with("refs/heads/"))
                  {
-                     ui_.message(window_.get(), {.icon = rap::message_spec::icon::error,
-                                                 .title = "Tortilla",
-                                                 .text = _("You cannot change the type of this ref with a rename.")});
+                     show_message(
+                         ui_, window_.get(),
+                         {.icon = rap::message_spec::icon::error,
+                          .title = "Tortilla",
+                          .text = _("You cannot change the type of this ref with a rename.")});
                      return;
                  }
                  run_then_reload(_("Rename"), {{"branch", "-m", strip_ref_name(e.full), strip_ref_name(to)}});
@@ -1028,13 +1040,15 @@ void browse_refs::pick_upstream(const ref_entry& e)
                  const git_result r =
                      run_git(workdir_, {"branch", "--set-upstream-to=" + upstream, "--", strip_ref_name(e.full)});
                  if (!r.ok())
-                     ui_.message(window_.get(),
-                                 {.icon = rap::message_spec::icon::error,
-                                  .title = "Tortilla",
-                                  .text = r.output,
-                                  .detail = rap::i18n::format(_("This is usually caused when the setting "
-                                                                "\"remote.{0}.fetch\" does not include the desired branch."),
-                                                              rb->first)});
+                     show_message(
+                         ui_, window_.get(),
+                         {.icon = rap::message_spec::icon::error,
+                          .title = "Tortilla",
+                          .text = r.output,
+                          .detail = rap::i18n::format(
+                              _("This is usually caused when the setting "
+                                "\"remote.{0}.fetch\" does not include the desired branch."),
+                              rb->first)});
                  reload();
              });
 }
@@ -1046,7 +1060,9 @@ void pick_ref(rap::ui& ui, rap::window* parent, const std::string& workdir, brow
     auto d = browse_refs::open(ui, workdir, std::move(o), parent);
     if (!d)
     {
-        ui.message(parent, {.icon = rap::message_spec::icon::error, .title = "Tortilla", .text = d.error()});
+        show_message(
+            ui, parent,
+            {.icon = rap::message_spec::icon::error, .title = "Tortilla", .text = d.error()});
         if (done) done({});
         return;
     }
@@ -1061,8 +1077,8 @@ void check_refs(rap::ui& ui, rap::window* parent, const std::string& workdir,
     auto d = browse_refs::open(ui, workdir, {.check = true, .checked = std::move(checked)}, parent);
     if (!d)
     {
-        ui.message(
-            parent,
+        show_message(
+            ui, parent,
             {.icon = rap::message_spec::icon::error, .title = "Tortilla", .text = d.error()});
         return;
     }

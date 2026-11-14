@@ -2,6 +2,7 @@
 
 #include "git/repo.h"
 #include "i18n.h"
+#include "ui/modal_dialogs.h"
 #include "ui/progress_dialog.h"
 #include "ui/repo_icon.h"
 #include "ui/windows.h"
@@ -81,9 +82,10 @@ void bisect_start_dialog::ok()
     const std::string good = good_.revision(), bad = bad_.revision();
     if (good.empty() || bad.empty())
     {
-        ui_.message(window_.get(), {.icon = rap::message_spec::icon::warning,
-                                    .title = _("Bisect start"),
-                                    .text = _("Both the good and the bad revision are needed.")});
+        show_message(ui_, window_.get(),
+                     {.icon = rap::message_spec::icon::warning,
+                      .title = _("Bisect start"),
+                      .text = _("Both the good and the bad revision are needed.")});
         return;
     }
     const size_t running = windows::hold({});

@@ -5,6 +5,7 @@
 #include "git/svn.h"
 #include "i18n.h"
 #include "rebase/rebase_window.h"
+#include "ui/modal_dialogs.h"
 #include "ui/progress_dialog.h"
 #include "ui/repo_icon.h"
 #include "ui/windows.h"
@@ -83,8 +84,8 @@ void check_first(rap::ui& ui, const std::string& workdir, unsigned asked,
 void fail(rap::ui& ui, const parent_window& parent, const std::string& title,
           const std::string& text, const std::string& detail, const std::function<void(bool)>& done)
 {
-    ui.message(
-        parent(),
+    show_message(
+        ui, parent(),
         {.icon = rap::message_spec::icon::error, .title = title, .text = text, .detail = detail},
         [done](rap::dialog_role)
         {
@@ -109,35 +110,35 @@ void offer_stash(rap::ui& ui, const parent_window& parent, const std::string& wo
                  std::function<void(bool stashed)> then, const std::function<void(bool)>& done)
 {
     if (changes.empty()) return then(false);
-    ui.message(parent(),
-               {.icon = rap::message_spec::icon::question,
-                .title = title,
-                .text = _("The working tree has local changes. Stash them first?"),
-                .detail = changes,
-                .buttons = {rap::dialog_role::yes, rap::dialog_role::cancel}},
-               [&ui, parent, workdir, title, then = std::move(then), done](rap::dialog_role r)
-               {
-                   if (r != rap::dialog_role::yes)
-                   {
-                       if (done) done(false);
-                       return;
-                   }
-                   std::thread(
-                       [&ui, parent, workdir, title, then, done]
-                       {
-                           const git_result stashed = run_git(workdir, {"stash", "push"});
-                           ui.post(
-                               [&ui, parent, title, then, done, stashed]
-                               {
-                                   if (!stashed.ok())
-                                       return fail(ui, parent, title,
-                                                   _("The local changes couldn't be stashed."),
-                                                   stashed.output, done);
-                                   then(true);
-                               });
-                       })
-                       .detach();
-               });
+    show_message(ui, parent(),
+                 {.icon = rap::message_spec::icon::question,
+                  .title = title,
+                  .text = _("The working tree has local changes. Stash them first?"),
+                  .detail = changes,
+                  .buttons = {rap::dialog_role::yes, rap::dialog_role::cancel}},
+                 [&ui, parent, workdir, title, then = std::move(then), done](rap::dialog_role r)
+                 {
+                     if (r != rap::dialog_role::yes)
+                     {
+                         if (done) done(false);
+                         return;
+                     }
+                     std::thread(
+                         [&ui, parent, workdir, title, then, done]
+                         {
+                             const git_result stashed = run_git(workdir, {"stash", "push"});
+                             ui.post(
+                                 [&ui, parent, title, then, done, stashed]
+                                 {
+                                     if (!stashed.ok())
+                                         return fail(ui, parent, title,
+                                                     _("The local changes couldn't be stashed."),
+                                                     stashed.output, done);
+                                     then(true);
+                                 });
+                         })
+                         .detach();
+                 });
 }
 
 // After it ran: the changes stashed first back, if the user wants them.
@@ -149,24 +150,24 @@ void offer_pop(rap::ui& ui, const parent_window& parent, const std::string& titl
         if (done) done(ok);
         return;
     }
-    ui.message(parent(),
-               {.icon = rap::message_spec::icon::question,
-                .title = title,
-                .text = _("Your changes were stashed first. Pop the stash now?"),
-                .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
-               [&ui, parent, title, workdir, ok, done = std::move(done)](rap::dialog_role r)
-               {
-                   if (r != rap::dialog_role::yes)
-                   {
-                       if (done) done(ok);
-                       return;
-                   }
-                   run_progress_dialog(ui, parent(), title, workdir, {{"stash", "pop"}},
-                                       [ok, done](bool popped)
-                                       {
-                                           if (done) done(ok && popped);
-                                       });
-               });
+    show_message(ui, parent(),
+                 {.icon = rap::message_spec::icon::question,
+                  .title = title,
+                  .text = _("Your changes were stashed first. Pop the stash now?"),
+                  .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
+                 [&ui, parent, title, workdir, ok, done = std::move(done)](rap::dialog_role r)
+                 {
+                     if (r != rap::dialog_role::yes)
+                     {
+                         if (done) done(ok);
+                         return;
+                     }
+                     run_progress_dialog(ui, parent(), title, workdir, {{"stash", "pop"}},
+                                         [ok, done](bool popped)
+                                         {
+                                             if (done) done(ok && popped);
+                                         });
+                 });
 }
 
 void run_dcommit(rap::ui& ui, const parent_window& parent, const std::string& workdir,
@@ -286,8 +287,8 @@ void svn_rebase(rap::ui& ui, const parent_window& parent, const std::string& wor
                                                 rap::i18n::format(_("{0} isn't there."), upstream),
                                                 {}, pop);
                                         if (same)
-                                            return ui.message(
-                                                parent(),
+                                            return show_message(
+                                                ui, parent(),
                                                 {.title = title,
                                                  .text = _("Everything is up to date.")},
                                                 [pop](rap::dialog_role) { pop(true); });
@@ -410,14 +411,14 @@ void svn_import_ignore(rap::ui& ui, const parent_window& parent, const std::stri
                                 {
                                     if (!error.empty())
                                         return fail(ui, parent, title, error, detail, done);
-                                    ui.message(parent(),
-                                               {.title = title,
-                                                .text = _("svn:ignore is imported into "
-                                                          ".git/info/exclude.")},
-                                               [done](rap::dialog_role)
-                                               {
-                                                   if (done) done(true);
-                                               });
+                                    show_message(ui, parent(),
+                                                 {.title = title,
+                                                  .text = _("svn:ignore is imported into "
+                                                            ".git/info/exclude.")},
+                                                 [done](rap::dialog_role)
+                                                 {
+                                                     if (done) done(true);
+                                                 });
                                 });
                         })
                         .detach();

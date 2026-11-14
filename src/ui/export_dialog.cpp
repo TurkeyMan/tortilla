@@ -4,6 +4,7 @@
 #include "git/temp_files.h"
 #include "i18n.h"
 #include "settings.h"
+#include "ui/modal_dialogs.h"
 #include "ui/progress_dialog.h"
 #include "ui/repo_icon.h"
 
@@ -79,19 +80,19 @@ void export_to_folder(rap::ui& ui, rap::window* parent, const std::string& workd
                             {
                                 std::string detail = r.error;
                                 for (const std::string& f : r.failed) detail += f + "\n";
-                                ui.message(nullptr,
-                                           {.icon = rap::message_spec::icon::error,
-                                            .title = _("Export"),
-                                            .text = r.error.empty()
-                                                        ? _("Some files could not be exported.")
-                                                        : rap::i18n::format(
-                                                              _("Could not export into {0}."),
-                                                              rap::sys::path_to_utf8(out)),
-                                            .detail = r.error.empty() ? detail : ""},
-                                           [done](rap::dialog_role)
-                                           {
-                                               if (done) done();
-                                           });
+                                show_message(ui, nullptr,
+                                             {.icon = rap::message_spec::icon::error,
+                                              .title = _("Export"),
+                                              .text = r.error.empty()
+                                                          ? _("Some files could not be exported.")
+                                                          : rap::i18n::format(
+                                                                _("Could not export into {0}."),
+                                                                rap::sys::path_to_utf8(out)),
+                                              .detail = r.error.empty() ? detail : ""},
+                                             [done](rap::dialog_role)
+                                             {
+                                                 if (done) done();
+                                             });
                                 return;
                             }
                             if (*open) rap::sys::open_path(out);
@@ -171,14 +172,14 @@ void export_revision(rap::ui& ui, rap::window* parent, const std::string& workdi
                                             zip ? _("Export to zip file") : _("Export into folder"),
                                         .initial_path = s->path->text()};
                                     if (zip) spec.filters = {{_("Zip files"), "*.zip"}};
-                                    ui.choose_files(s->window.get(), spec,
-                                                    [w](std::vector<std::string> chosen)
-                                                    {
-                                                        auto s = w.lock();
-                                                        if (!s || chosen.empty()) return;
-                                                        s->browsed = chosen.front();
-                                                        s->path->set_text(chosen.front());
-                                                    });
+                                    pick_files(ui, s->window.get(), spec,
+                                               [w](std::vector<std::string> chosen)
+                                               {
+                                                   auto s = w.lock();
+                                                   if (!s || chosen.empty()) return;
+                                                   s->browsed = chosen.front();
+                                                   s->path->set_text(chosen.front());
+                                               });
                                 }),
                         }},
                    },
@@ -221,21 +222,22 @@ void export_revision(rap::ui& ui, rap::window* parent, const std::string& workdi
                                       : fs::is_directory(out, ec) && !fs::is_empty(out, ec);
             if (!replaces) return start(ui, parent, workdir, rev, zip, out, done);
             const std::string shown = rap::sys::path_to_utf8(out);
-            ui.message(parent,
-                       {.icon = rap::message_spec::icon::question,
-                        .title = _("Export"),
-                        .text = zip ? rap::i18n::format(_("{0} already exists. Replace it?"), shown)
-                                    : rap::i18n::format(_("{0} is not empty. Export into it, "
-                                                          "replacing files of the same name?"),
-                                                        shown),
-                        .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
-                       [&ui, parent, workdir, rev, zip, out, done](rap::dialog_role r)
-                       {
-                           if (r == rap::dialog_role::yes)
-                               start(ui, parent, workdir, rev, zip, out, done);
-                           else if (done)
-                               done();
-                       });
+            show_message(
+                ui, parent,
+                {.icon = rap::message_spec::icon::question,
+                 .title = _("Export"),
+                 .text = zip ? rap::i18n::format(_("{0} already exists. Replace it?"), shown)
+                             : rap::i18n::format(_("{0} is not empty. Export into it, "
+                                                   "replacing files of the same name?"),
+                                                 shown),
+                 .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
+                [&ui, parent, workdir, rev, zip, out, done](rap::dialog_role r)
+                {
+                    if (r == rap::dialog_role::yes)
+                        start(ui, parent, workdir, rev, zip, out, done);
+                    else if (done)
+                        done();
+                });
         });
     st->window->show();
 }

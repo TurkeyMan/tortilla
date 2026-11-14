@@ -5,6 +5,7 @@
 #include "git/temp_files.h"
 #include "i18n.h"
 #include "ui/compare.h"
+#include "ui/modal_dialogs.h"
 #include "ui/progress_dialog.h"
 #include "ui/repo_icon.h"
 
@@ -103,8 +104,8 @@ void review_patch(rap::ui& ui, rap::window* parent, const std::string& workdir,
                             auto s = weak.lock();
                             if (!s || !s->window) return;
                             if (!r.ok())
-                                return s->ui.message(
-                                    s->window.get(),
+                                return show_message(
+                                    s->ui, s->window.get(),
                                     {.icon = rap::message_spec::icon::error,
                                      .title = _("Review Patch"),
                                      .text = _("This file's part of the patch doesn't apply."),

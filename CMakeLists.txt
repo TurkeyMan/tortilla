@@ -96,6 +96,7 @@ add_library(tortilla_git STATIC
     src/git/git_install.cpp
     src/git/patch_text.cpp
     src/git/lfs.cpp
+    src/ui/modal_dialogs.cpp
     src/git/clean.cpp
     src/git/blame.cpp
     src/git/tree_list.cpp

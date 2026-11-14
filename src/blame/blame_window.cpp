@@ -7,6 +7,7 @@
 #include "log/log_window.h"
 #include "settings.h"
 #include "ui/compare.h"
+#include "ui/modal_dialogs.h"
 #include "ui/repo_icon.h"
 #include "ui/settings_dialog.h"
 #include "ui/windows.h"
@@ -556,8 +557,8 @@ void blame_window::show_log(const blame_line& line)
     auto log = log_window::open(ui_, file);
     if (!log)
     {
-        ui_.message(
-            window_.get(),
+        show_message(
+            ui_, window_.get(),
             {.icon = rap::message_spec::icon::error, .title = "Tortilla", .text = log.error()});
         return;
     }

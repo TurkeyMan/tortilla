@@ -5,6 +5,7 @@
 #include "i18n.h"
 #include "ui/busy_pointer.h"
 #include "ui/diff_window.h"
+#include "ui/modal_dialogs.h"
 
 #include <rapport/sys.h>
 
@@ -40,12 +41,12 @@ void start_image_tool(rap::ui& ui, rap::window* parent, const std::string& dir,
                 });
             // With --no-index, git exits 1 for files that differ.
             if (code == 0 || (no_index && code == 1)) return finished();
-            ui.message(parent,
-                       {.icon = rap::message_spec::icon::error,
-                        .title = "Tortilla",
-                        .text = _("The image diff tool failed."),
-                        .detail = *output},
-                       [finished](rap::dialog_role) { finished(); });
+            show_message(ui, parent,
+                         {.icon = rap::message_spec::icon::error,
+                          .title = "Tortilla",
+                          .text = _("The image diff tool failed."),
+                          .detail = *output},
+                         [finished](rap::dialog_role) { finished(); });
         });
     if (!process) return finished();
     *slot = process;
@@ -55,19 +56,19 @@ void start_image_tool(rap::ui& ui, rap::window* parent, const std::string& dir,
 void offer_diff_settings(rap::ui& ui, rap::window* parent, const std::string& text,
                          std::function<void()> open_settings, std::function<void()> done)
 {
-    ui.message(parent,
-               {.icon = rap::message_spec::icon::question,
-                .title = "Tortilla",
-                .text = text,
-                .detail = _("Choose one on the Diff Viewer page of the Settings."),
-                .buttons = {rap::dialog_role::ok, rap::dialog_role::cancel}},
-               [open_settings, done](rap::dialog_role r)
-               {
-                   if (r == rap::dialog_role::ok && open_settings)
-                       open_settings();
-                   else
-                       done();
-               });
+    show_message(ui, parent,
+                 {.icon = rap::message_spec::icon::question,
+                  .title = "Tortilla",
+                  .text = text,
+                  .detail = _("Choose one on the Diff Viewer page of the Settings."),
+                  .buttons = {rap::dialog_role::ok, rap::dialog_role::cancel}},
+                 [open_settings, done](rap::dialog_role r)
+                 {
+                     if (r == rap::dialog_role::ok && open_settings)
+                         open_settings();
+                     else
+                         done();
+                 });
 }
 
 // Whether two files hold the same bytes, read here: no git diff --no-index
@@ -115,12 +116,12 @@ std::shared_ptr<git_process> start_direct(rap::ui& ui, rap::window* parent, cons
             // Its exit code isn't the comparison's: as git difftool (without
             // difftool.trustExitCode), only a tool that didn't start failed.
             if (code != -1) return done();
-            ui.message(parent,
-                       {.icon = rap::message_spec::icon::error,
-                        .title = "Tortilla",
-                        .text = _("The diff tool failed."),
-                        .detail = *output},
-                       [done](rap::dialog_role) { done(); });
+            show_message(ui, parent,
+                         {.icon = rap::message_spec::icon::error,
+                          .title = "Tortilla",
+                          .text = _("The diff tool failed."),
+                          .detail = *output},
+                         [done](rap::dialog_role) { done(); });
         });
 }
 
@@ -156,11 +157,11 @@ std::shared_ptr<git_process> compare_files(rap::ui& ui, rap::window* parent,
     if (same ? *same : run_git(dir, quiet, git_output::stdout_only).exit_code == 0)
     {
         idle();
-        ui.message(parent,
-                   {.icon = rap::message_spec::icon::info,
-                    .title = "Tortilla",
-                    .text = rap::i18n::format(_("“{0}” and “{1}” are the same."), na, nb)},
-                   [done](rap::dialog_role) { done(); });
+        show_message(ui, parent,
+                     {.icon = rap::message_spec::icon::info,
+                      .title = "Tortilla",
+                      .text = rap::i18n::format(_("“{0}” and “{1}” are the same."), na, nb)},
+                     [done](rap::dialog_role) { done(); });
         return nullptr;
     }
 
@@ -216,12 +217,12 @@ std::shared_ptr<git_process> compare_files(rap::ui& ui, rap::window* parent,
         {
             // Exit 1: the files differ, as --no-index says it.
             if (code == 0 || code == 1) return done();
-            ui.message(parent,
-                       {.icon = rap::message_spec::icon::error,
-                        .title = "Tortilla",
-                        .text = _("The diff tool failed."),
-                        .detail = *output},
-                       [done](rap::dialog_role) { done(); });
+            show_message(ui, parent,
+                         {.icon = rap::message_spec::icon::error,
+                          .title = "Tortilla",
+                          .text = _("The diff tool failed."),
+                          .detail = *output},
+                         [done](rap::dialog_role) { done(); });
         });
 }
 
@@ -278,14 +279,14 @@ compare_revisions(rap::ui& ui, rap::window* parent, const std::string& dir,
                     : run_git(dir, quiet, git_output::stdout_only).exit_code == 0)
         {
             idle();
-            ui.message(parent,
-                       {.icon = rap::message_spec::icon::info,
-                        .title = "Tortilla",
-                        .text = paths.size() == 1
-                                    ? rap::i18n::format(_("“{0}” has no changes to compare."),
-                                                        paths.front())
-                                    : std::string(_("There are no changes to compare."))},
-                       [done](rap::dialog_role) { done(); });
+            show_message(ui, parent,
+                         {.icon = rap::message_spec::icon::info,
+                          .title = "Tortilla",
+                          .text = paths.size() == 1
+                                      ? rap::i18n::format(_("“{0}” has no changes to compare."),
+                                                          paths.front())
+                                      : std::string(_("There are no changes to compare."))},
+                         [done](rap::dialog_role) { done(); });
             return nullptr;
         }
     }
@@ -414,12 +415,12 @@ compare_revisions(rap::ui& ui, rap::window* parent, const std::string& dir,
         [&ui, parent, output, done](int code)
         {
             if (code == 0) return done();
-            ui.message(parent,
-                       {.icon = rap::message_spec::icon::error,
-                        .title = "Tortilla",
-                        .text = _("The diff tool failed."),
-                        .detail = *output},
-                       [done](rap::dialog_role) { done(); });
+            show_message(ui, parent,
+                         {.icon = rap::message_spec::icon::error,
+                          .title = "Tortilla",
+                          .text = _("The diff tool failed."),
+                          .detail = *output},
+                         [done](rap::dialog_role) { done(); });
         });
 }
 

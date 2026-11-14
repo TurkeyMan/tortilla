@@ -34,12 +34,14 @@ void window_identities::destroyed(const void* w)
 }
 
 std::shared_ptr<const repo_identity> track_window(window_identities& ids, rap::window& w,
-                                                  rap::window* parent)
+                                                  rap::window* parent,
+                                                  std::shared_ptr<const void> hold)
 {
     auto id = ids.created(&w, parent);
     // Run once, first thing in w's destructor (at exit too): it touches
-    // only the record, by address, none of w's widgets.
-    w.on_destroyed([&ids, at = static_cast<const void*>(&w)] { ids.destroyed(at); });
+    // only the record, by address, none of w's widgets. `hold` goes with it.
+    w.on_destroyed([&ids, at = static_cast<const void*>(&w), hold = std::move(hold)]
+                   { ids.destroyed(at); });
     return id;
 }
 

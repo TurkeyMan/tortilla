@@ -6,6 +6,7 @@
 #include "git/submodule.h"
 #include "i18n.h"
 #include "settings.h"
+#include "ui/modal_dialogs.h"
 #include "ui/progress_dialog.h"
 #include "ui/repo_icon.h"
 #include "util/repo_path.h"
@@ -99,9 +100,10 @@ struct add_state
             .url = url->text(), .path = path->text(), .force = force->checked()};
         auto refuse = [this](const std::string& text)
         {
-            ui.message(window.get(), {.icon = rap::message_spec::icon::warning,
-                                      .title = _("Submodule Add"),
-                                      .text = text});
+            show_message(ui, window.get(),
+                         {.icon = rap::message_spec::icon::warning,
+                          .title = _("Submodule Add"),
+                          .text = text});
         };
         if (o.url.empty() || o.path.empty())
             return refuse(_("Repository and path must not be empty."));
@@ -292,16 +294,16 @@ void add_submodule(rap::ui& ui, rap::window* parent, const std::string& workdir,
                              [s]
                              {
                                  // A repository on this computer.
-                                 s->ui.choose_files(s->window.get(),
-                                                    {.mode = rap::file_dialog_spec::mode::folder,
-                                                     .title = _("Repository"),
-                                                     .initial_path = s->workdir},
-                                                    [s](std::vector<std::string> chosen)
-                                                    {
-                                                        if (chosen.empty() || !s->window) return;
-                                                        s->url->set_text(chosen.front());
-                                                        s->url_changed(chosen.front());
-                                                    });
+                                 pick_files(s->ui, s->window.get(),
+                                            {.mode = rap::file_dialog_spec::mode::folder,
+                                             .title = _("Repository"),
+                                             .initial_path = s->workdir},
+                                            [s](std::vector<std::string> chosen)
+                                            {
+                                                if (chosen.empty() || !s->window) return;
+                                                s->url->set_text(chosen.front());
+                                                s->url_changed(chosen.front());
+                                            });
                              }),
                      }},
                     {_("Path"), entry{s->base}.bind(s->path)},

@@ -5,6 +5,7 @@
 #include "git/patch_text.h"
 #include "i18n.h"
 #include "settings.h"
+#include "ui/modal_dialogs.h"
 #include "ui/repo_icon.h"
 
 #include <rapport/sys.h>
@@ -343,17 +344,17 @@ private:
         spec.initial_path = name + ".patch";
         spec.filters = {{_("Patches (*.patch, *.diff)"), "*.patch;*.diff"}, {_("All files"), "*"}};
         std::weak_ptr<diff_window> weak = shared_from_this();
-        ui_.choose_files(window_.get(), spec,
-                        [weak](std::vector<std::string> paths)
-                        {
-                            auto s = weak.lock();
-                            if (!s || paths.empty()) return;
-                            // GTK's save dialog doesn't add the type's
-                            // extension the way Windows' does.
-                            std::string path = paths.front();
-                            if (!rap::sys::path_from_utf8(path).has_extension()) path += ".patch";
-                            s->write(path);
-                        });
+        pick_files(ui_, window_.get(), spec,
+                   [weak](std::vector<std::string> paths)
+                   {
+                       auto s = weak.lock();
+                       if (!s || paths.empty()) return;
+                       // GTK's save dialog doesn't add the type's
+                       // extension the way Windows' does.
+                       std::string path = paths.front();
+                       if (!rap::sys::path_from_utf8(path).has_extension()) path += ".patch";
+                       s->write(path);
+                   });
     }
 
     void write(const std::string& path)
@@ -363,9 +364,10 @@ private:
         bool ok = f && std::fwrite(content_.data(), 1, content_.size(), f) == content_.size();
         if (f) ok = std::fclose(f) == 0 && ok;
         if (!ok)
-            ui_.message(window_.get(), {.icon = rap::message_spec::icon::error,
-                                        .title = _("Save Diff"),
-                                        .text = rap::i18n::format(_("Could not save {0}."), path)});
+            show_message(ui_, window_.get(),
+                         {.icon = rap::message_spec::icon::error,
+                          .title = _("Save Diff"),
+                          .text = rap::i18n::format(_("Could not save {0}."), path)});
     }
 
     // Destroyed after the callback that closed it returns.

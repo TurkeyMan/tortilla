@@ -22,6 +22,7 @@
 #include "rebase/rebase_window.h"
 
 #include "ui/diff_window.h"
+#include "ui/modal_dialogs.h"
 #include "ui/page_guard.h"
 #include "ui/repo_icon.h"
 #include "ui/settings_dialog.h"
@@ -32,7 +33,9 @@
 #include <chrono>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <type_traits>
+#include <utility>
 
 namespace tortilla
 {
@@ -65,6 +68,10 @@ public:
     // panel's and file list's hold on its widgets, before its widgets go:
     // the filters typed are applied, and the work goes on without a page.
     void drop_page();
+    // Moving to another window (log_window::detach, adopt): the view its
+    // page had as it went, kept for the page built there.
+    void carry_view(log_view_state view) { carried_view_ = std::move(view); }
+    std::optional<log_view_state> take_carried_view() { return std::exchange(carried_view_, {}); }
     // The loading, watching and asking of the forge begun, once there's a
     // page and a window. `all_branches` starts with All Branches.
     void start(bool all_branches);
@@ -84,9 +91,10 @@ public:
     // Whether `other` shows what this does: the same repository, limited to
     // the same path (or neither).
     bool shows(const log_tab& other) const;
-    // Why the tab can't close now (a history edit being written, git moving
-    // a label, a rebase it opened); empty when it can.
-    std::string busy_reason() const;
+    // Why the tab can't close (or, `moving`, move to another window) now: a
+    // history edit being written, git moving a label, a rebase it opened;
+    // empty when it can.
+    std::string busy_reason(bool moving = false) const;
     // Gone from its window for good: what it started (watches, polls, the
     // replies to its dialogs and threads) stops calling back. Its page has
     // gone first (drop_page).
@@ -142,6 +150,9 @@ public:
     std::function<void()> later_for_tests(std::function<void()> f) const;
 
 private:
+    friend struct log_tab_test;
+    std::optional<log_view_state> carried_view_;
+
     // The window, as the parent of dialogs and messages; null while there's
     // none.
     rap::window* parent() const { return host_ ? host_->window() : nullptr; }

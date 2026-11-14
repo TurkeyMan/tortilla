@@ -3,6 +3,7 @@
 #include "git/command.h"
 #include "i18n.h"
 #include "settings.h"
+#include "ui/modal_dialogs.h"
 
 #include <rapport/sys.h>
 
@@ -71,15 +72,16 @@ void ensure_trusted(rap::ui& ui, const std::string& path, std::function<void(boo
 {
     const std::optional<std::string> value = untrusted_repository(path);
     if (!value) return done(true);
-    ui.message(
-        nullptr,
+    show_message(
+        ui, nullptr,
         {.icon = rap::message_spec::icon::warning,
          .title = "Tortilla",
-         .text = rap::i18n::format(_("Git won't open the repository in\n{0}\nbecause its folder belongs to another user "
-                                     "account (a network share, say, or WSL's files seen from Windows).\n\nTrust "
-                                     "this repository? Only do so if you trust whoever can change its files: "
-                                     "its configuration can run programs as you."),
-                                   *value),
+         .text = rap::i18n::format(
+             _("Git won't open the repository in\n{0}\nbecause its folder belongs to another user "
+               "account (a network share, say, or WSL's files seen from Windows).\n\nTrust "
+               "this repository? Only do so if you trust whoever can change its files: "
+               "its configuration can run programs as you."),
+             *value),
          .detail = "git config --global --add safe.directory " + *value,
          .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
         [&ui, value = *value, done](rap::dialog_role role)
@@ -87,12 +89,12 @@ void ensure_trusted(rap::ui& ui, const std::string& path, std::function<void(boo
             if (role != rap::dialog_role::yes) return done(false);
             const git_result r = run_git(".", {"config", "--global", "--add", "safe.directory", value});
             if (r.ok()) return done(true);
-            ui.message(nullptr,
-                       {.icon = rap::message_spec::icon::error,
-                        .title = "Tortilla",
-                        .text = _("Couldn't add the repository to safe.directory."),
-                        .detail = r.output},
-                       [done](rap::dialog_role) { done(false); });
+            show_message(ui, nullptr,
+                         {.icon = rap::message_spec::icon::error,
+                          .title = "Tortilla",
+                          .text = _("Couldn't add the repository to safe.directory."),
+                          .detail = r.output},
+                         [done](rap::dialog_role) { done(false); });
         });
 }
 

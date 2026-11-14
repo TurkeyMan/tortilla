@@ -11,6 +11,7 @@
 #include "remote/remote_selector.h"
 #include "settings.h"
 #include "ui/compare.h"
+#include "ui/modal_dialogs.h"
 #include "ui/progress_dialog.h"
 #include "ui/repo_icon.h"
 #include "ui/settings_dialog.h"
@@ -219,20 +220,20 @@ void pull_fetch_dialog::ok()
     const std::string where = remote();
     if (!all && where.empty())
     {
-        ui_.message(window_.get(),
-                    {.icon = rap::message_spec::icon::warning,
-                     .title = pull_ ? _("Pull") : _("Fetch"),
-                     .text = url ? _("Enter the URL to pull from.") : _("Choose a remote.")});
+        show_message(ui_, window_.get(),
+                     {.icon = rap::message_spec::icon::warning,
+                      .title = pull_ ? _("Pull") : _("Fetch"),
+                      .text = url ? _("Enter the URL to pull from.") : _("Choose a remote.")});
         return;
     }
     const bool rebase = rebase_->checked() && !url && !all;
     std::string branch = remote_branch_->text();
     if (pull_ && rebase && branch.empty())
     {
-        ui_.message(window_.get(),
-                    {.icon = rap::message_spec::icon::warning,
-                     .title = _("Pull"),
-                     .text = _("You asked to pull, but did not specify a remote branch.")});
+        show_message(ui_, window_.get(),
+                     {.icon = rap::message_spec::icon::warning,
+                      .title = _("Pull"),
+                      .text = _("You asked to pull, but did not specify a remote branch.")});
         return;
     }
 
@@ -366,19 +367,20 @@ void pull_fetch_dialog::ok()
                 if (!forced && !onto.empty() && is_ancestor(workdir, onto, "HEAD"))
                 {
                     const size_t asking = windows::hold({});
-                    ui.message(nullptr,
-                               {.icon = rap::message_spec::icon::question,
-                                .title = _("Rebase"),
-                                .text = _("Current branch is up to date or newer than the fetched "
-                                          "branch. Open rebase anyway?"),
-                                .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
-                               [&ui, workdir, rebase_onto, asking](rap::dialog_role r)
-                               {
-                                   if (r == rap::dialog_role::yes)
-                                       if (auto w = rebase_window::open(ui, workdir, rebase_onto))
-                                           windows::keep(std::move(*w));
-                                   windows::release(asking);
-                               });
+                    show_message(
+                        ui, nullptr,
+                        {.icon = rap::message_spec::icon::question,
+                         .title = _("Rebase"),
+                         .text = _("Current branch is up to date or newer than the fetched "
+                                   "branch. Open rebase anyway?"),
+                         .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
+                        [&ui, workdir, rebase_onto, asking](rap::dialog_role r)
+                        {
+                            if (r == rap::dialog_role::yes)
+                                if (auto w = rebase_window::open(ui, workdir, rebase_onto))
+                                    windows::keep(std::move(*w));
+                            windows::release(asking);
+                        });
                 }
                 else if (auto w = rebase_window::open(ui, workdir, rebase_onto))
                     windows::keep(std::move(*w));

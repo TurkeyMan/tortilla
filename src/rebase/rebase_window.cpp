@@ -8,6 +8,7 @@
 #include "git/command.h"
 #include "i18n.h"
 #include "log/log_window.h"
+#include "ui/modal_dialogs.h"
 #include "ui/progress_dialog.h"
 #include "ui/repo_icon.h"
 #include "ui/settings_dialog.h"
@@ -268,19 +269,20 @@ void rebase_window::build(const std::string& upstream)
         .warn =
             [this](const std::string& m)
         {
-            ui_.message(window_.get(),
-                        {.icon = rap::message_spec::icon::warning, .title = _("Rebase"), .text = m});
+            show_message(
+                ui_, window_.get(),
+                {.icon = rap::message_spec::icon::warning, .title = _("Rebase"), .text = m});
         },
         .ask_skip =
             [this](const std::string& output, std::function<void(bool)> answer)
         {
-            ui_.message(window_.get(),
-                        {.icon = rap::message_spec::icon::question,
-                         .title = _("Rebase"),
-                         .text = _("Cherry-pick failed. Skip this commit?"),
-                         .detail = output,
-                         .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
-                        [answer](rap::dialog_role r) { answer(r == rap::dialog_role::yes); });
+            show_message(ui_, window_.get(),
+                         {.icon = rap::message_spec::icon::question,
+                          .title = _("Rebase"),
+                          .text = _("Cherry-pick failed. Skip this commit?"),
+                          .detail = output,
+                          .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
+                         [answer](rap::dialog_role r) { answer(r == rap::dialog_role::yes); });
         },
     };
     engine_ = std::make_unique<rebase_engine>(ui_, repo_.workdir(), repo_.git_dir(), model_, hooks);
@@ -590,17 +592,17 @@ void rebase_window::continue_pressed()
     case rebase_stage::done:
         if (stashed_)
         {
-            ui_.message(window_.get(),
-                        {.icon = rap::message_spec::icon::question,
-                         .title = _("Rebase"),
-                         .text = _("Your changes were stashed before the rebase. Pop the stash now?"),
-                         .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
-                        [this](rap::dialog_role r)
-                        {
-                            if (r == rap::dialog_role::yes)
-                                run_git(repo_.workdir(), {"stash", "pop"});
-                            close();
-                        });
+            show_message(
+                ui_, window_.get(),
+                {.icon = rap::message_spec::icon::question,
+                 .title = _("Rebase"),
+                 .text = _("Your changes were stashed before the rebase. Pop the stash now?"),
+                 .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
+                [this](rap::dialog_role r)
+                {
+                    if (r == rap::dialog_role::yes) run_git(repo_.workdir(), {"stash", "pop"});
+                    close();
+                });
             return;
         }
         close();
@@ -616,13 +618,13 @@ void rebase_window::start_rebase()
     // The picks create commits, so an identity is required [spec 2.7.1].
     if (!run_git(repo_.workdir(), {"var", "GIT_COMMITTER_IDENT"}).ok())
     {
-        ui_.message(window_.get(),
-                    {.icon = rap::message_spec::icon::error,
-                     .title = _("Rebase"),
-                     .text = _("Git doesn't know who you are, so it can't create commits."),
-                     .detail = _("Set your name and email, for example:\n"
-                                 "git config --global user.name \"Your Name\"\n"
-                                 "git config --global user.email you@example.com")});
+        show_message(ui_, window_.get(),
+                     {.icon = rap::message_spec::icon::error,
+                      .title = _("Rebase"),
+                      .text = _("Git doesn't know who you are, so it can't create commits."),
+                      .detail = _("Set your name and email, for example:\n"
+                                  "git config --global user.name \"Your Name\"\n"
+                                  "git config --global user.email you@example.com")});
         return;
     }
     // --onto: the upstream's commits replayed onto another [spec 2.8].
@@ -639,17 +641,17 @@ void rebase_window::start_rebase()
             list +=
                 rap::i18n::format(N_("...and {0} more", "...and {0} more", in_the_way.size() - 50),
                                   in_the_way.size() - 50);
-        ui_.message(window_.get(),
-                    {.icon = rap::message_spec::icon::error,
-                     .title = _("Rebase"),
-                     .text = rap::i18n::format(
-                         N_("An untracked file is where the rebase would put one of its own. "
-                            "Move it away, or add it, first:",
-                            "{0} untracked files are where the rebase would put its own. Move "
-                            "them away, or add them, first:",
-                            in_the_way.size()),
-                         in_the_way.size()),
-                     .detail = list});
+        show_message(ui_, window_.get(),
+                     {.icon = rap::message_spec::icon::error,
+                      .title = _("Rebase"),
+                      .text = rap::i18n::format(
+                          N_("An untracked file is where the rebase would put one of its own. "
+                             "Move it away, or add it, first:",
+                             "{0} untracked files are where the rebase would put its own. Move "
+                             "them away, or add them, first:",
+                             in_the_way.size()),
+                          in_the_way.size()),
+                      .detail = list});
         return;
     }
     git_result dirty = run_git(repo_.workdir(), {"status", "--porcelain", "--untracked-files=no"},
@@ -674,40 +676,40 @@ void rebase_window::start_rebase()
     };
     if (dirty.ok() && dirty.output.empty()) return go();
 
-    ui_.message(window_.get(),
-                {.icon = rap::message_spec::icon::question,
-                 .title = _("Rebase"),
-                 .text = _("The working tree has local changes. Stash them and start the rebase?"),
-                 .detail = dirty.output,
-                 .buttons = {rap::dialog_role::yes, rap::dialog_role::cancel}},
-                [this, go](rap::dialog_role r)
-                {
-                    if (r != rap::dialog_role::yes) return;
-                    if (!run_git(repo_.workdir(), {"stash", "push"}).ok()) return;
-                    stashed_ = true;
-                    go();
-                });
+    show_message(ui_, window_.get(),
+                 {.icon = rap::message_spec::icon::question,
+                  .title = _("Rebase"),
+                  .text = _("The working tree has local changes. Stash them and start the rebase?"),
+                  .detail = dirty.output,
+                  .buttons = {rap::dialog_role::yes, rap::dialog_role::cancel}},
+                 [this, go](rap::dialog_role r)
+                 {
+                     if (r != rap::dialog_role::yes) return;
+                     if (!run_git(repo_.workdir(), {"stash", "push"}).ok()) return;
+                     stashed_ = true;
+                     go();
+                 });
 }
 
 void rebase_window::abort_pressed()
 {
     if (!engine_->started() || engine_->stage() == rebase_engine::rebase_stage::done)
         return close();
-    ui_.message(window_.get(),
-                {.icon = rap::message_spec::icon::question,
-                 .title = _("Rebase"),
-                 .text = _("Are you sure you want to abort the rebase process?"),
-                 .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
-                [this](rap::dialog_role r)
-                {
-                    if (r != rap::dialog_role::yes) return;
-                    engine_->abort(
-                        [this]
-                        {
-                            if (stashed_) run_git(repo_.workdir(), {"stash", "pop"});
-                            close();
-                        });
-                });
+    show_message(ui_, window_.get(),
+                 {.icon = rap::message_spec::icon::question,
+                  .title = _("Rebase"),
+                  .text = _("Are you sure you want to abort the rebase process?"),
+                  .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
+                 [this](rap::dialog_role r)
+                 {
+                     if (r != rap::dialog_role::yes) return;
+                     engine_->abort(
+                         [this]
+                         {
+                             if (stashed_) run_git(repo_.workdir(), {"stash", "pop"});
+                             close();
+                         });
+                 });
 }
 
 bool rebase_window::acted() const
@@ -755,8 +757,8 @@ void rebase_window::add_commits()
 {
     auto log = log_window::open(ui_, repo_.workdir(), true);
     if (!log)
-        return ui_.message(
-            window_.get(),
+        return show_message(
+            ui_, window_.get(),
             {.icon = rap::message_spec::icon::error, .title = "Tortilla", .text = log.error()});
     (*log)->pick_commits(_("Add Commits to Rebase"), _("_Add"),
                          [this, alive = std::weak_ptr<bool>(alive_)](std::vector<commit> chosen)

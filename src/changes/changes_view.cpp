@@ -21,6 +21,7 @@
 #include "ui/diff_window.h"
 #include "ui/menu_items.h"
 #include "ui/menu_text.h"
+#include "ui/modal_dialogs.h"
 #include "ui/repo_icon.h"
 #include "ui/windows.h"
 #include "util/check_rows.h"
@@ -290,15 +291,15 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
     auto confirm_local = [this, local](const std::string& question, const std::string& title,
                                        std::vector<arg_list> commands)
     {
-        host_.ui.message(host_.window(),
-                         {.icon = rap::message_spec::icon::question,
-                          .title = title,
-                          .text = question,
-                          .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
-                         [local, title, commands](rap::dialog_role r)
-                         {
-                             if (r == rap::dialog_role::yes) local(title, commands);
-                         });
+        show_message(host_.ui, host_.window(),
+                     {.icon = rap::message_spec::icon::question,
+                      .title = title,
+                      .text = question,
+                      .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
+                     [local, title, commands](rap::dialog_role r)
+                     {
+                         if (r == rap::dialog_role::yes) local(title, commands);
+                     });
     };
     // As confirm_local, for commands that overwrite or remove working
     // files: once confirmed, what `keep` names goes to the trash first, so
@@ -307,8 +308,8 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
     auto confirm_overwrite = [this, local](const std::string& question, const std::string& title,
                                            keep_fn keep, std::vector<arg_list> commands)
     {
-        host_.ui.message(
-            host_.window(),
+        show_message(
+            host_.ui, host_.window(),
             {.icon = rap::message_spec::icon::question,
              .title = title,
              .text = question,
@@ -434,10 +435,10 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
                 {
                     revert_plan plan = plan_revert(dir, files);
                     if (!plan.error.empty())
-                        return host_.ui.message(host_.window(),
-                                                {.icon = rap::message_spec::icon::error,
-                                                 .title = _("Revert"),
-                                                 .text = plan.error});
+                        return show_message(host_.ui, host_.window(),
+                                            {.icon = rap::message_spec::icon::error,
+                                             .title = _("Revert"),
+                                             .text = plan.error});
                     confirm_overwrite(
                         rap::i18n::format(_("Revert {0}? Their local changes go to the Recycle "
                                             "Bin."),
@@ -624,12 +625,12 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
         {
             const auto path = rap::sys::path_from_utf8(host_.workdir) / ".gitignore";
             if (const std::string error = append_ignore_lines(path, patterns); !error.empty())
-                host_.ui.message(host_.window(),
-                                 {.icon = rap::message_spec::icon::error,
-                                  .title = _("Add to ignore list"),
-                                  .text = rap::i18n::format(_("Could not write {0}."),
-                                                            rap::sys::path_to_utf8(path)),
-                                  .detail = error});
+                show_message(host_.ui, host_.window(),
+                             {.icon = rap::message_spec::icon::error,
+                              .title = _("Add to ignore list"),
+                              .text = rap::i18n::format(_("Could not write {0}."),
+                                                        rap::sys::path_to_utf8(path)),
+                              .detail = error});
             host_.refresh();
         };
         std::vector<std::string> paths_chosen;
@@ -728,21 +729,23 @@ void changes_view::open_file(const file_change& f, bool choose)
         if (path.empty())
         {
             idle();
-            host_.ui.message(host_.window(), {.icon = rap::message_spec::icon::error,
-                                              .title = _("Open"),
-                                              .text = rap::i18n::format(_("Could not get {0} at {1}."),
-                                                                        f.path, source_.hash.substr(0, 8)),
-                                              .detail = r.ok() ? "" : r.output});
+            show_message(host_.ui, host_.window(),
+                         {.icon = rap::message_spec::icon::error,
+                          .title = _("Open"),
+                          .text = rap::i18n::format(_("Could not get {0} at {1}."), f.path,
+                                                    source_.hash.substr(0, 8)),
+                          .detail = r.ok() ? "" : r.output});
             return;
         }
     }
     if (!(choose ? rap::sys::open_with(path) : rap::sys::open_path(path)))
     {
         idle();
-        host_.ui.message(host_.window(),
-                         {.icon = rap::message_spec::icon::error,
-                          .title = _("Open"),
-                          .text = rap::i18n::format(_("Could not open {0}."), rap::sys::path_to_utf8(path))});
+        show_message(
+            host_.ui, host_.window(),
+            {.icon = rap::message_spec::icon::error,
+             .title = _("Open"),
+             .text = rap::i18n::format(_("Could not open {0}."), rap::sys::path_to_utf8(path))});
     }
 }
 
@@ -788,11 +791,12 @@ changes_view::file_of(const version& v, const std::string& title,
     else if (r.ok())
         path = write_revision_file(v.rev, v.path, r.output);
     if (!path.empty()) return path;
-    host_.ui.message(host_.window(), {.icon = rap::message_spec::icon::error,
-                                      .title = title,
-                                      .text = rap::i18n::format(_("Could not get {0} at {1}."),
-                                                                v.path, v.rev.substr(0, 8)),
-                                      .detail = r.ok() ? "" : r.output});
+    show_message(
+        host_.ui, host_.window(),
+        {.icon = rap::message_spec::icon::error,
+         .title = title,
+         .text = rap::i18n::format(_("Could not get {0} at {1}."), v.path, v.rev.substr(0, 8)),
+         .detail = r.ok() ? "" : r.output});
     return std::nullopt;
 }
 
@@ -840,11 +844,11 @@ void changes_view::view_in_editor(const file_change& f)
         if (!rap::sys::open_path(*path))
         {
             idle();
-            host_.ui.message(host_.window(),
-                             {.icon = rap::message_spec::icon::error,
-                              .title = title,
-                              .text = rap::i18n::format(_("Could not open {0}."),
-                                                        rap::sys::path_to_utf8(*path))});
+            show_message(host_.ui, host_.window(),
+                         {.icon = rap::message_spec::icon::error,
+                          .title = title,
+                          .text = rap::i18n::format(_("Could not open {0}."),
+                                                    rap::sys::path_to_utf8(*path))});
         }
         return;
     }
@@ -858,8 +862,8 @@ void changes_view::view_in_editor(const file_change& f)
     if (!p)
     {
         idle();
-        return host_.ui.message(
-            host_.window(),
+        return show_message(
+            host_.ui, host_.window(),
             {.icon = rap::message_spec::icon::error,
              .title = title,
              .text = rap::i18n::format(_("Could not start {0}: {1}"), program, p.error())});
@@ -886,8 +890,8 @@ void changes_view::commit(const std::vector<file_change>& files)
                                                rap::sys::path_from_utf8(f.path)));
     auto w = commit_window::open(host_.ui, paths);
     if (!w)
-        return host_.ui.message(
-            host_.window(),
+        return show_message(
+            host_.ui, host_.window(),
             {.icon = rap::message_spec::icon::error, .title = "Tortilla", .text = w.error()});
     windows::keep(std::move(*w));
 }
@@ -900,8 +904,8 @@ void changes_view::show_log(const std::string& path, const std::string& rev)
                                                     rap::sys::path_from_utf8(path));
     auto log = log_window::open(host_.ui, file);
     if (!log)
-        return host_.ui.message(
-            host_.window(),
+        return show_message(
+            host_.ui, host_.window(),
             {.icon = rap::message_spec::icon::error, .title = "Tortilla", .text = log.error()});
     if (!rev.empty()) (*log)->select_commit(rev);
     windows::keep(std::move(*log));
@@ -914,8 +918,8 @@ void changes_view::blame(const std::string& path, const std::string& rev)
                                                     rap::sys::path_from_utf8(path));
     auto w = blame_window::open(host_.ui, file, rev);
     if (!w)
-        return host_.ui.message(
-            host_.window(),
+        return show_message(
+            host_.ui, host_.window(),
             {.icon = rap::message_spec::icon::error, .title = "Tortilla", .text = w.error()});
     windows::keep(std::move(*w));
 }
@@ -969,8 +973,8 @@ void changes_view::save_revisions(const std::string& rev, std::vector<file_chang
     rap::file_dialog_spec spec;
     spec.mode = rap::file_dialog_spec::mode::folder;
     spec.title = _("Export selection to");
-    host_.ui.choose_files(
-        host_.window(), spec,
+    pick_files(
+        host_.ui, host_.window(), spec,
         [this, rev, files](std::vector<std::string> picked)
         {
             if (picked.empty()) return;
@@ -986,10 +990,11 @@ void changes_view::save_revisions(const std::string& rev, std::vector<file_chang
                     failed += f.path + "\n";
             }
             if (!failed.empty())
-                host_.ui.message(host_.window(), {.icon = rap::message_spec::icon::error,
-                                                  .title = _("Export selection to"),
-                                                  .text = _("Some files could not be exported."),
-                                                  .detail = failed});
+                show_message(host_.ui, host_.window(),
+                             {.icon = rap::message_spec::icon::error,
+                              .title = _("Export selection to"),
+                              .text = _("Some files could not be exported."),
+                              .detail = failed});
         });
 }
 
@@ -1005,18 +1010,19 @@ void changes_view::save_revision(const std::string& rev, const file_change& file
     spec.initial_path = dot == std::string::npos || dot == 0
                             ? name + "-" + rev.substr(0, 8)
                             : name.substr(0, dot) + "-" + rev.substr(0, 8) + name.substr(dot);
-    host_.ui.choose_files(
-        host_.window(), spec,
-        [this, rev, path = file.path](std::vector<std::string> picked)
-        {
-            if (picked.empty()) return;
-            git_result r = revision_file(host_.workdir, rev, path);
-            if (!r.ok() || !write_file(rap::sys::path_from_utf8(picked.front()), r.output))
-                host_.ui.message(host_.window(), {.icon = rap::message_spec::icon::error,
-                                                  .title = _("Save revision to"),
-                                                  .text = rap::i18n::format(_("Could not save {0}."), picked.front()),
-                                                  .detail = r.ok() ? "" : r.output});
-        });
+    pick_files(host_.ui, host_.window(), spec,
+               [this, rev, path = file.path](std::vector<std::string> picked)
+               {
+                   if (picked.empty()) return;
+                   git_result r = revision_file(host_.workdir, rev, path);
+                   if (!r.ok() || !write_file(rap::sys::path_from_utf8(picked.front()), r.output))
+                       show_message(
+                           host_.ui, host_.window(),
+                           {.icon = rap::message_spec::icon::error,
+                            .title = _("Save revision to"),
+                            .text = rap::i18n::format(_("Could not save {0}."), picked.front()),
+                            .detail = r.ok() ? "" : r.output});
+               });
 }
 
 }  // namespace tortilla

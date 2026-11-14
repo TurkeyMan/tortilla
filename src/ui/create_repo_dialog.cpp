@@ -2,6 +2,7 @@
 
 #include "git/command.h"
 #include "i18n.h"
+#include "ui/modal_dialogs.h"
 #include "ui/repo_icon.h"
 
 #include <rapport/sys.h>
@@ -90,19 +91,20 @@ struct state
         const git_result r = run_git(folder, args);
         if (!r.ok())
         {
-            ui.message(nullptr,
-                       {.icon = rap::message_spec::icon::error,
-                        .title = "Tortilla",
-                        .text = _("Could not initialize a new repository."),
-                        .detail = r.output},
-                       [self](rap::dialog_role) { self->finish(false); });
+            show_message(ui, nullptr,
+                         {.icon = rap::message_spec::icon::error,
+                          .title = "Tortilla",
+                          .text = _("Could not initialize a new repository."),
+                          .detail = r.output},
+                         [self](rap::dialog_role) { self->finish(false); });
             return;
         }
-        ui.message(nullptr,
-                   {.icon = rap::message_spec::icon::info,
-                    .title = "Tortilla",
-                    .text = rap::i18n::format(_("Initialized empty Git repository in {0}."), folder)},
-                   [self](rap::dialog_role) { self->finish(true); });
+        show_message(
+            ui, nullptr,
+            {.icon = rap::message_spec::icon::info,
+             .title = "Tortilla",
+             .text = rap::i18n::format(_("Initialized empty Git repository in {0}."), folder)},
+            [self](rap::dialog_role) { self->finish(true); });
     }
 
     void show(std::shared_ptr<state> self)
@@ -135,13 +137,14 @@ struct state
                 // Bare in a folder with things in it: sure? [CreateRepositoryCommand]
                 if (bare_repo && !empty_folder(rap::sys::path_from_utf8(self->folder)))
                 {
-                    self->ui.message(
-                        nullptr,
+                    show_message(
+                        self->ui, nullptr,
                         {.icon = rap::message_spec::icon::warning,
                          .title = "Tortilla",
-                         .text = rap::i18n::format(_("The target folder\n{0}\nis not empty!\nAre you sure you want "
-                                                     "to initialize a git repository inside that folder?"),
-                                                   self->folder),
+                         .text = rap::i18n::format(
+                             _("The target folder\n{0}\nis not empty!\nAre you sure you want "
+                               "to initialize a git repository inside that folder?"),
+                             self->folder),
                          .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
                         [self](rap::dialog_role r)
                         {
@@ -164,21 +167,22 @@ void create_repository(rap::ui& ui, const std::string& folder, std::function<voi
 {
     auto st = std::make_shared<state>(state{.ui = ui, .folder = folder, .done = std::move(done)});
     if (!special_folder(rap::sys::path_from_utf8(folder))) return st->show(st);
-    ui.message(nullptr,
-               {.icon = rap::message_spec::icon::warning,
-                .title = "Tortilla",
-                .text = rap::i18n::format(_("The target folder\n{0}\nis a special folder and is not supposed to be "
-                                            "a repository root!\nAre you sure you want to initialize a git "
-                                            "repository inside that folder?"),
-                                          folder),
-                .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
-               [st](rap::dialog_role r)
-               {
-                   if (r == rap::dialog_role::yes)
-                       st->show(st);
-                   else
-                       st->finish(false);
-               });
+    show_message(ui, nullptr,
+                 {.icon = rap::message_spec::icon::warning,
+                  .title = "Tortilla",
+                  .text = rap::i18n::format(
+                      _("The target folder\n{0}\nis a special folder and is not supposed to be "
+                        "a repository root!\nAre you sure you want to initialize a git "
+                        "repository inside that folder?"),
+                      folder),
+                  .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
+                 [st](rap::dialog_role r)
+                 {
+                     if (r == rap::dialog_role::yes)
+                         st->show(st);
+                     else
+                         st->finish(false);
+                 });
 }
 
 }  // namespace tortilla

@@ -4,6 +4,7 @@
 #include "i18n.h"
 #include "log/ref_labels.h"
 #include "ui/menu_text.h"
+#include "ui/modal_dialogs.h"
 
 #include <rapport/sys.h>
 
@@ -1450,8 +1451,8 @@ void forge_panel::download_selected()
                                .initial_path =
                                    a.name.find('.') == std::string::npos ? a.name + ".zip" : a.name,
                                .filters = {{_("Zip archives"), "*.zip"}}};
-    host_.ui.choose_files(
-        host_.window ? host_.window() : nullptr, spec,
+    pick_files(
+        host_.ui, host_.window ? host_.window() : nullptr, spec,
         [this, alive = std::weak_ptr<bool>(alive_), a, remote](std::vector<std::string> chosen)
         {
             if (!alive.lock() || chosen.empty()) return;

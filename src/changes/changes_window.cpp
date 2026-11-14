@@ -6,6 +6,7 @@
 #include "log/reflog_window.h"
 #include "settings.h"
 #include "ui/diff_window.h"
+#include "ui/modal_dialogs.h"
 #include "ui/progress_dialog.h"
 #include "ui/repo_icon.h"
 #include "ui/settings_dialog.h"
@@ -324,8 +325,9 @@ void changes_window::open_commit()
     auto w = commit_window::open(ui_, paths);
     if (!w)
     {
-        ui_.message(window_.get(),
-                    {.icon = rap::message_spec::icon::error, .title = _("Commit"), .text = w.error()});
+        show_message(
+            ui_, window_.get(),
+            {.icon = rap::message_spec::icon::error, .title = _("Commit"), .text = w.error()});
         return;
     }
     commit_window_ = std::move(*w);
@@ -367,10 +369,10 @@ rap::menu changes_window::stash_menu()
                      {
                          auto list = reflog_window::open(ui_, workdir_, "refs/stash");
                          if (!list)
-                             return ui_.message(window_.get(),
-                                                {.icon = rap::message_spec::icon::error,
-                                                 .title = "Tortilla",
-                                                 .text = list.error()});
+                             return show_message(ui_, window_.get(),
+                                                 {.icon = rap::message_spec::icon::error,
+                                                  .title = "Tortilla",
+                                                  .text = list.error()});
                          windows::keep(std::move(*list));
                      }});
     }

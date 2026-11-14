@@ -6,6 +6,7 @@
 #include "i18n.h"
 #include "log/log_window.h"
 #include "settings.h"
+#include "ui/modal_dialogs.h"
 #include "ui/progress_dialog.h"
 #include "ui/repo_icon.h"
 #include "ui/windows.h"
@@ -75,18 +76,17 @@ void clone_dialog::build(const std::string& folder, const std::string& url)
                                  button{_("Bro_wse...")}.on_click(
                                      [this]
                                      {
-                                         ui_.choose_files(
-                                             window_.get(),
-                                             {.mode = rap::file_dialog_spec::mode::folder,
-                                              .title = _("Clone into"),
-                                              .initial_path = directory_->text()},
-                                             [this](std::vector<std::string> chosen)
-                                             {
-                                                 if (chosen.empty()) return;
-                                                 directory_->set_text(chosen.front());
-                                                 module_.clear();
-                                                 url_changed(url_->text());
-                                             });
+                                         pick_files(ui_, window_.get(),
+                                                    {.mode = rap::file_dialog_spec::mode::folder,
+                                                     .title = _("Clone into"),
+                                                     .initial_path = directory_->text()},
+                                                    [this](std::vector<std::string> chosen)
+                                                    {
+                                                        if (chosen.empty()) return;
+                                                        directory_->set_text(chosen.front());
+                                                        module_.clear();
+                                                        url_changed(url_->text());
+                                                    });
                                      }),
                              }},
                         },
@@ -176,8 +176,8 @@ void clone_dialog::ok()
     const std::string url = url_->text(), dir = directory_->text();
     auto refuse = [this](const std::string& text)
     {
-        ui_.message(window_.get(),
-                    {.icon = rap::message_spec::icon::warning, .title = _("Clone"), .text = text});
+        show_message(ui_, window_.get(),
+                     {.icon = rap::message_spec::icon::warning, .title = _("Clone"), .text = text});
     };
     if (url.empty() || dir.empty()) return refuse(_("URL and directory must not be empty."));
     if (branch_->checked() && !valid_branch_name(branch_name_->text()))

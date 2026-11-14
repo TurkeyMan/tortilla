@@ -31,6 +31,7 @@
 #include "ui/export_dialog.h"
 #include "ui/menu_items.h"
 #include "ui/menu_text.h"
+#include "ui/modal_dialogs.h"
 #include "ui/progress_dialog.h"
 #include "ui/repo_browser.h"
 #include "ui/repo_icon.h"
@@ -131,10 +132,11 @@ void log_tab::run_ref_commands(const std::string& title, std::vector<arg_list> c
         {
             update_undo_buttons();
             if (!o.applied)
-                ui_.message(parent(), {.icon = rap::message_spec::icon::error,
-                                       .title = o.title,
-                                       .text = rap::i18n::format(_("{0} failed."), o.title),
-                                       .detail = o.applied.error().message});
+                show_message(ui_, parent(),
+                             {.icon = rap::message_spec::icon::error,
+                              .title = o.title,
+                              .text = rap::i18n::format(_("{0} failed."), o.title),
+                              .detail = o.applied.error().message});
             refs_changed();
         });
 }
@@ -171,10 +173,11 @@ void log_tab::run_quietly(const std::string& title, std::vector<arg_list> comman
                 if (code == 0) return (*self)();
                 ref_command_.reset();
                 if (show_failure)
-                    ui_.message(parent(), {.icon = rap::message_spec::icon::error,
-                                           .title = title,
-                                           .text = rap::i18n::format(_("{0} failed."), title),
-                                           .detail = run->output});
+                    show_message(ui_, parent(),
+                                 {.icon = rap::message_spec::icon::error,
+                                  .title = title,
+                                  .text = rap::i18n::format(_("{0} failed."), title),
+                                  .detail = run->output});
                 if (after) after(false, run->output);  // an earlier command may have succeeded
             },
             git_output::all, prompts);
@@ -201,28 +204,27 @@ void log_tab::refs_changed()
 void log_tab::confirm_then_run(const std::string& question, const std::string& title,
                                std::vector<arg_list> commands, std::string label)
 {
-    ui_.message(parent(),
-                {.icon = rap::message_spec::icon::question,
-                 .title = title,
-                 .text = question,
-                 .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
-                guarded(
-                    [this, title, commands, label](rap::dialog_role r)
-                    {
-                        if (r != rap::dialog_role::yes) return;
-                        // Deleting local branches and tags only touches refs.
-                        const bool refs_only = std::ranges::all_of(
-                            commands,
-                            [](const arg_list& a)
-                            {
-                                return !a.empty() &&
-                                       (a[0] == "branch" || a[0] == "tag" || a[0] == "update-ref");
-                            });
-                        if (refs_only)
-                            run_ref_commands(title, commands, label);
-                        else
-                            run_git_commands(title, commands);
-                    }));
+    show_message(ui_, parent(),
+                 {.icon = rap::message_spec::icon::question,
+                  .title = title,
+                  .text = question,
+                  .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
+                 guarded(
+                     [this, title, commands, label](rap::dialog_role r)
+                     {
+                         if (r != rap::dialog_role::yes) return;
+                         // Deleting local branches and tags only touches refs.
+                         const bool refs_only = std::ranges::all_of(
+                             commands,
+                             [](const arg_list& a) {
+                                 return !a.empty() &&
+                                        (a[0] == "branch" || a[0] == "tag" || a[0] == "update-ref");
+                             });
+                         if (refs_only)
+                             run_ref_commands(title, commands, label);
+                         else
+                             run_git_commands(title, commands);
+                     }));
 }
 
 // Comparing revisions with the tool the Diff Viewer page chose (compare.h).
@@ -459,9 +461,10 @@ menu log_tab::context_menu(std::optional<size_t> clicked)
                             : repo_location();
                     auto b = repo_browser::open(ui_, from, hash);
                     if (!b)
-                        return ui_.message(parent(), {.icon = rap::message_spec::icon::error,
-                                                      .title = "Tortilla",
-                                                      .text = b.error()});
+                        return show_message(ui_, parent(),
+                                            {.icon = rap::message_spec::icon::error,
+                                             .title = "Tortilla",
+                                             .text = b.error()});
                     windows::keep(std::move(*b));
                 }));
             if (!head && has_wc && !merging && !is_stash)
@@ -914,10 +917,11 @@ void log_tab::copy_to_clipboard(const std::vector<size_t>& rows, int format)
 void log_tab::show_branches_containing(const commit& c)
 {
     // In process (the message waits for it), as git branch -a --contains.
-    ui_.message(parent(), {.icon = rap::message_spec::icon::info,
-                           .title = _("Branches"),
-                           .text = rap::i18n::format(_("Branches containing {0}:"), c.id.hex(8)),
-                           .detail = repo_.branches_containing(c.id)});
+    show_message(ui_, parent(),
+                 {.icon = rap::message_spec::icon::info,
+                  .title = _("Branches"),
+                  .text = rap::i18n::format(_("Branches containing {0}:"), c.id.hex(8)),
+                  .detail = repo_.branches_containing(c.id)});
 }
 
 // TortoiseGit's Create Branch dialog, reduced to the common options.
@@ -963,8 +967,8 @@ void log_tab::keep_dialog(std::expected<std::unique_ptr<Dialog>, std::string> d)
 {
     if (!d)
     {
-        ui_.message(
-            parent(),
+        show_message(
+            ui_, parent(),
             {.icon = rap::message_spec::icon::error, .title = "Tortilla", .text = d.error()});
         return;
     }
@@ -1037,18 +1041,18 @@ void log_tab::move_ref(const ref& ref, const commit& target)
         args = {"tag", "--force", ref.name, to};
 
     const std::string title = tag ? _("Move Tag") : _("Move Branch");
-    ui_.message(parent(),
-                {.icon = rap::message_spec::icon::question,
-                 .title = title,
-                 .text = text,
-                 .detail = detail,
-                 .buttons = {rap::dialog_role::ok, rap::dialog_role::cancel}},
-                guarded(
-                    [this, title, args,
-                     label = rap::i18n::format(_("Move {0}"), ref.name)](rap::dialog_role r)
-                    {
-                        if (r == rap::dialog_role::ok) run_ref_commands(title, {args}, label);
-                    }));
+    show_message(ui_, parent(),
+                 {.icon = rap::message_spec::icon::question,
+                  .title = title,
+                  .text = text,
+                  .detail = detail,
+                  .buttons = {rap::dialog_role::ok, rap::dialog_role::cancel}},
+                 guarded(
+                     [this, title, args,
+                      label = rap::i18n::format(_("Move {0}"), ref.name)](rap::dialog_role r)
+                     {
+                         if (r == rap::dialog_role::ok) run_ref_commands(title, {args}, label);
+                     }));
 }
 
 // A right-click on a label makes the menu about that label (checkout,
@@ -1211,11 +1215,11 @@ void log_tab::run_switch(const std::string& target, bool detach, switch_mode mod
                                    [this](bool ok2, const std::string& output)
                                    {
                                        if (!ok2)
-                                           ui_.message(parent(),
-                                                       {.icon = rap::message_spec::icon::error,
-                                                        .title = _("Switch/Checkout"),
-                                                        .text = _("Switch/Checkout failed."),
-                                                        .detail = output});
+                                           show_message(ui_, parent(),
+                                                        {.icon = rap::message_spec::icon::error,
+                                                         .title = _("Switch/Checkout"),
+                                                         .text = _("Switch/Checkout failed."),
+                                                         .detail = output});
                                        reload();
                                        if (ok2) offer_stash_pop();
                                    });
@@ -1243,8 +1247,8 @@ void log_tab::offer_stash_pop()
             run_git(repo_.workdir(), {"status", "--porcelain", "--untracked-files=no"},
                     git_output::stdout_only);
         const bool clean = dirty.ok() && dirty.output.empty();
-        ui_.message(
-            parent(),
+        show_message(
+            ui_, parent(),
             {.icon = rap::message_spec::icon::question,
              .title = _("Stash"),
              .text = rap::i18n::format(
@@ -1316,8 +1320,8 @@ void log_tab::save_patch_series(rap::window* viewer, const patch_range& range)
     const std::string key = "formatPatch.dir." + repo_.workdir();
     std::string folder = settings::get().value(key);
     if (folder.empty()) folder = repo_.workdir();
-    ui_.choose_files(
-        viewer,
+    pick_files(
+        ui_, viewer,
         {.mode = rap::file_dialog_spec::mode::folder,
          .title = _("Write patches into"),
          .initial_path = folder},
@@ -1342,8 +1346,8 @@ void log_tab::show_log_at(const std::string& rev)
 {
     auto log = log_window::open(ui_, repo_location());
     if (!log)
-        return ui_.message(
-            parent(),
+        return show_message(
+            ui_, parent(),
             {.icon = rap::message_spec::icon::error, .title = "Tortilla", .text = log.error()});
     (*log)->start_at(rev);
     windows::keep(std::move(*log));
@@ -1392,11 +1396,11 @@ void log_tab::compare_change_sets(const std::string& a, const std::string& b)
                     if (!error.empty())
                     {
                         remove();
-                        return ui_.message(parent(),
-                                           {.icon = rap::message_spec::icon::error,
-                                            .title = _("Compare change sets"),
-                                            .text = _("Could not write the commits' patches."),
-                                            .detail = error});
+                        return show_message(ui_, parent(),
+                                            {.icon = rap::message_spec::icon::error,
+                                             .title = _("Compare change sets"),
+                                             .text = _("Could not write the commits' patches."),
+                                             .detail = error});
                     }
                     difftool_ = compare_files(
                         ui_, parent(), rap::sys::path_to_utf8((*patches)[0]),
@@ -1457,8 +1461,8 @@ void log_tab::open_rebase(const std::string& upstream, const rebase_todo* todo)
     if (w && todo) (*w)->prepare(*todo);
     if (!w)
     {
-        ui_.message(
-            parent(),
+        show_message(
+            ui_, parent(),
             {.icon = rap::message_spec::icon::error, .title = _("Rebase"), .text = w.error()});
         return;
     }
@@ -1481,8 +1485,8 @@ void log_tab::create_pull_request(const ref& r)
 {
     auto d = pull_request_dialog::open(ui_, repo_location(), r, pr_watch_->remotes());
     if (!d)
-        return ui_.message(
-            parent(),
+        return show_message(
+            ui_, parent(),
             {.icon = rap::message_spec::icon::error, .title = "Tortilla", .text = d.error()});
     (*d)->on_done(
         [this, alive = std::weak_ptr<bool>(alive_)](const pull_request&)
@@ -1612,9 +1616,10 @@ void log_tab::open_worktree(const std::string& path)
 {
     auto log = log_window::open(ui_, path);
     if (!log)
-        return ui_.message(parent(), {.icon = rap::message_spec::icon::error,
-                                      .title = _("Open worktree"),
-                                      .text = log.error()});
+        return show_message(ui_, parent(),
+                            {.icon = rap::message_spec::icon::error,
+                             .title = _("Open worktree"),
+                             .text = log.error()});
     windows::keep(std::move(*log));
 }
 

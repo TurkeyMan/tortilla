@@ -4,6 +4,7 @@
 #include "git/pathspec_file.h"
 #include "git/repo.h"
 #include "i18n.h"
+#include "ui/modal_dialogs.h"
 #include "util/repo_path.h"
 
 #include <rapport/sys.h>
@@ -22,12 +23,12 @@ void remove_files(rap::ui& ui, const std::vector<std::string>& paths, bool keep_
     namespace fs = std::filesystem;
     auto fail = [&ui, done](const std::string& text, const std::string& detail = {})
     {
-        ui.message(nullptr,
-                   {.icon = rap::message_spec::icon::error,
-                    .title = "Tortilla",
-                    .text = text,
-                    .detail = detail},
-                   [done](rap::dialog_role) { done(false); });
+        show_message(ui, nullptr,
+                     {.icon = rap::message_spec::icon::error,
+                      .title = "Tortilla",
+                      .text = text,
+                      .detail = detail},
+                     [done](rap::dialog_role) { done(false); });
     };
     if (paths.empty()) return done(false);
     auto repo = repo::open(paths.front());
@@ -67,33 +68,35 @@ void remove_files(rap::ui& ui, const std::vector<std::string>& paths, bool keep_
     const std::string detail =
         keep_local ? N_("It stays on disk, untracked.", "They stay on disk, untracked.", n) : bin;
     const std::string workdir = repo->workdir();
-    ui.message(nullptr,
-               {.icon = rap::message_spec::icon::question,
-                .title = keep_local ? _("Delete (keep local)") : _("Delete"),
-                .text = question,
-                .detail = detail,
-                .buttons = {rap::dialog_role::ok, rap::dialog_role::cancel}},
-               [=, &ui](rap::dialog_role r)
-               {
-                   if (r != rap::dialog_role::ok) return done(false);
-                   if (!keep_local)
-                       if (auto trashed = rap::sys::move_to_trash(absolute); !trashed)
-                           return fail(N_("Couldn't delete it.", "Couldn't delete them.", n), trashed.error());
-                   // Its removal staged (already gone from disk, or kept there);
-                   // untracked items git doesn't know are skipped.
-                   // The paths through a file: a big selection would pass
-                   // Windows' command-line limit.
-                   const auto list = pathspec_file::write(relative);
-                   if (!list)
-                       return fail(_("Could not write the list of files to the temporary folder."));
-                   std::vector<std::string> args{"rm", "-r", "-q", "--cached", "--ignore-unmatch"};
-                   for (std::string& a : list->arguments()) args.push_back(std::move(a));
-                   const git_result rm = run_git(workdir, literal_paths(args));
-                   if (!rm.ok())
-                       return fail(N_("git couldn't stop tracking it.", "git couldn't stop tracking them.", n),
-                                   rm.output);
-                   done(true);
-               });
+    show_message(
+        ui, nullptr,
+        {.icon = rap::message_spec::icon::question,
+         .title = keep_local ? _("Delete (keep local)") : _("Delete"),
+         .text = question,
+         .detail = detail,
+         .buttons = {rap::dialog_role::ok, rap::dialog_role::cancel}},
+        [=, &ui](rap::dialog_role r)
+        {
+            if (r != rap::dialog_role::ok) return done(false);
+            if (!keep_local)
+                if (auto trashed = rap::sys::move_to_trash(absolute); !trashed)
+                    return fail(N_("Couldn't delete it.", "Couldn't delete them.", n),
+                                trashed.error());
+            // Its removal staged (already gone from disk, or kept there);
+            // untracked items git doesn't know are skipped.
+            // The paths through a file: a big selection would pass
+            // Windows' command-line limit.
+            const auto list = pathspec_file::write(relative);
+            if (!list) return fail(_("Could not write the list of files to the temporary folder."));
+            std::vector<std::string> args{"rm", "-r", "-q", "--cached", "--ignore-unmatch"};
+            for (std::string& a : list->arguments()) args.push_back(std::move(a));
+            const git_result rm = run_git(workdir, literal_paths(args));
+            if (!rm.ok())
+                return fail(
+                    N_("git couldn't stop tracking it.", "git couldn't stop tracking them.", n),
+                    rm.output);
+            done(true);
+        });
 }
 
 }  // namespace tortilla

@@ -8,6 +8,7 @@
 #include "i18n.h"
 #include "remote/pull_fetch_dialog.h"
 #include "settings.h"
+#include "ui/modal_dialogs.h"
 #include "ui/progress_dialog.h"
 #include "ui/repo_icon.h"
 #include "ui/windows.h"
@@ -139,9 +140,10 @@ void switch_dialog::ok()
     const std::string name = trimmed(name_->text());
     auto refuse = [this](const std::string& text)
     {
-        ui_.message(
-            window_.get(),
-            {.icon = rap::message_spec::icon::warning, .title = _("Switch/Checkout"), .text = text});
+        show_message(ui_, window_.get(),
+                     {.icon = rap::message_spec::icon::warning,
+                      .title = _("Switch/Checkout"),
+                      .text = text});
     };
     if (make)
     {

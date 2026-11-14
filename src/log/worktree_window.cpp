@@ -6,6 +6,7 @@
 #include "i18n.h"
 #include "log/log_window.h"
 #include "settings.h"
+#include "ui/modal_dialogs.h"
 #include "ui/repo_icon.h"
 #include "ui/windows.h"
 #include "util/strings.h"
@@ -159,14 +160,14 @@ private:
 
     void browse()
     {
-        ui_.choose_files(window_.get(),
-                         {.mode = rap::file_dialog_spec::mode::folder,
-                          .title = _("Add Worktree"),
-                          .initial_path = folder_->text()},
-                         [this](std::vector<std::string> chosen)
-                         {
-                             if (!chosen.empty()) folder_->set_text(chosen.front());
-                         });
+        pick_files(ui_, window_.get(),
+                   {.mode = rap::file_dialog_spec::mode::folder,
+                    .title = _("Add Worktree"),
+                    .initial_path = folder_->text()},
+                   [this](std::vector<std::string> chosen)
+                   {
+                       if (!chosen.empty()) folder_->set_text(chosen.front());
+                   });
     }
 
     void update_state() { name_->set_enabled(new_branch_->checked()); }
@@ -175,9 +176,10 @@ private:
     {
         auto refuse = [this](const std::string& text)
         {
-            ui_.message(window_.get(), {.icon = rap::message_spec::icon::warning,
-                                        .title = _("Add Worktree"),
-                                        .text = text});
+            show_message(ui_, window_.get(),
+                         {.icon = rap::message_spec::icon::warning,
+                          .title = _("Add Worktree"),
+                          .text = text});
         };
         const std::string folder = trimmed(folder_->text());
         const bool make = new_branch_->checked();
@@ -300,10 +302,11 @@ void worktree_window::reload(const std::string& select)
         if (auto trees = list_worktrees(*repo))
             rows_->items = std::move(*trees);
         else
-            ui_.message(window_.get(), {.icon = rap::message_spec::icon::error,
-                                        .title = "Tortilla",
-                                        .text = _("Couldn't read the worktrees."),
-                                        .detail = trees.error()});
+            show_message(ui_, window_.get(),
+                         {.icon = rap::message_spec::icon::error,
+                          .title = "Tortilla",
+                          .text = _("Couldn't read the worktrees."),
+                          .detail = trees.error()});
     }
     // As paths, not text: libgit2 writes '/' where Windows has '\'.
     auto same = [](const std::string& a, const std::string& b)
@@ -379,8 +382,8 @@ void worktree_window::show_log(const worktree_info& w)
     auto log = log_window::open(ui_, w.path);
     if (!log)
     {
-        ui_.message(
-            window_.get(),
+        show_message(
+            ui_, window_.get(),
             {.icon = rap::message_spec::icon::error, .title = "Tortilla", .text = log.error()});
         return;
     }
@@ -418,27 +421,27 @@ void worktree_window::add()
 // it; the progress dialog then offers to force it.
 void worktree_window::remove(const worktree_info& w)
 {
-    ui_.message(window_.get(),
-                {.icon = rap::message_spec::icon::warning,
-                 .title = "Tortilla",
-                 .text = rap::i18n::format(
-                     _("Do you really want to remove the worktree {0}? Its folder is deleted."),
-                     shown_path(w.path)),
-                 .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
-                [this, w, alive = std::weak_ptr<bool>(alive_)](rap::dialog_role role)
-                {
-                    if (!alive.lock() || role != rap::dialog_role::yes) return;
-                    // A locked worktree takes --force twice.
-                    git_command force{"worktree", "remove", "--force"};
-                    if (w.locked) force.push_back("--force");
-                    force.push_back(w.path);
-                    std::vector<progress_follow_up> follow_ups{
-                        {.label = _("_Force remove"),
-                         .commands = [force] { return std::vector<git_command>{force}; },
-                         .offered = [](bool ok) { return !ok; }}};
-                    run(rap::i18n::format(_("{0} - Remove Worktree"), shown_path(dir_)),
-                        {{"worktree", "remove", w.path}}, {}, std::move(follow_ups));
-                });
+    show_message(ui_, window_.get(),
+                 {.icon = rap::message_spec::icon::warning,
+                  .title = "Tortilla",
+                  .text = rap::i18n::format(
+                      _("Do you really want to remove the worktree {0}? Its folder is deleted."),
+                      shown_path(w.path)),
+                  .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
+                 [this, w, alive = std::weak_ptr<bool>(alive_)](rap::dialog_role role)
+                 {
+                     if (!alive.lock() || role != rap::dialog_role::yes) return;
+                     // A locked worktree takes --force twice.
+                     git_command force{"worktree", "remove", "--force"};
+                     if (w.locked) force.push_back("--force");
+                     force.push_back(w.path);
+                     std::vector<progress_follow_up> follow_ups{
+                         {.label = _("_Force remove"),
+                          .commands = [force] { return std::vector<git_command>{force}; },
+                          .offered = [](bool ok) { return !ok; }}};
+                     run(rap::i18n::format(_("{0} - Remove Worktree"), shown_path(dir_)),
+                         {{"worktree", "remove", w.path}}, {}, std::move(follow_ups));
+                 });
 }
 
 // Quick, so not in the progress dialog, but still off the UI thread; a
@@ -453,8 +456,8 @@ void worktree_window::lock(const worktree_info& w, bool lock)
         {
             if (!alive.lock()) return;
             if (exit_code != 0)
-                ui_.message(
-                    window_.get(),
+                show_message(
+                    ui_, window_.get(),
                     {.icon = rap::message_spec::icon::error, .title = "Tortilla", .text = *output});
             reload(path);
         });

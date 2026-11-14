@@ -11,6 +11,7 @@
 #include "settings.h"
 #include "ui/compare.h"
 #include "ui/menu_text.h"
+#include "ui/modal_dialogs.h"
 #include "ui/progress_dialog.h"
 #include "ui/repo_icon.h"
 #include "ui/reset_dialog.h"
@@ -216,10 +217,11 @@ void reflog_window::load()
         if (auto log = read_reflog(*repo, rows_->ref))
             rows_->items = std::move(*log);
         else
-            ui_.message(window_.get(), {.icon = rap::message_spec::icon::error,
-                                        .title = "Tortilla",
-                                        .text = _("Couldn't read the reflog."),
-                                        .detail = log.error()});
+            show_message(ui_, window_.get(),
+                         {.icon = rap::message_spec::icon::error,
+                          .title = "Tortilla",
+                          .text = _("Couldn't read the reflog."),
+                          .detail = log.error()});
     }
     rows_->notify_reset();
     clear_->set_visible(stash());
@@ -353,8 +355,8 @@ void reflog_window::show_log(const std::string& rev)
     auto log = log_window::open(ui_, workdir_);
     if (!log)
     {
-        ui_.message(
-            window_.get(),
+        show_message(
+            ui_, window_.get(),
             {.icon = rap::message_spec::icon::error, .title = "Tortilla", .text = log.error()});
         return;
     }
@@ -414,30 +416,31 @@ void reflog_window::delete_entries(std::vector<size_t> sel)
                   N_("Do you really want to delete {0} from the reflog?",
                      "Do you really want to delete these {1} entries from the reflog?", n),
                   short_selector(rows_->ref, sel.front()), std::to_string(n));
-    ui_.message(window_.get(),
-                {.icon = rap::message_spec::icon::warning,
-                 .title = "Tortilla",
-                 .text = text,
-                 .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
-                [this, names, is_stash, first = sel.front(),
-                 alive = std::weak_ptr<bool>(alive_)](rap::dialog_role role)
-                {
-                    if (!alive.lock() || role != rap::dialog_role::yes) return;
-                    std::vector<std::vector<std::string>> commands;
-                    for (auto it = names.rbegin(); it != names.rend(); ++it)
-                        commands.push_back(is_stash
-                                               ? std::vector<std::string>{"stash", "drop", *it}
-                                               : std::vector<std::string>{"reflog", "delete", *it});
-                    for (const auto& args : commands)
-                        if (const git_result r = run_git(workdir_, args); !r.ok())
-                        {
-                            ui_.message(window_.get(), {.icon = rap::message_spec::icon::error,
-                                                        .title = "Tortilla",
-                                                        .text = r.output});
-                            break;
-                        }
-                    acted(first);
-                });
+    show_message(ui_, window_.get(),
+                 {.icon = rap::message_spec::icon::warning,
+                  .title = "Tortilla",
+                  .text = text,
+                  .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
+                 [this, names, is_stash, first = sel.front(),
+                  alive = std::weak_ptr<bool>(alive_)](rap::dialog_role role)
+                 {
+                     if (!alive.lock() || role != rap::dialog_role::yes) return;
+                     std::vector<std::vector<std::string>> commands;
+                     for (auto it = names.rbegin(); it != names.rend(); ++it)
+                         commands.push_back(
+                             is_stash ? std::vector<std::string>{"stash", "drop", *it}
+                                      : std::vector<std::string>{"reflog", "delete", *it});
+                     for (const auto& args : commands)
+                         if (const git_result r = run_git(workdir_, args); !r.ok())
+                         {
+                             show_message(ui_, window_.get(),
+                                          {.icon = rap::message_spec::icon::error,
+                                           .title = "Tortilla",
+                                           .text = r.output});
+                             break;
+                         }
+                     acted(first);
+                 });
 }
 
 // Every stash at once: `git stash clear` writes nothing to any reflog, so
@@ -483,10 +486,10 @@ void reflog_window::clear_stash()
                                        if (const git_result r =
                                                run_git(workdir_, {"stash", "clear"});
                                            !r.ok())
-                                           ui_.message(window_.get(),
-                                                       {.icon = rap::message_spec::icon::error,
-                                                        .title = "Tortilla",
-                                                        .text = r.output});
+                                           show_message(ui_, window_.get(),
+                                                        {.icon = rap::message_spec::icon::error,
+                                                         .title = "Tortilla",
+                                                         .text = r.output});
                                        acted();
                                    }),
                            dialog_button{rap::dialog_role::cancel, ""}.on_click(
@@ -516,8 +519,8 @@ void reflog_window::open_dialog(std::expected<std::unique_ptr<D>, std::string> d
 {
     if (!dialog)
     {
-        ui_.message(
-            window_.get(),
+        show_message(
+            ui_, window_.get(),
             {.icon = rap::message_spec::icon::error, .title = "Tortilla", .text = dialog.error()});
         return;
     }

@@ -7,6 +7,7 @@
 #include "i18n.h"
 #include "settings.h"
 #include "ui/menu_items.h"
+#include "ui/modal_dialogs.h"
 #include "ui/progress_dialog.h"
 #include "ui/repo_icon.h"
 #include "ui/settings_dialog.h"
@@ -423,9 +424,10 @@ void commit_window::commit()
         message_only_->checked() ? std::vector<file_change>{} : files_.checked_files();
     if (std::ranges::any_of(files, [](const file_change& f) { return f.status == 'U'; }))
     {
-        ui_.message(window_.get(), {.icon = rap::message_spec::icon::warning,
-                                    .title = _("Commit"),
-                                    .text = _("One or more files are in a conflicted state.")});
+        show_message(ui_, window_.get(),
+                     {.icon = rap::message_spec::icon::warning,
+                      .title = _("Commit"),
+                      .text = _("One or more files are in a conflicted state.")});
         return;
     }
     std::string branch;
@@ -434,10 +436,11 @@ void commit_window::commit()
         branch = trimmed(branch_->text());
         if (branch.empty() || !valid_branch_name(branch))
         {
-            ui_.message(window_.get(), {.icon = rap::message_spec::icon::warning,
-                                        .title = _("Commit"),
-                                        .text = rap::i18n::format(_("“{0}” isn't a valid branch name."),
-                                                                  branch)});
+            show_message(
+                ui_, window_.get(),
+                {.icon = rap::message_spec::icon::warning,
+                 .title = _("Commit"),
+                 .text = rap::i18n::format(_("“{0}” isn't a valid branch name."), branch)});
             return;
         }
     }
@@ -458,11 +461,11 @@ void commit_window::commit()
     if (message_file.empty() || !write_file(message_file, message_->text()) || !paths_file ||
         (!unversioned.empty() && !add_file))
     {
-        ui_.message(window_.get(),
-                    {.icon = rap::message_spec::icon::error,
-                     .title = _("Commit"),
-                     .text = rap::i18n::format(_("Could not write the commit message to {0}."),
-                                               rap::sys::path_to_utf8(tortilla_temp_dir()))});
+        show_message(ui_, window_.get(),
+                     {.icon = rap::message_spec::icon::error,
+                      .title = _("Commit"),
+                      .text = rap::i18n::format(_("Could not write the commit message to {0}."),
+                                                rap::sys::path_to_utf8(tortilla_temp_dir()))});
         return;
     }
 
@@ -507,8 +510,8 @@ void commit_window::commit()
                             {
                                 const std::vector<std::string> failed = restore(restoring());
                                 if (failed.empty()) return close(true);
-                                ui_.message(
-                                    window_.get(),
+                                show_message(
+                                    ui_, window_.get(),
                                     {.icon = rap::message_spec::icon::error,
                                      .title = _("Restore after commit"),
                                      .text = rap::i18n::format(
@@ -527,8 +530,8 @@ void commit_window::commit()
 void commit_window::cancel()
 {
     if (restore_.empty()) return close(false);
-    ui_.message(
-        window_.get(),
+    show_message(
+        ui_, window_.get(),
         {.icon = rap::message_spec::icon::question,
          .title = _("Restore after commit"),
          .text = _("Put the files marked “restore after commit” back as they were "
@@ -540,11 +543,11 @@ void commit_window::cancel()
             if (r == rap::dialog_role::yes)
                 if (const std::vector<std::string> failed = restore(restoring()); !failed.empty())
                 {
-                    ui_.message(window_.get(),
-                                {.icon = rap::message_spec::icon::error,
-                                 .title = _("Restore after commit"),
-                                 .text = rap::i18n::format(
-                                     _("These files couldn't be put back:\n{0}"), lines(failed))});
+                    show_message(ui_, window_.get(),
+                                 {.icon = rap::message_spec::icon::error,
+                                  .title = _("Restore after commit"),
+                                  .text = rap::i18n::format(
+                                      _("These files couldn't be put back:\n{0}"), lines(failed))});
                     return;  // open still, with what's left marked
                 }
             close(false);
@@ -579,11 +582,11 @@ void commit_window::restore_items(rap::menu& m, const std::vector<file_change>& 
             [this, marked]
             {
                 if (const std::vector<std::string> failed = restore(marked); !failed.empty())
-                    ui_.message(window_.get(),
-                                {.icon = rap::message_spec::icon::error,
-                                 .title = _("Restore"),
-                                 .text = rap::i18n::format(
-                                     _("These files couldn't be put back:\n{0}"), lines(failed))});
+                    show_message(ui_, window_.get(),
+                                 {.icon = rap::message_spec::icon::error,
+                                  .title = _("Restore"),
+                                  .text = rap::i18n::format(
+                                      _("These files couldn't be put back:\n{0}"), lines(failed))});
                 reload();
             }));
 }
@@ -604,10 +607,11 @@ void commit_window::restore_after_commit(const std::vector<std::string>& paths)
     }
     show_restoring();
     if (!failed.empty())
-        ui_.message(window_.get(), {.icon = rap::message_spec::icon::error,
-                                    .title = _("Restore after commit"),
-                                    .text = rap::i18n::format(
-                                        _("These files couldn't be kept:\n{0}"), lines(failed))});
+        show_message(
+            ui_, window_.get(),
+            {.icon = rap::message_spec::icon::error,
+             .title = _("Restore after commit"),
+             .text = rap::i18n::format(_("These files couldn't be kept:\n{0}"), lines(failed))});
 }
 
 std::vector<std::string> commit_window::restore(const std::vector<std::string>& paths)

@@ -3,6 +3,7 @@
 #include "git/git_install.h"
 #include "i18n.h"
 #include "settings.h"
+#include "ui/modal_dialogs.h"
 
 #include <rapport/sys.h>
 
@@ -27,20 +28,20 @@ void show_git_missing(rap::ui& ui, rap::window* parent, std::function<void()> do
     const bool open = !help.url.empty(), copy = !open && !help.command.empty();
     if (open) text += "\n\n" + std::string(_("Open the download page?"));
     if (copy) text += "\n\n" + std::string(_("Copy the command to the clipboard?"));
-    ui.message(parent,
-               {.icon = rap::message_spec::icon::warning,
-                .title = _("git isn't installed"),
-                .text = std::move(text),
-                .detail = help.command,
-                .buttons = open || copy ? std::vector<rap::dialog_role>{rap::dialog_role::yes,
-                                                                        rap::dialog_role::no}
-                                        : std::vector<rap::dialog_role>{rap::dialog_role::ok}},
-               [&ui, help, open, copy, done = std::move(done)](rap::dialog_role role)
-               {
-                   if (role == rap::dialog_role::yes && open) rap::sys::open_url(help.url);
-                   if (role == rap::dialog_role::yes && copy) ui.set_clipboard(help.command);
-                   if (done) done();
-               });
+    show_message(ui, parent,
+                 {.icon = rap::message_spec::icon::warning,
+                  .title = _("git isn't installed"),
+                  .text = std::move(text),
+                  .detail = help.command,
+                  .buttons = open || copy ? std::vector<rap::dialog_role>{rap::dialog_role::yes,
+                                                                          rap::dialog_role::no}
+                                          : std::vector<rap::dialog_role>{rap::dialog_role::ok}},
+                 [&ui, help, open, copy, done = std::move(done)](rap::dialog_role role)
+                 {
+                     if (role == rap::dialog_role::yes && open) rap::sys::open_url(help.url);
+                     if (role == rap::dialog_role::yes && copy) ui.set_clipboard(help.command);
+                     if (done) done();
+                 });
 }
 
 void notice_if_git_missing(rap::ui& ui, rap::window* parent)

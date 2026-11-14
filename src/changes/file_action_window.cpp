@@ -5,6 +5,7 @@
 #include "git/pathspec_file.h"
 #include "i18n.h"
 #include "settings.h"
+#include "ui/modal_dialogs.h"
 #include "ui/progress_dialog.h"
 #include "ui/repo_icon.h"
 #include "ui/settings_dialog.h"
@@ -321,8 +322,8 @@ void file_action_window::run(const std::vector<file_change>& files)
         plan = plan_revert(workdir_, files);
         if (!plan.error.empty())
         {
-            ui_.message(
-                window_.get(),
+            show_message(
+                ui_, window_.get(),
                 {.icon = rap::message_spec::icon::error, .title = _("Revert"), .text = plan.error});
             return;
         }
@@ -335,10 +336,10 @@ void file_action_window::run(const std::vector<file_change>& files)
         written = command({"add", "-f"}, all);
     if (!written)
     {
-        ui_.message(window_.get(),
-                    {.icon = rap::message_spec::icon::error,
-                     .title = title(),
-                     .text = _("Could not write the list of files to the temporary folder.")});
+        show_message(ui_, window_.get(),
+                     {.icon = rap::message_spec::icon::error,
+                      .title = title(),
+                      .text = _("Could not write the list of files to the temporary folder.")});
         return;
     }
 
@@ -432,8 +433,9 @@ void file_action_window::open_commit()
     auto w = commit_window::open(ui_, {workdir_});
     if (!w)
     {
-        ui_.message(nullptr,
-                    {.icon = rap::message_spec::icon::error, .title = _("Commit"), .text = w.error()});
+        show_message(
+            ui_, nullptr,
+            {.icon = rap::message_spec::icon::error, .title = _("Commit"), .text = w.error()});
         return;
     }
     commit_ = std::move(*w);

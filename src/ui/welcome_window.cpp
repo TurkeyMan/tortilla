@@ -5,6 +5,7 @@
 #include "log/log_window.h"
 #include "remote/clone_dialog.h"
 #include "ui/github_mark.h"
+#include "ui/modal_dialogs.h"
 #include "ui/settings_dialog.h"
 #include "ui/windows.h"
 
@@ -144,25 +145,26 @@ void welcome_window::paint_header(rap::painter& p, rap::size_f size)
 
 void welcome_window::open_repository()
 {
-    ui_.choose_files(window_.get(),
-                     {.mode = rap::file_dialog_spec::mode::folder, .title = _("Open repository")},
-                     [this](std::vector<std::string> paths)
-                     {
-                         if (paths.empty()) return;
-                         use_repo_icon(ui_, paths.front());
-                         auto log = log_window::open(ui_, paths.front());
-                         if (!log)
-                         {
-                             ui_.message(window_.get(), {.icon = rap::message_spec::icon::error,
-                                                         .title = "Tortilla",
-                                                         .text = log.error()});
-                             return;
-                         }
-                         windows::keep(std::move(*log));
-                         // The log takes over; this has done its job.
-                         window_->close();
-                         close();
-                     });
+    pick_files(ui_, window_.get(),
+               {.mode = rap::file_dialog_spec::mode::folder, .title = _("Open repository")},
+               [this](std::vector<std::string> paths)
+               {
+                   if (paths.empty()) return;
+                   use_repo_icon(ui_, paths.front());
+                   auto log = log_window::open(ui_, paths.front());
+                   if (!log)
+                   {
+                       show_message(ui_, window_.get(),
+                                    {.icon = rap::message_spec::icon::error,
+                                     .title = "Tortilla",
+                                     .text = log.error()});
+                       return;
+                   }
+                   windows::keep(std::move(*log));
+                   // The log takes over; this has done its job.
+                   window_->close();
+                   close();
+               });
 }
 
 // window::close() only hides it: what closing means is ours.

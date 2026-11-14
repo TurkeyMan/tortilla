@@ -1,5 +1,7 @@
 #include "repo_icon.h"
 
+#include "modal_dialogs.h"
+
 #include "git/repo.h"
 
 #include <rapport/sys.h>
@@ -423,7 +425,11 @@ std::unique_ptr<rap::window> create_window(rap::ui& ui, const rap::window_spec& 
     if (!w) return w;
     // A dialog is its parent's repository's, whichever was opened since.
     // Let go when the window is destroyed (identities() outlives them all).
-    const auto id = track_window(identities(), *w, parent);
+    // A modal dialog also counts as open over its parent until it goes
+    // (modal_dialogs.h).
+    const auto id =
+        track_window(identities(), *w, parent,
+                     parent && spec.dialog && spec.modal ? count_modal(parent) : nullptr);
     const rap::icon& icon = id && id->icon ? id->icon : own_icon(ui);
     if (icon) w->set_icon(icon);
     // Before the window shows: one whose group changes after moves on the taskbar.

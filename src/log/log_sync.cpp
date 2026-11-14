@@ -108,11 +108,12 @@ void log_tab::show_sync_output()
     for (const remote_changes& c : changes_) text += (text.empty() ? "" : "\n") + changes_text(c);
     if (failures_.empty()) detail = last_output_;
     if (text.empty()) text = _("Nothing to bring from the remotes.");
-    ui_.message(parent(), {.icon = failures_.empty() ? rap::message_spec::icon::info
-                                                     : rap::message_spec::icon::warning,
-                           .title = _("Fetch"),
-                           .text = text,
-                           .detail = detail});
+    show_message(ui_, parent(),
+                 {.icon = failures_.empty() ? rap::message_spec::icon::info
+                                            : rap::message_spec::icon::warning,
+                  .title = _("Fetch"),
+                  .text = text,
+                  .detail = detail});
 }
 
 void log_tab::update_sync_badge()

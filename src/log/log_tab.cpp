@@ -258,15 +258,21 @@ bool log_tab::shows(const log_tab& other) const
                             (other.path_limited() ? other.rel_path_ : std::string());
 }
 
-std::string log_tab::busy_reason() const
+std::string log_tab::busy_reason(bool moving) const
 {
     if (history_edit_busy())
         return rap::i18n::format(
-            _("{0}: a history edit is still being written. Close the tab once it has finished."),
+            moving ? _("{0}: a history edit is still being written. Move the tab once it has "
+                       "finished.")
+                   : _("{0}: a history edit is still being written. Close the tab once it has "
+                       "finished."),
             tab_title());
     if (ref_command_)
         return rap::i18n::format(
-            _("{0}: git is still changing branches or tags. Close the tab once it has finished."),
+            moving ? _("{0}: git is still changing branches or tags. Move the tab once it has "
+                       "finished.")
+                   : _("{0}: git is still changing branches or tags. Close the tab once it has "
+                       "finished."),
             tab_title());
     if (!rebases_.empty())
         return rap::i18n::format(
@@ -1824,9 +1830,10 @@ void log_tab::jump(bool up)
                 return;
             }
     }
-    ui_.message(parent(), {.icon = rap::message_spec::icon::info,
-                           .title = "Tortilla",
-                           .text = _("No more revisions found.")});
+    show_message(ui_, parent(),
+                 {.icon = rap::message_spec::icon::info,
+                  .title = "Tortilla",
+                  .text = _("No more revisions found.")});
 }
 
 }  // namespace tortilla

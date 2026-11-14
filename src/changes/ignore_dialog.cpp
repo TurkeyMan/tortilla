@@ -7,6 +7,7 @@
 #include "git/repo.h"
 #include "i18n.h"
 #include "settings.h"
+#include "ui/modal_dialogs.h"
 #include "ui/repo_icon.h"
 #include "util/repo_path.h"
 
@@ -86,9 +87,12 @@ struct state
     // Says what went wrong over the dialog, then ends it.
     void fail(const std::string& text, const std::string& detail)
     {
-        ui.message(window.get(),
-                   {.icon = rap::message_spec::icon::error, .title = "Tortilla", .text = text, .detail = detail},
-                   [this](rap::dialog_role) { finish(false); });
+        show_message(ui, window.get(),
+                     {.icon = rap::message_spec::icon::error,
+                      .title = "Tortilla",
+                      .text = text,
+                      .detail = detail},
+                     [this](rap::dialog_role) { finish(false); });
     }
 };
 
@@ -99,8 +103,9 @@ void show_ignore_dialog(rap::ui& ui, std::vector<std::string> paths, bool by_ext
 {
     auto fail_now = [&ui, done](const std::string& text)
     {
-        ui.message(nullptr, {.icon = rap::message_spec::icon::error, .title = "Tortilla", .text = text},
-                   [done](rap::dialog_role) { done(false); });
+        show_message(ui, nullptr,
+                     {.icon = rap::message_spec::icon::error, .title = "Tortilla", .text = text},
+                     [done](rap::dialog_role) { done(false); });
     };
     if (paths.empty()) return done(false);
     auto repo = repo::open(paths.front());

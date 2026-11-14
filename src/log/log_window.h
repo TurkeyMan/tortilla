@@ -1,7 +1,8 @@
 // The Log window: repositories' logs (log_tab.h) as document tabs in one
 // window, one page each in a stack, the strip choosing which shows. What's
 // the window's own: its size and place, its keys, its closing, View Patch,
-// and opening, closing and ordering the tabs.
+// and opening, closing, ordering and moving the tabs (torn off into windows
+// of their own, dropped into other log windows).
 #pragma once
 
 #include "log/log_tab.h"
@@ -64,6 +65,38 @@ public:
     bool close_tab(const std::string& id);
     // Where the user dragged it to: `id` now at `index` in the strip.
     void reorder(const std::string& id, int index);
+    // -- Moving tabs between windows ---------------------------------------------
+    // Log windows' tabs are dragged out into windows of their own (or moved
+    // there from the tabs' menu), and from one log window into another's
+    // strip; the windows picking commits take no part.
+    //
+    // The tab `id` taken out of the window, to go into another (adopt): its
+    // view kept, its page gone, its work going on without one. Null, and the
+    // window as it was, while it can't move (move_refusal). The window's
+    // last tab gone, the window closes (once the caller has returned).
+    std::unique_ptr<log_tab> detach(const std::string& id);
+    // Why `id` can't move to another window now (picking commits, git at
+    // work in it, a dialog open over the window); empty when it can.
+    std::string move_refusal(const std::string& id) const;
+    // A tab from another window (detach) made part of this one, at `index`
+    // in the strip (-1: last), selected and drawn as it was. Only while
+    // takes_tabs().
+    log_tab& adopt(std::unique_ptr<log_tab>, int index = -1);
+    // Whether tabs may move in: not while picking commits or closing.
+    bool takes_tabs() const { return !picking_ && !closing_ && !emptied_; }
+    // The tabs' tearing off (rap::document_tabs::detach_fn): a window of
+    // its own for `id`, sized as this one, at `at` (or, from the menu, a
+    // little down and right of this one). Not shown: rapport shows it.
+    rap::window* tear_off(const std::string& id, std::optional<rap::point_f> at);
+    // A tab dropped in from another log window's strip (or sent home to
+    // this one): moved here, at t.index. False, and both as they were, if
+    // t.source isn't a log window or the tab can't move.
+    bool receive(const rap::document_tabs::transfer& t);
+    // The log window whose frame is `w` (null: none).
+    static log_window* of(const rap::window* w);
+    // Tests only: what keeps a torn-off window (else windows::hold, until
+    // it closes).
+    static inline std::function<void(std::unique_ptr<log_window>)>* keep_for_tests = nullptr;
     // In the strip's order.
     const std::vector<std::unique_ptr<log_tab>>& tabs() const { return tabs_; }
     log_tab* current_tab() const;
@@ -72,10 +105,18 @@ public:
 private:
     explicit log_window(rap::ui&);
 
-    void build(std::unique_ptr<log_tab> first);
-    // A tab made part of the window: its page in the stack, its tab in the
-    // strip (at `index`; -1 last), drawn; not selected.
-    log_tab& adopt(std::unique_ptr<log_tab>, int index = -1);
+    // Where a torn-off window goes: sized as the window it came from, and
+    // put there.
+    struct placement
+    {
+        rap::size_f size;
+        std::optional<rap::point_f> at;
+    };
+    void build(std::unique_ptr<log_tab> first, std::optional<placement> = std::nullopt);
+    // A tab made part of the window: its page in the stack (drawn as its
+    // carried view had it, if it's come from another window), its tab in
+    // the strip (at `index`; -1 last); not selected.
+    log_tab& place(std::unique_ptr<log_tab>, int index = -1);
     // The tab `id` on show: its page, and the window's title, icon and View
     // Patch from it. (The strip has it selected already.)
     void show_tab(const std::string& id);
@@ -114,6 +155,9 @@ private:
     std::string current_;  // the tab on show's id
     bool picking_ = false;
     bool closing_ = false;  // closed, or about to be
+    // Its last tab moved to another window: closing once the handler that
+    // moved it has returned, taking no other.
+    bool emptied_ = false;
     std::unique_ptr<rap::window> window_;
     rap::document_tabs* strip_ = nullptr;
     rap::stack* stack_ = nullptr;

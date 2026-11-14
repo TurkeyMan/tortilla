@@ -3,6 +3,7 @@
 #include "git/command.h"
 #include "git/repo.h"
 #include "i18n.h"
+#include "ui/modal_dialogs.h"
 #include "ui/repo_icon.h"
 #include "util/repo_path.h"
 #include "util/strings.h"
@@ -61,8 +62,9 @@ struct state
     }
     void complain(const std::string& text)
     {
-        ui.message(window.get(), {.icon = rap::message_spec::icon::error, .title = "Tortilla", .text = text},
-                   [](rap::dialog_role) {});
+        show_message(ui, window.get(),
+                     {.icon = rap::message_spec::icon::error, .title = "Tortilla", .text = text},
+                     [](rap::dialog_role) {});
     }
 
     void ok()
@@ -85,12 +87,12 @@ struct state
         const git_result r = run_git(workdir, args);
         if (!r.ok())
         {
-            ui.message(window.get(),
-                       {.icon = rap::message_spec::icon::error,
-                        .title = "Tortilla",
-                        .text = _("git couldn't rename it."),
-                        .detail = r.output},
-                       [](rap::dialog_role) {});
+            show_message(ui, window.get(),
+                         {.icon = rap::message_spec::icon::error,
+                          .title = "Tortilla",
+                          .text = _("git couldn't rename it."),
+                          .detail = r.output},
+                         [](rap::dialog_role) {});
             return;
         }
         finish(true);
@@ -103,8 +105,9 @@ void rename_item(rap::ui& ui, const std::string& path, std::function<void(bool)>
 {
     auto fail = [&ui, done](const std::string& text)
     {
-        ui.message(nullptr, {.icon = rap::message_spec::icon::error, .title = "Tortilla", .text = text},
-                   [done](rap::dialog_role) { done(false); });
+        show_message(ui, nullptr,
+                     {.icon = rap::message_spec::icon::error, .title = "Tortilla", .text = text},
+                     [done](rap::dialog_role) { done(false); });
     };
     auto repo = repo::open(path);
     if (!repo) return fail(repo.error());

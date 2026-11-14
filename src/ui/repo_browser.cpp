@@ -11,6 +11,7 @@
 #include "ui/busy_pointer.h"
 #include "ui/compare.h"
 #include "ui/menu_items.h"
+#include "ui/modal_dialogs.h"
 #include "ui/repo_icon.h"
 #include "ui/settings_dialog.h"
 #include "ui/windows.h"
@@ -455,8 +456,8 @@ std::string repo_browser::revision_id() const
 void repo_browser::error(const std::string& title, const std::string& text,
                          const std::string& detail)
 {
-    ui_.message(
-        window_.get(),
+    show_message(
+        ui_, window_.get(),
         {.icon = rap::message_spec::icon::error, .title = title, .text = text, .detail = detail});
 }
 
@@ -581,8 +582,8 @@ void repo_browser::save_as(const std::string& path)
     spec.initial_path = dot == std::string::npos || dot == 0
                             ? name + "-" + rev.substr(0, 8)
                             : name.substr(0, dot) + "-" + rev.substr(0, 8) + name.substr(dot);
-    ui_.choose_files(
-        window_.get(), spec,
+    pick_files(
+        ui_, window_.get(), spec,
         [this, rev, path, alive = std::weak_ptr<bool>(alive_)](std::vector<std::string> picked)
         {
             if (!alive.lock() || picked.empty()) return;
@@ -600,24 +601,25 @@ void repo_browser::save_to_folder(std::vector<std::string> paths)
     rap::file_dialog_spec spec;
     spec.mode = rap::file_dialog_spec::mode::folder;
     spec.title = _("Export selection to");
-    ui_.choose_files(
-        window_.get(), spec,
-        [this, rev = revision_id(), paths,
-         alive = std::weak_ptr<bool>(alive_)](std::vector<std::string> picked)
-        {
-            if (!alive.lock() || picked.empty()) return;
-            const fs::path to = rap::sys::path_from_utf8(picked.front());
-            std::string failed;
-            for (const std::string& p : paths)
-            {
-                const git_result r = revision_file(workdir_, rev, p);
-                // By its name alone, which must be one here (not C:\x, NUL).
-                const auto name = entry_path(last_part(p));
-                if (!r.ok() || !name || !write_file(to / *name, r.output)) failed += p + "\n";
-            }
-            if (!failed.empty())
-                error(_("Export selection to"), _("Some files could not be exported."), failed);
-        });
+    pick_files(ui_, window_.get(), spec,
+               [this, rev = revision_id(), paths,
+                alive = std::weak_ptr<bool>(alive_)](std::vector<std::string> picked)
+               {
+                   if (!alive.lock() || picked.empty()) return;
+                   const fs::path to = rap::sys::path_from_utf8(picked.front());
+                   std::string failed;
+                   for (const std::string& p : paths)
+                   {
+                       const git_result r = revision_file(workdir_, rev, p);
+                       // By its name alone, which must be one here (not C:\x, NUL).
+                       const auto name = entry_path(last_part(p));
+                       if (!r.ok() || !name || !write_file(to / *name, r.output))
+                           failed += p + "\n";
+                   }
+                   if (!failed.empty())
+                       error(_("Export selection to"), _("Some files could not be exported."),
+                             failed);
+               });
 }
 
 // The path's log, with the browsed commit selected.

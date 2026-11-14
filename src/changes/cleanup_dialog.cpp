@@ -4,6 +4,7 @@
 #include "git/repo.h"
 #include "i18n.h"
 #include "settings.h"
+#include "ui/modal_dialogs.h"
 #include "ui/progress_dialog.h"
 #include "ui/repo_icon.h"
 #include "util/repo_path.h"
@@ -24,9 +25,9 @@ void clean_up(rap::ui& ui, rap::window* parent, std::vector<std::string> paths,
 {
     auto fail = [&ui, parent, done](const std::string& text)
     {
-        ui.message(parent,
-                   {.icon = rap::message_spec::icon::error, .title = _("Clean up"), .text = text},
-                   [done](rap::dialog_role) { done(false); });
+        show_message(ui, parent,
+                     {.icon = rap::message_spec::icon::error, .title = _("Clean up"), .text = text},
+                     [done](rap::dialog_role) { done(false); });
     };
     if (paths.empty()) paths.push_back(".");
     auto repo = repo::open(paths.front());
@@ -142,21 +143,21 @@ void clean_up(rap::ui& ui, rap::window* parent, std::vector<std::string> paths,
             }
             if (!list.ok())
             {
-                ui.message(parent,
-                           {.icon = rap::message_spec::icon::error,
-                            .title = _("Clean up"),
-                            .text = _("git couldn't list the untracked files."),
-                            .detail = list.output},
-                           [done](rap::dialog_role) { done(false); });
+                show_message(ui, parent,
+                             {.icon = rap::message_spec::icon::error,
+                              .title = _("Clean up"),
+                              .text = _("git couldn't list the untracked files."),
+                              .detail = list.output},
+                             [done](rap::dialog_role) { done(false); });
                 return;
             }
             if (found.empty())
             {
-                ui.message(parent,
-                           {.icon = rap::message_spec::icon::info,
-                            .title = _("Clean up"),
-                            .text = _("Nothing to clean up.")},
-                           [done](rap::dialog_role) { done(true); });
+                show_message(ui, parent,
+                             {.icon = rap::message_spec::icon::info,
+                              .title = _("Clean up"),
+                              .text = _("Nothing to clean up.")},
+                             [done](rap::dialog_role) { done(true); });
                 return;
             }
             std::vector<fs::path> absolute;
@@ -172,8 +173,8 @@ void clean_up(rap::ui& ui, rap::window* parent, std::vector<std::string> paths,
             }
             const auto trashed = rap::sys::move_to_trash(absolute);
             const size_t n = found.size();
-            ui.message(
-                parent,
+            show_message(
+                ui, parent,
                 {.icon = trashed ? rap::message_spec::icon::info : rap::message_spec::icon::error,
                  .title = _("Clean up"),
 #ifdef _WIN32

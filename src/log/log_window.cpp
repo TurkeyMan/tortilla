@@ -6,14 +6,32 @@
 #include "i18n.h"
 #include "log/open_repository_dialog.h"
 #include "settings.h"
+#include "ui/modal_dialogs.h"
 #include "ui/repo_icon.h"
 #include "ui/trust_repository.h"
+#include "ui/windows.h"
 
 #include <algorithm>
+#include <map>
 #include <thread>
 
 namespace tortilla
 {
+namespace
+{
+
+// The log windows' strips trade tabs with each other, and only with each
+// other.
+constexpr const char* k_tab_group = "tortilla.log";
+
+// The log windows open, by frame: where a tab dropped in comes from.
+std::map<const rap::window*, log_window*>& log_windows()
+{
+    static std::map<const rap::window*, log_window*> all;
+    return all;
+}
+
+}  // namespace
 
 std::expected<std::unique_ptr<log_window>, std::string>
 log_window::open(rap::ui& ui, const std::string& path, bool all_branches, bool outer)
@@ -37,10 +55,17 @@ log_window::log_window(rap::ui& ui)
 // before the window; the rest of the tabs after it.
 log_window::~log_window()
 {
+    log_windows().erase(window_.get());
     for (auto& tab : tabs_) tab->drop_page();
 }
 
-void log_window::build(std::unique_ptr<log_tab> first)
+log_window* log_window::of(const rap::window* w)
+{
+    auto it = log_windows().find(w);
+    return it == log_windows().end() ? nullptr : it->second;
+}
+
+void log_window::build(std::unique_ptr<log_tab> first, std::optional<placement> where)
 {
     using namespace rap::literals;
     namespace layout = rap::layout;
@@ -56,7 +81,13 @@ void log_window::build(std::unique_ptr<log_tab> first)
                       .on_close([this](const std::string& id) { close_tab(id); })
                       .on_new([this] { new_tab(); })
                       .on_reorder([this](const std::string& id, int index) { reorder(id, index); })
+                      .group(k_tab_group)
+                      .on_detach([this](const std::string& id, std::optional<rap::point_f> at)
+                                 { return tear_off(id, at); })
+                      .on_receive([this](const rap::document_tabs::transfer& t)
+                                  { return receive(t); })
                       .bind(strip_)));
+    log_windows()[window_.get()] = this;
     // The first tab's icon; its app id is the window's from the start, and
     // never changed after (as other tabs show), as the taskbar would regroup
     // the window. What dialogs on it take, though, is the tab on show's
@@ -79,13 +110,19 @@ void log_window::build(std::unique_ptr<log_tab> first)
             return tab && tab->key(e);
         });
     // Size and position persist across runs, as TortoiseGit's do; position
-    // only where the platform lets apps place windows (not on Wayland).
-    settings::get().restore_window("log.window", *window_);
-    const std::string id = adopt(std::move(first)).id();
-    select_tab(id);
+    // only where the platform lets apps place windows (not on Wayland). A
+    // torn-off window is the size of the one it came from, where it's put.
+    if (!where)
+        settings::get().restore_window("log.window", *window_);
+    else
+    {
+        if (where->size.w > 0 && where->size.h > 0) window_->resize(where->size);
+        if (where->at) window_->move(*where->at);
+    }
+    adopt(std::move(first));
 }
 
-log_tab& log_window::adopt(std::unique_ptr<log_tab> tab, int index)
+log_tab& log_window::place(std::unique_ptr<log_tab> tab, int index)
 {
     log_tab& t = *tab;
     t.set_host(this);
@@ -93,7 +130,14 @@ log_tab& log_window::adopt(std::unique_ptr<log_tab> tab, int index)
     strip_->insert(index, strip_item(t));
     auto at = index < 0 || size_t(index) >= tabs_.size() ? tabs_.end() : tabs_.begin() + index;
     tabs_.insert(at, std::move(tab));
-    t.bind_page();
+    t.bind_page(t.take_carried_view());
+    return t;
+}
+
+log_tab& log_window::adopt(std::unique_ptr<log_tab> tab, int index)
+{
+    log_tab& t = place(std::move(tab), index);
+    select_tab(t.id());
     return t;
 }
 
@@ -153,7 +197,6 @@ std::expected<log_tab*, std::string> log_window::open_tab(const std::string& pat
             return t.get();
         }
     log_tab& tab = adopt(std::move(*opened));
-    select_tab(tab.id());
     tab.start(all_branches);
     remember_repository(tab.repo_location());
     return &tab;
@@ -161,22 +204,23 @@ std::expected<log_tab*, std::string> log_window::open_tab(const std::string& pat
 
 void log_window::new_tab()
 {
-    if (picking_ || closing_) return;
+    if (!takes_tabs()) return;
     open_repository_dialog(ui_, window_.get(),
                            [this, alive = std::weak_ptr<bool>(alive_)](const std::string& path)
                            {
-                               if (!alive.lock() || closing_) return;
+                               if (!alive.lock() || !takes_tabs()) return;
                                // One git refuses for its folder's owner: offered to trust it
                                // first, as Tortilla does for any it's started on (main.cpp).
                                // Not trusted: no tab, and nothing more to say.
                                ensure_trusted(ui_, path,
                                               [this, alive, path](bool go_on)
                                               {
-                                                  if (!go_on || !alive.lock() || closing_) return;
+                                                  if (!go_on || !alive.lock() || !takes_tabs())
+                                                      return;
                                                   auto opened = open_tab(path);
                                                   if (!opened)
-                                                      ui_.message(
-                                                          window_.get(),
+                                                      show_message(
+                                                          ui_, window_.get(),
                                                           {.icon = rap::message_spec::icon::error,
                                                            .title = _("Open Repository"),
                                                            .text = opened.error()});
@@ -192,9 +236,10 @@ bool log_window::close_tab(const std::string& id)
     // What's being written isn't given up half done.
     if (std::string why = tab.busy_reason(); !why.empty())
     {
-        ui_.message(window_.get(), {.icon = rap::message_spec::icon::warning,
-                                    .title = _("Close Tab"),
-                                    .text = std::move(why)});
+        show_message(ui_, window_.get(),
+                     {.icon = rap::message_spec::icon::warning,
+                      .title = _("Close Tab"),
+                      .text = std::move(why)});
         return false;
     }
     // The last: the window with it, once the strip's (or the page's)
@@ -248,17 +293,127 @@ void log_window::reorder(const std::string& id, int index)
     tabs_.insert(tabs_.begin() + index, std::move(moved));
 }
 
+// Moving a tab: refused while it's busy, as closing it is; and while a
+// dialog is open over the window, which would be left over the wrong one,
+// its answer landing in the tab elsewhere.
+std::string log_window::move_refusal(const std::string& id) const
+{
+    const log_tab* tab = nullptr;
+    for (const auto& t : tabs_)
+        if (t->id() == id) tab = t.get();
+    if (!tab || picking_ || closing_ || emptied_) return _("This tab can't be moved now.");
+    if (std::string why = tab->busy_reason(true); !why.empty()) return why;
+    if (modals_over(window_.get()))
+        return rap::i18n::format(
+            _("{0}: a dialog is open over its window. Close the dialog, then move the tab."),
+            tab->tab_title());
+    return {};
+}
+
+std::unique_ptr<log_tab> log_window::detach(const std::string& id)
+{
+    if (!move_refusal(id).empty()) return nullptr;
+    auto it = find(id);
+    log_tab& tab = **it;
+    // Its view for the page it'll have; this one gone, with its pop-up and
+    // its hold on the models (its widgets go once the handler has returned).
+    tab.carry_view(tab.capture_view());
+    tab.drop_page();
+    stack_->remove(id);
+    strip_->remove(id);
+    std::unique_ptr<log_tab> out = std::move(*it);
+    tabs_.erase(it);
+    out->set_host(nullptr);
+    if (tabs_.empty())
+    {
+        // The window goes too, but not under the handler that asked (the
+        // strip's, a drop's): once it's returned.
+        current_.clear();
+        emptied_ = true;
+        // Said to be no repository's now: a scope the tab's work had open
+        // on this window (repo_identity_scope) doesn't put it back.
+        set_repo_identity(window_.get(), nullptr);
+        ui_.post(
+            [this, alive = std::weak_ptr<bool>(alive_)]
+            {
+                if (alive.lock()) close_window();
+            });
+    }
+    else if (id == current_)
+    {
+        current_.clear();
+        show_tab(strip_->current());
+    }
+    return out;
+}
+
+rap::window* log_window::tear_off(const std::string& id, std::optional<rap::point_f> at)
+{
+    if (std::string why = move_refusal(id); !why.empty())
+    {
+        // From the menu, said why once it's closed; dragged, the drag goes
+        // on along the row.
+        if (!at && !picking_ && !closing_ && !emptied_)
+            ui_.post(
+                [this, alive = std::weak_ptr<bool>(alive_), why]
+                {
+                    if (alive.lock())
+                        show_message(ui_, window_.get(),
+                                     {.icon = rap::message_spec::icon::warning,
+                                      .title = _("Move to New Window"),
+                                      .text = why});
+                });
+        return nullptr;
+    }
+    placement where{.size = window_->size(), .at = at};
+    // From the menu: a little down and right of this one (unless the
+    // desktop places windows itself).
+    if (!at)
+        if (auto from = window_->position()) where.at = rap::point_f{from->x + 32, from->y + 32};
+    std::unique_ptr<log_tab> tab = detach(id);
+    if (!tab) return nullptr;
+    std::unique_ptr<log_window> w(new log_window(ui_));
+    w->build(std::move(tab), where);
+    rap::window* frame = w->window_.get();
+    // Kept until it closes, as the window it came from is; rapport shows it.
+    if (keep_for_tests && *keep_for_tests)
+        (*keep_for_tests)(std::move(w));
+    else
+    {
+        log_window* raw = w.get();
+        const size_t kept = windows::hold(std::shared_ptr<log_window>(std::move(w)));
+        raw->on_closed([kept] { windows::release(kept); });
+    }
+    return frame;
+}
+
+bool log_window::receive(const rap::document_tabs::transfer& t)
+{
+    if (!takes_tabs()) return false;
+    log_window* source = of(t.source);
+    if (!source || source == this) return false;
+    std::unique_ptr<log_tab> tab = source->detach(t.id);
+    if (!tab) return false;
+    adopt(std::move(tab), t.index);
+    return true;
+}
+
 void log_window::pick_commits(const std::string& purpose, const std::string& label,
                               std::function<void(std::vector<commit>)> chosen)
 {
     picking_ = true;
+    // Its one tab stays: no strip, and none torn off or dropped in.
+    strip_->set_group("");
+    strip_->on_detach({});
+    strip_->on_receive({});
     strip_->set_visible(false);
     tabs_.front()->pick_commits(purpose, label, std::move(chosen));
 }
 
 void log_window::closing()
 {
-    settings::get().save_window("log.window", *window_);
+    // (A window its tabs were moved out of wasn't the user's to close.)
+    if (!emptied_) settings::get().save_window("log.window", *window_);
     log_tab* now = current_tab();
     for (const auto& t : tabs_)
         if (t.get() != now)

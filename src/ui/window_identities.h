@@ -61,9 +61,11 @@ private:
 // `w`, just made with `parent` (or none), recorded as created() does, and
 // let go (destroyed()) when rapport destroys it: `w`'s on_destroyed is
 // taken. `ids` must outlive every window it tracks, as they may be torn
-// down at exit. Returns `w`'s identity.
+// down at exit. `hold` is kept as long as `w` (as a count of what's open
+// over its parent, ui/modal_dialogs.h). Returns `w`'s identity.
 std::shared_ptr<const repo_identity> track_window(window_identities& ids, rap::window& w,
-                                                  rap::window* parent);
+                                                  rap::window* parent,
+                                                  std::shared_ptr<const void> hold = nullptr);
 
 // While it lives, windows made without a parent take `id`, not current():
 // a window's own actions (Commit, Rebase, a log from a log) open windows of

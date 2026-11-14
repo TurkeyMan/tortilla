@@ -3,6 +3,7 @@
 #include "git/patch_serial.h"
 #include "git/repo.h"
 #include "i18n.h"
+#include "ui/modal_dialogs.h"
 #include "ui/progress_dialog.h"
 #include "ui/repo_icon.h"
 
@@ -103,15 +104,15 @@ void create_patch_serial(rap::ui& ui, rap::window* parent, const std::string& wo
                              button{_("_Browse...")}.on_click(
                                  [&ui, s]
                                  {
-                                     ui.choose_files(s->window.get(),
-                                                     {.mode = rap::file_dialog_spec::mode::folder,
-                                                      .title = _("Write patches into"),
-                                                      .initial_path = s->folder->text()},
-                                                     [s](std::vector<std::string> chosen)
-                                                     {
-                                                         if (!chosen.empty())
-                                                             s->folder->set_text(chosen.front());
-                                                     });
+                                     pick_files(ui, s->window.get(),
+                                                {.mode = rap::file_dialog_spec::mode::folder,
+                                                 .title = _("Write patches into"),
+                                                 .initial_path = s->folder->text()},
+                                                [s](std::vector<std::string> chosen)
+                                                {
+                                                    if (!chosen.empty())
+                                                        s->folder->set_text(chosen.front());
+                                                });
                                  })}},
                        {_("Commits"),
                         drop_down{{_("Since a revision"), _("The newest commits"), _("A range")},
@@ -152,15 +153,15 @@ void create_patch_serial(rap::ui& ui, rap::window* parent, const std::string& wo
                 (o.commits == format_patch_options::which::range && o.from.empty());
             if (missing)
             {
-                ui.message(parent,
-                           {.icon = rap::message_spec::icon::error,
-                            .title = _("Create Patch Serial"),
-                            .text = o.folder.empty() ? _("Choose a directory for the patches.")
-                                                     : _("Choose a revision to start from.")},
-                           [done](rap::dialog_role)
-                           {
-                               if (done) done(false);
-                           });
+                show_message(ui, parent,
+                             {.icon = rap::message_spec::icon::error,
+                              .title = _("Create Patch Serial"),
+                              .text = o.folder.empty() ? _("Choose a directory for the patches.")
+                                                       : _("Choose a revision to start from.")},
+                             [done](rap::dialog_role)
+                             {
+                                 if (done) done(false);
+                             });
                 return;
             }
             std::vector<progress_follow_up> follow_ups;
@@ -269,8 +270,8 @@ void apply_patch_serial(rap::ui& ui, rap::window* parent, const std::string& wor
                         vbox{button{_("_Add...")}.on_click(
                                  [&ui, s]
                                  {
-                                     ui.choose_files(
-                                         s->window.get(),
+                                     pick_files(
+                                         ui, s->window.get(),
                                          {.mode = rap::file_dialog_spec::mode::open_many,
                                           .title = _("Add patches"),
                                           .filters = {{_("Patches"), "*.patch;*.diff"},

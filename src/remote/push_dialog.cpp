@@ -7,6 +7,7 @@
 #include "remote/pull_fetch_dialog.h"
 #include "remote/remote_selector.h"
 #include "settings.h"
+#include "ui/modal_dialogs.h"
 #include "ui/progress_dialog.h"
 #include "ui/repo_icon.h"
 #include "ui/settings_dialog.h"
@@ -180,37 +181,38 @@ void push_dialog::ok()
     const bool url = by_url();
     if (url && url_->text().empty())
     {
-        ui_.message(window_.get(), {.icon = rap::message_spec::icon::warning,
-                                    .title = _("Push"),
-                                    .text = _("Enter the URL to push to.")});
+        show_message(ui_, window_.get(),
+                     {.icon = rap::message_spec::icon::warning,
+                      .title = _("Push"),
+                      .text = _("Enter the URL to push to.")});
         return;
     }
     if (all_branches_->checked())
     {
-        ui_.message(window_.get(),
-                    {.icon = rap::message_spec::icon::question,
-                     .title = _("Push"),
-                     .text = _("Do you really want to push all local branches?"),
-                     .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
-                    [this](rap::dialog_role r)
-                    {
-                        if (r == rap::dialog_role::yes) push();
-                    });
+        show_message(ui_, window_.get(),
+                     {.icon = rap::message_spec::icon::question,
+                      .title = _("Push"),
+                      .text = _("Do you really want to push all local branches?"),
+                      .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
+                     [this](rap::dialog_role r)
+                     {
+                         if (r == rap::dialog_role::yes) push();
+                     });
         return;
     }
     if (local_->text().empty())
     {
-        ui_.message(window_.get(),
-                    {.icon = rap::message_spec::icon::question,
-                     .title = _("Push"),
-                     .text = remote_branch_->text().empty()
-                                 ? _("Local and remote branch are empty.\nContinue?")
-                                 : _("This results in a remote removal.\nContinue?"),
-                     .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
-                    [this](rap::dialog_role r)
-                    {
-                        if (r == rap::dialog_role::yes) push();
-                    });
+        show_message(ui_, window_.get(),
+                     {.icon = rap::message_spec::icon::question,
+                      .title = _("Push"),
+                      .text = remote_branch_->text().empty()
+                                  ? _("Local and remote branch are empty.\nContinue?")
+                                  : _("This results in a remote removal.\nContinue?"),
+                      .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
+                     [this](rap::dialog_role r)
+                     {
+                         if (r == rap::dialog_role::yes) push();
+                     });
         return;
     }
     push();

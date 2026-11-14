@@ -2,6 +2,7 @@
 
 #include "i18n.h"
 #include "settings.h"
+#include "ui/modal_dialogs.h"
 #include "ui/repo_icon.h"
 #include "util/repo_path.h"
 
@@ -72,14 +73,14 @@ void open_repository_dialog(rap::ui& ui, rap::window* parent,
 
     auto browse = [&ui, done](rap::window* over, std::function<void()> chosen)
     {
-        ui.choose_files(
-            over, {.mode = rap::file_dialog_spec::mode::folder, .title = _("Open repository")},
-            [done, chosen](std::vector<std::string> paths)
-            {
-                if (paths.empty()) return;
-                if (chosen) chosen();
-                done(paths.front());
-            });
+        pick_files(ui, over,
+                   {.mode = rap::file_dialog_spec::mode::folder, .title = _("Open repository")},
+                   [done, chosen](std::vector<std::string> paths)
+                   {
+                       if (paths.empty()) return;
+                       if (chosen) chosen();
+                       done(paths.front());
+                   });
     };
     // Nothing recent: the folder picker is all there is to show.
     if (st->rows.paths.empty()) return browse(parent, {});

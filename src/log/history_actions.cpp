@@ -152,10 +152,10 @@ void log_tab::history_items(menu& m, const std::vector<size_t>& sel)
                         {
                             text = tidy_message(text);
                             if (text.empty())
-                                return ui_.message(parent(),
-                                                   {.icon = rap::message_spec::icon::error,
-                                                    .title = _("Reword"),
-                                                    .text = _("A commit needs a message.")});
+                                return show_message(ui_, parent(),
+                                                    {.icon = rap::message_spec::icon::error,
+                                                     .title = _("Reword"),
+                                                     .text = _("A commit needs a message.")});
                             start_history_edit(
                                 _("Reword"),
                                 from_plan(h, plan_reword(h, c, text), "tortilla: reword " + hash),
@@ -182,10 +182,10 @@ void log_tab::history_items(menu& m, const std::vector<size_t>& sel)
                         {
                             text = tidy_message(strip_squash_separators(text, 2));
                             if (text.empty())
-                                return ui_.message(parent(),
-                                                   {.icon = rap::message_spec::icon::error,
-                                                    .title = _("Squash"),
-                                                    .text = _("A commit needs a message.")});
+                                return show_message(ui_, parent(),
+                                                    {.icon = rap::message_spec::icon::error,
+                                                     .title = _("Squash"),
+                                                     .text = _("A commit needs a message.")});
                             start_history_edit(
                                 _("Squash"),
                                 from_plan(h, plan_fold(h, c, into, text),
@@ -301,10 +301,10 @@ void log_tab::history_items(menu& m, const std::vector<size_t>& sel)
                               {
                                   text = tidy_message(strip_squash_separators(text, n));
                                   if (text.empty())
-                                      return ui_.message(parent(),
-                                                         {.icon = rap::message_spec::icon::error,
-                                                          .title = _("Combine to One Commit"),
-                                                          .text = _("A commit needs a message.")});
+                                      return show_message(ui_, parent(),
+                                                          {.icon = rap::message_spec::icon::error,
+                                                           .title = _("Combine to One Commit"),
+                                                           .text = _("A commit needs a message.")});
                                   start_history_edit(
                                       _("Combine to One Commit"),
                                       from_plan(h, plan_combine(h, commits, text),
@@ -330,27 +330,27 @@ void log_tab::history_items(menu& m, const std::vector<size_t>& sel)
                                 "Drop {0} commits from {1}? Their changes go with them.", n),
                              n, h.name());
             if (!warning.empty()) question += "\n\n" + warning;
-            ui_.message(parent(),
-                        {.icon = rap::message_spec::icon::question,
-                         .title = _("Drop"),
-                         .text = question,
-                         .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
-                        guarded(
-                            [this, h, commits, n](rap::dialog_role r)
-                            {
-                                if (r != rap::dialog_role::yes) return;
-                                const auto plan = plan_drop(h, commits);
-                                start_history_edit(
-                                    _("Drop"),
-                                    from_plan(h, plan,
-                                              "tortilla: drop " + std::to_string(n) +
-                                                  (n == 1 ? " commit" : " commits")),
-                                    fallback_of(plan),
-                                    n == 1 ? rap::i18n::format(_("Drop {0}"),
-                                                               commits.front().hex(8))
-                                           : rap::i18n::format(
-                                                 N_("Drop {0} commit", "Drop {0} commits", n), n));
-                            }));
+            show_message(ui_, parent(),
+                         {.icon = rap::message_spec::icon::question,
+                          .title = _("Drop"),
+                          .text = question,
+                          .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
+                         guarded(
+                             [this, h, commits, n](rap::dialog_role r)
+                             {
+                                 if (r != rap::dialog_role::yes) return;
+                                 const auto plan = plan_drop(h, commits);
+                                 start_history_edit(
+                                     _("Drop"),
+                                     from_plan(h, plan,
+                                               "tortilla: drop " + std::to_string(n) +
+                                                   (n == 1 ? " commit" : " commits")),
+                                     fallback_of(plan),
+                                     n == 1
+                                         ? rap::i18n::format(_("Drop {0}"), commits.front().hex(8))
+                                         : rap::i18n::format(
+                                               N_("Drop {0} commit", "Drop {0} commits", n), n));
+                             }));
         }));
 
     // Move to another branch (committed on the wrong one), or a new one.
@@ -433,8 +433,8 @@ void log_tab::confirm_history_edit(const std::string& title, const std::string& 
     std::string text = question;
     if (pushed) text += (text.empty() ? "" : "\n\n") + pushed_warning(h);
     if (text.empty()) return go();
-    ui_.message(
-        parent(),
+    show_message(
+        ui_, parent(),
         {.icon = pushed ? rap::message_spec::icon::warning : rap::message_spec::icon::question,
          .title = title,
          .text = text,
@@ -611,10 +611,11 @@ void log_tab::show_notices()
     for (const std::string& n : take_notices(notices_dir(), repo_.workdir()))
         detail += (detail.empty() ? "" : "\n\n") + n;
     if (detail.empty()) return;
-    ui_.message(parent(), {.icon = rap::message_spec::icon::warning,
-                           .title = _("Tortilla"),
-                           .text = _("A change made here ended after its window was closed:"),
-                           .detail = detail});
+    show_message(ui_, parent(),
+                 {.icon = rap::message_spec::icon::warning,
+                  .title = _("Tortilla"),
+                  .text = _("A change made here ended after its window was closed:"),
+                  .detail = detail});
 }
 
 bool log_tab::claim_history_writer(const std::string& title)
@@ -674,8 +675,8 @@ void log_tab::history_replayed(const std::string& title,
                             _("The same edit a commit at a time, stopping at the conflict for you "
                               "to resolve it."),
                             [this, todo = *fallback] { open_rebase(todo.onto->hex(), &todo); }}});
-        return ui_.message(
-            parent(),
+        return show_message(
+            ui_, parent(),
             {.icon = rap::message_spec::icon::error,
              .title = title,
              .text = f.message.empty() ? std::string(_("It can't be done.")) : f.message});
@@ -715,13 +716,14 @@ void log_tab::history_applied(const history_outcome& o)
     if (!o.applied)
         // Refs it moved all the same and couldn't put back are a one-way
         // step of their own in the journal already: Undo puts them back.
-        return ui_.message(parent(), {.icon = rap::message_spec::icon::error,
-                                      .title = o.title,
-                                      .text = rap::i18n::format(_("{0} failed."), o.title),
-                                      .detail = o.applied.error().message});
+        return show_message(ui_, parent(),
+                            {.icon = rap::message_spec::icon::error,
+                             .title = o.title,
+                             .text = rap::i18n::format(_("{0} failed."), o.title),
+                             .detail = o.applied.error().message});
     if (!o.applied->empty())
-        ui_.message(
-            parent(),
+        show_message(
+            ui_, parent(),
             {.icon = rap::message_spec::icon::warning, .title = o.title, .text = *o.applied});
     set_sync_notice(rap::i18n::format(_("{0}: done"), o.title), false);
     if (o.edit.pushed && o.use != journal_use::undo) offer_force_push(o.edit);
@@ -754,8 +756,8 @@ void log_tab::step_journal(bool redo)
         else
             journal_.forget_undo();
         update_undo_buttons();
-        return ui_.message(
-            parent(),
+        return show_message(
+            ui_, parent(),
             {.icon = rap::message_spec::icon::warning,
              .title = redo ? _("Redo") : _("Undo"),
              .text = rap::i18n::format(_("{0} can't be done: {1}"), title, *why),
@@ -808,20 +810,20 @@ void log_tab::offer_force_push(const history_edit& e)
     if (!e.lease || !e.moves.front().to) return;
     auto args = force_push_args(e);
     if (args.empty()) return;
-    ui_.message(parent(),
-                {.icon = rap::message_spec::icon::question,
-                 .title = _("Force Push"),
-                 .text = rap::i18n::format(
-                     _("{0} has been rewritten. Force-push it to {1}, if no one else has pushed "
-                       "there since it was at {2}?"),
-                     short_branch(branch), args[2], e.lease->hex(8)),
-                 .detail = command_line(args),
-                 .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
-                guarded(
-                    [this, args](rap::dialog_role r)
-                    {
-                        if (r == rap::dialog_role::yes) run_git_commands(_("Force Push"), {args});
-                    }));
+    show_message(ui_, parent(),
+                 {.icon = rap::message_spec::icon::question,
+                  .title = _("Force Push"),
+                  .text = rap::i18n::format(
+                      _("{0} has been rewritten. Force-push it to {1}, if no one else has pushed "
+                        "there since it was at {2}?"),
+                      short_branch(branch), args[2], e.lease->hex(8)),
+                  .detail = command_line(args),
+                  .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
+                 guarded(
+                     [this, args](rap::dialog_role r)
+                     {
+                         if (r == rap::dialog_role::yes) run_git_commands(_("Force Push"), {args});
+                     }));
 }
 
 }  // namespace tortilla

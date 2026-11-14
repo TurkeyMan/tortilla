@@ -3,6 +3,7 @@
 #include "git/command.h"
 #include "git/git_install.h"
 #include "i18n.h"
+#include "ui/modal_dialogs.h"
 
 #include <git2.h>
 #include <rapport/sys.h>
@@ -129,18 +130,18 @@ void warn_if_lfs_missing(rap::ui& ui, rap::window* parent, const std::string& wo
         return;
     }
     warned.insert(key);
-    ui.message(parent,
-               {.icon = rap::message_spec::icon::info,
-                .title = _("Git LFS"),
-                .text = rap::i18n::format(
-                    _("{0} stores some files with Git LFS, but git-lfs isn't installed, so "
-                      "those files are checked out as small pointer files.\n\nInstall Git LFS "
-                      "(https://git-lfs.com), then run “git lfs pull” in the repository."),
-                    key)},
-               [done = std::move(done)](rap::dialog_role)
-               {
-                   if (done) done();
-               });
+    show_message(ui, parent,
+                 {.icon = rap::message_spec::icon::info,
+                  .title = _("Git LFS"),
+                  .text = rap::i18n::format(
+                      _("{0} stores some files with Git LFS, but git-lfs isn't installed, so "
+                        "those files are checked out as small pointer files.\n\nInstall Git LFS "
+                        "(https://git-lfs.com), then run “git lfs pull” in the repository."),
+                      key)},
+                 [done = std::move(done)](rap::dialog_role)
+                 {
+                     if (done) done();
+                 });
 }
 
 }  // namespace tortilla

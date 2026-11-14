@@ -2,6 +2,7 @@
 
 #include "i18n.h"
 #include "settings.h"
+#include "ui/modal_dialogs.h"
 #include "ui/repo_icon.h"
 #include "util/strings.h"
 
@@ -214,19 +215,19 @@ void merge_pr_dialog::merge(bool when_ready)
     if (!when_ready && state_->state != merge_state::verdict::ready && bypass_->checked())
     {
         // Going round the rules is the administrator's call, made knowingly.
-        ui_.message(window_.get(),
-                    {.icon = rap::message_spec::icon::warning,
-                     .title = rap::i18n::format(_("Merge Pull Request #{0}"), pr_.pr.number),
-                     .text = _("Merge it despite the branch's rules?"),
-                     .detail = state_->why + "\n\n" +
-                               _("The rules are there for a reason: this merges without the "
-                                 "reviews or checks they ask for, and the forge records that you "
-                                 "did."),
-                     .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
-                    [this, alive = std::weak_ptr<bool>(alive_)](rap::dialog_role r)
-                    {
-                        if (alive.lock() && r == rap::dialog_role::yes) send(false);
-                    });
+        show_message(ui_, window_.get(),
+                     {.icon = rap::message_spec::icon::warning,
+                      .title = rap::i18n::format(_("Merge Pull Request #{0}"), pr_.pr.number),
+                      .text = _("Merge it despite the branch's rules?"),
+                      .detail = state_->why + "\n\n" +
+                                _("The rules are there for a reason: this merges without the "
+                                  "reviews or checks they ask for, and the forge records that you "
+                                  "did."),
+                      .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
+                     [this, alive = std::weak_ptr<bool>(alive_)](rap::dialog_role r)
+                     {
+                         if (alive.lock() && r == rap::dialog_role::yes) send(false);
+                     });
         return;
     }
     send(when_ready);
@@ -273,10 +274,11 @@ void merge_pr_dialog::send(bool when_ready)
                 return;
             }
             if (!r->empty())
-                ui_.message(nullptr, {.icon = rap::message_spec::icon::warning,
-                                      .title = rap::i18n::format(_("Merge Pull Request #{0}"),
-                                                                 pr_.pr.number),
-                                      .text = *r});
+                show_message(
+                    ui_, nullptr,
+                    {.icon = rap::message_spec::icon::warning,
+                     .title = rap::i18n::format(_("Merge Pull Request #{0}"), pr_.pr.number),
+                     .text = *r});
             if (done_) done_(!when_ready);
             window_->close();
             if (closed_) closed_();

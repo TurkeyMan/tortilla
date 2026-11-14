@@ -9,6 +9,7 @@
 #include "git/temp_files.h"
 #include "i18n.h"
 #include "remote/push_dialog.h"
+#include "ui/modal_dialogs.h"
 #include "ui/progress_dialog.h"
 #include "ui/repo_icon.h"
 #include "ui/windows.h"
@@ -172,9 +173,10 @@ void merge_dialog::ok()
     const std::string rev = from_.revision();
     if (rev.empty())
     {
-        ui_.message(window_.get(), {.icon = rap::message_spec::icon::warning,
-                                    .title = _("Merge"),
-                                    .text = _("Branch/Tag name must not be empty or is invalid.")});
+        show_message(ui_, window_.get(),
+                     {.icon = rap::message_spec::icon::warning,
+                      .title = _("Merge"),
+                      .text = _("Branch/Tag name must not be empty or is invalid.")});
         return;
     }
     // [spec 8.4.4]
@@ -206,9 +208,10 @@ void merge_dialog::ok()
         *message_file = unique_temp_path("merge", ".txt");
         if (message_file->empty() || !write_file(*message_file, message))
         {
-            ui_.message(window_.get(), {.icon = rap::message_spec::icon::error,
-                                        .title = _("Merge"),
-                                        .text = _("Could not save merge message")});
+            show_message(ui_, window_.get(),
+                         {.icon = rap::message_spec::icon::error,
+                          .title = _("Merge"),
+                          .text = _("Could not save merge message")});
             return;
         }
         c.insert(c.end(), {"-F", rap::sys::path_to_utf8(*message_file)});
@@ -271,21 +274,22 @@ void merge_dialog::ok()
              [&ui, workdir, rev]
          {
              const size_t asking = windows::hold({});
-             ui.message(nullptr,
-                        {.icon = rap::message_spec::icon::question,
-                         .title = _("Merge"),
-                         .text = rap::i18n::format(_("Do you really want to delete \"{0}\"?"), rev),
-                         .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
-                        [&ui, workdir, rev, asking](rap::dialog_role r)
-                        {
-                            if (r == rap::dialog_role::yes)
-                                if (git_result d = run_git(workdir, {"branch", "-D", "--", rev});
-                                    !d.ok())
-                                    ui.message(nullptr, {.icon = rap::message_spec::icon::error,
-                                                         .title = _("Merge"),
-                                                         .text = d.output});
-                            windows::release(asking);
-                        });
+             show_message(
+                 ui, nullptr,
+                 {.icon = rap::message_spec::icon::question,
+                  .title = _("Merge"),
+                  .text = rap::i18n::format(_("Do you really want to delete \"{0}\"?"), rev),
+                  .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
+                 [&ui, workdir, rev, asking](rap::dialog_role r)
+                 {
+                     if (r == rap::dialog_role::yes)
+                         if (git_result d = run_git(workdir, {"branch", "-D", "--", rev}); !d.ok())
+                             show_message(ui, nullptr,
+                                          {.icon = rap::message_spec::icon::error,
+                                           .title = _("Merge"),
+                                           .text = d.output});
+                     windows::release(asking);
+                 });
          },
          .offered = [local_branch, no_commit](bool ok)
          { return ok && !no_commit && local_branch; }},
@@ -305,13 +309,14 @@ void merge_dialog::ok()
             std::error_code ec;
             if (!message_file->empty()) fs::remove(*message_file, ec);
             if (!ok && has_conflicts(workdir))
-                ui.message(nullptr, {.icon = rap::message_spec::icon::info,
-                                     .title = _("Merge"),
-                                     .text = _("While merging, a conflict in at least one file "
-                                               "occurred. After resolving all "
-                                               "files, you need to perform a commit in order to "
-                                               "complete the merge. If you want "
-                                               "to abort the merge, use Abort Merge.")});
+                show_message(ui, nullptr,
+                             {.icon = rap::message_spec::icon::info,
+                              .title = _("Merge"),
+                              .text = _("While merging, a conflict in at least one file "
+                                        "occurred. After resolving all "
+                                        "files, you need to perform a commit in order to "
+                                        "complete the merge. If you want "
+                                        "to abort the merge, use Abort Merge.")});
             if (done) done();
             windows::release(running);
         },

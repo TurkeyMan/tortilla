@@ -4,6 +4,7 @@
 #include "forge/pr_watch.h"
 #include "i18n.h"
 #include "log/ref_labels.h"
+#include "ui/modal_dialogs.h"
 
 #include <rapport/sys.h>
 
@@ -137,12 +138,12 @@ struct accounts_state : std::enable_shared_from_this<accounts_state>
 
     void complain(const std::string& text, const std::string& detail = {})
     {
-        ui.message(parent(),
-                   {.icon = rap::message_spec::icon::error,
-                    .title = _("Accounts"),
-                    .text = text,
-                    .detail = detail},
-                   [](rap::dialog_role) {});
+        show_message(ui, parent(),
+                     {.icon = rap::message_spec::icon::error,
+                      .title = _("Accounts"),
+                      .text = text,
+                      .detail = detail},
+                     [](rap::dialog_role) {});
     }
 
     // The buttons as the choices and what's under way allow.
@@ -358,8 +359,8 @@ struct accounts_state : std::enable_shared_from_this<accounts_state>
         const auto sel = list->selection();
         if (sel.empty() || sel.front() >= rows.accounts.size()) return;
         const forge_account a = rows.accounts[sel.front()];
-        ui.message(
-            parent(),
+        show_message(
+            ui, parent(),
             {.icon = rap::message_spec::icon::question,
              .title = _("Accounts"),
              .text = rap::i18n::format(_("Sign out of {0} on {1}?"), a.login, a.host),

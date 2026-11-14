@@ -7,6 +7,7 @@
 #include "i18n.h"
 #include "remote/push_dialog.h"
 #include "settings.h"
+#include "ui/modal_dialogs.h"
 #include "ui/progress_dialog.h"
 #include "ui/repo_icon.h"
 #include "ui/windows.h"
@@ -137,9 +138,10 @@ void create_ref_dialog::ok()
     const std::string message = trimmed(message_->text());
     auto refuse = [this](const std::string& text)
     {
-        ui_.message(window_.get(), {.icon = rap::message_spec::icon::warning,
-                                    .title = tag_ ? _("Create Tag") : _("Create Branch"),
-                                    .text = text});
+        show_message(ui_, window_.get(),
+                     {.icon = rap::message_spec::icon::warning,
+                      .title = tag_ ? _("Create Tag") : _("Create Branch"),
+                      .text = text});
     };
     if (tag_ && sign_->checked() && message.empty())
         return refuse(_("You must enter a log message for the commit"));
@@ -159,8 +161,8 @@ void create_ref_dialog::ok()
     }
     if (ref_exists(workdir_, (tag_ ? "refs/heads/" : "refs/tags/") + name))
     {
-        ui_.message(
-            window_.get(),
+        show_message(
+            ui_, window_.get(),
             {.icon = rap::message_spec::icon::warning,
              .title = tag_ ? _("Create Tag") : _("Create Branch"),
              .text = tag_ ? _("A branch with the same name as your entered tag name already exists "
@@ -217,9 +219,10 @@ void create_ref_dialog::create()
     }
     if (!r.ok())
     {
-        ui_.message(window_.get(), {.icon = rap::message_spec::icon::error,
-                                    .title = tag_ ? _("Create Tag") : _("Create Branch"),
-                                    .text = r.output});
+        show_message(ui_, window_.get(),
+                     {.icon = rap::message_spec::icon::error,
+                      .title = tag_ ? _("Create Tag") : _("Create Branch"),
+                      .text = r.output});
         return;
     }
     settings::get().set(tag_ ? "tag.push" : "branch.switchTo",

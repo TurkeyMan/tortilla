@@ -6,6 +6,7 @@
 #include "git/repo.h"
 #include "i18n.h"
 #include "log/ref_labels.h"
+#include "ui/modal_dialogs.h"
 
 #include <algorithm>
 #include <cctype>
@@ -110,12 +111,12 @@ struct remotes_state
 
     void complain(const std::string& text, const std::string& detail = {})
     {
-        ui.message(parent(),
-                   {.icon = rap::message_spec::icon::error,
-                    .title = _("Remotes"),
-                    .text = text,
-                    .detail = detail},
-                   [](rap::dialog_role) {});
+        show_message(ui, parent(),
+                     {.icon = rap::message_spec::icon::error,
+                      .title = _("Remotes"),
+                      .text = text,
+                      .detail = detail},
+                     [](rap::dialog_role) {});
     }
 
     // The remotes again, showing `select` (or a new one's empty fields).
@@ -286,8 +287,8 @@ struct remotes_state
     {
         if (editing.empty()) return;
         const std::string remote = editing;
-        ui.message(
-            parent(),
+        show_message(
+            ui, parent(),
             {.icon = rap::message_spec::icon::question,
              .title = _("Remotes"),
              .text = rap::i18n::format(_("Remove the remote “{0}”?"), remote),

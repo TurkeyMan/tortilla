@@ -2,6 +2,7 @@
 
 #include "git/command.h"
 #include "i18n.h"
+#include "ui/modal_dialogs.h"
 
 #include <rapport/sys.h>
 
@@ -110,16 +111,16 @@ void trash_first(rap::ui& ui, rap::window* parent, const std::string& title,
 {
     auto kept = rap::sys::move_to_trash(files);
     if (kept) return go();
-    ui.message(parent,
-               {.icon = rap::message_spec::icon::warning,
-                .title = title,
-                .text = question,
-                .detail = kept.error(),
-                .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
-               [go = std::move(go)](rap::dialog_role r)
-               {
-                   if (r == rap::dialog_role::yes) go();
-               });
+    show_message(ui, parent,
+                 {.icon = rap::message_spec::icon::warning,
+                  .title = title,
+                  .text = question,
+                  .detail = kept.error(),
+                  .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
+                 [go = std::move(go)](rap::dialog_role r)
+                 {
+                     if (r == rap::dialog_role::yes) go();
+                 });
 }
 
 }  // namespace tortilla

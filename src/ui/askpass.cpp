@@ -1,6 +1,7 @@
 #include "askpass.h"
 
 #include "git/askpass_env.h"
+#include "ui/modal_dialogs.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -60,20 +61,20 @@ int run_askpass(rap::ui& ui, const std::string& question)
     if (k == kind::yes_no || k == kind::yes_no_exit)
     {
         // ssh's question about a host it hasn't seen ("...(yes/no/[fingerprint])?").
-        ui.message(nullptr,
-                   {.icon = rap::message_spec::icon::question,
-                    .title = "Tortilla",
-                    .text = question,
-                    .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
-                   [&](rap::dialog_role r)
-                   {
-                       const bool yes = r == rap::dialog_role::yes;
-                       if (k == kind::yes_no)
-                           write_answer(yes ? "yes" : "no"), code = 0;
-                       else
-                           code = yes ? 0 : 1;
-                       ui.quit();
-                   });
+        show_message(ui, nullptr,
+                     {.icon = rap::message_spec::icon::question,
+                      .title = "Tortilla",
+                      .text = question,
+                      .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
+                     [&](rap::dialog_role r)
+                     {
+                         const bool yes = r == rap::dialog_role::yes;
+                         if (k == kind::yes_no)
+                             write_answer(yes ? "yes" : "no"), code = 0;
+                         else
+                             code = yes ? 0 : 1;
+                         ui.quit();
+                     });
         ui.run();
         return code;
     }
