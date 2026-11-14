@@ -25,6 +25,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -301,6 +302,10 @@ public:
     int pulses = 0;
 };
 
+class kept_stack;
+class kept_tabs;
+class kept_window;
+
 // What one window was built with, of those kept here, and how to poison
 // them all.
 struct built_window
@@ -309,6 +314,165 @@ struct built_window
     std::vector<kept_splitter*> splitters;
     std::vector<kept_entry*> entries;
     std::vector<std::function<void()>> poison;
+    kept_window* window = nullptr;
+    kept_tabs* tabs = nullptr;
+    kept_stack* stack = nullptr;
+    // While a stack's page is built: where its widgets' poison goes too.
+    std::vector<std::function<void()>>* page = nullptr;
+};
+
+// A window's document tabs: what they're told, and the user's clicks, which
+// call the handlers as the strip would.
+class kept_tabs : public kept<rap::document_tabs>
+{
+public:
+    void insert(int index, const rap::document_tab& t) override
+    {
+        touch();
+        if (index < 0 || size_t(index) > items.size()) index = int(items.size());
+        items.insert(items.begin() + index, t);
+        if (current_id.empty()) current_id = t.id;
+    }
+    void remove(const std::string& id) override
+    {
+        touch();
+        const int i = index_of(id);
+        if (i < 0) return;
+        items.erase(items.begin() + i);
+        if (current_id != id) return;
+        current_id =
+            items.empty() ? std::string() : items[std::min(size_t(i), items.size() - 1)].id;
+    }
+    void update(const rap::document_tab& t) override
+    {
+        touch();
+        if (const int i = index_of(t.id); i >= 0) items[size_t(i)] = t;
+    }
+    void select(const std::string& id) override
+    {
+        touch();
+        if (index_of(id) >= 0) current_id = id;
+    }
+    std::string current() const override
+    {
+        touch();
+        return current_id;
+    }
+    std::vector<std::string> ids() const override
+    {
+        touch();
+        std::vector<std::string> out;
+        for (const rap::document_tab& t : items) out.push_back(t.id);
+        return out;
+    }
+    void on_select(std::function<void(const std::string&)> f) override { selected = std::move(f); }
+    void on_close(std::function<void(const std::string&)> f) override { closed = std::move(f); }
+    void on_new(std::function<void()> f) override { added = std::move(f); }
+    void on_reorder(std::function<void(const std::string&, int)> f) override
+    {
+        reordered = std::move(f);
+    }
+
+    // The user's clicks and keys, as the strip passes them on: a tab
+    // clicked (Ctrl+Tab), its close box (Ctrl+W), + (Ctrl+T), a drag.
+    void click(const std::string& id)
+    {
+        if (id == current_id || index_of(id) < 0) return;
+        current_id = id;
+        if (selected) selected(id);
+    }
+    void close_box(const std::string& id)
+    {
+        if (closed) closed(id);
+    }
+    void plus()
+    {
+        if (added) added();
+    }
+    void drag(const std::string& id, int to)
+    {
+        const int from = index_of(id);
+        if (from < 0 || from == to) return;
+        rap::document_tab t = items[size_t(from)];
+        items.erase(items.begin() + from);
+        items.insert(items.begin() + to, t);
+        if (reordered) reordered(id, to);
+    }
+    const rap::document_tab* find(const std::string& id) const
+    {
+        const int i = index_of(id);
+        return i < 0 ? nullptr : &items[size_t(i)];
+    }
+
+    std::vector<rap::document_tab> items;
+    std::string current_id;
+    std::function<void(const std::string&)> selected, closed;
+    std::function<void()> added;
+    std::function<void(const std::string&, int)> reordered;
+
+private:
+    int index_of(const std::string& id) const
+    {
+        for (size_t i = 0; i < items.size(); ++i)
+            if (items[i].id == id) return int(i);
+        return -1;
+    }
+};
+
+// The null backend's stack, its pages' widgets poisoned as the stack's own
+// go: once the queue next runs after remove().
+class kept_stack : public kept<rap::stack>
+{
+public:
+    kept_stack(rap::stack& inner, built_window& b, std::function<void(std::function<void()>)> post)
+        : inner_(inner)
+        , built_(b)
+        , post_(std::move(post))
+    {
+    }
+    void add(const std::string& id, rap::node content) override
+    {
+        touch();
+        if (pages_.contains(id)) return;
+        auto& poison = pages_[id];
+        auto* outer = std::exchange(built_.page, &poison);
+        inner_.add(id, std::move(content));
+        built_.page = outer;
+    }
+    void remove(const std::string& id) override
+    {
+        touch();
+        auto it = pages_.find(id);
+        if (it == pages_.end()) return;
+        inner_.remove(id);
+        post_(
+            [poison = std::move(it->second)]
+            {
+                for (const auto& p : poison) p();
+            });
+        pages_.erase(it);
+    }
+    void show(const std::string& id) override
+    {
+        touch();
+        inner_.show(id);
+    }
+    std::string shown() const override
+    {
+        touch();
+        return inner_.shown();
+    }
+    std::vector<std::string> ids() const override
+    {
+        touch();
+        return inner_.ids();
+    }
+
+private:
+    rap::stack& inner_;
+    built_window& built_;
+    std::function<void(std::function<void()>)> post_;
+    std::map<std::string, std::vector<std::function<void()>>> pages_;
 };
 
 // The null backend's window, which poisons its widgets as it goes (they're
@@ -316,19 +480,31 @@ struct built_window
 class kept_window : public rap::window
 {
 public:
-    kept_window(std::unique_ptr<rap::window> inner, std::vector<std::function<void()>> poison)
+    kept_window(std::unique_ptr<rap::window> inner, std::unique_ptr<rap::build_sink> sink,
+                built_window& b)
         : inner_(std::move(inner))
-        , poison_(std::move(poison))
+        , sink_(std::move(sink))
+        , built_(b)
     {
+        built_.window = this;
     }
     ~kept_window() override
     {
         inner_.reset();
-        for (const auto& p : poison_) p();
+        built_.window = nullptr;
+        for (const auto& p : built_.poison) p();
     }
-    void set_title(const std::string& t) override { inner_->set_title(t); }
+    void set_title(const std::string& t) override
+    {
+        title = t;
+        inner_->set_title(t);
+    }
     void show() override { inner_->show(); }
-    void close() override { inner_->close(); }
+    void close() override
+    {
+        closed = true;
+        inner_->close();
+    }
     rap::size_f size() const override { return inner_->size(); }
     void resize(rap::size_f s) override { inner_->resize(s); }
     void set_min_size(rap::size_f s) override { inner_->set_min_size(s); }
@@ -342,8 +518,16 @@ public:
     {
         inner_->on_fullscreen_changed(std::move(f));
     }
-    void set_icon(const rap::icon& i) override { inner_->set_icon(i); }
-    void set_app_id(const std::string& id) override { inner_->set_app_id(id); }
+    void set_icon(const rap::icon& i) override
+    {
+        icon = i;
+        inner_->set_icon(i);
+    }
+    void set_app_id(const std::string& id) override
+    {
+        app_id = id;
+        inner_->set_app_id(id);
+    }
     void set_menu_bar_visible(bool on) override { inner_->set_menu_bar_visible(on); }
     void on_key(std::function<bool(const rap::key_event&)> f) override
     {
@@ -355,20 +539,32 @@ public:
     }
     void on_close_request(std::function<bool()> f) override
     {
+        close_request = f;
         inner_->on_close_request(std::move(f));
     }
+    void on_destroyed(std::function<void()> f) override { inner_->on_destroyed(std::move(f)); }
     void on_files_dropped(std::function<void(const std::vector<std::string>&)> f) override
     {
         inner_->on_files_dropped(std::move(f));
     }
 
+    std::string title, app_id;
+    rap::icon icon;
+    bool closed = false;
+    // The close box's question (the null window never asks it).
+    std::function<bool()> close_request;
+
+protected:
+    void busy_changed(bool) override {}
+
 private:
     std::unique_ptr<rap::window> inner_;
-    std::vector<std::function<void()>> poison_;
+    std::unique_ptr<rap::build_sink> sink_;  // what the null window's builds call
+    built_window& built_;
 };
 
 // The null backend, with the widgets above of this test's own.
-class keeping_backend : public rap::backend, rap::build_sink
+class keeping_backend : public rap::backend
 {
 public:
     explicit keeping_backend(std::unique_ptr<rap::ui> inner)
@@ -376,16 +572,17 @@ public:
     {
     }
 
-    std::vector<built_window> built;
+    // (A deque: each window's builds keep a reference to theirs.)
+    std::deque<built_window> built;
 
     std::string_view name() const override { return "tortilla-test"; }
     std::unique_ptr<rap::window> create_window(const rap::window_spec& spec, rap::window* parent,
                                                rap::build_sink& sink) override
     {
-        built.emplace_back();
-        sink_ = &sink;
-        auto w = null().create_window(spec, parent, *this);
-        return std::make_unique<kept_window>(std::move(w), built.back().poison);
+        built_window& b = built.emplace_back();
+        auto mine = std::make_unique<window_sink>(*this, sink, b);
+        auto w = null().create_window(spec, parent, *mine);
+        return std::make_unique<kept_window>(std::move(w), std::move(mine), b);
     }
     int run() override { return null().run(); }
     void quit(int code) override { null().quit(code); }
@@ -394,11 +591,21 @@ public:
     void message(rap::window* parent, const rap::message_spec& m,
                  std::function<void(rap::dialog_role)> done) override
     {
+        ++messages;
+        last_message = m.text;
         null().message(parent, m, std::move(done));
     }
     void choose_files(rap::window* parent, const rap::file_dialog_spec& f,
                       std::function<void(std::vector<std::string>)> done) override
     {
+        ++choosers;
+        if (choose)
+        {
+            std::vector<std::string> paths = std::move(*choose);
+            choose.reset();
+            if (done) done(std::move(paths));
+            return;
+        }
         null().choose_files(parent, f, std::move(done));
     }
     void print(rap::window* parent, rap::print_job job) override
@@ -420,7 +627,10 @@ public:
     {
         null().read_clipboard_image(std::move(done));
     }
-    bool save_snapshot(const std::string& path) override { return null().save_snapshot(path); }
+    bool save_snapshot(rap::window* w, const std::string& path) override
+    {
+        return null().save_snapshot(w, path);
+    }
     std::unique_ptr<rap::image> create_image(int w, int h, rap::pixel_format f, const uint8_t* p,
                                              size_t stride) override
     {
@@ -432,56 +642,93 @@ public:
     }
     void set_busy(bool on) override { null().set_busy(on); }
 
+    // Messages shown (the null backend answers each with its first button).
+    int messages = 0;
+    std::string last_message;
+    // Folder and file dialogs asked for, and the next one's answer (else none).
+    int choosers = 0;
+    std::optional<std::vector<std::string>> choose;
+
 private:
     rap::backend& null() { return inner_->backend(); }
 
-    // The null backend's widgets, but for those kept here: those are made
-    // here and handed to the core in their place.
-    void created(const rap::node& n, rap::widget& w) override
+    // One window's builds, its first and its stack's pages after: the null
+    // backend's widgets, but for those kept here, made here and handed to the
+    // core in their place.
+    class window_sink : public rap::build_sink
     {
-        rap::widget* mine = nullptr;
-        built_window& b = built.back();
-        if (const auto* s = std::get_if<rap::spec::list>(&n.spec))
+    public:
+        window_sink(keeping_backend& backend, rap::build_sink& core, built_window& b)
+            : backend_(backend)
+            , core_(core)
+            , built_(b)
         {
-            b.lists.push_back(keep<kept_list>(s->columns));
-            mine = b.lists.back();
         }
-        else if (const auto* s = std::get_if<rap::spec::splitter>(&n.spec))
+        void created(const rap::node& n, rap::widget& w) override
         {
-            b.splitters.push_back(keep<kept_splitter>(s->panes.size()));
-            mine = b.splitters.back();
+            rap::widget* mine = nullptr;
+            built_window& b = built_;
+            if (const auto* s = std::get_if<rap::spec::list>(&n.spec))
+            {
+                b.lists.push_back(keep<kept_list>(s->columns));
+                mine = b.lists.back();
+            }
+            else if (const auto* s = std::get_if<rap::spec::splitter>(&n.spec))
+            {
+                b.splitters.push_back(keep<kept_splitter>(s->panes.size()));
+                mine = b.splitters.back();
+            }
+            else if (const auto* s = std::get_if<rap::spec::entry>(&n.spec))
+            {
+                b.entries.push_back(keep<kept_entry>(*s));
+                mine = b.entries.back();
+            }
+            else if (std::holds_alternative<rap::spec::label>(n.spec))
+                mine = keep<kept_label>();
+            else if (std::holds_alternative<rap::spec::button>(n.spec))
+                mine = keep<kept_button>();
+            else if (std::holds_alternative<rap::spec::progress_bar>(n.spec))
+                mine = keep<kept_progress>();
+            else if (std::holds_alternative<rap::spec::stack>(n.spec))
+                mine = b.stack = keep<kept_stack>(static_cast<rap::stack&>(w), b,
+                                                  [&backend = backend_](std::function<void()> f)
+                                                  { backend.post(std::move(f)); });
+            core_.created(n, mine ? *mine : w);
         }
-        else if (const auto* s = std::get_if<rap::spec::entry>(&n.spec))
+        void created(const rap::spec::dialog_button& b, rap::button& w) override
         {
-            b.entries.push_back(keep<kept_entry>(*s));
-            mine = b.entries.back();
+            core_.created(b, w);
         }
-        else if (std::holds_alternative<rap::spec::label>(n.spec))
-            mine = keep<kept_label>();
-        else if (std::holds_alternative<rap::spec::button>(n.spec))
-            mine = keep<kept_button>();
-        else if (std::holds_alternative<rap::spec::progress_bar>(n.spec))
-            mine = keep<kept_progress>();
-        sink_->created(n, mine ? *mine : w);
-    }
-    void created(const rap::spec::dialog_button& b, rap::button& w) override
-    {
-        sink_->created(b, w);
-    }
-    template <class W, class... Args>
-    W* keep(Args&&... args)
-    {
-        auto w = std::make_unique<W>(std::forward<Args>(args)...);
-        W* raw = w.get();
-        built.back().poison.push_back([raw] { raw->dead = true; });
-        widgets_.push_back(std::move(w));
-        return raw;
-    }
+        void created(const rap::spec::document_tabs& s, rap::document_tabs&) override
+        {
+            kept_tabs* t = built_.tabs = keep<kept_tabs>();
+            for (const rap::document_tab& d : s.items) t->insert(-1, d);
+            if (!s.current.empty()) t->select(s.current);
+            core_.created(s, *t);
+        }
+
+    private:
+        template <class W, class... Args>
+        W* keep(Args&&... args)
+        {
+            auto w = std::make_unique<W>(std::forward<Args>(args)...);
+            W* raw = w.get();
+            auto poison = [raw] { raw->dead = true; };
+            built_.poison.push_back(poison);
+            if (built_.page) built_.page->push_back(poison);
+            backend_.widgets_.push_back(std::move(w));
+            return raw;
+        }
+
+        keeping_backend& backend_;
+        rap::build_sink& core_;
+        built_window& built_;
+    };
 
     std::unique_ptr<rap::ui> inner_;
-    rap::build_sink* sink_ = nullptr;
-    // For as long as the backend, poisoned once their window goes: they keep
-    // no pointer that could go stale (a model is only remembered, never asked).
+    // For as long as the backend, poisoned once their window or page goes:
+    // they keep no pointer that could go stale (a model is only remembered,
+    // never asked).
     std::vector<std::unique_ptr<rap::widget>> widgets_;
 };
 
