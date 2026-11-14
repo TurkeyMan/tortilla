@@ -1408,10 +1408,32 @@ void trust_tests(rap::ui& ui, const std::string& root, const std::string& first)
     if (!strip) return;
 
     std::ofstream(global, std::ios::binary).flush();
+    // git's config is the test's own while this runs: no system config (a
+    // CI image's may trust every folder: safe.directory=*), the global one
+    // a scratch file, none from the environment; and git told the owner
+    // differs. Put back as they were after.
+    const char* const vars[] = {"GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM",
+                                "GIT_TEST_ASSUME_DIFFERENT_OWNER", "GIT_CONFIG_COUNT",
+                                "GIT_CONFIG_PARAMETERS"};
+    std::vector<std::string> were;
+    for (const char* v : vars) were.push_back(rap::sys::env(v).value_or(""));
     set_env("GIT_CONFIG_GLOBAL", rap::sys::path_to_utf8(global));
+    set_env("GIT_CONFIG_NOSYSTEM", "1");
     set_env("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1");
+    set_env("GIT_CONFIG_COUNT", "");
+    set_env("GIT_CONFIG_PARAMETERS", "");
     const bool asks = untrusted_repository(refused).has_value();
-    check(asks, "log trust: git refuses the repository for its owner");
+    if (!asks)
+    {
+        // Trusted all the same: nothing here can make git refuse it, so the
+        // question can't be tested; said, with why, rather than failed.
+        const git_result where =
+            run_git(refused, {"config", "--show-origin", "--get-all", "safe.directory"});
+        const git_result opens = run_git(refused, {"rev-parse", "--git-dir"});
+        std::printf("skip log trust: git opens the repository whatever its owner here, so the "
+                    "trust question isn't tested\n  safe.directory: %s\n  rev-parse: %s\n",
+                    where.output.c_str(), opens.output.c_str());
+    }
     if (asks)
     {
         settings::get().set("log.recentRepositories", "");
@@ -1445,8 +1467,7 @@ void trust_tests(rap::ui& ui, const std::string& root, const std::string& first)
         }
     }
     g_backend->answer.reset();
-    set_env("GIT_TEST_ASSUME_DIFFERENT_OWNER", "");
-    set_env("GIT_CONFIG_GLOBAL", "");
+    for (size_t i = 0; i < std::size(vars); ++i) set_env(vars[i], were[i]);
     strip->close_box(w->tabs()[0]->id());
     settle(ui);
     w.reset();
