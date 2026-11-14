@@ -17,4 +17,9 @@ namespace tortilla
 // UTF-8 in and out, whatever the system's code page.
 std::optional<std::string> repo_relative(std::string_view workdir, std::string_view path);
 
+// A folder as it's shown and remembered: without trailing separators,
+// but for its root's own ("/", "C:/", "C:\": "C:" alone is a folder on that
+// drive, not its top). UTF-8.
+std::string folder_text(std::string path);
+
 }  // namespace tortilla

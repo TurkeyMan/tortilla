@@ -115,11 +115,6 @@ rap::icon icon_of(rap::ui& ui, std::optional<rap::color> colored)
         });
 }
 
-rap::icon g_icon;
-// A coloured repository's windows: a taskbar group of their own on Windows,
-// whose button shows their icon; "" keeps Tortilla's group.
-std::string g_app_id;
-
 // -- which colour: by what's open now ------------------------------------------
 //
 // Colours tell apart the repositories on screen at once, so they're handed
@@ -276,7 +271,6 @@ struct color_lease
     std::optional<rap::color> color;
 };
 std::map<std::string, std::weak_ptr<color_lease>> g_leases;  // by repository folder
-std::shared_ptr<color_lease> g_lease;                         // use_repo_icon's, until exit
 
 std::shared_ptr<color_lease> lease_color(const std::string& dir)
 {
@@ -299,6 +293,24 @@ std::string app_id_of(const std::string& dir, const std::optional<rap::color>& c
     return c ? "Tortilla.Repository." + hash_hex(dir) : std::string();
 }
 
+// Which repository each window made by create_window is, and which windows
+// without a parent take (window_identities.h): those use_repo_icon chose,
+// or a scope's. Never destroyed: windows kept until exit go in static
+// destruction, and let go of theirs then.
+window_identities& identities()
+{
+    static auto* ids = new window_identities;
+    return *ids;
+}
+
+// Tortilla's own icon, for windows of no repository.
+const rap::icon& own_icon(rap::ui& ui)
+{
+    static rap::icon icon;
+    if (!icon) icon = icon_of(ui, std::nullopt);
+    return icon;
+}
+
 }  // namespace
 
 void use_repo_icon(rap::ui& ui, const std::string& path, bool outer)
@@ -313,34 +325,87 @@ void use_repo_icon(rap::ui& ui, const std::string& path, bool outer)
         at = at.parent_path();
     auto r = repo::open(rap::sys::path_to_utf8(at));
     if (!r) return;
-    const std::string dir = repo_key(*r);
-    g_lease = lease_color(dir);
-    g_icon = icon_of(ui, g_lease->color);
-    g_app_id = app_id_of(dir, g_lease->color);
+    identities().use(repo_identity_of(ui, *r));
 }
 
-repo_identity repo_identity_of(rap::ui& ui, const repo& r)
+std::shared_ptr<const repo_identity> repo_identity_of(rap::ui& ui, const repo& r)
 {
     const std::string dir = repo_key(r);
     auto lease = lease_color(dir);
-    return {icon_of(ui, lease->color), app_id_of(dir, lease->color), lease};
+    return std::make_shared<repo_identity>(repo_identity{.repo = dir,
+                                                         .icon = icon_of(ui, lease->color),
+                                                         .app_id = app_id_of(dir, lease->color),
+                                                         .lease = lease});
+}
+
+std::optional<std::shared_ptr<const repo_identity>> repo_identity_of(rap::window* window)
+{
+    if (!window) return std::nullopt;
+    return identities().recorded(window);
+}
+
+void set_repo_identity(rap::window* window, std::shared_ptr<const repo_identity> id)
+{
+    if (!window) return;
+    // Recorded as made in a scope of `id` with no parent: created() replaces
+    // the record, and the window's on_destroyed (track_window's) still lets
+    // it go.
+    const identity_scope scope(identities(), std::move(id));
+    identities().created(window, nullptr);
+}
+
+repo_identity_scope::repo_identity_scope(rap::window* window)
+    : scope_(identities(), repo_identity_of(window))
+{
+}
+
+repo_identity_scope::repo_identity_scope(std::optional<std::shared_ptr<const repo_identity>> id)
+    : scope_(identities(), std::move(id))
+{
+}
+
+repo_identity_scope::repo_identity_scope(std::shared_ptr<const repo_identity> id,
+                                         rap::window* shared)
+    : scope_(identities(), id)
+{
+    // Only a window recorded (one create_window made, not yet destroyed).
+    if (!shared) return;
+    shared_was_ = identities().recorded(shared);
+    if (!shared_was_) return;
+    shared_ = shared;
+    set_repo_identity(shared, std::move(id));
+}
+
+repo_identity_scope::~repo_identity_scope()
+{
+    // Put back as it was, unless the window went meanwhile.
+    if (shared_ && identities().recorded(shared_)) set_repo_identity(shared_, *shared_was_);
+}
+
+rap::menu in_repo_scope(rap::window* window, rap::menu m)
+{
+    return in_identity_scope(identities(), repo_identity_of(window), std::move(m));
+}
+
+std::function<void()> repo_scoped(std::optional<std::shared_ptr<const repo_identity>> id,
+                                  std::function<void()> f)
+{
+    return in_identity_scope(identities(), std::move(id), std::move(f));
 }
 
 std::unique_ptr<rap::window> create_window(rap::ui& ui, const rap::window_spec& spec,
                                            rap::window* parent)
 {
     auto w = ui.create(spec, parent);
-    if (!g_icon) g_icon = icon_of(ui, std::nullopt);
-    if (w && g_icon) w->set_icon(g_icon);
+    if (!w) return w;
+    // A dialog is its parent's repository's, whichever was opened since.
+    // Let go when the window is destroyed (identities() outlives them all).
+    const auto id = track_window(identities(), *w, parent);
+    const rap::icon& icon = id && id->icon ? id->icon : own_icon(ui);
+    if (icon) w->set_icon(icon);
     // Before the window shows: one whose group changes after moves on the taskbar.
-    if (w && !g_app_id.empty()) w->set_app_id(g_app_id);
+    if (id && !id->app_id.empty()) w->set_app_id(id->app_id);
     return w;
-}
-
-repo_identity current_repo_identity(rap::ui& ui)
-{
-    if (!g_icon) g_icon = icon_of(ui, std::nullopt);
-    return {g_icon, g_app_id};
 }
 
 }  // namespace tortilla

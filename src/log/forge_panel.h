@@ -14,6 +14,7 @@
 #include "forge/ci.h"
 #include "forge/ci_poll.h"
 #include "forge/pr_watch.h"
+#include "ui/page_guard.h"
 
 #include <rapport/rapport.h>
 
@@ -132,6 +133,8 @@ private:
     host host_;
     std::shared_ptr<shared> shared_;
     std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
+    // The widgets' callbacks, from layout() until unbind().
+    page_guard page_guard_;
 
     std::vector<forge_remote> remotes_;
     std::vector<pr_entry> prs_;

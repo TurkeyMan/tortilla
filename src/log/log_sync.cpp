@@ -217,6 +217,7 @@ void log_tab::sync(const std::string& only)
                 [this, alive, run, remotes, leading]
                 {
                     if (!alive.lock()) return;
+                    const repo_identity_scope scope = tab_scope();
                     run->pending = remotes.size();
                     run->leading = leading;
                     if (remotes.empty()) sync_finished(run);
@@ -237,8 +238,9 @@ void log_tab::sync(const std::string& only)
                             [this, alive, r, run, result = std::move(result),
                              moved = std::move(moved)]() mutable
                             {
-                                if (alive.lock())
-                                    remote_synced(run, r, std::move(result), std::move(moved));
+                                if (!alive.lock()) return;
+                                const repo_identity_scope scope = tab_scope();
+                                remote_synced(run, r, std::move(result), std::move(moved));
                             });
                     })
                     .detach();
@@ -481,6 +483,7 @@ void log_tab::update_branch_hint()
                 [this, alive, state = std::move(state), after_sync]
                 {
                     if (!alive.lock()) return;
+                    const repo_identity_scope scope = tab_scope();
                     current_ = state;
                     // Set to: moved forward, when nothing stands in the way.
                     if (after_sync && fast_forward_current_setting() && state.behind > 0 &&

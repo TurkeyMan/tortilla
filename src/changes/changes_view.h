@@ -8,6 +8,7 @@
 
 #include "changes/file_model.h"
 #include "git/command.h"
+#include "ui/page_guard.h"
 #include "ui/settings_dialog.h"
 
 #include <rapport/rapport.h>
@@ -92,8 +93,9 @@ public:
     column_state view_state() const;
     void apply_view_state(const column_state&);
     // The list gone with its window: the files and the rest are kept for the
-    // next list() built.
-    void unbind() { list_ = nullptr; }
+    // next list() built. It lets go of the model, and its callbacks do
+    // nothing, from now on, however long it's there after.
+    void unbind();
     bool has_focus() const { return list_ && list_->has_focus(); }
     void focus()
     {
@@ -163,6 +165,7 @@ private:
     host host_;
     file_model model_;
     rap::list* list_ = nullptr;
+    page_guard list_guard_;  // list()'s callbacks, until unbind()
     std::string settings_key_;
     changes_source source_;
     std::vector<std::string> select_paths_;

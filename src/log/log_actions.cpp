@@ -1324,6 +1324,7 @@ void log_tab::save_patch_series(rap::window* viewer, const patch_range& range)
         [this, key, range, alive = std::weak_ptr<bool>(alive_)](std::vector<std::string> chosen)
         {
             if (chosen.empty() || !alive.lock()) return;
+            const repo_identity_scope scope = tab_scope();
             const std::string out = chosen.front();
             settings::get().set(key, out);
             std::vector<progress_follow_up> follow_ups;
@@ -1387,6 +1388,7 @@ void log_tab::compare_change_sets(const std::string& a, const std::string& b)
                         for (const fs::path& p : *patches) fs::remove(p, ec);
                     };
                     if (!alive.lock()) return remove();
+                    const repo_identity_scope scope = tab_scope();
                     if (!error.empty())
                     {
                         remove();
@@ -1432,6 +1434,7 @@ void log_tab::edit_notes(const commit& c)
             const std::string text = st->text->text();
             ui.post([st] {});  // the window goes after this returns
             if (role != rap::dialog_role::ok || !alive.lock()) return;
+            const repo_identity_scope scope = tab_scope();
             // From a file, so the note keeps its lines exactly as typed.
             // Its own name: two notes edited at once don't share a file.
             const fs::path file = unique_temp_path("notes-" + hash.substr(0, 8), ".txt");

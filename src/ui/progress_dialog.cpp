@@ -140,6 +140,10 @@ struct progress : std::enable_shared_from_this<progress>
         if (!keep) return;
         window->close();
         if (process) process->kill();
+        // What they open (the log after a pull, Commit after Add) is this
+        // dialog's repository's, as it took its parent's (ui/repo_icon.h):
+        // the window is only hidden, so still known.
+        const repo_identity_scope scope(window.get());
         if (after_close) after_close();
         if (done) done(ok);
         ui.post([keep] {});  // destroyed after this callback returns

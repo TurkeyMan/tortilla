@@ -128,7 +128,8 @@ log_tab::log_tab(rap::ui& ui, repo repo, std::string path)
           forge_panel::host{.ui = ui,
                             .window = [this] { return parent(); },
                             .workdir = repo_location(),
-                            .actions = [this](const open_pr& p) { return pull_request_items(p); },
+                            .actions = as_tab([this](const open_pr& p)
+                                              { return pull_request_items(p); }),
                             .shown = [this](bool on) { forge_panel_shown(on); },
                             .watch =
                                 [this](std::optional<std::string> sha,
@@ -151,6 +152,16 @@ log_tab::log_tab(rap::ui& ui, repo repo, std::string path)
     // Today until the loaded range replaces it (not 1970 while loading).
     loaded_from_ = loaded_to_ = local_date(std::time(nullptr));
     load_options();
+}
+
+rap::menu log_tab::tab_menu(rap::menu m) const
+{
+    for (rap::menu_item& item : m)
+    {
+        if (item.action) item.action = as_tab(std::move(item.action));
+        item.children = tab_menu(std::move(item.children));
+    }
+    return m;
 }
 
 void log_tab::start(bool all_branches)
@@ -193,11 +204,22 @@ void log_tab::start(bool all_branches)
             .detach();
 }
 
+namespace
+{
+
+// `rel` (a repository-relative path) under the folder `dir` (folder_text's).
+std::string under(const std::string& dir, const std::string& rel)
+{
+    const bool sep = !dir.empty() && (dir.back() == '/' || dir.back() == '\\');
+    return dir + (sep ? "" : "/") + rel;
+}
+
+}  // namespace
+
 std::string log_tab::title_text() const
 {
-    std::string title = repo_.workdir();
-    if (title.size() > 1 && title.back() == '/') title.pop_back();
-    if (path_limited()) title += "/" + rel_path_;
+    std::string title = folder_text(repo_.workdir());
+    if (path_limited()) title = under(title, rel_path_);
     title = rap::sys::path_to_utf8(rap::sys::path_from_utf8(title).make_preferred());
     if (picked_) return rap::i18n::format(_("{0} - {1} - Tortilla"), title, pick_purpose_);
     return rap::i18n::format(_("{0} - Log Messages - Tortilla"), title);
@@ -210,19 +232,18 @@ std::string log_tab::repo_location() const
 
 std::string log_tab::tab_title() const
 {
-    std::string dir = repo_location();
-    while (dir.size() > 1 && (dir.back() == '/' || dir.back() == '\\')) dir.pop_back();
+    // A drive's or the file system's top has no name of its own: it as it is.
+    const std::string dir = folder_text(repo_location());
     std::string title = rap::sys::path_to_utf8(rap::sys::path_from_utf8(dir).filename());
     if (title.empty()) title = dir;
-    if (path_limited()) title += "/" + path_text(40);
+    if (path_limited()) title = under(title, path_text(40));
     return title;
 }
 
 std::string log_tab::tab_tooltip() const
 {
-    std::string where = repo_location();
-    while (where.size() > 1 && where.back() == '/') where.pop_back();
-    if (path_limited()) where += "/" + rel_path_;
+    std::string where = folder_text(repo_location());
+    if (path_limited()) where = under(where, rel_path_);
     return rap::sys::path_to_utf8(rap::sys::path_from_utf8(where).make_preferred());
 }
 

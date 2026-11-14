@@ -23,6 +23,9 @@
 #include "log/open_repository_dialog.h"
 #include "settings.h"
 #include "test_support.h"
+#include "ui/repo_icon.h"
+#include "ui/trust_repository.h"
+#include "util/repo_path.h"
 
 #include <rapport/rapport.h>
 #include <rapport/sys.h>
@@ -63,6 +66,9 @@ namespace
 
 // Calls that reached a widget after its window had gone.
 int g_stale_calls = 0;
+// While set, the pages stacks remove are held here, their widgets there
+// until the test lets them go.
+std::vector<std::function<void()>>* g_held_pages = nullptr;
 
 // A widget's common part: its focus, whether it's shown and enabled, and
 // whether its window has gone.
@@ -189,7 +195,10 @@ public:
     void on_selection_changed(std::function<void()> f) override { changed = std::move(f); }
     void on_activate(std::function<void(size_t)>) override {}
     void on_sort_requested(std::function<void(size_t, rap::sort_order)>) override {}
-    void on_context_menu(std::function<rap::menu(std::optional<size_t>)>) override {}
+    void on_context_menu(std::function<rap::menu(std::optional<size_t>)> f) override
+    {
+        context = std::move(f);
+    }
     void on_header_menu(std::function<rap::menu(size_t)>) override {}
     void on_cell_context_menu(std::function<rap::menu(size_t, size_t, rap::point_f)>) override {}
     void on_reorder(reorder_fn) override {}
@@ -206,6 +215,7 @@ public:
     std::vector<size_t> order;
     std::vector<bool> visible;
     std::function<void()> changed;
+    std::function<rap::menu(std::optional<size_t>)> context;  // a right click's menu
 };
 
 class kept_splitter : public kept<rap::splitter>
@@ -465,11 +475,16 @@ public:
         auto it = pages_.find(id);
         if (it == pages_.end()) return;
         inner_.remove(id);
-        post_(
-            [poison = std::move(it->second)]
-            {
-                for (const auto& p : poison) p();
-            });
+        auto gone = [poison = std::move(it->second)]
+        {
+            for (const auto& p : poison) p();
+        };
+        // Held: the page outlives whatever the queue runs meanwhile, as a
+        // toolkit may keep it past any number of posts.
+        if (g_held_pages)
+            g_held_pages->push_back(std::move(gone));
+        else
+            post_(std::move(gone));
         pages_.erase(it);
     }
     void show(const std::string& id) override
@@ -555,6 +570,7 @@ public:
     }
     void on_finished(std::function<void(rap::dialog_role)> f) override
     {
+        finished = f;
         inner_->on_finished(std::move(f));
     }
     void on_close_request(std::function<bool()> f) override
@@ -573,6 +589,8 @@ public:
     bool closed = false;
     // The close box's question (the null window never asks it).
     std::function<bool()> close_request;
+    // A dialog's answer: OK, Cancel... (the null window never gives it).
+    std::function<void(rap::dialog_role)> finished;
 
 protected:
     void busy_changed(bool) override {}
@@ -613,6 +631,11 @@ public:
     {
         ++messages;
         last_message = m.text;
+        if (answer)
+        {
+            if (done) done(*answer);
+            return;
+        }
         null().message(parent, m, std::move(done));
     }
     void choose_files(rap::window* parent, const rap::file_dialog_spec& f,
@@ -665,6 +688,8 @@ public:
     // Messages shown (the null backend answers each with its first button).
     int messages = 0;
     std::string last_message;
+    // The next messages' answer, while set (else the null backend's).
+    std::optional<rap::dialog_role> answer;
     // Folder and file dialogs asked for, and the next one's answer (else none).
     int choosers = 0;
     std::optional<std::vector<std::string>> choose;
@@ -1293,6 +1318,308 @@ void recent_tests(const std::string& root, const std::string& one, const std::st
           "log tabs: one gone is left in the history, only not offered");
 }
 
+// An environment variable set, or unset with "" (Windows has no setenv).
+void set_env(const char* name, const std::string& value)
+{
+#ifdef _WIN32
+    _putenv_s(name, value.c_str());
+#else
+    if (value.empty())
+        unsetenv(name);
+    else
+        setenv(name, value.c_str(), 1);
+#endif
+}
+
+// A repository of two commits at `at`.
+bool make_repository(const std::string& at)
+{
+    std::error_code ec;
+    const std::filesystem::path dir = rap::sys::path_from_utf8(at);
+    std::filesystem::create_directories(dir, ec);
+    auto in = [&](std::vector<std::string> args)
+    {
+        args.insert(args.begin(),
+                    {"-c", "user.name=Tortilla Test", "-c", "user.email=test@tortilla.invalid",
+                     "-c", "commit.gpgsign=false"});
+        return run_git(at, args, git_output::stdout_only).ok();
+    };
+    bool ok = in({"init", "-q", "-b", "main"});
+    for (const char* file : {"one", "two"})
+    {
+        std::ofstream(dir / (std::string(file) + ".txt"), std::ios::binary) << file << "\n";
+        ok = ok && in({"add", "."}) && in({"commit", "-qm", std::string("Make ") + file});
+    }
+    return ok;
+}
+
+// The item labelled `label` (its access key's "_" left out), in `m` or a
+// submenu.
+const rap::menu_item* find_item(const rap::menu& m, std::string_view label)
+{
+    for (const rap::menu_item& item : m)
+    {
+        std::string text = item.label;
+        std::erase(text, '_');
+        if (text == label) return &item;
+        if (const rap::menu_item* in = find_item(item.children, label)) return in;
+    }
+    return nullptr;
+}
+
+// A tab's + choosing a repository git refuses for its owner: the question
+// whether to trust it (main.cpp's, ui/trust_repository.h), declined (no
+// tab, nothing more said), then accepted (its tab). git is told the owner
+// differs (GIT_TEST_ASSUME_DIFFERENT_OWNER), and its global config is a
+// scratch file (GIT_CONFIG_GLOBAL), so the user's own is never touched.
+void trust_tests(rap::ui& ui, const std::string& root, const std::string& first)
+{
+    namespace fs = std::filesystem;
+    const std::string refused =
+        rap::sys::path_to_utf8(rap::sys::path_from_utf8(root) / "owned-repo");
+    const fs::path global = rap::sys::path_from_utf8(root) / "trust-gitconfig";
+    check(make_repository(refused), "log trust: a repository to refuse");
+    // GIT_CONFIG_GLOBAL is git 2.32's, the owner test's variable 2.35's;
+    // without them, accepting would write to the user's own config.
+    const git_result version = run_git(".", {"version"}, git_output::stdout_only);
+    int major = 0, minor = 0;
+    if (std::sscanf(version.output.c_str(), "git version %d.%d", &major, &minor) != 2 ||
+        major < 2 || (major == 2 && minor < 35))
+        return check(false,
+                     "log trust: git 2.35 or later, for GIT_CONFIG_GLOBAL and the owner test");
+
+    auto opened = log_window::open(ui, first);
+    check(opened.has_value(), "log trust: the window opens");
+    if (!opened) return;
+    std::unique_ptr<log_window> w = std::move(*opened);
+    built_window& b = g_backend->built.back();
+    kept_tabs* strip = b.tabs;
+    check(strip && loaded(ui, page_in(b, 0, 0)), "log trust: the first tab loads");
+    if (!strip) return;
+
+    std::ofstream(global, std::ios::binary).flush();
+    set_env("GIT_CONFIG_GLOBAL", rap::sys::path_to_utf8(global));
+    set_env("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1");
+    const bool asks = untrusted_repository(refused).has_value();
+    check(asks, "log trust: git refuses the repository for its owner");
+    if (asks)
+    {
+        settings::get().set("log.recentRepositories", "");
+        // Declined: no tab, and nothing more said than the question.
+        const int before = g_backend->messages;
+        g_backend->answer = rap::dialog_role::no;
+        g_backend->choose = std::vector<std::string>{refused};
+        strip->plus();
+        settle(ui);
+        check(g_backend->messages == before + 1 && w->tabs().size() == 1 &&
+                  g_backend->last_message.find(folder_name(refused)) != std::string::npos,
+              "log trust: + on a repository git refuses asks to trust it; declined, no tab, no "
+              "error");
+        // Accepted: trusted (in the scratch config), and its tab.
+        g_backend->answer = rap::dialog_role::yes;
+        g_backend->choose = std::vector<std::string>{refused};
+        strip->plus();
+        settle(ui);
+        std::ifstream in(global, std::ios::binary);
+        const std::string config{std::istreambuf_iterator<char>(in), {}};
+        check(g_backend->messages == before + 2 && w->tabs().size() == 2 &&
+                  w->tabs()[1]->repo_location().find(folder_name(refused)) != std::string::npos &&
+                  config.find("[safe]") != std::string::npos &&
+                  config.find(folder_name(refused)) != std::string::npos,
+              "log trust: accepted, it's trusted and opens in a tab");
+        check(!untrusted_repository(refused), "log trust: git opens it now");
+        if (w->tabs().size() == 2)
+        {
+            strip->close_box(w->tabs()[1]->id());
+            settle(ui);
+        }
+    }
+    g_backend->answer.reset();
+    set_env("GIT_TEST_ASSUME_DIFFERENT_OWNER", "");
+    set_env("GIT_CONFIG_GLOBAL", "");
+    strip->close_box(w->tabs()[0]->id());
+    settle(ui);
+    w.reset();
+    settle(ui);
+}
+
+// Windows a tab's actions open are its repository's (ui/repo_icon.h), in a
+// window showing two: the second's action, the first's, and what the
+// second opens later, hidden; each window holds its identity (and its
+// colour) until it goes.
+void identity_tests(rap::ui& ui, const std::string& first, const std::string& second)
+{
+    auto opened = log_window::open(ui, first);
+    check(opened.has_value(), "log identity: the window opens");
+    if (!opened) return;
+    std::unique_ptr<log_window> w = std::move(*opened);
+    built_window& b = g_backend->built.back();
+    kept_tabs* strip = b.tabs;
+    kept_window* frame = b.window;
+    page p1 = page_in(b, 0, 0);
+    check(strip && frame && loaded(ui, p1), "log identity: the first tab loads");
+    if (!strip || !frame || !p1.log) return;
+    log_tab* one = w->tabs()[0].get();
+    const size_t lists = b.lists.size(), entries = b.entries.size();
+    auto two_opened = w->open_tab(second);
+    if (!two_opened) return check(false, "log identity: a second repository's tab");
+    log_tab* two = *two_opened;
+    page p2 = page_in(b, lists, entries);
+    check(loaded(ui, p2), "log identity: the second tab loads");
+    if (!p2.log) return;
+    const std::shared_ptr<const repo_identity> a = one->shared_identity();
+    const std::shared_ptr<const repo_identity> bee = two->shared_identity();
+    check(a && bee && a != bee && a->repo != bee->repo && bee->lease,
+          "log identity: each tab has its repository's identity, its colour held");
+    check(repo_identity_of(w->frame()) == bee && frame->app_id == a->app_id,
+          "log identity: the window's dialogs are the shown tab's; its taskbar group stays the "
+          "first's");
+
+    // Edit Notes, from the tab's commit list: a dialog on the window.
+    auto notes = [&](page& p, const char* summary) -> kept_window*
+    {
+        const auto row = row_of(*p.log, summary);
+        if (!row || !p.commits->context) return nullptr;
+        p.commits->click({*row}, *row);
+        const rap::menu m = p.commits->context(*row);
+        const rap::menu_item* item = find_item(m, "Edit Notes");
+        if (!item || !item->action) return nullptr;
+        const size_t before = g_backend->built.size();
+        item->action();
+        return g_backend->built.size() > before ? g_backend->built.back().window : nullptr;
+    };
+    kept_window* from_two = notes(p2, "Make one");
+    check(from_two && repo_identity_of(from_two) == bee && from_two->app_id == bee->app_id,
+          "log identity: the second tab's action opens a window of the second repository");
+
+    strip->click(one->id());
+    check(repo_identity_of(w->frame()) == a,
+          "log identity: the first tab shown, the window's dialogs are its");
+    kept_window* from_one = notes(p1, "Add beta");
+    check(from_one && from_one != from_two && repo_identity_of(from_one) == a &&
+              from_one->app_id == a->app_id,
+          "log identity: the first tab's action opens a window of the first repository");
+
+    // Later, from the second tab, hidden: a post's work, or a worker's.
+    std::unique_ptr<rap::window> late_dialog, late_own;
+    ui.post(two->later_for_tests(
+        [&]
+        {
+            late_dialog = create_window(ui, rap::layout::dialog{"Late", {rap::layout::label{""}}},
+                                        w->frame());
+            late_own = create_window(ui, rap::layout::window{"Late", {rap::layout::label{""}}});
+        }));
+    settle(ui);
+    check(late_dialog && late_own && repo_identity_of(late_dialog.get()) == bee &&
+              repo_identity_of(late_own.get()) == bee &&
+              static_cast<kept_window*>(late_own.get())->app_id == bee->app_id,
+          "log identity: what the hidden second tab opens later is the second repository's, on "
+          "the window or of its own");
+    check(repo_identity_of(w->frame()) == a,
+          "log identity: after it, the window's dialogs are the shown tab's again");
+    // And the first's: the first repository's.
+    std::unique_ptr<rap::window> own_one;
+    one->later_for_tests(
+        [&] {
+            own_one = create_window(ui, rap::layout::window{"Own", {rap::layout::label{""}}});
+        })();
+    check(own_one && repo_identity_of(own_one.get()) == a,
+          "log identity: the first tab's late work is the first repository's");
+
+    // Each window holds its identity, and with it its colour, as long as
+    // it's there.
+    const long held = bee.use_count();
+    rap::window* gone_dialog = late_dialog.get();
+    late_dialog.reset();
+    late_own.reset();
+    own_one.reset();
+    check(bee.use_count() == held - 2 && !repo_identity_of(gone_dialog),
+          "log identity: a window lets go of its repository's identity as it goes");
+    // As a toolkit does, the window lets go of its answer's callback (which
+    // holds the dialog) once it's given.
+    for (kept_window* d : {from_one, from_two})
+        if (auto finished = d ? std::exchange(d->finished, {}) : nullptr)
+            finished(rap::dialog_role::cancel);
+    settle(ui);
+    check(bee.use_count() == held - 3, "log identity: so does the action's dialog");
+
+    strip->close_box(two->id());
+    settle(ui);
+    strip->close_box(one->id());
+    settle(ui);
+    w.reset();
+    settle(ui);
+}
+
+// A tab closed while a nested loop (a modal dialog's, say) runs the queue
+// before the toolkit gets to its page: the posts the window keeps the tab
+// for run, and the tab goes, while the page's widgets are still there.
+// They hold nothing of it by then: its models taken from the lists, their
+// callbacks doing nothing.
+void teardown_tests(rap::ui& ui, const std::string& first, const std::string& second)
+{
+    auto opened = log_window::open(ui, first);
+    if (!opened) return check(false, "log teardown: the window opens");
+    std::unique_ptr<log_window> w = std::move(*opened);
+    built_window& b = g_backend->built.back();
+    kept_tabs* strip = b.tabs;
+    check(strip && loaded(ui, page_in(b, 0, 0)), "log teardown: the first tab loads");
+    const size_t lists = b.lists.size(), entries = b.entries.size();
+    auto two = w->open_tab(second);
+    if (!strip || !two) return check(false, "log teardown: a second tab");
+    page p2 = page_in(b, lists, entries);
+    check(loaded(ui, p2) && p2.files && p2.search, "log teardown: the second tab loads");
+    if (!p2.log || !p2.files || !p2.search) return;
+    const std::weak_ptr<const repo_identity> tab_held = (*two)->shared_identity();
+
+    std::vector<std::function<void()>> held;
+    g_held_pages = &held;
+    strip->close_box((*two)->id());
+    settle(ui);
+    pump(
+        ui, [] { return false; }, 300);
+    check(held.size() == 1 && !p2.commits->dead && tab_held.expired(),
+          "log teardown: the tab has gone, its page's widgets not yet");
+    check(!p2.commits->model && !p2.files->model,
+          "log teardown: its lists let go of its models first");
+    // The toolkit calling them still: nothing reaches the tab.
+    if (p2.commits->changed) p2.commits->changed();
+    check(p2.commits->context && p2.commits->context(size_t(0)).empty(),
+          "log teardown: its callbacks do nothing, its menus are empty");
+    if (p2.search->changed) p2.search->changed("Make");
+    if (p2.files->changed) p2.files->changed();
+    if (p2.files->context) p2.files->context(size_t(0));
+    g_held_pages = nullptr;
+    for (const auto& f : held) f();
+    check(p2.commits->dead && w->tabs().size() == 1, "log teardown: the page goes after");
+
+    strip->close_box(w->tabs()[0]->id());
+    settle(ui);
+    w.reset();
+    settle(ui);
+}
+
+// Folders shown and remembered without trailing separators, a root's own
+// kept: "C:" alone is a folder on that drive, not its top.
+void folder_text_tests()
+{
+    check(folder_text("/a/b/") == "/a/b" && folder_text("/a/b//") == "/a/b" &&
+              folder_text("/a/b") == "/a/b" && folder_text("/") == "/",
+          "folder text: trailing separators go, the root's stays");
+#ifdef _WIN32
+    check(folder_text("C:/") == "C:/" && folder_text("C:\\") == "C:\\" &&
+              folder_text("C:/x/") == "C:/x" && folder_text("C:\\x\\") == "C:\\x" &&
+              folder_text("D:/tmp\\") == "D:/tmp",
+          "folder text: a drive's top keeps its separator");
+    settings::get().set("log.recentRepositories", "");
+    remember_repository("C:\\");
+    const auto recent = settings::get().history("log.recentRepositories");
+    check(recent.size() == 1 && recent[0] == "C:\\",
+          "folder text: a drive's top is remembered as its top");
+    settings::get().set("log.recentRepositories", "");
+#endif
+}
+
 }  // namespace
 
 void run_log_page_tests(const std::string& root)
@@ -1371,6 +1698,10 @@ void run_log_page_tests(const std::string& root)
     g_stale_calls = 0;
     tab_tests(ui, repo, others[0], others[1]);
     recent_tests(root, repo, others[0]);
+    identity_tests(ui, repo, others[0]);
+    teardown_tests(ui, repo, others[0]);
+    trust_tests(ui, root, repo);
+    folder_text_tests();
     check(g_stale_calls == 0, "log tabs: nothing reached a page's widgets after they went");
 
     log_tab::poll_hooks_for_tests = nullptr;

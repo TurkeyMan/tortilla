@@ -54,4 +54,12 @@ std::optional<std::string> repo_relative(std::string_view workdir, std::string_v
     return std::nullopt;
 }
 
+std::string folder_text(std::string path)
+{
+    const size_t root = rap::sys::path_to_utf8(rap::sys::path_from_utf8(path).root_path()).size();
+    while (path.size() > std::max<size_t>(root, 1) && (path.back() == '/' || path.back() == '\\'))
+        path.pop_back();
+    return path;
+}
+
 }  // namespace tortilla

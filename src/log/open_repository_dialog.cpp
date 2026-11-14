@@ -3,6 +3,7 @@
 #include "i18n.h"
 #include "settings.h"
 #include "ui/repo_icon.h"
+#include "util/repo_path.h"
 
 #include <rapport/sys.h>
 
@@ -36,13 +37,6 @@ public:
         return rap::icon::for_path(paths[row], "folder");
     }
 };
-
-// Without a trailing slash, as the list and the history show it.
-std::string folder_text(std::string path)
-{
-    while (path.size() > 1 && (path.back() == '/' || path.back() == '\\')) path.pop_back();
-    return path;
-}
 
 }  // namespace
 

@@ -21,6 +21,7 @@
 #include "ui/diff_window.h"
 #include "ui/menu_items.h"
 #include "ui/menu_text.h"
+#include "ui/repo_icon.h"
 #include "ui/windows.h"
 #include "util/check_rows.h"
 #include "util/entry_path.h"
@@ -90,6 +91,7 @@ changes_view::changes_view(host h)
 rap::layout::list changes_view::list(std::string settings_key, bool checkboxes)
 {
     settings_key_ = std::move(settings_key);
+    list_guard_.open();
     if (checkboxes)
         model_.on_toggle = [this](size_t row)
         {
@@ -102,16 +104,23 @@ rap::layout::list changes_view::list(std::string settings_key, bool checkboxes)
         .checkboxes(checkboxes)
         .soft_selection()
         .bind(list_)
-        .on_selection_changed(
+        .on_selection_changed(list_guard_(
             [this]
             {
                 if (host_.selection_changed) host_.selection_changed();
-            })
-        .on_activate([this](size_t row) { activated(row); })
-        .on_context_menu([this](std::optional<size_t> row)
-                         { return context_menu(row, std::nullopt); })
-        .on_cell_context_menu([this](size_t row, size_t column, rap::point_f)
-                              { return context_menu(row, column); });
+            }))
+        .on_activate(list_guard_([this](size_t row) { activated(row); }))
+        .on_context_menu(list_guard_([this](std::optional<size_t> row)
+                                     { return context_menu(row, std::nullopt); }))
+        .on_cell_context_menu(list_guard_([this](size_t row, size_t column, rap::point_f)
+                                          { return context_menu(row, column); }));
+}
+
+void changes_view::unbind()
+{
+    list_guard_.close();
+    if (list_) list_->set_model(nullptr);
+    list_ = nullptr;
 }
 
 namespace
@@ -658,13 +667,16 @@ menu changes_view::context_menu(std::optional<size_t> row, std::optional<size_t>
                                 [this, column] { copy_files(copy_column, column); }));
     }
     m.push_back({.label = _("Copy to clipboard"), .children = std::move(copy)});
-    return m;
+    // Each action opens its windows as the host window's repository's
+    // (ui/repo_icon.h), whichever the log windows' host opened since.
+    return in_repo_scope(host_.window(), std::move(m));
 }
 
 // Double-click: compare the file with the commit's parent (or, for the
 // working tree, with HEAD).
 void changes_view::edit_conflict(const std::string& path)
 {
+    const repo_identity_scope scope(host_.window());
     // The merge tool may still be open when this window has closed: the
     // window's refresh and settings only while it's there.
     std::weak_ptr<bool> alive = alive_;
@@ -682,6 +694,7 @@ void changes_view::edit_conflict(const std::string& path)
 
 void changes_view::activated(size_t row)
 {
+    const repo_identity_scope scope(host_.window());
     if (row >= model_.files().size()) return;
     const file_change& f = model_.files()[row];
     // Nothing to compare an unversioned file with: it opens instead.
@@ -700,6 +713,7 @@ void changes_view::activated(size_t row)
 // with].
 void changes_view::open_file(const file_change& f, bool choose)
 {
+    const repo_identity_scope scope(host_.window());
     // The busy pointer while its program comes up (Open with asks first).
     const std::function<void()> idle = choose ? [] {} : show_busy_pointer(host_.ui);
     std::filesystem::path path =
@@ -789,6 +803,7 @@ changes_view::file_of(const version& v, const std::string& title,
 // (the window closed, the tool replaced, Settings chosen instead).
 void changes_view::compare(const version& base, const version& mine, const std::string& title)
 {
+    const repo_identity_scope scope(host_.window());
     auto owners = std::make_shared<std::vector<std::shared_ptr<temp_dir>>>();
     const auto a = file_of(base, title, owners.get());
     if (!a) return;
@@ -808,6 +823,7 @@ void changes_view::compare(const version& base, const version& mine, const std::
 // $EDITOR as git takes them) where one is set, else the system's.
 void changes_view::view_in_editor(const file_change& f)
 {
+    const repo_identity_scope scope(host_.window());
     const std::string title = _("View revision in alternative editor");
     const auto idle = show_busy_pointer(host_.ui);
     const auto path = file_of(version_of(f), title);
@@ -863,6 +879,7 @@ void changes_view::view_in_editor(const file_change& f)
 // Commit...: the Commit window for just these files.
 void changes_view::commit(const std::vector<file_change>& files)
 {
+    const repo_identity_scope scope(host_.window());
     std::vector<std::string> paths;
     for (const file_change& f : files)
         paths.push_back(rap::sys::path_to_utf8(rap::sys::path_from_utf8(host_.workdir) /
@@ -878,6 +895,7 @@ void changes_view::commit(const std::vector<file_change>& files)
 // The log of one file (repository-relative), at `rev` when given.
 void changes_view::show_log(const std::string& path, const std::string& rev)
 {
+    const repo_identity_scope scope(host_.window());
     const std::string file = rap::sys::path_to_utf8(rap::sys::path_from_utf8(host_.workdir) /
                                                     rap::sys::path_from_utf8(path));
     auto log = log_window::open(host_.ui, file);
@@ -891,6 +909,7 @@ void changes_view::show_log(const std::string& path, const std::string& rev)
 
 void changes_view::blame(const std::string& path, const std::string& rev)
 {
+    const repo_identity_scope scope(host_.window());
     const std::string file = rap::sys::path_to_utf8(rap::sys::path_from_utf8(host_.workdir) /
                                                     rap::sys::path_from_utf8(path));
     auto w = blame_window::open(host_.ui, file, rev);
@@ -904,6 +923,7 @@ void changes_view::blame(const std::string& path, const std::string& rev)
 // With the tool the Diff Viewer page chose (compare.h).
 void changes_view::difftool(std::vector<std::string> revisions, std::vector<std::string> paths)
 {
+    const repo_identity_scope scope(host_.window());
     difftool_ = compare_revisions(host_.ui, host_.window(), host_.workdir, std::move(revisions),
                                   std::move(paths),
                                   [this]

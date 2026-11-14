@@ -7,6 +7,7 @@
 #include "log/open_repository_dialog.h"
 #include "settings.h"
 #include "ui/repo_icon.h"
+#include "ui/trust_repository.h"
 
 #include <algorithm>
 #include <thread>
@@ -58,7 +59,8 @@ void log_window::build(std::unique_ptr<log_tab> first)
                       .bind(strip_)));
     // The first tab's icon; its app id is the window's from the start, and
     // never changed after (as other tabs show), as the taskbar would regroup
-    // the window.
+    // the window. What dialogs on it take, though, is the tab on show's
+    // (show_tab).
     if (first->identity().icon) window_->set_icon(first->identity().icon);
     if (!first->identity().app_id.empty()) window_->set_app_id(first->identity().app_id);
     window_->on_close_request(
@@ -124,6 +126,9 @@ void log_window::show_tab(const std::string& id)
     stack_->show(id);
     window_->set_title(tab.title_text());
     if (tab.identity().icon) window_->set_icon(tab.identity().icon);
+    // Its dialogs, and the windows its actions open, are its repository's
+    // (ui/repo_icon.h); the window's taskbar group stays the first tab's.
+    set_repo_identity(window_.get(), tab.shared_identity());
     update_patch();
 }
 
@@ -160,12 +165,21 @@ void log_window::new_tab()
                            [this, alive = std::weak_ptr<bool>(alive_)](const std::string& path)
                            {
                                if (!alive.lock() || closing_) return;
-                               auto opened = open_tab(path);
-                               if (!opened)
-                                   ui_.message(window_.get(),
-                                               {.icon = rap::message_spec::icon::error,
-                                                .title = _("Open Repository"),
-                                                .text = opened.error()});
+                               // One git refuses for its folder's owner: offered to trust it
+                               // first, as Tortilla does for any it's started on (main.cpp).
+                               // Not trusted: no tab, and nothing more to say.
+                               ensure_trusted(ui_, path,
+                                              [this, alive, path](bool go_on)
+                                              {
+                                                  if (!go_on || !alive.lock() || closing_) return;
+                                                  auto opened = open_tab(path);
+                                                  if (!opened)
+                                                      ui_.message(
+                                                          window_.get(),
+                                                          {.icon = rap::message_spec::icon::error,
+                                                           .title = _("Open Repository"),
+                                                           .text = opened.error()});
+                                              });
                            });
 }
 
@@ -201,9 +215,11 @@ bool log_window::close_tab(const std::string& id)
     std::shared_ptr<log_tab> gone(std::move(*it));
     tabs_.erase(it);
     gone->stop();
-    // Its page's widgets go once the event loop is next reached (this may
-    // be one of them calling), telling its models they're going as they
-    // go: the tab, with its models, goes after them.
+    // Its page's widgets go once the toolkit next gets to them (this may be
+    // one of them calling). They hold nothing of the tab by now: drop_page
+    // took its models from their lists and turned their callbacks off
+    // (ui/page_guard.h), so the tab could go at once. It's kept for two
+    // turns of the queue as a margin only; nothing depends on it.
     ui_.post([&ui = ui_, gone] { ui.post([gone] {}); });
     if (id == current_)
     {

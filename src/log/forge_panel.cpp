@@ -407,10 +407,10 @@ void forge_panel::with_token(const forge_remote& r,
 void forge_panel::built()
 {
     parts_->on_moved(
-        [this]
+        page_guard_([this]
         {
             if (parts_state_ == parts::pr_and_lists) part_sizes_ = parts_->sizes();
-        });
+        }));
     // A page built again: what's known drawn, a download's line with it.
     const bool shown = visible_;
     update();
@@ -420,6 +420,11 @@ void forge_panel::built()
 
 void forge_panel::unbind()
 {
+    // Its widgets may be there a while yet (ui/page_guard.h): they reach
+    // nothing of the panel from now on.
+    page_guard_.close();
+    for (rap::list* l : {matrix_list_, annotations_, artifacts_})
+        if (l) l->set_model(nullptr);
     parts_retry_ = {};
     download_timer_ = {};
     // The next page's divider is placed anew, and its description set.
@@ -482,6 +487,7 @@ void forge_panel::set_part_sizes(std::vector<float> sizes)
 rap::node forge_panel::layout()
 {
     using namespace rap::layout;
+    page_guard_.open();
     auto mark = [](rap::canvas*& bind, const std::function<void(rap::painter&, rap::size_f)>& paint)
     {
         return canvas{}
@@ -505,7 +511,7 @@ rap::node forge_panel::layout()
                         canvas{}
                             .focusable(false)
                             .on_paint(
-                                [this, background](rap::painter& p, rap::size_f size)
+                                page_guard_([this, background](rap::painter& p, rap::size_f size)
                                 {
                                     background(p, size);
                                     if (!picture_) return;
@@ -515,7 +521,7 @@ rap::node forge_panel::layout()
                                                 ih = float(picture_->height());
                                     p.image(*picture_, {0, 0, iw, ih},
                                             rap::fit_inside({0, 0, size.w, size.h}, iw, ih));
-                                })
+                                }))
                             .width(rap::extent{k_picture_size, rap::extent::unit::px})
                             .height(rap::extent{k_picture_size, rap::extent::unit::px})
                             .bind(pr_avatar_),
@@ -523,21 +529,21 @@ rap::node forge_panel::layout()
                     },
                     hbox{
                         mark(pr_merge_mark_,
-                             [this, background](rap::painter& p, rap::size_f size)
+                             page_guard_([this, background](rap::painter& p, rap::size_f size)
                              {
                                  background(p, size);
                                  paint_mark(p, size, merge_mark_state_,
                                             mergeable(merge_mark_kind_));
-                             }),
+                             })),
                         label{}.wrap().bind(pr_merge_).stretch(),
                     },
                     hbox{
                         mark(pr_checks_mark_,
-                             [this, background](rap::painter& p, rap::size_f size)
+                             page_guard_([this, background](rap::painter& p, rap::size_f size)
                              {
                                  background(p, size);
                                  paint_mark(p, size, checks_mark_state_);
-                             }),
+                             })),
                         label{}.wrap().bind(pr_checks_).stretch(),
                     },
                     label{}.wrap().selectable().bind(pr_reviews_),
@@ -550,27 +556,27 @@ rap::node forge_panel::layout()
                         button{""}
                             .bind(pr_buttons_[0])
                             .on_click(
-                                [this]
+                                page_guard_([this]
                                 {
                                     if (pr_actions_.size() > 0 && pr_actions_[0])
                                         pr_actions_[0]();
-                                }),
+                                })),
                         button{""}
                             .bind(pr_buttons_[1])
                             .on_click(
-                                [this]
+                                page_guard_([this]
                                 {
                                     if (pr_actions_.size() > 1 && pr_actions_[1])
                                         pr_actions_[1]();
-                                }),
+                                })),
                         button{""}
                             .bind(pr_buttons_[2])
                             .on_click(
-                                [this]
+                                page_guard_([this]
                                 {
                                     if (pr_actions_.size() > 2 && pr_actions_[2])
                                         pr_actions_[2]();
-                                }),
+                                })),
                         spacer{},
                     },
                 }
@@ -580,20 +586,20 @@ rap::node forge_panel::layout()
                 vbox{
                     hbox{
                         mark(build_mark_,
-                             [this, background](rap::painter& p, rap::size_f size)
+                             page_guard_([this, background](rap::painter& p, rap::size_f size)
                              {
                                  background(p, size);
                                  paint_mark(p, size, build_mark_state_);
-                             }),
+                             })),
                         label{}.ellipsize().bind(build_summary_).stretch(),
                         label{_("Show all")}
                             .link(
-                                [this]
+                                page_guard_([this]
                                 {
                                     matrix_open_ = !matrix_open_;
                                     matrix_opened_by_user_ = true;
                                     update_build();
-                                })
+                                }))
                             .bind(build_toggle_),
                     },
                 }
@@ -610,7 +616,7 @@ rap::node forge_panel::layout()
                     .selection(rap::selection_mode::single)
                     .bind(matrix_list_)
                     .on_selection_changed(
-                        [this]
+                        page_guard_([this]
                         {
                             const auto sel = matrix_list_->selection();
                             if (sel.size() != 1 || sel.front() >= matrix_->rows.size())
@@ -618,9 +624,9 @@ rap::node forge_panel::layout()
                             const auto& row = matrix_->rows[sel.front()];
                             if (row.kind != matrix_model::row::job) return;
                             ask_failure(row.w, row.j);
-                        })
+                        }))
                     .on_activate(
-                        [this](size_t r)
+                        page_guard_([this](size_t r)
                         {
                             if (!sha_ || r >= matrix_->rows.size()) return;
                             auto it = builds_.find(*sha_);
@@ -631,7 +637,7 @@ rap::node forge_panel::layout()
                                                         ? w.jobs[row.j].url
                                                         : w.url;
                             if (!url.empty()) rap::sys::open_url(url);
-                        })
+                        }))
                     .height(4_lines)
                     .stretch(2),
                 // Why the selected job failed.
@@ -643,12 +649,12 @@ rap::node forge_panel::layout()
                         .selection(rap::selection_mode::single)
                         .bind(annotations_)
                         .on_activate(
-                            [this](size_t r)
+                            page_guard_([this](size_t r)
                             {
                                 if (r < annotation_list_->rows.size() &&
                                     !annotation_list_->rows[r].url.empty())
                                     rap::sys::open_url(annotation_list_->rows[r].url);
-                            })
+                            }))
                         .height(4_lines),
                     text_view{}
                         .read_only()
@@ -659,11 +665,11 @@ rap::node forge_panel::layout()
                         .stretch(3),
                     label{_("Open the full log")}
                         .link(
-                            [this]
+                            page_guard_([this]
                             {
                                 if (!full_log_url_.empty())
                                     rap::sys::open_url(full_log_url_);
-                            })
+                            }))
                         .bind(full_log_),
                 }
                     .stretch(3)
@@ -675,20 +681,20 @@ rap::node forge_panel::layout()
                         .selection(rap::selection_mode::single)
                         .bind(artifacts_)
                         .on_selection_changed(
-                            [this]
+                            page_guard_([this]
                             {
                                 const auto sel = artifacts_->selection();
                                 download_->set_enabled(
                                     !downloading_ && sel.size() == 1 &&
                                     sel.front() < artifact_list_->rows.size() &&
                                     !artifact_list_->rows[sel.front()].expired);
-                            })
-                        .on_activate([this](size_t) { download_selected(); })
+                            }))
+                        .on_activate(page_guard_([this](size_t) { download_selected(); }))
                         .height(4_lines)
                         .stretch(),
                     hbox{
                         button{_("_Download...")}.bind(download_).enabled(false).on_click(
-                            [this] { download_selected(); }),
+                            page_guard_([this] { download_selected(); })),
                         progress_bar{}.bind(download_progress_).stretch(),
                         spacer{},
                     },

@@ -22,6 +22,7 @@
 #include "rebase/rebase_window.h"
 
 #include "ui/diff_window.h"
+#include "ui/page_guard.h"
 #include "ui/repo_icon.h"
 #include "ui/settings_dialog.h"
 
@@ -91,8 +92,11 @@ public:
     // gone first (drop_page).
     void stop();
     // Its repository's icon and taskbar group, the window's while it shows
-    // the tab; the tab's own, so they go where it goes.
-    const repo_identity& identity() const { return identity_; }
+    // the tab; the tab's own, so they go where it goes. Windows opened from
+    // the tab (its actions, and what they open later) are its repository's:
+    // see as_tab.
+    const repo_identity& identity() const { return *identity_; }
+    const std::shared_ptr<const repo_identity>& shared_identity() const { return identity_; }
     // A key pressed in the window; true if it was the tab's.
     bool key(const rap::key_event&);
     // The column sizes and the like, and the options (log.walk.* and the
@@ -133,6 +137,12 @@ public:
         std::function<void(log_tab&, bool allowed)> ticked;
     };
     static inline poll_hooks* poll_hooks_for_tests = nullptr;
+    // Tests only: `f` as the tab's late work runs (guarded), for a window
+    // opened from a post or a worker's result.
+    std::function<void()> later_for_tests(std::function<void()> f) const
+    {
+        return guarded(std::move(f));
+    }
 
 private:
     // The window, as the parent of dialogs and messages; null while there's
@@ -147,11 +157,12 @@ private:
 
     // `f`, called only while this log is there: for what can call back after
     // it has gone (dialogs and windows of its own, posts to the UI thread).
-    // Dead, it does nothing and returns what a default value would.
+    // Dead, it does nothing and returns what a default value would. Run as
+    // the tab's (as_tab), whichever tab shows by then.
     template <class F>
     auto guarded(F f) const
     {
-        return [alive = std::weak_ptr<bool>(alive_), f = std::move(f)](auto&&... args) mutable
+        return [this, alive = std::weak_ptr<bool>(alive_), f = std::move(f)](auto&&... args) mutable
         {
             using result = decltype(f(std::forward<decltype(args)>(args)...));
             if (!alive.lock())
@@ -161,8 +172,40 @@ private:
                 else
                     return result{};
             }
+            const repo_identity_scope scope = tab_scope();
             return f(std::forward<decltype(args)>(args)...);
         };
+    }
+
+    // The windows made while it lives are this tab's repository's
+    // (ui/repo_icon.h): those without a parent, and the dialogs on its log
+    // window, which may show another tab by now. Taken on the UI thread,
+    // the tab there.
+    repo_identity_scope tab_scope() const { return repo_identity_scope(identity_, parent()); }
+    // `f` (a page's callback, a host's) run in tab_scope() whenever it runs,
+    // and a menu it returns with each action so too; while the tab is there
+    // (after, `f` is left to find that out itself).
+    template <class F>
+    auto as_tab(F f) const
+    {
+        return [this, alive = std::weak_ptr<bool>(alive_), f = std::move(f)](auto&&... args) mutable
+        {
+            using result = decltype(f(std::forward<decltype(args)>(args)...));
+            if (!alive.lock()) return f(std::forward<decltype(args)>(args)...);
+            const repo_identity_scope scope = tab_scope();
+            if constexpr (std::is_same_v<result, rap::menu>)
+                return tab_menu(f(std::forward<decltype(args)>(args)...));
+            else
+                return f(std::forward<decltype(args)>(args)...);
+        };
+    }
+    rap::menu tab_menu(rap::menu) const;
+    rap::list::cell_drag tab_drag(rap::list::cell_drag d) const
+    {
+        if (d.begin) d.begin = on_page(std::move(d.begin));
+        if (d.can_drop) d.can_drop = on_page(std::move(d.can_drop));
+        if (d.drop) d.drop = on_page(std::move(d.drop));
+        return d;
     }
 
     // The state changes, and the page (while there is one) drawn from it:
@@ -399,7 +442,7 @@ private:
     rap::ui& ui_;
     static inline unsigned next_id = 0;
     std::string id_;
-    repo_identity identity_;
+    std::shared_ptr<const repo_identity> identity_;  // never null
     // Expires with the log, for dialogs that outlive it (their reload).
     std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
     // A git-svn repository's: whether git svn is installed, for SVN DCommit
@@ -423,6 +466,14 @@ private:
     void show_pick_mode();
     // The widgets and what lives as long as they do, while there are any.
     std::unique_ptr<log_page> page_;
+    // The page's callbacks, through on_page: run only until drop_page, as
+    // its widgets may be there a while after (ui/page_guard.h).
+    page_guard page_guard_;
+    template <class F>
+    auto on_page(F f) const
+    {
+        return page_guard_(as_tab(std::move(f)));
+    }
 
     rap::date loaded_from_, loaded_to_;  // the dates loaded, without limits
     // The page's view as `view` has it (bind_page).

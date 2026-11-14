@@ -48,6 +48,7 @@ rap::node log_tab::build_page()
     namespace a = rap;
 
     page_ = std::make_unique<log_page>();
+    page_guard_.open();
     return vbox{
         // Filter bar [spec 1.2, row 1]
         hbox{
@@ -57,23 +58,23 @@ rap::node log_tab::build_page()
                 .icon(fetch_icon())
                 .icon_only()
                 .bind(page_->fetch)
-                .on_click([this] { sync(); }),
+                .on_click(on_page([this] { sync(); })),
             menu_button{"HEAD"}
                 .bind(page_->ref_button)
-                .on_menu([this] { return show_menu(); })
+                .on_menu(on_page([this] { return show_menu(); }))
                 .width(22_ch),
             // What this window did to the refs, undone and redone.
             tool_button{undo_icon(false), _("Undo")}
                 .bind(page_->undo)
-                .on_click([this] { step_journal(false); }),
+                .on_click(on_page([this] { step_journal(false); })),
             tool_button{undo_icon(true), _("Redo")}
                 .bind(page_->redo)
-                .on_click([this] { step_journal(true); }),
+                .on_click(on_page([this] { step_journal(true); })),
             entry{search_text_}
                 .bind(page_->search)
                 .clearable()
                 // Emptied (its clear button), at once.
-                .on_changed(
+                .on_changed(on_page(
                     [this](const std::string& text)
                     {
                         search_text_ = text;
@@ -81,47 +82,49 @@ rap::node log_tab::build_page()
                             apply_filter();
                         else
                             schedule_filter();
-                    })
-                .on_activate([this] { apply_filter(); })
+                    }))
+                .on_activate(on_page([this] { apply_filter(); }))
                 // The dates [spec 1.9.3], rarely limited: a pop-up
                 // of their own from the box's end, the button held
                 // down while they are.
-                .trailing_action(
-                    calendar_icon(), _("Date range"), [this] { open_dates(); }, page_->dates)
+                .trailing_action(calendar_icon(), _("Date range"),
+                                 on_page([this] { open_dates(); }), page_->dates)
                 // Which fields the text is looked for in, and how:
                 // TortoiseGit's magnifier at the box's start.
                 .leading_menu(rap::icon::named("edit-find-symbolic"), _("Filter options"),
-                              [this] { return filter_menu(); })
+                              on_page([this] { return filter_menu(); }))
                 .stretch(),
             drop_down{{_("Author Email"), _("Committer Email"), _("Merge Point"), _("Parent 1"),
                        _("Parent 2"), _("Tag"), _("Tag (FF)"), _("Branch"), _("Branch (FF)"),
                        _("Selection History")},
                       jump_type_}
                 .bind(page_->jump_type)
-                .on_changed([this](int type) { jump_type_ = type; }),
+                .on_changed(on_page([this](int type) { jump_type_ = type; })),
             button{_("Jump up (Alt+Up)")}
                 .icon(jump_arrow(true))
                 .icon_only()
-                .on_click([this] { jump(true); }),
+                .on_click(on_page([this] { jump(true); })),
             button{_("Jump down (Alt+Down)")}
                 .icon(jump_arrow(false))
                 .icon_only()
-                .on_click([this] { jump(false); }),
+                .on_click(on_page([this] { jump(false); })),
         },
         // The current branch behind its upstream, after a sync.
         hbox{
             label{}.bind(page_->hint_text).ellipsize().stretch(),
             button{_("_Fast-forward")}
                 .bind(page_->hint_ff)
-                .on_click([this] { fast_forward_current(); }),
-            button{_("_Pull...")}.bind(page_->hint_pull).on_click([this] { keep_pull_dialog(); }),
-            button{_("Hide")}.flat().on_click(
+                .on_click(on_page([this] { fast_forward_current(); })),
+            button{_("_Pull...")}
+                .bind(page_->hint_pull)
+                .on_click(on_page([this] { keep_pull_dialog(); })),
+            button{_("Hide")}.flat().on_click(on_page(
                 [this]
                 {
                     hint_hidden_ = current_.branch + ' ' + current_.upstream + ' ' +
                                    std::to_string(current_.behind);
                     show_branch_hint(current_);
-                }),
+                })),
         }
             .handle(page_->hint_bar)
             .visible(false),
@@ -132,33 +135,36 @@ rap::node log_tab::build_page()
                 .soft_selection()
                 .auto_scroll()
                 .bind(page_->commit_list)
-                .on_selection_changed([this] { selection_changed(); })
-                .on_context_menu([this](std::optional<size_t> row) { return context_menu(row); })
-                .on_header_menu([this](size_t) { return header_menu(); })
-                .on_cell_drag(label_drag())
+                .on_selection_changed(on_page([this] { selection_changed(); }))
+                .on_context_menu(
+                    on_page([this](std::optional<size_t> row) { return context_menu(row); }))
+                .on_header_menu(on_page([this](size_t) { return header_menu(); }))
+                .on_cell_drag(tab_drag(label_drag()))
                 // Commits dragged within the log: reordered on their
                 // branch, or moved or copied onto another one
                 // (history_actions.cpp).
-                .on_reorder_or_copy([this](const std::vector<size_t>& rows, size_t destination,
-                                           rap::drop_action action)
-                                    { return reorder_rows(rows, destination, action); },
+                .on_reorder_or_copy(on_page([this](const std::vector<size_t>& rows,
+                                                   size_t destination, rap::drop_action action)
+                                            { return reorder_rows(rows, destination, action); }),
                                     copy_drag_keys)
                 // Commits dragged out, into a rebase's list or anywhere
                 // taking text: their hashes, newest first as the rows run.
                 .on_drag_out(
-                    {.begin = [this](std::vector<size_t> rows) -> std::optional<rap::data_offer>
-                     {
-                         std::ranges::sort(rows);
-                         std::vector<std::string> hashes;
-                         for (size_t row : rows)
-                             if (const commit* c = log_.commit(row)) hashes.push_back(c->id.hex());
-                         if (hashes.empty()) return std::nullopt;
-                         const std::string data = commits_payload(hashes);
-                         return rap::data_offer{{{commits_type, data}, {"text/plain", data}}};
-                     }})
-                .on_activate([this](size_t row) { row_activated(row); })
-                .on_cell_context_menu([this](size_t row, size_t column, rap::point_f at)
-                                      { return cell_menu(row, column, at); })
+                    {.begin = on_page(
+                         [this](std::vector<size_t> rows) -> std::optional<rap::data_offer>
+                         {
+                             std::ranges::sort(rows);
+                             std::vector<std::string> hashes;
+                             for (size_t row : rows)
+                                 if (const commit* c = log_.commit(row))
+                                     hashes.push_back(c->id.hex());
+                             if (hashes.empty()) return std::nullopt;
+                             const std::string data = commits_payload(hashes);
+                             return rap::data_offer{{{commits_type, data}, {"text/plain", data}}};
+                         })})
+                .on_activate(on_page([this](size_t row) { row_activated(row); }))
+                .on_cell_context_menu(on_page([this](size_t row, size_t column, rap::point_f at)
+                                              { return cell_menu(row, column, at); }))
                 .stretch(3),
             // The forge panel, a column beside the commit's text and
             // files, when the commit has a PR or CI to show.
@@ -175,7 +181,7 @@ rap::node log_tab::build_page()
                         // Kept top right, as TortoiseGit has it [spec 1.2].
                         vbox{
                             canvas{}
-                                .on_paint(
+                                .on_paint(on_page(
                                     [this](rap::painter& p, rap::size_f size)
                                     {
                                         p.rect({0, 0, size.w, size.h}, 0,
@@ -192,7 +198,7 @@ rap::node log_tab::build_page()
                                             rap::fit_inside({0, 0, size.w, size.h}, iw, ih, 1, 0);
                                         if (std::min(at.w, at.h) < k_avatar_least) return;
                                         p.image(*avatar_, {0, 0, iw, ih}, at);
-                                    })
+                                    }))
                                 .width(rap::extent{k_avatar_size, rap::extent::unit::px})
                                 .height(rap::extent{k_avatar_size, rap::extent::unit::px})
                                 .bind(page_->avatar_canvas),
@@ -222,13 +228,13 @@ rap::node log_tab::build_page()
                 .visible(false)
                 .on_paint([](rap::painter& p, rap::size_f s) { paint_failure_mark(p, s); })
                 // Clicked: what git said.
-                .on_pointer(
+                .on_pointer(on_page(
                     [this](const rap::pointer_event& e)
                     {
                         if (e.type != rap::pointer_event_type::press || e.button != 1) return false;
                         show_sync_output();
                         return true;
-                    }),
+                    })),
             label{}.selectable().ellipsize().bind(page_->status).stretch(),
         },
         hbox{
@@ -241,7 +247,7 @@ rap::node log_tab::build_page()
                     .bind(page_->only_path)
                     .visible(!rel_path_.empty())
                     .tooltip(path_text(0))
-                    .on_toggled(
+                    .on_toggled(on_page(
                         [this](bool only)
                         {
                             only_path_ = only;
@@ -250,7 +256,7 @@ rap::node log_tab::build_page()
                             if (host_) host_->tab_changed(*this);
                             update_file_view();  // nothing is unrelated without a path
                             reload();
-                        }),
+                        })),
             },
             // The selected commit's files, by path: a second after
             // typing stops, at once on Enter, cleared by Escape (the
@@ -258,15 +264,15 @@ rap::node log_tab::build_page()
             entry{path_filter_text_}
                 .bind(page_->path_filter)
                 .placeholder(std::string("   ") + _("Filter paths"))
-                .on_changed(
+                .on_changed(on_page(
                     [this](const std::string& text)
                     {
                         path_filter_text_ = text;
                         if (!page_) return;
                         page_->path_filter_timer =
                             ui_.timer(1000, false, [this] { update_file_view(); });
-                    })
-                .on_activate([this] { update_file_view(); })
+                    }))
+                .on_activate(on_page([this] { update_file_view(); }))
                 .stretch(),
         },
         hbox{
@@ -278,10 +284,12 @@ rap::node log_tab::build_page()
             progress_bar{}.bind(page_->progress).stretch(),
             menu_button{_("Walk Be_havior")}
                 .bind(page_->walk)
-                .on_menu([this] { return walk_menu(); }),
-            menu_button{_("_View")}.bind(page_->view).on_menu([this] { return view_menu(); }),
+                .on_menu(on_page([this] { return walk_menu(); })),
+            menu_button{_("_View")}
+                .bind(page_->view)
+                .on_menu(on_page([this] { return view_menu(); })),
             spacer{},
-            button{_("OK")}.bind(page_->ok).on_click(
+            button{_("OK")}.bind(page_->ok).on_click(on_page(
                 [this]
                 {
                     if (picked_)
@@ -293,14 +301,14 @@ rap::node log_tab::build_page()
                         picked_(std::move(chosen));
                     }
                     if (host_) host_->finish(*this, true);
-                }),
+                })),
             button{_("Cancel")}
                 .bind(page_->cancel)
-                .on_click(
+                .on_click(on_page(
                     [this]
                     {
                         if (host_) host_->finish(*this, false);
-                    }),
+                    })),
         },
     };
 }
@@ -310,7 +318,7 @@ void log_tab::bind_page(std::optional<log_view_state> view)
     if (!page_) return;
     // Clicked, the status bar's "!" says what git said.
     page_->status_mark->set_cursor(rap::cursor::pointer);
-    page_->forge_splitter->on_moved(
+    page_->forge_splitter->on_moved(on_page(
         [this]
         {
             if (!page_) return;
@@ -324,7 +332,7 @@ void log_tab::bind_page(std::optional<log_view_state> view)
                 forge_share_.fitted(total, window->size().w);
             }
             fit_files();
-        });
+        }));
     forge_panel_->built();
     if (view)
         apply_view(*view);
@@ -412,6 +420,13 @@ void log_tab::drop_page()
         for (float s : sizes) total += s;
         if (total > 0) forge_sizes_ = sizes;
     }
+    // Its widgets go when the toolkit next gets to them (rap::stack::remove),
+    // which may be after the tab has: from now on they reach nothing of it.
+    // The lists let go of the models now, the callbacks do nothing (page_guard).
+    // The tab is kept a little after (log_window::close_tab), but nothing
+    // depends on that any more.
+    page_guard_.close();
+    page_->commit_list->set_model(nullptr);
     forge_panel_->unbind();
     files_.unbind();
     show_selected_ = false;
@@ -422,6 +437,8 @@ void log_tab::drop_page()
 bool log_tab::key(const rap::key_event& e)
 {
     if (!e.press || !page_) return false;
+    // What a key opens is this tab's repository's (as_tab).
+    const repo_identity_scope scope = tab_scope();
     // Undo and Redo in the commit list (text fields keep theirs:
     // their keys don't come here).
     if ((e.modifiers & ~rap::mod_shift) == rap::mod_ctrl && page_->commit_list->has_focus() &&
