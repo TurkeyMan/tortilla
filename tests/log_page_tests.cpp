@@ -2,13 +2,15 @@
 // backend: what the page showed (the selection, the panes, the columns,
 // the filter box, the selected files, the focus) comes back, and what
 // changed meanwhile shows. With them, the remotes' poll in two logs at once,
-// and the forge panel's download line across a page built again.
+// and the forge panel's download line across a page built again; and
+// repositories as tabs of one log window, and the recent repositories.
 //
 // The null backend's widgets keep nothing (or, its entries, no callbacks),
 // so this test's backend wraps it and builds lists, splitters, entries,
-// labels, buttons and progress bars itself, keeping what they're told and
-// what they'd call. Its windows poison their widgets as they go: a call that
-// reaches one afterwards fails the test.
+// labels, buttons, progress bars, stacks and document tabs itself, keeping
+// what they're told and what they'd call. Its windows poison their widgets
+// as they go, and its stacks a page's as it goes: a call that reaches one
+// afterwards fails the test.
 #include "log_page_tests.h"
 
 #include "changes/file_model.h"
@@ -17,6 +19,8 @@
 #include "log/forge_panel.h"
 #include "log/log_model.h"
 #include "log/log_tab.h"
+#include "log/log_window.h"
+#include "log/open_repository_dialog.h"
 #include "settings.h"
 #include "test_support.h"
 
@@ -1086,6 +1090,191 @@ void forge_download_tests(rap::ui& ui, const std::string& repo)
     settle(ui);
 }
 
+// A page's widgets, of those built into `b` from the lists and entries
+// counted (the pages before it in the window's stack) on.
+page page_in(const built_window& b, size_t lists_from, size_t entries_from)
+{
+    page p;
+    for (size_t i = lists_from; i < b.lists.size(); ++i)
+        if (auto* m = dynamic_cast<log_model*>(b.lists[i]->model))
+        {
+            p.commits = b.lists[i];
+            p.log = m;
+        }
+        else if (auto* f = dynamic_cast<file_model*>(b.lists[i]->model))
+        {
+            p.files = b.lists[i];
+            p.file_rows = f;
+        }
+    for (size_t i = entries_from; i < b.entries.size(); ++i)
+        (b.entries[i]->clearable ? p.search : p.path_filter) = b.entries[i];
+    return p;
+}
+
+bool loaded(rap::ui& ui, const page& p)
+{
+    return p.log && pump(ui, [&] { return !p.log->loading() && p.log->commit_rows() >= 2; });
+}
+
+std::string folder_name(const std::string& path)
+{
+    return rap::sys::path_to_utf8(rap::sys::path_from_utf8(path).filename());
+}
+
+// Repositories as document tabs in one log window: each keeps what it
+// shows as the others are shown, one already open is selected rather than
+// opened again, they're reordered, one closes mid-load without anything
+// reaching its page after, the + opens another, and the last one closes the
+// window.
+void tab_tests(rap::ui& ui, const std::string& first, const std::string& second,
+               const std::string& third)
+{
+    auto opened = log_window::open(ui, first);
+    check(opened.has_value(), "log tabs: the window opens");
+    if (!opened) return;
+    std::unique_ptr<log_window> w = std::move(*opened);
+    bool closed = false;
+    w->on_closed([&] { closed = true; });
+    built_window& b = g_backend->built.back();
+    kept_tabs* strip = b.tabs;
+    kept_stack* stack = b.stack;
+    kept_window* frame = b.window;
+    check(strip && stack && frame && strip->items.size() == 1 && w->tabs().size() == 1 &&
+              stack->ids() == std::vector<std::string>{w->tabs()[0]->id()},
+          "log tabs: a window's one tab, its page in the stack");
+    if (!strip || !stack || !frame || w->tabs().size() != 1) return;
+    log_tab* one = w->tabs()[0].get();
+    const std::string one_id = one->id();
+    check(strip->items[0].title == folder_name(first) &&
+              strip->items[0].tooltip.find(folder_name(first)) != std::string::npos &&
+              bool(strip->items[0].icon),
+          "log tabs: the tab says the repository's folder, in full as its tooltip, with its icon");
+
+    page p1 = page_in(b, 0, 0);
+    check(loaded(ui, p1), "log tabs: the first tab's log loads");
+    if (!p1.log || !p1.search) return;
+    const auto beta = row_of(*p1.log, "Add beta");
+    if (!beta) return check(false, "log tabs: the first tab's commits are there");
+    p1.commits->click({*beta}, *beta);
+    p1.search->type("Add");
+    settle(ui);
+
+    // -- a second repository: its own tab, page and title -------------------
+    const size_t lists = b.lists.size(), entries = b.entries.size();
+    auto two_opened = w->open_tab(second);
+    check(two_opened.has_value() && w->tabs().size() == 2 && strip->items.size() == 2,
+          "log tabs: a second repository opens in a second tab");
+    if (!two_opened) return;
+    log_tab* two = *two_opened;
+    const std::string two_id = two->id();
+    check(two_id != one_id && w->current_tab() == two && strip->current_id == two_id &&
+              stack->shown() == two_id && stack->ids().size() == 2,
+          "log tabs: the new tab is current, its page on show");
+    check(frame->title.find(folder_name(second)) != std::string::npos,
+          "log tabs: the window's title is the current tab's");
+    page p2 = page_in(b, lists, entries);
+    check(p2.commits != p1.commits && loaded(ui, p2), "log tabs: the second tab's log loads");
+    if (!p2.log) return;
+    const auto make_one = row_of(*p2.log, "Make one");
+    if (!make_one) return check(false, "log tabs: the second tab's commits are there");
+    p2.commits->click({*make_one}, *make_one);
+
+    // -- switching keeps each tab's selection and filter --------------------
+    strip->click(one_id);
+    check(w->current_tab() == one && stack->shown() == one_id &&
+              frame->title.find(folder_name(first)) != std::string::npos,
+          "log tabs: a click on the first tab shows it, its title the window's");
+    check(p1.commits->selected == std::vector<size_t>{*row_of(*p1.log, "Add beta")} &&
+              p1.search->value == "Add" && !p1.commits->dead,
+          "log tabs: switched back, the first tab's selection and filter are as they were");
+    check(p2.commits->selected == std::vector<size_t>{*row_of(*p2.log, "Make one")} &&
+              !p2.commits->dead,
+          "log tabs: the second tab, hidden, keeps its selection");
+
+    // -- one open already: its tab ------------------------------------------
+    auto again = w->open_tab(second);
+    check(again && *again == two && w->tabs().size() == 2 && strip->items.size() == 2 &&
+              w->current_tab() == two && stack->shown() == two_id,
+          "log tabs: a repository open already selects its tab instead");
+
+    // -- reordering -----------------------------------------------------------
+    strip->drag(two_id, 0);
+    check(w->tabs()[0].get() == two && w->tabs()[1].get() == one,
+          "log tabs: dragged first, the tabs follow the strip");
+    w->reorder(two_id, 1);
+    check(w->tabs()[1].get() == two && strip->ids() == std::vector<std::string>{one_id, two_id} &&
+              strip->current_id == two_id,
+          "log tabs: moved from the window, the strip follows, the current tab kept");
+
+    // -- closing one mid-load -------------------------------------------------
+    // F5 reloads it; closed at once, with the load under way on its worker.
+    two->key(rap::key_event{.press = true, .key = rap::key::f5});
+    check(p2.log->loading(), "log tabs: the second tab is reloading");
+    strip->close_box(two_id);
+    check(w->tabs().size() == 1 && strip->ids() == std::vector<std::string>{one_id} &&
+              stack->ids() == std::vector<std::string>{one_id} && w->current_tab() == one &&
+              stack->shown() == one_id &&
+              frame->title.find(folder_name(first)) != std::string::npos,
+          "log tabs: closed, its tab and page go, and the one beside it shows");
+    settle(ui);
+    pump(
+        ui, [] { return false; }, 300);
+    check(p2.commits->dead && p2.search->dead && !p1.commits->dead && !closed,
+          "log tabs: the closed tab's page went once the queue ran, the window stays");
+
+    // -- + : the repository picker, then its tab -------------------------------
+    // Nothing recent: the folder picker at once.
+    settings::get().set("log.recentRepositories", "");
+    const int asked = g_backend->choosers;
+    g_backend->choose = std::vector<std::string>{third};
+    strip->plus();
+    settle(ui);
+    check(g_backend->choosers == asked + 1 && w->tabs().size() == 2 &&
+              w->current_tab() == w->tabs()[1].get() &&
+              strip->current_id == w->tabs()[1]->id() &&
+              w->tabs()[1]->repo_location().find(folder_name(third)) != std::string::npos,
+          "log tabs: + asks for a folder, and it opens in a tab of its own");
+    if (w->tabs().size() == 2)
+    {
+        const std::string three_id = w->tabs()[1]->id();
+        strip->close_box(three_id);
+        settle(ui);
+        check(w->tabs().size() == 1 && !closed, "log tabs: closed again");
+    }
+
+    // -- the last tab closes the window -----------------------------------------
+    strip->close_box(one_id);
+    check(!closed && w->tabs().size() == 1, "log tabs: the last tab's close waits for the handler");
+    settle(ui);
+    check(closed && frame->closed, "log tabs: closing the last tab closes the window");
+    const auto recent = settings::get().history("log.recentRepositories");
+    check(std::ranges::any_of(recent, [&](const std::string& r)
+                              { return r.find(folder_name(third)) != std::string::npos; }),
+          "log tabs: a repository opened is remembered as recent");
+    w.reset();
+    settle(ui);
+}
+
+// The recent repositories leave out folders that have gone.
+void recent_tests(const std::string& root, const std::string& one, const std::string& two)
+{
+    namespace fs = std::filesystem;
+    const fs::path gone = rap::sys::path_from_utf8(root) / "gone-repo";
+    std::error_code ec;
+    fs::create_directories(gone, ec);
+    settings::get().set("log.recentRepositories", "");
+    remember_repository(one);
+    remember_repository(rap::sys::path_to_utf8(gone));
+    remember_repository(two);
+    remember_repository(one + "/");  // the same, moved first
+    fs::remove(gone, ec);
+    const std::vector<std::string> recent = recent_repositories();
+    check(recent.size() == 2 && recent[0] == one && recent[1] == two,
+          "log tabs: the recent repositories, newest first, without a folder that's gone");
+    check(settings::get().history("log.recentRepositories").size() == 3,
+          "log tabs: one gone is left in the history, only not offered");
+}
+
 }  // namespace
 
 void run_log_page_tests(const std::string& root)
@@ -1136,6 +1325,35 @@ void run_log_page_tests(const std::string& root)
     poll_tests(ui, repo, polled);
     forge_download_tests(ui, repo);
     check(g_stale_calls == 0, "log page: nothing reached a widget after its window went");
+
+    // A second repository, and a third, for a window's tabs.
+    std::vector<std::string> others;
+    for (const char* name : {"tab-repo", "third-repo"})
+    {
+        const fs::path other = rap::sys::path_from_utf8(root) / name;
+        fs::create_directories(other, ec);
+        const std::string at = rap::sys::path_to_utf8(other);
+        auto in = [&](std::vector<std::string> args)
+        {
+            args.insert(args.begin(), {"-c", "user.name=Tortilla Test", "-c",
+                                       "user.email=test@tortilla.invalid", "-c",
+                                       "commit.gpgsign=false"});
+            return run_git(at, args, git_output::stdout_only).ok();
+        };
+        bool ok = in({"init", "-q", "-b", "main"});
+        for (const char* file : {"one", "two"})
+        {
+            std::ofstream(other / (std::string(file) + ".txt"), std::ios::binary) << file << "\n";
+            ok = ok && in({"add", "."}) && in({"commit", "-qm", std::string("Make ") + file});
+        }
+        check(ok, "log tabs: another repository to show");
+        if (!ok) return;
+        others.push_back(at);
+    }
+    g_stale_calls = 0;
+    tab_tests(ui, repo, others[0], others[1]);
+    recent_tests(root, repo, others[0]);
+    check(g_stale_calls == 0, "log tabs: nothing reached a page's widgets after they went");
 
     log_tab::poll_hooks_for_tests = nullptr;
     loaded->reset();
