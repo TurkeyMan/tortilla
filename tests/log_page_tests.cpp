@@ -558,6 +558,11 @@ public:
         ++shown;
         inner_->show();
     }
+    void present() override
+    {
+        ++presented;
+        inner_->present();
+    }
     void close() override
     {
         closed = true;
@@ -612,6 +617,8 @@ public:
     rap::icon icon;
     bool closed = false;
     int shown = 0;  // times show() was called: brought to the front, once open
+    // Times present() was called: restored if minimised, raised, activated.
+    int presented = 0;
     // The window's keys, as the user would press them.
     std::function<bool(const rap::key_event&)> key;
     // The close box's question (the null window never asks it).
@@ -2275,6 +2282,7 @@ void forward_tests(rap::ui& ui, const std::string& first, const std::string& sec
     if (!ab || !ab->tabs) return check(false, "log forward: the first window's widgets");
     check(selected_in(ui, page_in(*ab, 0, 0), subject_of(first, "HEAD~1")),
           "log forward: --select's commit selected in the window");
+    check(ab->window->presented == 1, "log forward: the window of its own brought forward, once");
     const std::string a_first = a->tabs()[0]->id();
 
     // -- log.openIn=window: a window of its own, one open or not -------------
@@ -2285,6 +2293,11 @@ void forward_tests(rap::ui& ui, const std::string& first, const std::string& sec
     if (kept.windows.size() != 2) return;
     log_window* b = kept.windows[1].get();
     check(log_window::forward_target() == b, "log forward: the window opened last is the one used");
+    {
+        built_window* bb = built_for(b->frame());
+        check(bb && bb->window->presented == 1 && ab->window->presented == 1,
+              "log forward: asked for a window, that one brought forward, once, the other not");
+    }
 
     // -- a tab of the window used last, brought to the front ------------------
     // A key pressed in the first: used since.
@@ -2292,7 +2305,7 @@ void forward_tests(rap::ui& ui, const std::string& first, const std::string& sec
     if (ab->window->key) ab->window->key(rap::key_event{.press = true, .key = rap::key::other});
     check(log_window::forward_target() == a,
           "log forward: a key pressed in it, that one's used last");
-    const int shown = ab->window->shown;
+    const int shown = ab->window->shown, presented = ab->window->presented;
     const size_t lists = ab->lists.size(), entries = ab->entries.size();
     auto tabbed = log_window::open_forwarded(ui, {.path = third, .select = "HEAD~1"}, kept.keep);
     check(tabbed && *tabbed == a && kept.windows.size() == 2 && a->tabs().size() == 2 &&
@@ -2300,7 +2313,9 @@ void forward_tests(rap::ui& ui, const std::string& first, const std::string& sec
               ab->tabs->current_id == a->tabs()[1]->id() &&
               a->tabs()[1]->repo_location().find(folder_name(third)) != std::string::npos,
           "log forward: a new tab in the window used last, selected, and no window more");
-    check(ab->window->shown == shown + 1, "log forward: that window brought to the front");
+    // present(), not show(): a minimised window is restored as it's raised.
+    check(ab->window->presented == presented + 1 && ab->window->shown == shown,
+          "log forward: that window brought forward (present), once");
     if (a->tabs().size() != 2) return;
     const std::string a_third = a->tabs()[1]->id();
     page third_page = page_in(*ab, lists, entries);
@@ -2314,6 +2329,8 @@ void forward_tests(rap::ui& ui, const std::string& first, const std::string& sec
     check(again && *again == a && a->tabs().size() == 2 && a->current_tab()->id() == a_third &&
               ab->tabs->current_id == a_third && kept.windows.size() == 2,
           "log forward: a repository open there already selects its tab");
+    check(ab->window->presented == presented + 2,
+          "log forward: and that window's brought forward again");
     check(selected_in(ui, third_page, subject_of(third, "HEAD")),
           "log forward: and --select moves that tab's selection");
 

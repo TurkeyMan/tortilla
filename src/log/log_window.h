@@ -36,11 +36,16 @@ public:
 
     // Shown, and brought to the front if it's open already.
     void show();
+    // As show(), and restored if minimised, raised and activated where the
+    // platform lets it (rap::window::present): for a log another process
+    // asked for, which the user is waiting to see.
+    void present();
     // A log another `tortilla log` handed over (log/log_host.h), opened as
     // it asked: unless r.new_window, a tab of forward_target() (or that
-    // window's tab showing it already, selected, as open_tab does), the
-    // window brought to the front; otherwise, or with no such window, a log
-    // window of its own, given to `keep`. r.select selected in it either
+    // window's tab showing it already, selected, as open_tab does);
+    // otherwise, or with no such window, a log window of its own, given to
+    // `keep`. Either way the window is present()ed after: restored if
+    // minimised, brought to the front. r.select selected in it either
     // way. The window it's in; the error says why the repository can't be
     // shown (nothing opened then).
     static std::expected<log_window*, std::string>

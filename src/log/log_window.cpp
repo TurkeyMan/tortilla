@@ -48,7 +48,7 @@ log_window::open_forwarded(rap::ui& ui, const log_request& r,
             auto tab = into->open_tab(r.path, r.all_branches, r.submodule);
             if (!tab) return std::unexpected(tab.error());
             if (!r.select.empty()) (*tab)->select_commit(r.select);
-            into->show();
+            into->present();
             return into;
         }
     auto log = open(ui, r.path, r.all_branches, r.submodule);
@@ -56,6 +56,9 @@ log_window::open_forwarded(rap::ui& ui, const log_request& r,
     if (!r.select.empty()) (*log)->select_commit(r.select);
     log_window* w = log->get();
     keep(std::move(*log));
+    // Another process asked for it, so it's brought forward as a tab's
+    // window is, not only shown (as keep may have: present() shows it if not).
+    w->present();
     return w;
 }
 
@@ -79,6 +82,12 @@ void log_window::show()
 {
     used();
     window_->show();
+}
+
+void log_window::present()
+{
+    used();
+    window_->present();
 }
 
 std::expected<std::unique_ptr<log_window>, std::string>
