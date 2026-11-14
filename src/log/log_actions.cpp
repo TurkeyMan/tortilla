@@ -1614,6 +1614,9 @@ void log_tab::hide_branch(const ref& r)
 
 void log_tab::open_worktree(const std::string& path)
 {
+    // That worktree's own repository, not this tab's: what opens before its
+    // tab gives the window its identity.
+    const repo_identity_scope scope(repo_identity_for(ui_, path));
     auto log = log_window::open(ui_, path);
     if (!log)
         return show_message(ui_, parent(),

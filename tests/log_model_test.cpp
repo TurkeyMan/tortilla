@@ -50,6 +50,7 @@
 #include "log/log_model.h"
 #include "log/ref_labels.h"
 #include "journal_tests.h"
+#include "log_host_tests.h"
 #include "log_page_tests.h"
 #include "raw_client.h"
 #include "test_support.h"
@@ -5474,6 +5475,7 @@ int main(int argc, char** argv)
     history_edit_tests(argv[1]);
     diff_sides_tests(**ui, argv[1]);
     tortilla::test::run_journal_tests(**ui, argv[1]);
+    tortilla::test::run_log_host_tests(**ui, repo);
     tortilla::test::run_log_page_tests(argv[1]);
     libgit2_parity_tests(argv[1]);
     libgit2_dialog_parity_tests(argv[1]);

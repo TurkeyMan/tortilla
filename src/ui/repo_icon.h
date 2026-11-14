@@ -44,6 +44,13 @@ class repo;
 // keep the colour they have.
 std::shared_ptr<const repo_identity> repo_identity_of(rap::ui&, const repo&);
 
+// The identity of the repository at `path`, found as use_repo_icon finds
+// it (`outer` too), without changing what create_window gives windows;
+// nullptr outside one. For a window of another repository than the one
+// it's opened from (a worktree's log), with repo_identity_scope.
+std::shared_ptr<const repo_identity> repo_identity_for(rap::ui&, const std::string& path,
+                                                       bool outer = false);
+
 // What `window` carries (made by create_window); nullopt when it isn't
 // recorded. For something that opens later, after the scope it was asked
 // in has closed: a follow-up's window, a dialog's done.

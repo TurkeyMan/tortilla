@@ -107,7 +107,9 @@ add_library(tortilla_git STATIC
     src/git/ref_journal.cpp
     src/git/history_writer.cpp
     src/util/notices.cpp
+    src/util/single_instance.cpp
     src/ui/window_identities.cpp
+    src/log/log_host.cpp
     src/cache/badge_cache.cpp
     src/cache/badge_changes.cpp
     src/cache/cache_main.cpp
@@ -120,6 +122,10 @@ add_library(tortilla_git STATIC
 target_include_directories(tortilla_git PUBLIC src)
 target_link_libraries(tortilla_git PUBLIC ${TORTILLA_LIBGIT2} rapport::rapport)
 target_compile_features(tortilla_git PUBLIC cxx_std_23)
+if(WIN32)
+    # The log windows' host's pipe: its owner checked, its access its user's only.
+    target_link_libraries(tortilla_git PRIVATE advapi32 user32)
+endif()
 
 # The app but main(): its windows, which the tests build too (on the null
 # backend).
@@ -352,7 +358,7 @@ if(NOT MSVC)
 endif()
 
 add_executable(tortilla-tests tests/log_model_test.cpp tests/journal_tests.cpp tests/raw_client.cpp
-               tests/log_page_tests.cpp)
+               tests/log_page_tests.cpp tests/log_host_tests.cpp)
 target_link_libraries(tortilla-tests PRIVATE tortilla_app rapport::rapport)
 
 add_executable(tortilla-icon-preview tools/icon_preview.cpp)

@@ -315,7 +315,8 @@ const rap::icon& own_icon(rap::ui& ui)
 
 }  // namespace
 
-void use_repo_icon(rap::ui& ui, const std::string& path, bool outer)
+std::shared_ptr<const repo_identity> repo_identity_for(rap::ui& ui, const std::string& path,
+                                                       bool outer)
 {
     // As the log finds it: a path gone from the working tree is looked
     // for from the nearest folder still there; `outer` from the folder above.
@@ -326,8 +327,12 @@ void use_repo_icon(rap::ui& ui, const std::string& path, bool outer)
     while (!fs::exists(at, ec) && at.has_parent_path() && at.parent_path() != at)
         at = at.parent_path();
     auto r = repo::open(rap::sys::path_to_utf8(at));
-    if (!r) return;
-    identities().use(repo_identity_of(ui, *r));
+    return r ? repo_identity_of(ui, *r) : nullptr;
+}
+
+void use_repo_icon(rap::ui& ui, const std::string& path, bool outer)
+{
+    if (auto id = repo_identity_for(ui, path, outer)) identities().use(std::move(id));
 }
 
 std::shared_ptr<const repo_identity> repo_identity_of(rap::ui& ui, const repo& r)

@@ -21,6 +21,9 @@ size_t hold(std::shared_ptr<void> owner);
 // Lets go of a window (after the callback that closed it returns); the
 // program ends if it was the last.
 void release(size_t id);
+// Once the last window has gone and the program is ending: nothing new is
+// kept from then (the log windows' host turns requests away).
+bool ending();
 
 // Keeps and shows a window (log_window, commit_window...: anything with
 // show() and on_closed()); `closed` runs too when it closes.

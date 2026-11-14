@@ -82,6 +82,7 @@
 #include "git/temp_files.h"
 #include "i18n.h"
 #include "log/bisect_dialog.h"
+#include "log/log_host.h"
 #include "log/log_window.h"
 #include "log/reflog_window.h"
 #include "log/worktree_window.h"
@@ -124,6 +125,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <set>
 #include <string>
 
@@ -181,6 +183,67 @@ void show_toolkit_hint(rap::ui& ui, const rap::load_options& opts)
 
 }  // namespace
 #endif
+
+namespace
+{
+
+// The notices a write left for the repository at `path` (util/notices.h),
+// together, or "" when there are none.
+std::string notices_for(const std::string& path)
+{
+    std::string detail;
+    if (auto r = tortilla::repo::open(path))
+        for (const std::string& n : tortilla::take_notices(tortilla::notices_dir(), r->workdir()))
+            detail += (detail.empty() ? "" : "\n\n") + n;
+    return detail;
+}
+
+// A log another `tortilla log` handed to this one, the log windows' host
+// (log/log_host.h): opened as that process would have, from trusting the
+// repository to the window, except that a failure is said without ending
+// the host's other windows. Held meanwhile, so the host doesn't end while
+// it's asked or said.
+void open_forwarded_log(rap::ui& ui, const tortilla::log_request& r)
+{
+    const size_t opening = tortilla::windows::hold({});
+    auto open = [&ui, r, opening]
+    {
+        tortilla::use_repo_icon(ui, r.path, r.submodule);
+        auto log = tortilla::log_window::open(ui, r.path, r.all_branches, r.submodule);
+        if (log)
+        {
+            if (!r.select.empty()) (*log)->select_commit(r.select);
+            tortilla::windows::keep(std::move(*log));
+        }
+        else if (r.welcome)
+            tortilla::windows::keep(tortilla::welcome_window::open(ui));
+        else
+        {
+            const size_t said = tortilla::windows::hold({});
+            ui.message(nullptr,
+                       {.icon = rap::message_spec::icon::error, .title = "Tortilla", .text = log.error()},
+                       [said](rap::dialog_role) { tortilla::windows::release(said); });
+        }
+        tortilla::windows::release(opening);
+    };
+    // Nothing given: no repository asked for, so none to trust.
+    if (r.welcome) return open();
+    tortilla::ensure_trusted(ui, r.path,
+                             [&ui, r, open, opening](bool go_on)
+                             {
+                                 if (!go_on) return tortilla::windows::release(opening);
+                                 const std::string detail = notices_for(r.path);
+                                 if (detail.empty()) return open();
+                                 ui.message(nullptr,
+                                            {.icon = rap::message_spec::icon::warning,
+                                             .title = _("Tortilla"),
+                                             .text = _("A change made here ended after its window was closed:"),
+                                             .detail = detail},
+                                            [open](rap::dialog_role) { open(); });
+                             });
+}
+
+}  // namespace
 
 int main(int argc, char** argv)
 {
@@ -328,6 +391,26 @@ int main(int argc, char** argv)
     // Explorer's Help [spec 4.2, row 61]: the documentation, online; no window.
     if (command == "help") return tortilla::open_help() ? 0 : 1;
 
+    // A log goes to the log windows' host, when one is running, and this
+    // process ends (log/log_host.h): its path made absolute first, as the
+    // host's own folder is another. Not with --ui=, which asks for a toolkit
+    // of its own. With no host, this process claims the endpoint at once,
+    // before its UI loads: of two started together one hosts, and the other
+    // hands its log over once the first is ready (or opens its own, if that
+    // takes too long). A host that doesn't take it leaves it to this process.
+    const bool hosting = command == "log" && opts.backend.empty() && tortilla::log_host_enabled();
+    std::unique_ptr<tortilla::log_host> claimed;
+    if (hosting)
+    {
+        auto start = tortilla::forward_or_claim({.path = tortilla::log_request_path(path),
+                                                 .select = select,
+                                                 .all_branches = all_branches,
+                                                 .submodule = submodule,
+                                                 .welcome = !named && args.empty()});
+        if (start.forwarded) return 0;
+        claimed = std::move(start.host);
+    }
+
     // Light or dark as Settings says, from the first window.
     opts.look.color_scheme = tortilla::appearance();
     // Under libadwaita (GNOME): its message boxes, and settings groups that
@@ -336,6 +419,11 @@ int main(int argc, char** argv)
     opts.look.alert_dialogs = true;
     opts.look.boxed_lists = true;
     auto ui = rap::ui::load(argc, argv, opts);
+    // The endpoint claimed above: from here on held after the ui, so it's
+    // gone (its thread stopped, posting nothing more) before the ui is.
+    // Until serve_logs() below, requests wait; ending before then (a
+    // repository not trusted, a log that didn't open) turns them away.
+    std::unique_ptr<tortilla::log_host> host = std::move(claimed);
     if (!ui)
     {
         std::fprintf(stderr, "%s", ui.error().c_str());
@@ -394,27 +482,20 @@ int main(int argc, char** argv)
 
         // What a write said after its window on this repository closed
         // [util/notices.h], shown once before going on.
-        if (auto r = tortilla::repo::open(path))
+        if (const std::string detail = notices_for(path); !detail.empty())
         {
-            std::string detail;
-            for (const std::string& n :
-                 tortilla::take_notices(tortilla::notices_dir(), r->workdir()))
-                detail += (detail.empty() ? "" : "\n\n") + n;
-            if (!detail.empty())
-            {
-                bool seen = false;
-                (*ui)->message(nullptr,
-                               {.icon = rap::message_spec::icon::warning,
-                                .title = _("Tortilla"),
-                                .text = _("A change made here ended after its window was closed:"),
-                                .detail = detail},
-                               [&](rap::dialog_role)
-                               {
-                                   seen = true;
-                                   (*ui)->quit();
-                               });
-                if (!seen) (*ui)->run();
-            }
+            bool seen = false;
+            (*ui)->message(nullptr,
+                           {.icon = rap::message_spec::icon::warning,
+                            .title = _("Tortilla"),
+                            .text = _("A change made here ended after its window was closed:"),
+                            .detail = detail},
+                           [&](rap::dialog_role)
+                           {
+                               seen = true;
+                               (*ui)->quit();
+                           });
+            if (!seen) (*ui)->run();
         }
     }
 
@@ -1117,11 +1198,35 @@ int main(int argc, char** argv)
     }
 
     tortilla::windows::init(**ui);
+    // Once this process's own log (or welcome window) is open, it hosts the
+    // log windows later `tortilla log`s ask for, until the last window of
+    // all closes. A request taken holds the process (it mustn't end before
+    // its window opens) until it's opened, or dropped when its sender gave
+    // up and opened its own; requests come one at a time, so one hold.
+    size_t reserved = 0;
+    auto serve_logs = [&]
+    {
+        if (!host) return;
+        host->serve([&ui](std::function<void()> f) { (*ui)->post(std::move(f)); },
+                    [&reserved]
+                    {
+                        if (tortilla::windows::ending()) return false;
+                        reserved = tortilla::windows::hold({});
+                        return true;
+                    },
+                    [&ui, &reserved](const tortilla::log_request& r)
+                    {
+                        open_forwarded_log(**ui, r);
+                        tortilla::windows::release(reserved);
+                    },
+                    [&reserved] { tortilla::windows::release(reserved); });
+    };
     // Started with nothing to open (from the Start menu, a launcher): what
     // Tortilla is and a way in, rather than nothing at all.
     auto welcome = [&]
     {
         tortilla::windows::keep(tortilla::welcome_window::open(**ui));
+        if (command == "log") serve_logs();
         return (*ui)->run();
     };
     if (command == "about") return welcome();
@@ -1141,5 +1246,6 @@ int main(int argc, char** argv)
     if (!select.empty()) (*log)->select_commit(select);
     // The log, and the dialogs it opens: until the last closes.
     tortilla::windows::keep(std::move(*log));
+    serve_logs();
     return (*ui)->run();
 }

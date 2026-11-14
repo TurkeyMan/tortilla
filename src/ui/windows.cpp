@@ -10,6 +10,7 @@ namespace
 rap::ui* g_ui = nullptr;
 std::map<size_t, std::shared_ptr<void>> g_kept;
 size_t g_next = 1;
+bool g_ending = false;
 
 }  // namespace
 
@@ -31,8 +32,15 @@ void release(size_t id)
         [id]
         {
             g_kept.erase(id);
-            if (g_kept.empty()) g_ui->quit();
+            if (!g_kept.empty()) return;
+            g_ending = true;
+            g_ui->quit();
         });
+}
+
+bool ending()
+{
+    return g_ending;
 }
 
 }  // namespace tortilla::windows
