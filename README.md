@@ -145,8 +145,33 @@ menu for just you, without installing; `--unregister-shell` removes it.
 
 ## Building
 
+### Windows
+
+Install Visual Studio 2022 with the Desktop development with C++ workload,
+including its bundled CMake tools, and Git for Windows. Clone over HTTPS:
+
+```sh
+git clone --recursive https://github.com/TurkeyMan/tortilla.git
+cd tortilla
+```
+
+Open the folder in Visual Studio, or run these commands from a Developer
+PowerShell or Developer Command Prompt:
+
+```sh
+cmake -S . -B build
+cmake --build build --config Release
+```
+
+CMake downloads and builds a pinned libgit2 release when no installed package
+is found. No SSH key, vcpkg or pkg-config is required. Vcpkg is optional: an
+existing vcpkg toolchain continues to supply libgit2 instead. Set
+`TORTILLA_FETCH_LIBGIT2=OFF` to require an installed package.
+
+### Linux
+
 You need CMake 3.25, a C++23 compiler, libgit2, and the development files
-for GTK 3, GTK 4 and/or Qt 6 (Linux) or nothing extra (Windows).
+for GTK 3, GTK 4 and/or Qt 6.
 
 ```sh
 git clone --recursive https://github.com/TurkeyMan/tortilla.git

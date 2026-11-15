@@ -39,7 +39,9 @@ add_subdirectory(rapport)
 # on the matching librapport backend.
 # libgit2: pkg-config where there is one (distro packages; Debian's CMake
 # package drags in its private dependencies, e.g. Kerberos, as link
-# requirements), else libgit2's own CMake package (the Windows cross-build).
+# requirements), then libgit2's own CMake package (e.g. vcpkg), then a
+# pinned source archive for a plain Visual Studio build.
+option(TORTILLA_FETCH_LIBGIT2 "Download and build libgit2 if no installed package is found" ON)
 find_package(PkgConfig QUIET)
 if(PKG_CONFIG_FOUND AND NOT WIN32)
     pkg_check_modules(LIBGIT2 QUIET IMPORTED_TARGET libgit2)
@@ -51,8 +53,13 @@ if(TARGET PkgConfig::LIBGIT2)
     set(TORTILLA_LIBGIT2 PkgConfig::LIBGIT2)
 elseif(TARGET libgit2::libgit2package)
     set(TORTILLA_LIBGIT2 libgit2::libgit2package)
+elseif(TORTILLA_FETCH_LIBGIT2)
+    enable_language(C)
+    include(cmake/FetchLibgit2.cmake)
+    tortilla_fetch_libgit2()
+    set(TORTILLA_LIBGIT2 libgit2::libgit2package)
 else()
-    message(FATAL_ERROR "libgit2 not found (pkg-config libgit2, or libgit2_DIR)")
+    message(FATAL_ERROR "libgit2 not found: install the pkg-config libgit2 package, provide a CMake config package (e.g. vcpkg or libgit2_DIR), or enable TORTILLA_FETCH_LIBGIT2 to download and build it")
 endif()
 
 add_library(tortilla_git STATIC

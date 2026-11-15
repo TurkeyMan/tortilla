@@ -11,7 +11,8 @@ licences follow.
 - **libgit2**, git's object database, read by Tortilla directly. GNU GPL
   version 2 with the linking exception. <https://libgit2.org>
   The Windows build links it statically, with what it uses:
-  - **PCRE2**: BSD licence. <https://github.com/PCRE2Project/pcre2>
+  - **PCRE** in the downloaded build: BSD licence. <https://www.pcre.org>
+    Or **PCRE2** with vcpkg: BSD licence. <https://github.com/PCRE2Project/pcre2>
   - **zlib**: zlib licence. <https://zlib.net>
   - **http-parser**: MIT licence. <https://github.com/nodejs/http-parser>
 - **The GitHub mark** in the welcome window: Octicons' mark-github,
