@@ -23,6 +23,7 @@ namespace
 constexpr int k_picture_size = 24;
 constexpr int k_mark_size = 16;
 constexpr float k_label_bootstrap_width = 64;
+constexpr float k_label_bootstrap_height = 24;
 // How often the shown build is asked again while its checks run.
 constexpr auto k_running_poll = std::chrono::seconds(20);
 
@@ -585,6 +586,7 @@ void forge_panel::plan_labels()
         {
             next.shown.push_back(i);
             next.width = width;
+            next.height = std::max(next.height, label_sizes_[i].h);
         }
     }
     next.hidden = labels_.size() - next.shown.size();
@@ -592,11 +594,15 @@ void forge_panel::plan_labels()
     {
         const float width = next.width + (next.shown.empty() ? 0 : 4) + overflow_sizes_[next.hidden].w;
         if (width <= limit)
+        {
             next.width = width;
+            next.height = std::max(next.height, overflow_sizes_[next.hidden].h);
+        }
         else
         {
             next.shown.clear();
             next.width = 0;  // no partial counter; every name remains in the title's tooltip
+            next.height = 0;
         }
     }
     label_plan_ = std::move(next);
@@ -634,11 +640,12 @@ void forge_panel::layout_labels()
     const unsigned revision = labels_revision_;
     const std::string id = std::to_string(generation);
     const float width = labels_measured_ ? std::ceil(label_plan_.width) : k_label_bootstrap_width;
+    const float height = labels_measured_ ? std::ceil(label_plan_.height) : k_label_bootstrap_height;
     // A stack measures its page root's natural size. Put fixed extents on
     // the box's child so they participate in that measurement on Win32.
-    pr_labels_->add(id, rap::layout::hbox{rap::layout::canvas{}.focusable(false).tooltip(tip).bind(labels_canvas_)
+    pr_labels_->add(id, rap::layout::vbox{rap::layout::canvas{}.focusable(false).tooltip(tip).bind(labels_canvas_)
         .width(rap::extent{width, rap::extent::unit::px})
-        .height(rap::extent{2, rap::extent::unit::lines})
+        .height(rap::extent{height, rap::extent::unit::px})
         .on_paint(page_guard_([this, generation, revision](rap::painter& p, rap::size_f size)
         {
             if (generation != labels_generation_ || revision != labels_revision_) return;

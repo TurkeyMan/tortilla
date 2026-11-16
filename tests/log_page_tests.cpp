@@ -72,6 +72,8 @@ struct forge_panel_test
     static rap::label* title(forge_panel& p) { return p.pr_title_; }
     static float label_width(const forge_panel& p)
     { return p.labels_rendered_ ? p.labels_rendered_->width : 0; }
+    static float label_height(const forge_panel& p)
+    { return p.labels_rendered_ ? p.labels_rendered_->height : 0; }
     static void labels(forge_panel& p, std::vector<pr_label> labels)
     { p.prs_[0].pr.pr.labels = std::move(labels); }
     static void build(forge_panel& p)
@@ -141,6 +143,7 @@ int g_forge_invalidates = 0;
 int g_forge_selects = 0;
 class kept_canvas;
 std::function<void(kept_canvas&, rap::size_f)> g_allocated_canvas_paint;
+std::map<rap::stack*, rap::size_f> g_stack_allocations;
 // While set, the pages stacks remove are held here, their widgets there
 // until the test lets them go.
 std::vector<std::function<void()>>* g_held_pages = nullptr;
@@ -542,6 +545,20 @@ struct built_window
 rap::size_f allocated_page_size(const rap::node& n)
 {
     if (std::holds_alternative<rap::spec::canvas>(n.spec)) return {64, 64};
+    if (const auto* label = std::get_if<rap::spec::label>(&n.spec))
+    {
+        const auto* kept_label_widget = label->bind ? dynamic_cast<kept_label*>(*label->bind) : nullptr;
+        const auto& text = kept_label_widget ? kept_label_widget->text : label->text;
+        return {float(text.size() * 7), 14};
+    }
+    if (const auto* stack = std::get_if<rap::spec::stack>(&n.spec))
+    {
+        auto* widget = stack->bind ? *stack->bind : nullptr;
+        const auto* state = dynamic_cast<kept<rap::stack>*>(widget);
+        if (!state || !state->shown) return {};
+        const auto found = g_stack_allocations.find(widget);
+        return found == g_stack_allocations.end() ? rap::size_f{} : found->second;
+    }
     const auto* box = std::get_if<rap::spec::box>(&n.spec);
     if (!box) return {};
     auto extent = [](rap::extent e, float natural)
@@ -698,6 +715,7 @@ public:
         touch();
         ++g_forge_pages;
         if (pages_.contains(id)) return;
+        if (g_allocated_canvas_paint) allocated_sizes_[id] = allocated_page_size(content);
         auto& poison = pages_[id];
         auto* outer = std::exchange(built_.page, &poison);
         const auto old_size = std::exchange(built_.page_canvas_size,
@@ -724,11 +742,14 @@ public:
         else
             post_(std::move(gone));
         pages_.erase(it);
+        allocated_sizes_.erase(id);
+        if (g_allocated_canvas_paint) g_stack_allocations[this] = allocated_sizes_[inner_.shown()];
     }
     void show(const std::string& id) override
     {
         touch();
         inner_.show(id);
+        if (g_allocated_canvas_paint) g_stack_allocations[this] = allocated_sizes_[id];
     }
     std::string shown() const override
     {
@@ -746,6 +767,7 @@ private:
     built_window& built_;
     std::function<void(std::function<void()>)> post_;
     std::map<std::string, std::vector<std::function<void()>>> pages_;
+    std::map<std::string, rap::size_f> allocated_sizes_;
 };
 
 // The null backend's window, which poisons its widgets as it goes (they're
@@ -1625,18 +1647,30 @@ void forge_fresh_canvas_tests(rap::ui& ui, const std::string& repo)
         allocations.push_back(size);
     };
     forge_panel panel({.ui = ui, .workdir = repo});
-    auto window = ui.create(rap::layout::window{"Forge fresh", {panel.layout()}});
+    const auto layout = panel.layout();
+    const auto& split = std::get<rap::spec::splitter>(std::get<rap::spec::box>(layout.spec).items[0].spec);
+    const auto& pr = std::get<rap::spec::box>(std::get<rap::spec::box>(split.panes[0].spec).items[0].spec);
+    const auto& header = pr.items[0];
+    auto window = ui.create(rap::layout::window{"Forge fresh", {layout}});
     panel.built();
     forge_panel_test::seed(panel);
+    forge_panel_test::labels(panel, {});
+    panel.show_commit("head");
+    settle(ui);
+    check(allocated_page_size(header).h == 14 && forge_panel_test::label_height(panel) == 0,
+          "forge fresh: empty strip contributes no height to one-line title row");
     forge_panel_test::labels(panel, {{"pm-approved", std::nullopt}});
-    panel.show_commit("head");  // outer pane width has not arrived yet
+    forge_panel_test::refresh(panel);  // outer pane width has not arrived yet
     settle(ui);
     auto canvas = [&] { return dynamic_cast<kept_canvas*>(forge_panel_test::labels(panel)); };
     auto* visible_stack = dynamic_cast<kept<rap::stack>*>(forge_panel_test::label_stack(panel));
-    check(!allocations.empty() && allocations.front().w >= 64 && allocations.front().h >= 18 &&
+    check(!allocations.empty() && allocations.front().w >= 64 && allocations.front().h == 24 &&
               visible_stack && visible_stack->shown && canvas() && canvas()->shown && canvas()->allocated_paints > 0 &&
               canvas()->painted_strings == std::vector<std::string>{"+1"},
           "forge fresh: unknown-cap label set gets viable allocation and paints naturally");
+    check(canvas() && canvas()->painted_size.h == 18 &&
+              forge_panel_test::label_height(panel) == 18 && allocated_page_size(header).h == 18,
+          "forge fresh: measured chip height replaces bootstrap without a reserved canvas gap");
     panel.set_available_width(240);
     settle(ui);
     check(canvas() && canvas()->painted_size.w == 87 &&
@@ -1644,6 +1678,12 @@ void forge_fresh_canvas_tests(rap::ui& ui, const std::string& repo)
               canvas()->painted_rectangles.size() == 1 &&
               canvas()->painted_rectangles[0].w <= canvas()->painted_size.w,
           "forge fresh: stack allocation exceeds raw canvas natural width and draws label");
+    const auto& header_box = std::get<rap::spec::box>(header.spec);
+    const float title_height = allocated_page_size(header_box.items[0]).h;
+    const float row_height = allocated_page_size(header).h;
+    check(header_box.dir == rap::orientation::horizontal && row_height == 18 &&
+              (row_height - title_height) / 2 + title_height / 2 == row_height / 2,
+          "forge fresh: ordinary horizontal row centers one-line title against chip-height strip");
     g_forge_writes = g_forge_pages = g_forge_invalidates = 0;
     panel.set_available_width(240);
     forge_panel_test::refresh(panel);
@@ -1653,10 +1693,13 @@ void forge_fresh_canvas_tests(rap::ui& ui, const std::string& repo)
     forge_panel_test::labels(panel, {});
     forge_panel_test::refresh(panel);
     settle(ui);
+    check(allocated_page_size(header).h == 14 && forge_panel_test::label_height(panel) == 0,
+          "forge fresh: removing labels returns header to title height");
     forge_panel_test::labels(panel, {{"pm-approved", std::nullopt}});
     forge_panel_test::refresh(panel);
     settle(ui);
     check(canvas() && canvas()->allocated_paints > 0 && canvas()->painted_size.w == 87 &&
+              canvas()->painted_size.h == 18 && allocated_page_size(header).h == 18 &&
               canvas()->painted_strings == std::vector<std::string>{"pm-approved"},
           "forge fresh: empty-to-new labels bootstrap through declared box sizing");
     forge_panel_test::labels(panel, {{"stale measurement", std::nullopt}});
@@ -1671,6 +1714,7 @@ void forge_fresh_canvas_tests(rap::ui& ui, const std::string& repo)
     window.reset();
     settle(ui);
     g_allocated_canvas_paint = {};
+    g_stack_allocations.clear();
 }
 
 // A download's line under the forge panel's artifacts, across pages built

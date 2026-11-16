@@ -204,6 +204,7 @@ private:
         std::vector<size_t> shown;
         size_t hidden = 0;
         float width = 0;
+        float height = 0;
         bool operator==(const label_plan&) const = default;
     };
     float labels_available_width_ = 0;
