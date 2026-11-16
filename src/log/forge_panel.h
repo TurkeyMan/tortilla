@@ -169,6 +169,20 @@ private:
     void download_progressed(float fraction);
     void download_ended(const std::string& to, const std::string& error);
     void show_download();
+    // Last values sent to this page. Background answers often leave the
+    // presentation unchanged; do not ask native controls to lay it out again.
+    struct drawn_widget
+    {
+        std::optional<std::string> text, tooltip;
+        std::optional<bool> visible, enabled;
+    };
+    std::map<rap::widget*, drawn_widget> drawn_;
+    void text(rap::label*, const std::string&);
+    void text(rap::button*, const std::string&);
+    void text(rap::text_view*, const std::string&);
+    void show(rap::widget*, bool);
+    void enable(rap::widget*, bool);
+    void tooltip(rap::widget*, const std::string&);
     friend struct forge_panel_test;  // tests/log_page_tests.cpp
     std::shared_ptr<std::atomic<bool>> download_cancel_;
 
@@ -182,9 +196,9 @@ private:
     rap::label* pr_title_ = nullptr;
     rap::stack* pr_labels_ = nullptr;
     std::vector<pr_label> labels_;
-    float labels_height_ = 24;
+    rap::canvas* labels_canvas_ = nullptr;
     unsigned labels_generation_ = 0;
-    void layout_labels(float height);
+    void layout_labels();
     rap::canvas* pr_avatar_ = nullptr;
     rap::label* pr_author_ = nullptr;
     rap::canvas* pr_merge_mark_ = nullptr;

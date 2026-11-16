@@ -52,6 +52,32 @@ namespace tortilla
 // The forge panel's download line, from outside (forge_panel.h befriends it).
 struct forge_panel_test
 {
+    static void seed(forge_panel& p)
+    {
+        open_pr pr;
+        pr.pr.number = 42;
+        pr.pr.title = "A useful change";
+        pr.pr.head_sha = "head";
+        pr.pr.body_known = pr.pr.reviews_known = true;
+        pr.pr.labels = {{"bug", rap::color{200, 40, 40}}, {"review", std::nullopt}};
+        p.prs_ = {{.pr = pr, .commits = {"head", "one", "two"}, .known = true}};
+        for (const char* sha : {"head", "one", "two"})
+            p.builds_[sha] = {.asked = true, .answered = true, .local = true};
+    }
+    static void refresh(forge_panel& p) { p.update(); }
+    static rap::canvas* checks(forge_panel& p) { return p.pr_checks_mark_; }
+    static void checks(forge_panel& p, check_state state) { p.prs_[0].pr.pr.checks = state; }
+    static rap::canvas* labels(forge_panel& p) { return p.labels_canvas_; }
+    static void labels(forge_panel& p, std::vector<pr_label> labels)
+    { p.prs_[0].pr.pr.labels = std::move(labels); }
+    static void build(forge_panel& p)
+    {
+        auto& b = p.builds_["head"];
+        b.local = false;
+        b.ci.workflows = {{.jobs = {{.name = "test", .state = check_state::failure}}}};
+    }
+    static rap::list* matrix(forge_panel& p) { return p.matrix_list_; }
+    static bool picked(const forge_panel& p) { return p.failed_job_.has_value(); }
     static void started(forge_panel& p, std::string text, bool pulsing)
     {
         p.download_started(std::move(text), pulsing);
@@ -93,6 +119,9 @@ namespace
 
 // Calls that reached a widget after its window had gone.
 int g_stale_calls = 0;
+int g_forge_writes = 0;
+int g_forge_pages = 0;
+int g_forge_invalidates = 0;
 // While set, the pages stacks remove are held here, their widgets there
 // until the test lets them go.
 std::vector<std::function<void()>>* g_held_pages = nullptr;
@@ -106,14 +135,16 @@ public:
     void set_enabled(bool on) override
     {
         touch();
+        ++g_forge_writes;
         enabled = on;
     }
     void set_visible(bool on) override
     {
         touch();
+        ++g_forge_writes;
         shown = on;
     }
-    void set_tooltip(const std::string&) override { touch(); }
+    void set_tooltip(const std::string& value) override { touch(); ++g_forge_writes; tip = value; }
     void focus() override
     {
         touch();
@@ -128,6 +159,7 @@ public:
     {
         if (dead) ++g_stale_calls;
     }
+    std::string tip;
     bool focused = false, shown = true, enabled = true, dead = false;
 };
 
@@ -168,6 +200,7 @@ public:
     void select(const std::vector<size_t>& rows) override
     {
         touch();
+        ++g_forge_writes;
         selected = rows;
         std::ranges::sort(selected);
     }
@@ -261,6 +294,7 @@ public:
     void set_sizes(const std::vector<float>& s) override
     {
         touch();
+        ++g_forge_writes;
         for (size_t i = 0; i < s.size() && i < sizes_.size(); ++i)
             if (s[i] > 0) sizes_[i] = s[i];
     }
@@ -317,12 +351,38 @@ public:
     std::function<void(const std::string&)> changed;
 };
 
+// A null canvas with observable app repaint requests.
+class kept_canvas : public kept<rap::canvas>
+{
+public:
+    explicit kept_canvas(rap::canvas& inner) : inner_(inner) {}
+    void invalidate() override { touch(); ++g_forge_invalidates; inner_.invalidate(); }
+    rap::size_f size() const override { return inner_.size(); }
+    float device_scale() const override { return inner_.device_scale(); }
+    void set_cursor(rap::cursor c) override { inner_.set_cursor(c); }
+    void on_paint(std::function<void(rap::painter&, rap::size_f)> f) override
+    { paint = f; inner_.on_paint(std::move(f)); }
+    void on_resize(std::function<void(rap::size_f)> f) override { inner_.on_resize(std::move(f)); }
+    void on_pointer(std::function<bool(const rap::pointer_event&)> f) override { inner_.on_pointer(std::move(f)); }
+    void on_scroll(std::function<bool(const rap::scroll_event&)> f) override { inner_.on_scroll(std::move(f)); }
+    void on_key(std::function<bool(const rap::key_event&)> f) override { inner_.on_key(std::move(f)); }
+    rap::subscription on_frame(std::function<void(double)> f) override { return inner_.on_frame(std::move(f)); }
+    rap::frame_target target() const override { return inner_.target(); }
+    void on_frame_target(std::function<void(const rap::frame_target&)> f) override { inner_.on_frame_target(std::move(f)); }
+    void present(std::shared_ptr<const rap::image> image, rap::frame_color c = {}) override { inner_.present(std::move(image), c); }
+    void clear_frame() override { inner_.clear_frame(); }
+    std::function<void(rap::painter&, rap::size_f)> paint;
+private:
+    rap::canvas& inner_;
+};
+
 class kept_label : public kept<rap::label>
 {
 public:
     void set_text(const std::string& t) override
     {
         touch();
+        ++g_forge_writes;
         text = t;
     }
     std::string text;
@@ -331,7 +391,7 @@ public:
 class kept_button : public kept<rap::button>
 {
 public:
-    void set_text(const std::string&) override { touch(); }
+    void set_text(const std::string&) override { touch(); ++g_forge_writes; }
     void set_icon(const rap::icon&) override { touch(); }
     void on_click(std::function<void()> f) override { click = std::move(f); }
     std::function<void()> click;
@@ -565,6 +625,7 @@ public:
     void add(const std::string& id, rap::node content) override
     {
         touch();
+        ++g_forge_pages;
         if (pages_.contains(id)) return;
         auto& poison = pages_[id];
         auto* outer = std::exchange(built_.page, &poison);
@@ -574,6 +635,7 @@ public:
     void remove(const std::string& id) override
     {
         touch();
+        ++g_forge_pages;
         auto it = pages_.find(id);
         if (it == pages_.end()) return;
         inner_.remove(id);
@@ -866,6 +928,8 @@ private:
                 b.entries.push_back(keep<kept_entry>(*s));
                 mine = b.entries.back();
             }
+            else if (std::holds_alternative<rap::spec::canvas>(n.spec))
+                mine = keep<kept_canvas>(static_cast<rap::canvas&>(w));
             else if (std::holds_alternative<rap::spec::label>(n.spec))
                 mine = keep<kept_label>();
             else if (const auto* s = std::get_if<rap::spec::button>(&n.spec))
@@ -1246,6 +1310,169 @@ void poll_tests(rap::ui& ui, const std::string& repo, polls& polled)
     polled.pending.clear();
     polled.allowed.clear();
     set_check_setting(was);
+}
+
+class forge_painter : public rap::painter
+{
+public:
+    rap::color resolve(const rap::paint&) const override { return {0, 0, 0}; }
+    void line(rap::point_f, rap::point_f, const rap::paint&, float, rap::line_cap) override {}
+    void curve(rap::point_f, rap::point_f, rap::point_f, rap::point_f, const rap::paint&, float) override {}
+    void circle(rap::point_f, float, std::optional<rap::paint>, std::optional<rap::paint>) override {}
+    void rect(rap::rect_f r, float, std::optional<rap::paint>, std::optional<rap::paint>) override { rectangles.push_back(r); }
+    void polygon(const std::vector<rap::point_f>&, std::optional<rap::paint>, std::optional<rap::paint>, float) override {}
+    void arc(rap::point_f, float, float, float, const rap::paint&, float, rap::line_cap) override {}
+    void image(const rap::image&, rap::rect_f, rap::rect_f, rap::filter, float) override {}
+    float device_scale() const override { return 1; }
+    void push_clip(rap::rect_f) override {}
+    void pop_clip() override {}
+    void text(rap::point_f, const std::string& text, const rap::text_style&) override { strings.push_back(text); }
+    rap::size_f measure(const std::string& text, const rap::text_style&) const override { return {float(text.size() * 7), 12}; }
+    std::vector<rap::rect_f> rectangles;
+    std::vector<std::string> strings;
+};
+
+class forge_observer : public rap::list_observer
+{
+public:
+    void model_reset() override { ++resets; }
+    void rows_changed(size_t, size_t) override {}
+    void rows_inserted(size_t, size_t) override {}
+    void rows_removed(size_t, size_t) override {}
+    int resets = 0;
+};
+
+// Cached/async answers and commits in one PR can leave every visible
+// value unchanged: no setters, stack-page rebuild or canvas invalidation.
+void forge_presentation_tests(rap::ui& ui, const std::string& repo)
+{
+    forge_panel panel({.ui = ui, .workdir = repo});
+    forge_panel_test::seed(panel);
+    const auto layout = panel.layout();
+    const auto& outer = std::get<rap::spec::box>(layout.spec);
+    const auto& splitter = std::get<rap::spec::splitter>(outer.items.front().spec);
+    const auto& top = std::get<rap::spec::box>(splitter.panes.front().spec);
+    const auto& pr = std::get<rap::spec::box>(top.items.front().spec);
+    const auto* header = std::get_if<rap::spec::box>(&pr.items.front().spec);
+    check(header && header->dir == rap::orientation::horizontal && header->items.size() == 2 &&
+              std::holds_alternative<rap::spec::label>(header->items[0].spec) &&
+              header->items[0].common.stretch > 0 &&
+              std::holds_alternative<rap::spec::stack>(header->items[1].spec),
+          "forge presentation: title and chips share one stretching title row");
+    auto window = ui.create(rap::layout::window{"Forge", {layout}});
+    panel.built();
+    panel.show_commit("one");
+    settle(ui);
+    auto reset = [] { g_forge_writes = g_forge_pages = g_forge_invalidates = 0; };
+    forge_painter chips;
+    auto* chip_canvas = dynamic_cast<kept_canvas*>(forge_panel_test::labels(panel));
+    if (chip_canvas && chip_canvas->paint) chip_canvas->paint(chips, {96, 100});
+    settle(ui);
+    chip_canvas = dynamic_cast<kept_canvas*>(forge_panel_test::labels(panel));
+    reset();
+    if (chip_canvas && chip_canvas->paint) chip_canvas->paint(chips, {96, 100});
+    settle(ui);
+    check(g_forge_pages == 0 && chips.rectangles.size() == 4 &&
+              chips.rectangles[0].x > 0 && chips.rectangles[1].x + chips.rectangles[1].w == 96,
+          "forge presentation: whole chips are right-aligned, paint never rebuilds a page");
+    check(chip_canvas && chip_canvas->tip == "bug\nreview",
+          "forge presentation: tooltip lists every label");
+    reset();
+    forge_painter burst;
+    if (chip_canvas && chip_canvas->paint)
+    {
+        chip_canvas->paint(burst, {40, 100});
+        chip_canvas->paint(burst, {96, 100});
+    }
+    settle(ui);
+    check(g_forge_pages == 0 && g_forge_invalidates == 0,
+          "forge presentation: width changes never queue layout or rebuild pages");
+    reset();
+    forge_panel_test::refresh(panel);
+    check(g_forge_writes == 0 && g_forge_pages == 0 && g_forge_invalidates == 0,
+          "forge presentation: identical refresh touches no controls, pages or paint");
+    reset();
+    panel.show_commit("two");
+    check(g_forge_writes == 0 && g_forge_pages == 0 && g_forge_invalidates == 0,
+          "forge presentation: same PR on another commit has no presentation churn");
+    reset();
+    panel.show_commit("head");
+    check(g_forge_writes == 1 && g_forge_pages == 0 && g_forge_invalidates == 0,
+          "forge presentation: head switch changes title only");
+    auto* mark = dynamic_cast<kept_canvas*>(forge_panel_test::checks(panel));
+    check(mark && !mark->shown, "forge presentation: no checks has no empty mark square");
+    forge_panel_test::checks(panel, check_state::success);
+    forge_panel_test::refresh(panel);
+    check(mark && mark->shown, "forge presentation: checks mark reappears for a result");
+    reset();
+    forge_panel_test::refresh(panel);
+    check(g_forge_writes == 0 && g_forge_pages == 0 && g_forge_invalidates == 0,
+          "forge presentation: repeated result has no setters or invalidation");
+    for (check_state state : {check_state::none, check_state::success, check_state::failure})
+    {
+        forge_panel_test::checks(panel, state);
+        forge_panel_test::refresh(panel);
+        forge_painter mark_paint;
+        if (mark && mark->paint) mark->paint(mark_paint, {16, 16});
+        check(mark_paint.rectangles.empty(), "forge presentation: marks leave panel background untouched");
+    }
+    forge_panel_test::build(panel);
+    forge_panel_test::refresh(panel);
+    auto* matrix = dynamic_cast<kept_list*>(forge_panel_test::matrix(panel));
+    if (matrix) matrix->click({0}, 0);
+    check(forge_panel_test::picked(panel), "forge presentation: selecting a CI job records the picked job");
+    forge_observer observer;
+    if (matrix && matrix->model) matrix->model->add_observer(&observer);
+    reset();
+    forge_panel_test::refresh(panel);
+    check(observer.resets == 0 && g_forge_writes == 0 && g_forge_invalidates == 0,
+          "forge presentation: unchanged build preserves matrix and widgets");
+    if (matrix && matrix->model) matrix->model->remove_observer(&observer);
+    reset();
+    forge_panel_test::labels(panel, {{"a-very-long-label", std::nullopt}, {"second", std::nullopt}});
+    forge_panel_test::refresh(panel);
+    check(g_forge_pages == 2, "forge presentation: changed labels replace exactly one canvas page");
+    chip_canvas = dynamic_cast<kept_canvas*>(forge_panel_test::labels(panel));
+    forge_painter narrow;
+    if (chip_canvas && chip_canvas->paint) chip_canvas->paint(narrow, {40, 24});
+    settle(ui);
+    check(narrow.rectangles.size() == 1 && narrow.strings == std::vector<std::string>{"+2"} &&
+              narrow.rectangles[0].x >= 0 && narrow.rectangles[0].x + narrow.rectangles[0].w <= 40 &&
+              chip_canvas && chip_canvas->tip == "a-very-long-label\nsecond",
+          "forge presentation: narrow strip shows whole overflow chip, tooltip lists all labels");
+    forge_painter partial;
+    if (chip_canvas && chip_canvas->paint) chip_canvas->paint(partial, {90, 24});
+    check(partial.rectangles.size() == 2 && partial.strings == std::vector<std::string>{"second", "+1"} &&
+              partial.rectangles[0].y == partial.rectangles[1].y &&
+              partial.rectangles[0].x >= 0 && partial.rectangles[1].x + partial.rectangles[1].w == 90,
+          "forge presentation: complete fitting label reserves complete overflow chip on same row");
+    forge_painter tiny;
+    if (chip_canvas && chip_canvas->paint) chip_canvas->paint(tiny, {23, 24});
+    check(tiny.rectangles.empty() && tiny.strings.empty(),
+          "forge presentation: never clips an overflow chip that cannot fit");
+    reset();
+    forge_painter stable;
+    if (chip_canvas && chip_canvas->paint) chip_canvas->paint(stable, {40, 24});
+    forge_panel_test::refresh(panel);
+    settle(ui);
+    check(g_forge_pages == 0 && g_forge_writes == 0 && g_forge_invalidates == 0,
+          "forge presentation: repeated label set and paints never change layout or widgets");
+    const auto late_paint = chip_canvas ? chip_canvas->paint : decltype(chip_canvas->paint){};
+    panel.unbind();
+    reset();
+    if (late_paint) late_paint(stable, {40, 100});
+    check(g_forge_writes == 0 && g_forge_pages == 0 && g_forge_invalidates == 0,
+          "forge presentation: old chip paint is inert after page unbind");
+    window.reset();
+    settle(ui);
+    window = ui.create(rap::layout::window{"Forge", {panel.layout()}});
+    panel.built();
+    matrix = dynamic_cast<kept_list*>(forge_panel_test::matrix(panel));
+    check(matrix && matrix->selected == std::vector<size_t>{0},
+          "forge presentation: rebuilt page restores picked job without resetting unchanged model");
+    panel.unbind();
+    window.reset();
+    settle(ui);
 }
 
 // A download's line under the forge panel's artifacts, across pages built
@@ -2693,6 +2920,7 @@ void run_log_page_tests(const std::string& root)
 
     page_tests(ui, repo, git);
     poll_tests(ui, repo, polled);
+    forge_presentation_tests(ui, repo);
     forge_download_tests(ui, repo);
     check(g_stale_calls == 0, "log page: nothing reached a widget after its window went");
 
