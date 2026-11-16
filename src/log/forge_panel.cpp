@@ -473,6 +473,12 @@ void forge_panel::unbind()
     pr_labels_ = nullptr;
     labels_canvas_ = nullptr;
     labels_.clear();
+    label_sizes_.clear();
+    overflow_sizes_.clear();
+    labels_measured_ = labels_layout_queued_ = false;
+    labels_rendered_.reset();
+    label_plan_ = {};
+    ++labels_revision_;
     picture_.reset();
     merge_mark_state_ = checks_mark_state_ = build_mark_state_ = check_state::none;
     ++labels_generation_;
@@ -547,69 +553,124 @@ void forge_panel::set_part_sizes(std::vector<float> sizes)
     if (sizes.size() == 2 && sizes[0] > 0 && sizes[1] > 0) part_sizes_ = std::move(sizes);
 }
 
-// A single trailing strip: only complete chips, then the number hidden.
-// Its page is built once per label-set change; paint never changes layout.
+// Width comes from the outer forge splitter, not the chip canvas itself:
+// shrinking to intrinsic content must not be mistaken for less available room.
+void forge_panel::set_available_width(float width)
+{
+    width = std::max(0.f, width);
+    if (std::abs(width - labels_available_width_) <= 0.5f) return;
+    labels_available_width_ = width;
+    if (!pr_labels_ || labels_.empty()) return;
+    if (labels_measured_)
+        plan_labels();
+    else
+    {
+        show(pr_labels_, width > 0);
+        if (width > 0 && labels_canvas_) labels_canvas_->invalidate();
+    }
+}
+
+void forge_panel::plan_labels()
+{
+    if (!labels_measured_) return;
+    label_plan next;
+    const float limit = labels_available_width_ / 2;  // leave at least half for the title
+    for (size_t i = 0; i < label_sizes_.size(); ++i)
+    {
+        const size_t hidden = labels_.size() - next.shown.size() - 1;
+        const float width = next.width + (next.shown.empty() ? 0 : 4) + label_sizes_[i].w;
+        if (width + (hidden ? 4 + overflow_sizes_[hidden].w : 0) <= limit)
+        {
+            next.shown.push_back(i);
+            next.width = width;
+        }
+    }
+    next.hidden = labels_.size() - next.shown.size();
+    if (next.hidden)
+    {
+        const float width = next.width + (next.shown.empty() ? 0 : 4) + overflow_sizes_[next.hidden].w;
+        if (width <= limit)
+            next.width = width;
+        else
+        {
+            next.shown.clear();
+            next.width = 0;  // no partial counter; every name remains in the title's tooltip
+        }
+    }
+    label_plan_ = std::move(next);
+    if (labels_rendered_ == label_plan_ || labels_layout_queued_) return;
+    labels_layout_queued_ = true;
+    const unsigned revision = labels_revision_;
+    host_.ui.post(page_guard_([this, revision]
+    {
+        if (revision != labels_revision_) return;
+        labels_layout_queued_ = false;
+        layout_labels();  // one coalesced update using the latest independent width
+    }));
+}
+
+// Only the width of the chips actually drawn is reserved beside the title.
+// A new label set needs one measurement paint; it never feeds back height.
 void forge_panel::layout_labels()
 {
-    if (!pr_labels_) return;
-    show(pr_labels_, !labels_.empty());
+    if (!pr_labels_ || (labels_measured_ && labels_rendered_ == label_plan_)) return;
     std::string tip;
     for (const auto& label : labels_) tip += (tip.empty() ? "" : "\n") + label.name;
+    tooltip(pr_title_, tip);  // also available when not even a whole +N fits
     if (labels_canvas_) drawn_.erase(labels_canvas_);
     const auto old = pr_labels_->ids();
-    if (labels_.empty())
+    if (labels_.empty() || (labels_measured_ && label_plan_.width <= 0))
     {
+        show(pr_labels_, false);
         labels_canvas_ = nullptr;
+        labels_rendered_ = label_plan_;
         for (const auto& page : old) pr_labels_->remove(page);
         return;
     }
+    show(pr_labels_, labels_available_width_ > 0);
     const unsigned generation = ++labels_generation_;
+    const unsigned revision = labels_revision_;
     const std::string id = std::to_string(generation);
+    const float width = labels_measured_ ? std::ceil(label_plan_.width) : 1.f;
     pr_labels_->add(id, rap::layout::canvas{}.focusable(false).tooltip(tip).bind(labels_canvas_)
+        .width(rap::extent{width, rap::extent::unit::px})
         .height(rap::extent{1.5f, rap::extent::unit::lines})
-        .on_paint(page_guard_([this](rap::painter& p, rap::size_f size)
+        .on_paint(page_guard_([this, generation, revision](rap::painter& p, rap::size_f size)
         {
-            struct chip { std::string text; rap::color fill; rap::text_style style; float w, h; };
-            auto make = [&p](std::string text, rap::color fill)
-            {
-                rap::text_style style;
-                style.fg = ink_on(fill);
-                const auto measured = p.measure(text, style);
-                return chip{std::move(text), fill, style, measured.w + 10, measured.h + 6};
-            };
-            std::vector<chip> shown;
-            float width = 0;
+            if (generation != labels_generation_ || revision != labels_revision_) return;
+            label_sizes_.clear();
+            overflow_sizes_.clear();
+            rap::text_style style;
             for (const auto& label : labels_)
             {
-                auto c = make(label.name, label.color.value_or(rap::color{224, 224, 224}));
-                const size_t hidden = labels_.size() - shown.size() - 1;
-                const auto overflow = make("+" + std::to_string(hidden), {224, 224, 224});
-                const float next = width + (shown.empty() ? 0 : 4) + c.w;
-                // Reserve the complete overflow chip before admitting a label.
-                if (c.h <= size.h && next + (hidden ? 4 + overflow.w : 0) <= size.w)
-                {
-                    shown.push_back(std::move(c));
-                    width = next;
-                }
+                const auto measured = p.measure(label.name, style);
+                label_sizes_.push_back({measured.w + 10, measured.h + 6});
             }
-            const size_t hidden = labels_.size() - shown.size();
-            if (hidden)
+            for (size_t i = 0; i <= labels_.size(); ++i)
             {
-                auto overflow = make("+" + std::to_string(hidden), {224, 224, 224});
-                if (overflow.h > size.h || width + (shown.empty() ? 0 : 4) + overflow.w > size.w)
-                    return;  // Not even a whole counter fits: the tooltip still lists everything.
-                width += (shown.empty() ? 0 : 4) + overflow.w;
-                shown.push_back(std::move(overflow));
+                const auto measured = p.measure("+" + std::to_string(i), style);
+                overflow_sizes_.push_back({measured.w + 10, measured.h + 6});
             }
-            float x = size.w - width;
-            for (const auto& c : shown)
+            labels_measured_ = true;
+            plan_labels();
+            if (label_plan_.width > size.w || label_plan_.width <= 0) return;
+            float x = size.w - label_plan_.width;
+            auto draw = [&](const std::string& text, rap::color fill, rap::size_f measured)
             {
-                const float y = (size.h - c.h) / 2;
-                p.rect({x, y, c.w, c.h}, 3, rap::paint{c.fill}, std::nullopt);
-                p.text({x + 5, y + 3}, c.text, c.style);
-                x += c.w + 4;
-            }
+                if (measured.h > size.h) return;
+                rap::text_style ink;
+                ink.fg = ink_on(fill);
+                const float y = (size.h - measured.h) / 2;
+                p.rect({x, y, measured.w, measured.h}, 3, rap::paint{fill}, std::nullopt);
+                p.text({x + 5, y + 3}, text, ink);
+                x += measured.w + 4;
+            };
+            for (size_t i : label_plan_.shown)
+                draw(labels_[i].name, labels_[i].color.value_or(rap::color{224, 224, 224}), label_sizes_[i]);
+            if (label_plan_.hidden)
+                draw("+" + std::to_string(label_plan_.hidden), {224, 224, 224}, overflow_sizes_[label_plan_.hidden]);
         })));
+    if (labels_measured_) labels_rendered_ = label_plan_;
     pr_labels_->show(id);
     for (const auto& page : old) pr_labels_->remove(page);
 }
@@ -638,7 +699,7 @@ rap::node forge_panel::layout()
                 vbox{
                     hbox{
                         label{}.wrap().selectable().bind(pr_title_).stretch(),
-                        stack{}.homogeneous(false).width(12_ch).visible(false).bind(pr_labels_),
+                        stack{}.homogeneous(false).visible(false).bind(pr_labels_),
                     },
                     hbox{
                         canvas{}
@@ -1079,6 +1140,12 @@ void forge_panel::update_pull_request()
             }))
         {
             labels_ = pr.labels;
+            ++labels_revision_;
+            labels_layout_queued_ = labels_measured_ = false;
+            labels_rendered_.reset();
+            label_plan_ = {};
+            label_sizes_.clear();
+            overflow_sizes_.clear();
             layout_labels();
         }
         if (!pr.author_avatar.empty()) ask_avatar(pr.author_avatar);

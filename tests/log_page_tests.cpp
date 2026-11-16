@@ -68,6 +68,10 @@ struct forge_panel_test
     static rap::canvas* checks(forge_panel& p) { return p.pr_checks_mark_; }
     static void checks(forge_panel& p, check_state state) { p.prs_[0].pr.pr.checks = state; }
     static rap::canvas* labels(forge_panel& p) { return p.labels_canvas_; }
+    static rap::stack* label_stack(forge_panel& p) { return p.pr_labels_; }
+    static rap::label* title(forge_panel& p) { return p.pr_title_; }
+    static float label_width(const forge_panel& p)
+    { return p.labels_rendered_ ? p.labels_rendered_->width : 0; }
     static void labels(forge_panel& p, std::vector<pr_label> labels)
     { p.prs_[0].pr.pr.labels = std::move(labels); }
     static void build(forge_panel& p)
@@ -1347,7 +1351,7 @@ public:
 void forge_presentation_tests(rap::ui& ui, const std::string& repo)
 {
     forge_panel panel({.ui = ui, .workdir = repo});
-    forge_panel_test::seed(panel);
+    panel.set_available_width(192);
     const auto layout = panel.layout();
     const auto& outer = std::get<rap::spec::box>(layout.spec);
     const auto& splitter = std::get<rap::spec::splitter>(outer.items.front().spec);
@@ -1357,36 +1361,46 @@ void forge_presentation_tests(rap::ui& ui, const std::string& repo)
     check(header && header->dir == rap::orientation::horizontal && header->items.size() == 2 &&
               std::holds_alternative<rap::spec::label>(header->items[0].spec) &&
               header->items[0].common.stretch > 0 &&
-              std::holds_alternative<rap::spec::stack>(header->items[1].spec),
+              std::holds_alternative<rap::spec::stack>(header->items[1].spec) &&
+              header->items[1].common.width.unit == rap::extent::unit::auto_,
           "forge presentation: title and chips share one stretching title row");
     auto window = ui.create(rap::layout::window{"Forge", {layout}});
     panel.built();
+    auto* label_stack = dynamic_cast<kept<rap::stack>*>(forge_panel_test::label_stack(panel));
+    check(label_stack && !label_stack->shown && forge_panel_test::label_width(panel) == 0,
+          "forge presentation: no labels leave no visible or reserved strip");
+    forge_panel_test::seed(panel);
     panel.show_commit("one");
     settle(ui);
     auto reset = [] { g_forge_writes = g_forge_pages = g_forge_invalidates = 0; };
     forge_painter chips;
     auto* chip_canvas = dynamic_cast<kept_canvas*>(forge_panel_test::labels(panel));
-    if (chip_canvas && chip_canvas->paint) chip_canvas->paint(chips, {96, 100});
+    if (chip_canvas && chip_canvas->paint) chip_canvas->paint(chips, {1, 24});
     settle(ui);
     chip_canvas = dynamic_cast<kept_canvas*>(forge_panel_test::labels(panel));
     reset();
-    if (chip_canvas && chip_canvas->paint) chip_canvas->paint(chips, {96, 100});
+    if (chip_canvas && chip_canvas->paint) chip_canvas->paint(chips, {87, 24});
     settle(ui);
-    check(g_forge_pages == 0 && chips.rectangles.size() == 4 &&
-              chips.rectangles[0].x > 0 && chips.rectangles[1].x + chips.rectangles[1].w == 96,
-          "forge presentation: whole chips are right-aligned, paint never rebuilds a page");
+    check(g_forge_pages == 0 && chips.rectangles.size() == 2 &&
+              chips.rectangles[0].x == 0 && chips.rectangles[1].x + chips.rectangles[1].w == 87 &&
+              forge_panel_test::label_width(panel) == 87,
+          "forge presentation: chip strip reserves intrinsic shown width, no paint feedback");
     check(chip_canvas && chip_canvas->tip == "bug\nreview",
           "forge presentation: tooltip lists every label");
     reset();
-    forge_painter burst;
-    if (chip_canvas && chip_canvas->paint)
-    {
-        chip_canvas->paint(burst, {40, 100});
-        chip_canvas->paint(burst, {96, 100});
-    }
+    panel.set_available_width(80);
+    panel.set_available_width(192);
     settle(ui);
-    check(g_forge_pages == 0 && g_forge_invalidates == 0,
-          "forge presentation: width changes never queue layout or rebuild pages");
+    check(g_forge_pages == 0 && g_forge_writes == 0 && g_forge_invalidates == 0,
+          "forge presentation: coalesced width burst cancels obsolete layout");
+    reset();
+    panel.set_available_width(80);
+    panel.set_available_width(100);
+    settle(ui);
+    check(g_forge_pages == 2 && forge_panel_test::label_width(panel) == 24,
+          "forge presentation: width burst replaces one page for whole overflow chip");
+    panel.set_available_width(192);
+    settle(ui);
     reset();
     forge_panel_test::refresh(panel);
     check(g_forge_writes == 0 && g_forge_pages == 0 && g_forge_invalidates == 0,
@@ -1431,33 +1445,63 @@ void forge_presentation_tests(rap::ui& ui, const std::string& repo)
     reset();
     forge_panel_test::labels(panel, {{"a-very-long-label", std::nullopt}, {"second", std::nullopt}});
     forge_panel_test::refresh(panel);
-    check(g_forge_pages == 2, "forge presentation: changed labels replace exactly one canvas page");
+    check(g_forge_pages == 2, "forge presentation: changed labels build one measurement page");
+    chip_canvas = dynamic_cast<kept_canvas*>(forge_panel_test::labels(panel));
+    forge_painter measured;
+    if (chip_canvas && chip_canvas->paint) chip_canvas->paint(measured, {1, 24});
+    settle(ui);
+    panel.set_available_width(80);
+    settle(ui);
     chip_canvas = dynamic_cast<kept_canvas*>(forge_panel_test::labels(panel));
     forge_painter narrow;
-    if (chip_canvas && chip_canvas->paint) chip_canvas->paint(narrow, {40, 24});
+    if (chip_canvas && chip_canvas->paint) chip_canvas->paint(narrow, {24, 24});
     settle(ui);
     check(narrow.rectangles.size() == 1 && narrow.strings == std::vector<std::string>{"+2"} &&
-              narrow.rectangles[0].x >= 0 && narrow.rectangles[0].x + narrow.rectangles[0].w <= 40 &&
-              chip_canvas && chip_canvas->tip == "a-very-long-label\nsecond",
-          "forge presentation: narrow strip shows whole overflow chip, tooltip lists all labels");
+              forge_panel_test::label_width(panel) == 24 && chip_canvas &&
+              chip_canvas->tip == "a-very-long-label\nsecond",
+          "forge presentation: narrow intrinsic strip shows whole overflow chip and full tooltip");
+    panel.set_available_width(180);
+    settle(ui);
+    chip_canvas = dynamic_cast<kept_canvas*>(forge_panel_test::labels(panel));
     forge_painter partial;
-    if (chip_canvas && chip_canvas->paint) chip_canvas->paint(partial, {90, 24});
+    if (chip_canvas && chip_canvas->paint) chip_canvas->paint(partial, {80, 24});
     check(partial.rectangles.size() == 2 && partial.strings == std::vector<std::string>{"second", "+1"} &&
               partial.rectangles[0].y == partial.rectangles[1].y &&
-              partial.rectangles[0].x >= 0 && partial.rectangles[1].x + partial.rectangles[1].w == 90,
-          "forge presentation: complete fitting label reserves complete overflow chip on same row");
-    forge_painter tiny;
-    if (chip_canvas && chip_canvas->paint) chip_canvas->paint(tiny, {23, 24});
-    check(tiny.rectangles.empty() && tiny.strings.empty(),
-          "forge presentation: never clips an overflow chip that cannot fit");
+              partial.rectangles[0].x == 0 && partial.rectangles[1].x + partial.rectangles[1].w == 80,
+          "forge presentation: complete label plus counter take only their content width");
+    panel.set_available_width(46);
+    settle(ui);
+    auto* title = dynamic_cast<kept_label*>(forge_panel_test::title(panel));
+    check(label_stack && !label_stack->shown && forge_panel_test::label_width(panel) == 0 &&
+              title && title->tip == "a-very-long-label\nsecond",
+          "forge presentation: too narrow for counter hides strip without losing tooltip");
+    panel.set_available_width(192);
+    forge_panel_test::labels(panel, {{"a", std::nullopt}});
+    forge_panel_test::refresh(panel);
+    chip_canvas = dynamic_cast<kept_canvas*>(forge_panel_test::labels(panel));
+    forge_painter short_label;
+    if (chip_canvas && chip_canvas->paint) chip_canvas->paint(short_label, {1, 24});
+    settle(ui);
+    check(forge_panel_test::label_width(panel) == 17,
+          "forge presentation: one short label reserves only its17 pixel intrinsic width");
+    chip_canvas = dynamic_cast<kept_canvas*>(forge_panel_test::labels(panel));
     reset();
     forge_painter stable;
-    if (chip_canvas && chip_canvas->paint) chip_canvas->paint(stable, {40, 24});
+    if (chip_canvas && chip_canvas->paint) chip_canvas->paint(stable, {17, 24});
+    panel.set_available_width(192);
     forge_panel_test::refresh(panel);
     settle(ui);
     check(g_forge_pages == 0 && g_forge_writes == 0 && g_forge_invalidates == 0,
-          "forge presentation: repeated label set and paints never change layout or widgets");
+          "forge presentation: stable width, row and label paints change no widgets or layout");
     const auto late_paint = chip_canvas ? chip_canvas->paint : decltype(chip_canvas->paint){};
+    panel.set_available_width(20);  // queues a width update for the old label set
+    forge_panel_test::labels(panel, {});
+    forge_panel_test::refresh(panel);
+    reset();
+    settle(ui);
+    check(label_stack && !label_stack->shown && forge_panel_test::label_width(panel) == 0 &&
+              g_forge_pages == 0 && g_forge_writes == 0,
+          "forge presentation: removing labels leaves zero width and cancels stale width post");
     panel.unbind();
     reset();
     if (late_paint) late_paint(stable, {40, 100});

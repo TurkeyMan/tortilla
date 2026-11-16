@@ -71,6 +71,8 @@ public:
     // put back whenever both show again; for saving. Empty: as they stretch.
     const std::vector<float>& part_sizes() const { return part_sizes_; }
     void set_part_sizes(std::vector<float> sizes);
+    // Actual forge pane width, from the host's existing splitter/resize watch.
+    void set_available_width(float width);
 
     // The open pull requests and the forge remotes, as pr_watch last heard;
     // which commits are each one's is worked out on a worker.
@@ -197,8 +199,22 @@ private:
     rap::stack* pr_labels_ = nullptr;
     std::vector<pr_label> labels_;
     rap::canvas* labels_canvas_ = nullptr;
+    struct label_plan
+    {
+        std::vector<size_t> shown;
+        size_t hidden = 0;
+        float width = 0;
+        bool operator==(const label_plan&) const = default;
+    };
+    float labels_available_width_ = 0;
+    std::vector<rap::size_f> label_sizes_, overflow_sizes_;
+    bool labels_measured_ = false, labels_layout_queued_ = false;
+    label_plan label_plan_;
+    std::optional<label_plan> labels_rendered_;
+    unsigned labels_revision_ = 0;
     unsigned labels_generation_ = 0;
     void layout_labels();
+    void plan_labels();
     rap::canvas* pr_avatar_ = nullptr;
     rap::label* pr_author_ = nullptr;
     rap::canvas* pr_merge_mark_ = nullptr;

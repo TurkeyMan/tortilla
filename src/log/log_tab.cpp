@@ -709,6 +709,7 @@ void log_tab::keep_forge_share(bool showing)
     if (total <= 0) return;  // not laid out yet: the next tick
     const float side = forge_share::side(total, forge_sizes_);
     page_->forge_splitter->set_sizes({total - side, side});
+    forge_panel_->set_available_width(side);
     forge_share_.fitted(total, window_w);
     if (!showing) fit_files();
 }
@@ -718,6 +719,7 @@ void log_tab::fit_files()
 {
     if (!page_) return;
     const auto sizes = page_->forge_splitter->sizes();
+    if (forge_panel_visible_ && sizes.size() > 1) forge_panel_->set_available_width(sizes.back());
     float width = 0;
     if (forge_panel_visible_ && !sizes.empty())
         width = sizes.front();

@@ -247,6 +247,7 @@ void log_tab::bind_page(std::optional<log_view_state> view)
             if (forge_panel_visible_ && window)
             {
                 forge_sizes_ = page_->forge_splitter->sizes();
+                if (forge_sizes_.size() > 1) forge_panel_->set_available_width(forge_sizes_.back());
                 float total = 0;
                 for (float s : forge_sizes_) total += s;
                 forge_share_.fitted(total, window->size().w);
