@@ -258,6 +258,7 @@ int main(int argc, char** argv)
             return 1;
         rap::load_options askpass;
         askpass.look.density = rap::density::compact;
+        askpass.look.row_height = 20;
         askpass.look.color_scheme = tortilla::appearance();
         auto ui = rap::ui::load(argc, argv, askpass);
         if (!ui) return 1;
@@ -282,6 +283,9 @@ int main(int argc, char** argv)
     tortilla::sweep_temp_dirs();
     rap::load_options opts;
     opts.look.density = rap::density::compact;
+    // Tortilla's lists and trees are deliberately tighter than the platform's
+    // rows (20 at 96 dpi, scaled), for density in the log and file lists.
+    opts.look.row_height = 20;
     std::string command = "log";
     bool named = false;  // a command was given (else the log, or the welcome window)
     bool all_branches = false;
