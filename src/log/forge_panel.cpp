@@ -22,6 +22,7 @@ namespace
 // logical px.
 constexpr int k_picture_size = 24;
 constexpr int k_mark_size = 16;
+constexpr float k_label_bootstrap_width = 64;
 // How often the shown build is asked again while its checks run.
 constexpr auto k_running_poll = std::chrono::seconds(20);
 
@@ -565,8 +566,8 @@ void forge_panel::set_available_width(float width)
         plan_labels();
     else
     {
-        show(pr_labels_, width > 0);
-        if (width > 0 && labels_canvas_) labels_canvas_->invalidate();
+        show(pr_labels_, true);
+        if (labels_canvas_) labels_canvas_->invalidate();
     }
 }
 
@@ -574,7 +575,8 @@ void forge_panel::plan_labels()
 {
     if (!labels_measured_) return;
     label_plan next;
-    const float limit = labels_available_width_ / 2;  // leave at least half for the title
+    const float limit = labels_available_width_ > 0 ? labels_available_width_ / 2
+                                                   : k_label_bootstrap_width;
     for (size_t i = 0; i < label_sizes_.size(); ++i)
     {
         const size_t hidden = labels_.size() - next.shown.size() - 1;
@@ -627,14 +629,16 @@ void forge_panel::layout_labels()
         for (const auto& page : old) pr_labels_->remove(page);
         return;
     }
-    show(pr_labels_, labels_available_width_ > 0);
+    show(pr_labels_, true);
     const unsigned generation = ++labels_generation_;
     const unsigned revision = labels_revision_;
     const std::string id = std::to_string(generation);
-    const float width = labels_measured_ ? std::ceil(label_plan_.width) : 1.f;
-    pr_labels_->add(id, rap::layout::canvas{}.focusable(false).tooltip(tip).bind(labels_canvas_)
+    const float width = labels_measured_ ? std::ceil(label_plan_.width) : k_label_bootstrap_width;
+    // A stack measures its page root's natural size. Put fixed extents on
+    // the box's child so they participate in that measurement on Win32.
+    pr_labels_->add(id, rap::layout::hbox{rap::layout::canvas{}.focusable(false).tooltip(tip).bind(labels_canvas_)
         .width(rap::extent{width, rap::extent::unit::px})
-        .height(rap::extent{1.5f, rap::extent::unit::lines})
+        .height(rap::extent{2, rap::extent::unit::lines})
         .on_paint(page_guard_([this, generation, revision](rap::painter& p, rap::size_f size)
         {
             if (generation != labels_generation_ || revision != labels_revision_) return;
@@ -669,7 +673,7 @@ void forge_panel::layout_labels()
                 draw(labels_[i].name, labels_[i].color.value_or(rap::color{224, 224, 224}), label_sizes_[i]);
             if (label_plan_.hidden)
                 draw("+" + std::to_string(label_plan_.hidden), {224, 224, 224}, overflow_sizes_[label_plan_.hidden]);
-        })));
+        }))});
     if (labels_measured_) labels_rendered_ = label_plan_;
     pr_labels_->show(id);
     for (const auto& page : old) pr_labels_->remove(page);
@@ -1332,20 +1336,49 @@ void forge_panel::update_build()
     {
         // The rows again keep the job picked, if it's still there.
         const auto picked = failed_job_;
+        const auto selected = matrix_list_->selection();
         matrix_->set(b->ci, now_seconds());
         if (picked)
+        {
+            std::optional<size_t> match;
             for (size_t r = 0; r < matrix_->rows.size(); ++r)
             {
                 const auto& row = matrix_->rows[r];
                 if (row.kind != matrix_model::row::job) continue;
                 const ci_job& j = b->ci.workflows[row.w].jobs[row.j];
-                if (j.id == picked->id && j.name == picked->name)
+                if ((picked->id && j.id == picked->id) ||
+                    (!picked->id && !j.id && j.name == picked->name))
                 {
-                    if (matrix_list_->selection() != std::vector<size_t>{r})
-                        matrix_list_->select({r});
+                    match = r;
                     break;
                 }
             }
+            // A rerun can replace the id without changing the displayed row.
+            if (!match && selected.size() == 1 && selected[0] < matrix_->rows.size())
+            {
+                const auto& row = matrix_->rows[selected[0]];
+                if (row.kind == matrix_model::row::job &&
+                    b->ci.workflows[row.w].jobs[row.j].name == picked->name)
+                    match = selected[0];
+            }
+            if (match)
+            {
+                const auto& row = matrix_->rows[*match];
+                const ci_job& job = b->ci.workflows[row.w].jobs[row.j];
+                const bool changed = job.name != picked->name || job.id != picked->id ||
+                    job.state != picked->state || job.started_at != picked->started_at ||
+                    job.completed_at != picked->completed_at || job.url != picked->url ||
+                    job.failure_reason != picked->failure_reason;
+                failed_job_ = job;  // backing data always follows the current answer
+                if (matrix_list_->selection() != std::vector<size_t>{*match})
+                    matrix_list_->select({*match});
+                if (changed && job.state == check_state::failure && job.id &&
+                    !failures_asked_.contains(job.id))
+                    ask_failure(row.w, row.j);
+            }
+            else
+                failed_job_.reset();
+        }
     }
     update_failure();
 

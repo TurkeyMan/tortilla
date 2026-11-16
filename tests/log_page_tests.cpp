@@ -82,6 +82,18 @@ struct forge_panel_test
     }
     static rap::list* matrix(forge_panel& p) { return p.matrix_list_; }
     static bool picked(const forge_panel& p) { return p.failed_job_.has_value(); }
+    static std::optional<ci_job> picked_job(const forge_panel& p) { return p.failed_job_; }
+    static std::string failure_title(const forge_panel& p) { return p.failure_title_->text(); }
+    static const std::string& failure_url(const forge_panel& p) { return p.full_log_url_; }
+    static void job_metadata(forge_panel& p, std::int64_t id, std::string url, std::string reason)
+    {
+        auto& job = p.builds_["head"].ci.workflows[0].jobs[0];
+        job.id = id;
+        job.url = std::move(url);
+        job.failure_reason = std::move(reason);
+        p.failures_[id] = {};
+        p.failures_asked_.insert(id);  // details already answered, no network in the fixture
+    }
     static void started(forge_panel& p, std::string text, bool pulsing)
     {
         p.download_started(std::move(text), pulsing);
@@ -126,6 +138,9 @@ int g_stale_calls = 0;
 int g_forge_writes = 0;
 int g_forge_pages = 0;
 int g_forge_invalidates = 0;
+int g_forge_selects = 0;
+class kept_canvas;
+std::function<void(kept_canvas&, rap::size_f)> g_allocated_canvas_paint;
 // While set, the pages stacks remove are held here, their widgets there
 // until the test lets them go.
 std::vector<std::function<void()>>* g_held_pages = nullptr;
@@ -205,6 +220,7 @@ public:
     {
         touch();
         ++g_forge_writes;
+        ++g_forge_selects;
         selected = rows;
         std::ranges::sort(selected);
     }
@@ -359,13 +375,15 @@ public:
 class kept_canvas : public kept<rap::canvas>
 {
 public:
-    explicit kept_canvas(rap::canvas& inner) : inner_(inner) {}
-    void invalidate() override { touch(); ++g_forge_invalidates; inner_.invalidate(); }
-    rap::size_f size() const override { return inner_.size(); }
+    explicit kept_canvas(rap::canvas& inner, std::optional<rap::size_f> allocated = {},
+                         std::function<void(std::function<void()>)> post = {})
+        : inner_(inner), allocated_(allocated), post_(std::move(post)) {}
+    void invalidate() override { touch(); ++g_forge_invalidates; inner_.invalidate(); request_paint(); }
+    rap::size_f size() const override { return allocated_ ? *allocated_ : inner_.size(); }
     float device_scale() const override { return inner_.device_scale(); }
     void set_cursor(rap::cursor c) override { inner_.set_cursor(c); }
     void on_paint(std::function<void(rap::painter&, rap::size_f)> f) override
-    { paint = f; inner_.on_paint(std::move(f)); }
+    { paint = f; inner_.on_paint(std::move(f)); request_paint(); }
     void on_resize(std::function<void(rap::size_f)> f) override { inner_.on_resize(std::move(f)); }
     void on_pointer(std::function<bool(const rap::pointer_event&)> f) override { inner_.on_pointer(std::move(f)); }
     void on_scroll(std::function<bool(const rap::scroll_event&)> f) override { inner_.on_scroll(std::move(f)); }
@@ -376,8 +394,23 @@ public:
     void present(std::shared_ptr<const rap::image> image, rap::frame_color c = {}) override { inner_.present(std::move(image), c); }
     void clear_frame() override { inner_.clear_frame(); }
     std::function<void(rap::painter&, rap::size_f)> paint;
+    rap::size_f painted_size;
+    std::vector<std::string> painted_strings;
+    std::vector<rap::rect_f> painted_rectangles;
+    int allocated_paints = 0;
 private:
+    void request_paint()
+    {
+        if (!allocated_ || !post_ || !g_allocated_canvas_paint) return;
+        post_([this]
+        {
+            if (!dead && paint && g_allocated_canvas_paint && allocated_->w > 0 && allocated_->h > 0)
+                g_allocated_canvas_paint(*this, *allocated_);
+        });
+    }
     rap::canvas& inner_;
+    std::optional<rap::size_f> allocated_;
+    std::function<void(std::function<void()>)> post_;
 };
 
 class kept_label : public kept<rap::label>
@@ -499,7 +532,41 @@ struct built_window
     kept_stack* stack = nullptr;
     // While a stack's page is built: where its widgets' poison goes too.
     std::vector<std::function<void()>>* page = nullptr;
+    std::optional<rap::size_f> page_canvas_size;
 };
+
+// The pinned Win32 stack measures its page root's natural size directly.
+// A raw canvas is naturally64x64; only a containing box consumes the
+// canvas child's explicit extents. Preserve that distinction here so a
+// requested width cannot masquerade as a real allocated/painted width.
+rap::size_f allocated_page_size(const rap::node& n)
+{
+    if (std::holds_alternative<rap::spec::canvas>(n.spec)) return {64, 64};
+    const auto* box = std::get_if<rap::spec::box>(&n.spec);
+    if (!box) return {};
+    auto extent = [](rap::extent e, float natural)
+    {
+        switch (e.unit)
+        {
+        case rap::extent::unit::px: return e.value;
+        case rap::extent::unit::chars: return e.value * 7;
+        case rap::extent::unit::lines: return e.value * 14;
+        default: return natural;
+        }
+    };
+    rap::size_f size;
+    for (const auto& child : box->items)
+    {
+        auto s = allocated_page_size(child);
+        s.w = extent(child.common.width, s.w);
+        s.h = extent(child.common.height, s.h);
+        if (box->dir == rap::orientation::horizontal)
+        { size.w += s.w; size.h = std::max(size.h, s.h); }
+        else
+        { size.h += s.h; size.w = std::max(size.w, s.w); }
+    }
+    return size;
+}
 
 // A window's document tabs: what they're told, and the user's clicks, which
 // call the handlers as the strip would.
@@ -633,7 +700,10 @@ public:
         if (pages_.contains(id)) return;
         auto& poison = pages_[id];
         auto* outer = std::exchange(built_.page, &poison);
+        const auto old_size = std::exchange(built_.page_canvas_size,
+            g_allocated_canvas_paint ? std::optional{allocated_page_size(content)} : std::nullopt);
         inner_.add(id, std::move(content));
+        built_.page_canvas_size = old_size;
         built_.page = outer;
     }
     void remove(const std::string& id) override
@@ -933,7 +1003,8 @@ private:
                 mine = b.entries.back();
             }
             else if (std::holds_alternative<rap::spec::canvas>(n.spec))
-                mine = keep<kept_canvas>(static_cast<rap::canvas&>(w));
+                mine = keep<kept_canvas>(static_cast<rap::canvas&>(w), b.page_canvas_size,
+                    [&backend = backend_](std::function<void()> f) { backend.post(std::move(f)); });
             else if (std::holds_alternative<rap::spec::label>(n.spec))
                 mine = keep<kept_label>();
             else if (const auto* s = std::get_if<rap::spec::button>(&n.spec))
@@ -1372,7 +1443,7 @@ void forge_presentation_tests(rap::ui& ui, const std::string& repo)
     forge_panel_test::seed(panel);
     panel.show_commit("one");
     settle(ui);
-    auto reset = [] { g_forge_writes = g_forge_pages = g_forge_invalidates = 0; };
+    auto reset = [] { g_forge_writes = g_forge_pages = g_forge_invalidates = g_forge_selects = 0; };
     forge_painter chips;
     auto* chip_canvas = dynamic_cast<kept_canvas*>(forge_panel_test::labels(panel));
     if (chip_canvas && chip_canvas->paint) chip_canvas->paint(chips, {1, 24});
@@ -1441,6 +1512,25 @@ void forge_presentation_tests(rap::ui& ui, const std::string& repo)
     forge_panel_test::refresh(panel);
     check(observer.resets == 0 && g_forge_writes == 0 && g_forge_invalidates == 0,
           "forge presentation: unchanged build preserves matrix and widgets");
+    reset();
+    forge_panel_test::job_metadata(panel, 71, "https://forge.invalid/job/71", "new failure reason");
+    forge_panel_test::refresh(panel);
+    const auto picked = forge_panel_test::picked_job(panel);
+    check(picked && picked->id == 71 && picked->url == "https://forge.invalid/job/71" &&
+              picked->failure_reason == "new failure reason" && g_forge_selects == 0 &&
+              forge_panel_test::failure_url(panel) == picked->url &&
+              forge_panel_test::failure_title(panel).find("new failure reason") != std::string::npos,
+          "forge presentation: same selected row refreshes id, URL and failure reason without reselect");
+    reset();
+    forge_panel_test::job_metadata(panel, 71, "https://forge.invalid/job/71-new", "new failure reason");
+    forge_panel_test::refresh(panel);
+    check(forge_panel_test::failure_url(panel) == "https://forge.invalid/job/71-new" &&
+              g_forge_writes == 0 && g_forge_selects == 0 && g_forge_invalidates == 0,
+          "forge presentation: changed URL refreshes link without repainting identical content");
+    reset();
+    forge_panel_test::refresh(panel);
+    check(g_forge_writes == 0 && g_forge_selects == 0 && g_forge_pages == 0 && g_forge_invalidates == 0,
+          "forge presentation: identical metadata poll touches no native state");
     if (matrix && matrix->model) matrix->model->remove_observer(&observer);
     reset();
     forge_panel_test::labels(panel, {{"a-very-long-label", std::nullopt}, {"second", std::nullopt}});
@@ -1517,6 +1607,70 @@ void forge_presentation_tests(rap::ui& ui, const std::string& repo)
     panel.unbind();
     window.reset();
     settle(ui);
+}
+
+// Exercise allocation/queued paint through the actual declared stack page,
+// not by passing an invented nonzero size to the app's paint callback.
+void forge_fresh_canvas_tests(rap::ui& ui, const std::string& repo)
+{
+    std::vector<rap::size_f> allocations;
+    g_allocated_canvas_paint = [&](kept_canvas& canvas, rap::size_f size)
+    {
+        forge_painter painter;
+        canvas.paint(painter, size);
+        canvas.painted_size = size;
+        canvas.painted_strings = painter.strings;
+        canvas.painted_rectangles = painter.rectangles;
+        ++canvas.allocated_paints;
+        allocations.push_back(size);
+    };
+    forge_panel panel({.ui = ui, .workdir = repo});
+    auto window = ui.create(rap::layout::window{"Forge fresh", {panel.layout()}});
+    panel.built();
+    forge_panel_test::seed(panel);
+    forge_panel_test::labels(panel, {{"pm-approved", std::nullopt}});
+    panel.show_commit("head");  // outer pane width has not arrived yet
+    settle(ui);
+    auto canvas = [&] { return dynamic_cast<kept_canvas*>(forge_panel_test::labels(panel)); };
+    auto* visible_stack = dynamic_cast<kept<rap::stack>*>(forge_panel_test::label_stack(panel));
+    check(!allocations.empty() && allocations.front().w >= 64 && allocations.front().h >= 18 &&
+              visible_stack && visible_stack->shown && canvas() && canvas()->shown && canvas()->allocated_paints > 0 &&
+              canvas()->painted_strings == std::vector<std::string>{"+1"},
+          "forge fresh: unknown-cap label set gets viable allocation and paints naturally");
+    panel.set_available_width(240);
+    settle(ui);
+    check(canvas() && canvas()->painted_size.w == 87 &&
+              canvas()->painted_strings == std::vector<std::string>{"pm-approved"} &&
+              canvas()->painted_rectangles.size() == 1 &&
+              canvas()->painted_rectangles[0].w <= canvas()->painted_size.w,
+          "forge fresh: stack allocation exceeds raw canvas natural width and draws label");
+    g_forge_writes = g_forge_pages = g_forge_invalidates = 0;
+    panel.set_available_width(240);
+    forge_panel_test::refresh(panel);
+    settle(ui);
+    check(g_forge_writes == 0 && g_forge_pages == 0 && g_forge_invalidates == 0,
+          "forge fresh: settled allocation and identical refresh do no native work");
+    forge_panel_test::labels(panel, {});
+    forge_panel_test::refresh(panel);
+    settle(ui);
+    forge_panel_test::labels(panel, {{"pm-approved", std::nullopt}});
+    forge_panel_test::refresh(panel);
+    settle(ui);
+    check(canvas() && canvas()->allocated_paints > 0 && canvas()->painted_size.w == 87 &&
+              canvas()->painted_strings == std::vector<std::string>{"pm-approved"},
+          "forge fresh: empty-to-new labels bootstrap through declared box sizing");
+    forge_panel_test::labels(panel, {{"stale measurement", std::nullopt}});
+    forge_panel_test::refresh(panel);
+    forge_panel_test::labels(panel, {});
+    forge_panel_test::refresh(panel);
+    settle(ui);
+    auto* stack = dynamic_cast<kept<rap::stack>*>(forge_panel_test::label_stack(panel));
+    check(!canvas() && stack && !stack->shown && forge_panel_test::label_width(panel) == 0,
+          "forge fresh: stale allocated paint cannot revive removed labels");
+    panel.unbind();
+    window.reset();
+    settle(ui);
+    g_allocated_canvas_paint = {};
 }
 
 // A download's line under the forge panel's artifacts, across pages built
@@ -2965,6 +3119,7 @@ void run_log_page_tests(const std::string& root)
     page_tests(ui, repo, git);
     poll_tests(ui, repo, polled);
     forge_presentation_tests(ui, repo);
+    forge_fresh_canvas_tests(ui, repo);
     forge_download_tests(ui, repo);
     check(g_stale_calls == 0, "log page: nothing reached a widget after its window went");
 
