@@ -498,32 +498,66 @@ void forge_panel::unbind()
     download_progress_ = nullptr;
 }
 
-// Visibility changes are silent. Show new pages first, so hiding the chosen
-// page can select the nearest page in the final set, then keep that fallback.
+// Remember user intent separately from the actual page chosen by a silent
+// visibility fallback. A late answer can restore it only for this row and
+// only while no intervening user choice has invalidated the request.
+void forge_panel::remember_for_row()
+{
+    restore_page_ = page_restore{row_revision_, user_choice_revision_, remembered_page_};
+}
+
 void forge_panel::sync_pages()
 {
     if (!tabs_) return;
+    struct quiet
+    {
+        bool& value;
+        bool previous;
+        explicit quiet(bool& v)
+            : value(v)
+            , previous(v)
+        {
+            value = true;
+        }
+        ~quiet() { value = previous; }
+    } updating(changing_pages_);
     const std::array<bool, 4> visible{true, pr_present_, ci_present_, artifacts_present_};
+    // Show first, so fallback chooses among the final visible pages.
     for (int i = 1; i < 4; ++i)
         if (visible[i] && !tabs_->page_visible(i)) tabs_->set_page_visible(i, true);
     for (int i = 1; i < 4; ++i)
         if (!visible[i] && tabs_->page_visible(i)) tabs_->set_page_visible(i, false);
-    if (restore_page_ && tabs_->page_visible(selected_page_) && tabs_->current() != selected_page_)
-        tabs_->set_current(selected_page_);
-    restore_page_ = false;
+    if (!tabs_->page_visible(remembered_page_) && !restore_page_) remember_for_row();
+    if (restore_page_)
+    {
+        const auto request = *restore_page_;
+        if (request.row != row_revision_ || request.choice != user_choice_revision_ ||
+            request.page != remembered_page_)
+            restore_page_.reset();
+        else if (tabs_->page_visible(request.page))
+        {
+            if (tabs_->current() != request.page) tabs_->set_current(request.page);
+            restore_page_.reset();
+        }
+    }
     selected_page_ = tabs_->current();
 }
 
-void forge_panel::select_page(int page)
+void forge_panel::restore_page_choice(int page)
 {
     if (page < 0 || page > 3) return;
-    if (!tabs_)
-    {
-        selected_page_ = page;
-        return;
-    }
-    if (tabs_->page_visible(page) && tabs_->current() != page) tabs_->set_current(page);
+    remembered_page_ = page;
+    remember_for_row();
+    sync_pages();
+}
+
+void forge_panel::user_page_changed(int page)
+{
+    if (changing_pages_ || !tabs_ || page < 0 || page > 3) return;
     selected_page_ = tabs_->current();
+    remembered_page_ = page;
+    ++user_choice_revision_;
+    restore_page_.reset();
 }
 
 // Width comes from the host window, not the chip canvas itself:
@@ -682,7 +716,7 @@ rap::node forge_panel::layout(rap::node commit)
             .height(rap::extent{k_mark_size, rap::extent::unit::px})
             .bind(bind);
     };
-    restore_page_ = true;
+    remember_for_row();
     return tabs{
         page{_("Commit"), std::move(commit)},
         page{_("PR"),
@@ -866,7 +900,7 @@ rap::node forge_panel::layout(rap::node commit)
         .stretch(2)
         .bind(tabs_)
         .handle(root_)
-        .on_changed(page_guard_([this](int page) { selected_page_ = page; }));
+        .on_changed(page_guard_([this](int page) { user_page_changed(page); }));
 }
 
 // -- which commits are a PR's -------------------------------------------------
@@ -993,6 +1027,8 @@ void forge_panel::show_commit(std::optional<std::string> sha, std::string author
 {
     if (sha == sha_) return;
     sha_ = std::move(sha);
+    ++row_revision_;
+    remember_for_row();
     author_name_ = std::move(author_name);
     author_email_ = std::move(author_email);
     failed_job_.reset();

@@ -255,7 +255,7 @@ log_view_state log_tab::capture_view()
     v.since = since_;
     v.until = until_;
     v.jump_type = jump_type_;
-    v.lower_page = forge_panel_->selected_page();
+    v.lower_page = forge_panel_->remembered_page();
     // Still to be put back (a load under way), or as it is.
     v.selection = kept_ ? kept_ : keep_selection();
     v.panes = page_->splitter->sizes();
@@ -284,7 +284,7 @@ void log_tab::apply_view(const log_view_state& v)
     since_ = v.since;
     until_ = v.until;
     jump_type_ = v.jump_type;
-    forge_panel_->select_page(v.lower_page);
+    forge_panel_->restore_page_choice(v.lower_page);
     toolbar_changed();
     auto sized = [](const std::vector<float>& sizes)
     {

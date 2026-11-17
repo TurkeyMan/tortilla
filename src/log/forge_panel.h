@@ -54,7 +54,9 @@ public:
     void built();
     void unbind();
     int selected_page() const { return selected_page_; }
-    void select_page(int page);
+    int remembered_page() const { return remembered_page_; }
+    // Restore a carried user choice at bind/adopt; ordinary fallbacks never write it.
+    void restore_page_choice(int page);
     // Actual full lower-area width, from the host's existing resize watch.
     void set_available_width(float width);
 
@@ -102,6 +104,8 @@ private:
     void update_pull_request();
     void update_build();
     void sync_pages();
+    void user_page_changed(int page);
+    void remember_for_row();
     void update_failure();
     void update_watch();
     void ask_details(const pr_entry&);
@@ -142,8 +146,15 @@ private:
     std::set<std::int64_t> failures_asked_;
     std::optional<ci_job> failed_job_;  // the job picked in the matrix
     rap::tabs* tabs_ = nullptr;
-    int selected_page_ = 0;
-    bool restore_page_ = true;
+    int selected_page_ = 0, remembered_page_ = 0;
+    std::uint64_t row_revision_ = 0, user_choice_revision_ = 0;
+    struct page_restore
+    {
+        std::uint64_t row, choice;
+        int page;
+    };
+    std::optional<page_restore> restore_page_;
+    bool changing_pages_ = false;
     bool pr_present_ = false, ci_present_ = false, artifacts_present_ = false;
     rap::subscription poll_timer_, download_timer_;
     std::chrono::steady_clock::time_point poll_after_{};  // the answer the poll timer follows

@@ -116,6 +116,20 @@ struct forge_panel_test
                 artifacts ? std::vector<ci_artifact>{artifact} : std::vector<ci_artifact>{};
         }
     }
+    static void awaiting(forge_panel& p, const std::string& sha)
+    {
+        p.builds_[sha] = {.asked = true, .asking = true};
+    }
+    static void answer_ci(forge_panel& p, const std::string& sha, bool present)
+    {
+        auto& b = p.builds_[sha];
+        b.asked = b.answered = b.artifacts_known = true;
+        b.asking = false;
+        b.ci.workflows = present
+                             ? std::vector<ci_workflow>{{.jobs = {{.name = "test",
+                                                                   .state = check_state::success}}}}
+                             : std::vector<ci_workflow>{};
+    }
     static void present_commit(forge_panel& p, const std::string& sha)
     {
         presence(p, true, true, true);
@@ -739,8 +753,11 @@ public:
     }
     void click(int page)
     {
+        const int before = current();
         set_current(page);
-        if (changed) changed(current());
+        // The existing native API reports only selection changes. It cannot
+        // report a click on the already-current fallback page.
+        if (changed && current() != before) changed(current());
     }
     bool strip_shown() const
     {
@@ -1965,19 +1982,51 @@ void forge_tabs_tests(rap::ui& ui, const std::string& repo)
     forge_panel_test::presence(panel, true, false, true);
     forge_panel_test::refresh(panel);
     check(tabs()->current() == 3 && panel.selected_page() == 3,
-          "forge tabs: hiding chosen CI records the silent nearest-after fallback");
+          "forge tabs: hiding chosen CI uses silent nearest-after fallback");
     forge_panel_test::presence(panel, true, false, false);
     forge_panel_test::refresh(panel);
     check(tabs()->current() == 1 && panel.selected_page() == 1,
-          "forge tabs: hiding chosen artifacts records nearest-before PR");
+          "forge tabs: hiding actual artifacts uses nearest-before PR");
     forge_panel_test::presence(panel, false, false, false);
     forge_panel_test::refresh(panel);
     check(tabs()->current() == 0 && !tabs()->strip_shown() && panel.selected_page() == 0,
-          "forge tabs: Commit-only hides the strip again and records fallback");
+          "forge tabs: Commit-only hides strip without overwriting remembered CI");
     forge_panel_test::presence(panel, false, true, true);
     forge_panel_test::refresh(panel);
-    check(tabs()->current() == 0 && tabs()->strip_shown(),
-          "forge tabs: later pages do not restore a stale choice after fallback");
+    check(tabs()->current() == 2 && tabs()->strip_shown() && panel.remembered_page() == 2,
+          "forge tabs: appearing pages restore the still-remembered user choice");
+    forge_panel_test::awaiting(panel, "unknown");
+    panel.show_commit("unknown");
+    check(tabs()->current() == 0 && panel.remembered_page() == 2,
+          "forge tabs: unknown CI falls back to Commit while remembering CI");
+    forge_panel_test::answer_ci(panel, "unknown", true);
+    forge_panel_test::refresh(panel);
+    check(tabs()->current() == 2 && panel.remembered_page() == 2,
+          "forge tabs: late same-row CI restores the unchanged user choice");
+    forge_panel_test::awaiting(panel, "another");
+    panel.show_commit("another");
+    // Make PR a real alternative to fallback Commit; selecting a different
+    // page is observable through the current API, unlike same-current clicks.
+    forge_panel_test::presence(panel, true, false, false);
+    forge_panel_test::present_commit(panel, "another");
+    forge_panel_test::awaiting(panel, "another");
+    forge_panel_test::refresh(panel);
+    tabs()->click(1);
+    forge_panel_test::answer_ci(panel, "another", true);
+    forge_panel_test::refresh(panel);
+    check(tabs()->current() == 1 && panel.remembered_page() == 1,
+          "forge tabs: a different user page prevents a late CI restoration");
+    tabs()->click(2);
+    forge_panel_test::awaiting(panel, "none");
+    panel.show_commit("none");
+    forge_panel_test::answer_ci(panel, "none", false);
+    forge_panel_test::refresh(panel);
+    check(tabs()->current() == 0 && panel.remembered_page() == 2,
+          "forge tabs: confirmed no CI keeps Commit but remembers CI for next row");
+    panel.show_commit("head");
+    forge_panel_test::presence(panel, false, true, true);
+    forge_panel_test::refresh(panel);
+    check(tabs()->current() == 2, "forge tabs: next CI row restores the retained user choice");
     tabs()->click(3);
     const int chosen = panel.selected_page();
     panel.unbind();
@@ -2040,7 +2089,7 @@ void lower_page_view_tests(rap::ui& ui, const std::string& repo)
     auto& panel = log_tab_test::forge(*tab);
     forge_panel_test::present_commit(panel, sha);
     page.commits->click({row}, row);
-    panel.select_page(2);
+    dynamic_cast<kept_pages*>(forge_panel_test::pages(panel))->click(2);
     auto view = tab->capture_view();
     check(view.lower_page == 2,
           "forge tabs: selected CI page is captured in per-log-tab view state");
