@@ -86,14 +86,8 @@ rap::node log_tab::build_page()
                 .on_cell_context_menu(on_page([this](size_t row, size_t column, rap::point_f at)
                                               { return cell_menu(row, column, at); }))
                 .stretch(3),
-            // The forge panel, a column beside the commit's text and
-            // files, when the commit has a PR or CI to show.
-            splitter{
-                horizontal,
-                // The details pane keeps its height: dragging the upper
-                // divider takes space from the file list until that
-                // reaches its minimum. (TortoiseGit shrinks the details
-                // first [spec 1.3]; this is deliberate.)
+            // One full-width lower area; Commit retains its message/files split.
+            forge_panel_->layout(vbox{
                 splitter{
                     vertical,
                     hbox{
@@ -129,12 +123,46 @@ rap::node log_tab::build_page()
                     files_.list("log.files").height(4_lines).stretch(2),
                 }
                     .bind(page_->details_splitter)
-                    .width(30_ch)  // the least the forge panel's bar leaves it
-                    .stretch(3),
-                forge_panel_->layout(),
-            }
-                .bind(page_->forge_splitter)
-                .stretch(2),
+                    .stretch(),
+                hbox{
+                    vbox{
+                        // TortoiseGit's Show Whole Project the other way up, to
+                        // say what's in effect: ticked, the history of the
+                        // path only. Per repository, saved as TortoiseGit's
+                        // [spec 1.9.7]; only with a path to leave out.
+                        check{rap::i18n::format(_("_Only changes to {0}"), path_text(40)),
+                              only_path_}
+                            .bind(page_->only_path)
+                            .visible(!rel_path_.empty())
+                            .tooltip(path_text(0))
+                            .on_toggled(on_page(
+                                [this](bool only)
+                                {
+                                    only_path_ = only;
+                                    settings::get().set("log.wholeProject." + repo_.workdir(),
+                                                        only ? "0" : "1");
+                                    if (host_) host_->tab_changed(*this);
+                                    update_file_view();  // nothing is unrelated without a path
+                                    reload();
+                                })),
+                    },
+                    // The selected commit's files, by path: a second after
+                    // typing stops, at once on Enter, cleared by Escape (the
+                    // window's keys) [spec 1.11.2].
+                    entry{path_filter_text_}
+                        .bind(page_->path_filter)
+                        .placeholder(std::string("   ") + _("Filter paths"))
+                        .on_changed(on_page(
+                            [this](const std::string& text)
+                            {
+                                path_filter_text_ = text;
+                                if (!page_) return;
+                                page_->path_filter_timer =
+                                    ui_.timer(1000, false, [this] { update_file_view(); });
+                            }))
+                        .on_activate(on_page([this] { update_file_view(); }))
+                        .stretch(),
+                }}.stretch()),
         }
             .bind(page_->splitter)
             .stretch(),
@@ -156,44 +184,6 @@ rap::node log_tab::build_page()
                         return true;
                     })),
             label{}.selectable().ellipsize().bind(page_->status).stretch(),
-        },
-        hbox{
-            vbox{
-                // TortoiseGit's Show Whole Project the other way up, to
-                // say what's in effect: ticked, the history of the
-                // path only. Per repository, saved as TortoiseGit's
-                // [spec 1.9.7]; only with a path to leave out.
-                check{rap::i18n::format(_("_Only changes to {0}"), path_text(40)), only_path_}
-                    .bind(page_->only_path)
-                    .visible(!rel_path_.empty())
-                    .tooltip(path_text(0))
-                    .on_toggled(on_page(
-                        [this](bool only)
-                        {
-                            only_path_ = only;
-                            settings::get().set("log.wholeProject." + repo_.workdir(),
-                                                only ? "0" : "1");
-                            if (host_) host_->tab_changed(*this);
-                            update_file_view();  // nothing is unrelated without a path
-                            reload();
-                        })),
-            },
-            // The selected commit's files, by path: a second after
-            // typing stops, at once on Enter, cleared by Escape (the
-            // window's keys) [spec 1.11.2].
-            entry{path_filter_text_}
-                .bind(page_->path_filter)
-                .placeholder(std::string("   ") + _("Filter paths"))
-                .on_changed(on_page(
-                    [this](const std::string& text)
-                    {
-                        path_filter_text_ = text;
-                        if (!page_) return;
-                        page_->path_filter_timer =
-                            ui_.timer(1000, false, [this] { update_file_view(); });
-                    }))
-                .on_activate(on_page([this] { update_file_view(); }))
-                .stretch(),
         },
         hbox{
             // A placeholder until TortoiseGit's statistics dialog is built.
@@ -238,22 +228,9 @@ void log_tab::bind_page(std::optional<log_view_state> view)
     if (!page_) return;
     // Clicked, the status bar's "!" says what git said.
     page_->status_mark->set_cursor(rap::cursor::pointer);
-    page_->forge_splitter->on_moved(on_page(
-        [this]
-        {
-            if (!page_) return;
-            // The share it's dragged to is the one it keeps.
-            rap::window* window = parent();
-            if (forge_panel_visible_ && window)
-            {
-                forge_sizes_ = page_->forge_splitter->sizes();
-                if (forge_sizes_.size() > 1) forge_panel_->set_available_width(forge_sizes_.back());
-                float total = 0;
-                for (float s : forge_sizes_) total += s;
-                forge_share_.fitted(total, window->size().w);
-            }
-            fit_files();
-        }));
+    lower_width_ = 0;
+    update_lower_width();
+    page_->width_watch = ui_.timer(200, true, [this] { update_lower_width(); });
     forge_panel_->built();
     if (view)
         apply_view(*view);
@@ -278,6 +255,7 @@ log_view_state log_tab::capture_view()
     v.since = since_;
     v.until = until_;
     v.jump_type = jump_type_;
+    v.lower_page = forge_panel_->selected_page();
     // Still to be put back (a load under way), or as it is.
     v.selection = kept_ ? kept_ : keep_selection();
     v.panes = page_->splitter->sizes();
@@ -290,8 +268,8 @@ log_view_state log_tab::capture_view()
     for (size_t row : files_.selection())
         if (row < files_.files().size()) v.selected_files.push_back(files_.files()[row].path);
     using focus = log_view_state::focus;
-    v.focused = page_->commit_list->has_focus()    ? focus::commits
-                : filter_focused()                 ? focus::search
+    v.focused = page_->commit_list->has_focus()   ? focus::commits
+                : filter_focused()                ? focus::search
                 : page_->path_filter->has_focus() ? focus::path_filter
                 : files_.has_focus()              ? focus::files
                                                   : focus::none;
@@ -306,6 +284,7 @@ void log_tab::apply_view(const log_view_state& v)
     since_ = v.since;
     until_ = v.until;
     jump_type_ = v.jump_type;
+    forge_panel_->select_page(v.lower_page);
     toolbar_changed();
     auto sized = [](const std::vector<float>& sizes)
     {
@@ -348,14 +327,6 @@ void log_tab::drop_page()
 {
     if (!page_) return;
     flush_filters();
-    // The forge column's divider, kept as it would be on hiding it.
-    if (forge_panel_visible_)
-    {
-        const auto sizes = page_->forge_splitter->sizes();
-        float total = 0;
-        for (float s : sizes) total += s;
-        if (total > 0) forge_sizes_ = sizes;
-    }
     // Its widgets go when the toolkit next gets to them (rap::stack::remove),
     // which may be after the tab has: from now on they reach nothing of it.
     // The lists let go of the models now, the callbacks do nothing (page_guard).

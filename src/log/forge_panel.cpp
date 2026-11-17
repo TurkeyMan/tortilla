@@ -457,15 +457,8 @@ void forge_panel::tooltip(rap::widget* w, const std::string& value)
 
 void forge_panel::built()
 {
-    parts_->on_moved(
-        page_guard_([this]
-        {
-            if (parts_state_ == parts::pr_and_lists) part_sizes_ = parts_->sizes();
-        }));
     // A page built again: what's known drawn, a download's line with it.
-    const bool shown = visible_;
     update();
-    if (shown && visible_ && host_.shown) host_.shown(true);
     show_download();
 }
 
@@ -489,73 +482,51 @@ void forge_panel::unbind()
     page_guard_.close();
     for (rap::list* l : {matrix_list_, annotations_, artifacts_})
         if (l) l->set_model(nullptr);
-    parts_retry_ = {};
     download_timer_ = {};
     // The next page's divider is placed anew, and its description set.
-    parts_state_ = parts::unknown;
     pr_url_.clear();
     pr_body_text_.clear();
-    root_ = pr_part_ = top_spacer_ = build_body_ = build_part_ = failure_part_ = artifact_part_ =
-        nullptr;
+    root_ = pr_part_ = build_body_ = build_part_ = failure_part_ = artifact_part_ = nullptr;
     pr_title_ = pr_author_ = pr_merge_ = pr_checks_ = pr_reviews_ = pr_also_ = build_summary_ =
-        build_toggle_ = full_log_ = download_status_ = nullptr;
+        full_log_ = download_status_ = nullptr;
     pr_avatar_ = pr_merge_mark_ = pr_checks_mark_ = build_mark_ = nullptr;
     pr_body_ = failure_title_ = log_tail_ = nullptr;
     pr_buttons_ = {};
-    parts_ = nullptr;
+    tabs_ = nullptr;
     matrix_list_ = annotations_ = artifacts_ = nullptr;
     download_ = nullptr;
     download_progress_ = nullptr;
 }
 
-// The divider between the PR (and the build's line) and the build's lists.
-// With a PR, where it was last dragged to, else two fifths of the height
-// for the lists; without one, the build's line as high as it needs and the
-// lists the rest. The upper part takes what the window gains or loses.
-void forge_panel::fit_parts(bool pr, bool lists)
+// Visibility changes are silent. Show new pages first, so hiding the chosen
+// page can select the nearest page in the final set, then keep that fallback.
+void forge_panel::sync_pages()
 {
-    show(build_body_, lists);
-    const parts state = !lists ? parts::one : pr ? parts::pr_and_lists : parts::lists;
-    parts_retry_ = {};  // this call stands for one put off
-    if (state == parts_state_) return;
-    float total = 0;
-    for (float s : parts_->sizes()) total += s;
-    if (state != parts::one && total <= 0)
+    if (!tabs_) return;
+    const std::array<bool, 4> visible{true, pr_present_, ci_present_, artifacts_present_};
+    for (int i = 1; i < 4; ++i)
+        if (visible[i] && !tabs_->page_visible(i)) tabs_->set_page_visible(i, true);
+    for (int i = 1; i < 4; ++i)
+        if (!visible[i] && tabs_->page_visible(i)) tabs_->set_page_visible(i, false);
+    if (restore_page_ && tabs_->page_visible(selected_page_) && tabs_->current() != selected_page_)
+        tabs_->set_current(selected_page_);
+    restore_page_ = false;
+    selected_page_ = tabs_->current();
+}
+
+void forge_panel::select_page(int page)
+{
+    if (page < 0 || page > 3) return;
+    if (!tabs_)
     {
-        // Not laid out yet: tried again until it is, whether or not
-        // anything else changes meanwhile.
-        parts_retry_ = host_.ui.timer(50, false, [this, pr, lists] { fit_parts(pr, lists); });
+        selected_page_ = page;
         return;
     }
-    parts_state_ = state;
-    auto sizes = [this](const std::vector<float>& wanted)
-    {
-        const auto current = parts_->sizes();
-        if (current.size() == wanted.size() && std::ranges::equal(current, wanted,
-                [](float a, float b) { return std::abs(a - b) <= 0.5f; })) return;
-        parts_->set_sizes(wanted);
-    };
-    if (state == parts::pr_and_lists)
-    {
-        if (part_sizes_.size() == 2)
-            sizes(part_sizes_);
-        else
-            sizes({total * 0.6f, total * 0.4f});
-    }
-    else if (state == parts::lists)
-    {
-        // The line: a mark's height, and the box's spacing around it.
-        const float line = float(k_mark_size) + 14;
-        sizes({line, std::max(total - line, line)});
-    }
+    if (tabs_->page_visible(page) && tabs_->current() != page) tabs_->set_current(page);
+    selected_page_ = tabs_->current();
 }
 
-void forge_panel::set_part_sizes(std::vector<float> sizes)
-{
-    if (sizes.size() == 2 && sizes[0] > 0 && sizes[1] > 0) part_sizes_ = std::move(sizes);
-}
-
-// Width comes from the outer forge splitter, not the chip canvas itself:
+// Width comes from the host window, not the chip canvas itself:
 // shrinking to intrinsic content must not be mistaken for less available room.
 void forge_panel::set_available_width(float width)
 {
@@ -576,8 +547,8 @@ void forge_panel::plan_labels()
 {
     if (!labels_measured_) return;
     label_plan next;
-    const float limit = labels_available_width_ > 0 ? labels_available_width_ / 2
-                                                   : k_label_bootstrap_width;
+    const float limit =
+        labels_available_width_ > 0 ? labels_available_width_ / 2 : k_label_bootstrap_width;
     for (size_t i = 0; i < label_sizes_.size(); ++i)
     {
         const size_t hidden = labels_.size() - next.shown.size() - 1;
@@ -592,7 +563,8 @@ void forge_panel::plan_labels()
     next.hidden = labels_.size() - next.shown.size();
     if (next.hidden)
     {
-        const float width = next.width + (next.shown.empty() ? 0 : 4) + overflow_sizes_[next.hidden].w;
+        const float width =
+            next.width + (next.shown.empty() ? 0 : 4) + overflow_sizes_[next.hidden].w;
         if (width <= limit)
         {
             next.width = width;
@@ -609,12 +581,13 @@ void forge_panel::plan_labels()
     if (labels_rendered_ == label_plan_ || labels_layout_queued_) return;
     labels_layout_queued_ = true;
     const unsigned revision = labels_revision_;
-    host_.ui.post(page_guard_([this, revision]
-    {
-        if (revision != labels_revision_) return;
-        labels_layout_queued_ = false;
-        layout_labels();  // one coalesced update using the latest independent width
-    }));
+    host_.ui.post(page_guard_(
+        [this, revision]
+        {
+            if (revision != labels_revision_) return;
+            labels_layout_queued_ = false;
+            layout_labels();  // one coalesced update using the latest independent width
+        }));
 }
 
 // Only the width of the chips actually drawn is reserved beside the title.
@@ -640,53 +613,61 @@ void forge_panel::layout_labels()
     const unsigned revision = labels_revision_;
     const std::string id = std::to_string(generation);
     const float width = labels_measured_ ? std::ceil(label_plan_.width) : k_label_bootstrap_width;
-    const float height = labels_measured_ ? std::ceil(label_plan_.height) : k_label_bootstrap_height;
-    // A stack measures its page root's natural size. Put fixed extents on
-    // the box's child so they participate in that measurement on Win32.
-    pr_labels_->add(id, rap::layout::vbox{rap::layout::canvas{}.focusable(false).tooltip(tip).bind(labels_canvas_)
-        .width(rap::extent{width, rap::extent::unit::px})
-        .height(rap::extent{height, rap::extent::unit::px})
-        .on_paint(page_guard_([this, generation, revision](rap::painter& p, rap::size_f size)
-        {
-            if (generation != labels_generation_ || revision != labels_revision_) return;
-            label_sizes_.clear();
-            overflow_sizes_.clear();
-            rap::text_style style;
-            for (const auto& label : labels_)
-            {
-                const auto measured = p.measure(label.name, style);
-                label_sizes_.push_back({measured.w + 10, measured.h + 6});
-            }
-            for (size_t i = 0; i <= labels_.size(); ++i)
-            {
-                const auto measured = p.measure("+" + std::to_string(i), style);
-                overflow_sizes_.push_back({measured.w + 10, measured.h + 6});
-            }
-            labels_measured_ = true;
-            plan_labels();
-            if (label_plan_.width > size.w || label_plan_.width <= 0) return;
-            float x = size.w - label_plan_.width;
-            auto draw = [&](const std::string& text, rap::color fill, rap::size_f measured)
-            {
-                if (measured.h > size.h) return;
-                rap::text_style ink;
-                ink.fg = ink_on(fill);
-                const float y = (size.h - measured.h) / 2;
-                p.rect({x, y, measured.w, measured.h}, 3, rap::paint{fill}, std::nullopt);
-                p.text({x + 5, y + 3}, text, ink);
-                x += measured.w + 4;
-            };
-            for (size_t i : label_plan_.shown)
-                draw(labels_[i].name, labels_[i].color.value_or(rap::color{224, 224, 224}), label_sizes_[i]);
-            if (label_plan_.hidden)
-                draw("+" + std::to_string(label_plan_.hidden), {224, 224, 224}, overflow_sizes_[label_plan_.hidden]);
-        }))});
+    const float height =
+        labels_measured_ ? std::ceil(label_plan_.height) : k_label_bootstrap_height;
+    // ABI 89 measures fixed page-root extents, so no box wrapper is needed.
+    pr_labels_->add(
+        id,
+        rap::layout::canvas{}
+            .focusable(false)
+            .tooltip(tip)
+            .bind(labels_canvas_)
+            .width(rap::extent{width, rap::extent::unit::px})
+            .height(rap::extent{height, rap::extent::unit::px})
+            .on_paint(page_guard_(
+                [this, generation, revision](rap::painter& p, rap::size_f size)
+                {
+                    if (generation != labels_generation_ || revision != labels_revision_) return;
+                    label_sizes_.clear();
+                    overflow_sizes_.clear();
+                    rap::text_style style;
+                    for (const auto& label : labels_)
+                    {
+                        const auto measured = p.measure(label.name, style);
+                        label_sizes_.push_back({measured.w + 10, measured.h + 6});
+                    }
+                    for (size_t i = 0; i <= labels_.size(); ++i)
+                    {
+                        const auto measured = p.measure("+" + std::to_string(i), style);
+                        overflow_sizes_.push_back({measured.w + 10, measured.h + 6});
+                    }
+                    labels_measured_ = true;
+                    plan_labels();
+                    if (label_plan_.width > size.w || label_plan_.width <= 0) return;
+                    float x = size.w - label_plan_.width;
+                    auto draw = [&](const std::string& text, rap::color fill, rap::size_f measured)
+                    {
+                        if (measured.h > size.h) return;
+                        rap::text_style ink;
+                        ink.fg = ink_on(fill);
+                        const float y = (size.h - measured.h) / 2;
+                        p.rect({x, y, measured.w, measured.h}, 3, rap::paint{fill}, std::nullopt);
+                        p.text({x + 5, y + 3}, text, ink);
+                        x += measured.w + 4;
+                    };
+                    for (size_t i : label_plan_.shown)
+                        draw(labels_[i].name, labels_[i].color.value_or(rap::color{224, 224, 224}),
+                             label_sizes_[i]);
+                    if (label_plan_.hidden)
+                        draw("+" + std::to_string(label_plan_.hidden), {224, 224, 224},
+                             overflow_sizes_[label_plan_.hidden]);
+                })));
     if (labels_measured_) labels_rendered_ = label_plan_;
     pr_labels_->show(id);
     for (const auto& page : old) pr_labels_->remove(page);
 }
 
-rap::node forge_panel::layout()
+rap::node forge_panel::layout(rap::node commit)
 {
     using namespace rap::layout;
     page_guard_.open();
@@ -701,217 +682,191 @@ rap::node forge_panel::layout()
             .height(rap::extent{k_mark_size, rap::extent::unit::px})
             .bind(bind);
     };
-    return vbox{
-        splitter{
-            vertical,
-            // Above the divider: the PR, then the build's line under it.
-            vbox{
-                // Pull request
-                vbox{
-                    hbox{
-                        label{}.wrap().selectable().bind(pr_title_).stretch(),
-                        stack{}.homogeneous(false).visible(false).bind(pr_labels_),
-                    },
-                    hbox{
-                        canvas{}
-                            .focusable(false)
-                            .on_paint(
-                                page_guard_([this](rap::painter& p, rap::size_f size)
-                                {
-                                    if (!picture_) return;
-                                    // Whole and in shape if laid out
-                                    // smaller than asked.
-                                    const float iw = float(picture_->width()),
-                                                ih = float(picture_->height());
-                                    p.image(*picture_, {0, 0, iw, ih},
-                                            rap::fit_inside({0, 0, size.w, size.h}, iw, ih));
-                                }))
-                            .width(rap::extent{k_picture_size, rap::extent::unit::px})
-                            .height(rap::extent{k_picture_size, rap::extent::unit::px})
-                            .bind(pr_avatar_),
-                        label{}.ellipsize().bind(pr_author_).stretch(),
-                    },
-                    hbox{
-                        mark(pr_merge_mark_,
-                             page_guard_([this](rap::painter& p, rap::size_f size)
+    restore_page_ = true;
+    return tabs{
+        page{_("Commit"), std::move(commit)},
+        page{_("PR"),
+             vbox{
+                 hbox{
+                     label{}.wrap().selectable().bind(pr_title_).stretch(),
+                     stack{}.homogeneous(false).visible(false).bind(pr_labels_),
+                 },
+                 hbox{
+                     canvas{}
+                         .focusable(false)
+                         .on_paint(page_guard_(
+                             [this](rap::painter& p, rap::size_f size)
                              {
-                                 paint_mark(p, size, merge_mark_state_,
-                                            mergeable(merge_mark_kind_));
-                             })),
-                        label{}.wrap().bind(pr_merge_).stretch(),
-                    },
-                    hbox{
-                        mark(pr_checks_mark_,
-                             page_guard_([this](rap::painter& p, rap::size_f size)
+                                 if (!picture_) return;
+                                 // Whole and in shape if laid out
+                                 // smaller than asked.
+                                 const float iw = float(picture_->width()),
+                                             ih = float(picture_->height());
+                                 p.image(*picture_, {0, 0, iw, ih},
+                                         rap::fit_inside({0, 0, size.w, size.h}, iw, ih));
+                             }))
+                         .width(rap::extent{k_picture_size, rap::extent::unit::px})
+                         .height(rap::extent{k_picture_size, rap::extent::unit::px})
+                         .bind(pr_avatar_),
+                     label{}.ellipsize().bind(pr_author_).stretch(),
+                 },
+                 hbox{
+                     mark(pr_merge_mark_, page_guard_(
+                                              [this](rap::painter& p, rap::size_f size) {
+                                                  paint_mark(p, size, merge_mark_state_,
+                                                             mergeable(merge_mark_kind_));
+                                              })),
+                     label{}.wrap().bind(pr_merge_).stretch(),
+                 },
+                 hbox{
+                     mark(pr_checks_mark_,
+                          page_guard_([this](rap::painter& p, rap::size_f size)
+                                      { paint_mark(p, size, checks_mark_state_); })),
+                     label{}.wrap().bind(pr_checks_).stretch(),
+                 },
+                 label{}.wrap().selectable().bind(pr_reviews_),
+                 // The description takes what the part has left, and
+                 // scrolls: as a label, a long one widened the column
+                 // past the window.
+                 text_view{}.read_only().compact().bind(pr_body_).height(3_lines).stretch(),
+                 label{}.wrap().bind(pr_also_),
+                 hbox{
+                     button{""}
+                         .bind(pr_buttons_[0])
+                         .on_click(page_guard_(
+                             [this]
                              {
-                                 paint_mark(p, size, checks_mark_state_);
+                                 if (pr_actions_.size() > 0 && pr_actions_[0]) pr_actions_[0]();
                              })),
-                        label{}.wrap().bind(pr_checks_).stretch(),
-                    },
-                    label{}.wrap().selectable().bind(pr_reviews_),
-                    // The description takes what the part has left, and
-                    // scrolls: as a label, a long one widened the column
-                    // past the window.
-                    text_view{}.read_only().compact().bind(pr_body_).height(3_lines).stretch(),
-                    label{}.wrap().bind(pr_also_),
-                    hbox{
-                        button{""}
-                            .bind(pr_buttons_[0])
-                            .on_click(
-                                page_guard_([this]
-                                {
-                                    if (pr_actions_.size() > 0 && pr_actions_[0])
-                                        pr_actions_[0]();
-                                })),
-                        button{""}
-                            .bind(pr_buttons_[1])
-                            .on_click(
-                                page_guard_([this]
-                                {
-                                    if (pr_actions_.size() > 1 && pr_actions_[1])
-                                        pr_actions_[1]();
-                                })),
-                        button{""}
-                            .bind(pr_buttons_[2])
-                            .on_click(
-                                page_guard_([this]
-                                {
-                                    if (pr_actions_.size() > 2 && pr_actions_[2])
-                                        pr_actions_[2]();
-                                })),
-                        spacer{},
-                    },
-                }
-                    .stretch()
-                    .handle(pr_part_),
-                // Build
-                vbox{
-                    hbox{
-                        mark(build_mark_,
-                             page_guard_([this](rap::painter& p, rap::size_f size)
+                     button{""}
+                         .bind(pr_buttons_[1])
+                         .on_click(page_guard_(
+                             [this]
                              {
-                                 paint_mark(p, size, build_mark_state_);
+                                 if (pr_actions_.size() > 1 && pr_actions_[1]) pr_actions_[1]();
                              })),
-                        label{}.ellipsize().bind(build_summary_).stretch(),
-                        label{_("Show all")}
-                            .link(
-                                page_guard_([this]
-                                {
-                                    matrix_open_ = !matrix_open_;
-                                    matrix_opened_by_user_ = true;
-                                    update_build();
-                                }))
-                            .bind(build_toggle_),
-                    },
-                }
-                    .handle(build_part_),
-                // Without a PR, holds the build's line at the top.
-                vbox{spacer{}}.stretch().handle(top_spacer_),
-            },
-            // Below it: the build's checks, why a job failed, its artifacts;
-            // hidden while there's none of that to show.
-            vbox{
-                list{matrix_model::columns(), matrix_.get()}
-                    .headers(false)
-                    .compact()
-                    .selection(rap::selection_mode::single)
-                    .bind(matrix_list_)
-                    .on_selection_changed(
-                        page_guard_([this]
-                        {
-                            const auto sel = matrix_list_->selection();
-                            if (sel.size() != 1 || sel.front() >= matrix_->rows.size())
-                                return;
-                            const auto& row = matrix_->rows[sel.front()];
-                            if (row.kind != matrix_model::row::job) return;
-                            ask_failure(row.w, row.j);
-                        }))
-                    .on_activate(
-                        page_guard_([this](size_t r)
-                        {
-                            if (!sha_ || r >= matrix_->rows.size()) return;
-                            auto it = builds_.find(*sha_);
-                            if (it == builds_.end()) return;
-                            const auto& row = matrix_->rows[r];
-                            const ci_workflow& w = it->second.ci.workflows[row.w];
-                            const std::string url = row.kind == matrix_model::row::job
-                                                        ? w.jobs[row.j].url
-                                                        : w.url;
-                            if (!url.empty()) rap::sys::open_url(url);
-                        }))
-                    .height(4_lines)
-                    .stretch(2),
-                // Why the selected job failed.
-                vbox{
-                    text_view{}.read_only().compact().bind(failure_title_).height(3_lines),
-                    list{annotation_model::columns(), annotation_list_.get()}
-                        .headers(false)
-                        .compact()
-                        .selection(rap::selection_mode::single)
-                        .bind(annotations_)
-                        .on_activate(
-                            page_guard_([this](size_t r)
-                            {
-                                if (r < annotation_list_->rows.size() &&
-                                    !annotation_list_->rows[r].url.empty())
-                                    rap::sys::open_url(annotation_list_->rows[r].url);
-                            }))
-                        .height(4_lines),
-                    text_view{}
-                        .read_only()
-                        .monospace()
-                        .wrap(false)
-                        .bind(log_tail_)
-                        .height(4_lines)
-                        .stretch(3),
-                    label{_("Open the full log")}
-                        .link(
-                            page_guard_([this]
-                            {
-                                if (!full_log_url_.empty())
-                                    rap::sys::open_url(full_log_url_);
-                            }))
-                        .bind(full_log_),
-                }
-                    .stretch(3)
-                    .handle(failure_part_),
-                // The artifacts the runs left.
-                vbox{
-                    list{artifact_model::columns(), artifact_list_.get()}
-                        .compact()
-                        .selection(rap::selection_mode::single)
-                        .bind(artifacts_)
-                        .on_selection_changed(
-                            page_guard_([this]
-                            {
-                                const auto sel = artifacts_->selection();
-                                enable(download_,
-                                    !downloading_ && sel.size() == 1 &&
-                                    sel.front() < artifact_list_->rows.size() &&
-                                    !artifact_list_->rows[sel.front()].expired);
-                            }))
-                        .on_activate(page_guard_([this](size_t) { download_selected(); }))
-                        .height(4_lines)
-                        .stretch(),
-                    hbox{
-                        button{_("_Download...")}.bind(download_).enabled(false).on_click(
-                            page_guard_([this] { download_selected(); })),
-                        progress_bar{}.bind(download_progress_).stretch(),
-                        spacer{},
-                    },
-                    label{}.wrap().selectable().bind(download_status_),
-                }
-                    .stretch()
-                    .handle(artifact_part_),
-            }
-                .handle(build_body_),
-        }
-            .bind(parts_)
-            .stretch(),
+                     button{""}
+                         .bind(pr_buttons_[2])
+                         .on_click(page_guard_(
+                             [this]
+                             {
+                                 if (pr_actions_.size() > 2 && pr_actions_[2]) pr_actions_[2]();
+                             })),
+                     spacer{},
+                 },
+             }
+                 .stretch()
+                 .handle(pr_part_)}
+            .visible(false),
+        page{_("CI"),
+             vbox{vbox{
+                      hbox{
+                          mark(build_mark_,
+                               page_guard_([this](rap::painter& p, rap::size_f size)
+                                           { paint_mark(p, size, build_mark_state_); })),
+                          label{}.ellipsize().bind(build_summary_).stretch(),
+
+                      },
+                  }
+                      .handle(build_part_),
+                  list{matrix_model::columns(), matrix_.get()}
+                      .headers(false)
+                      .compact()
+                      .selection(rap::selection_mode::single)
+                      .bind(matrix_list_)
+                      .on_selection_changed(page_guard_(
+                          [this]
+                          {
+                              const auto sel = matrix_list_->selection();
+                              if (sel.size() != 1 || sel.front() >= matrix_->rows.size()) return;
+                              const auto& row = matrix_->rows[sel.front()];
+                              if (row.kind != matrix_model::row::job) return;
+                              ask_failure(row.w, row.j);
+                          }))
+                      .on_activate(page_guard_(
+                          [this](size_t r)
+                          {
+                              if (!sha_ || r >= matrix_->rows.size()) return;
+                              auto it = builds_.find(*sha_);
+                              if (it == builds_.end()) return;
+                              const auto& row = matrix_->rows[r];
+                              const ci_workflow& w = it->second.ci.workflows[row.w];
+                              const std::string url =
+                                  row.kind == matrix_model::row::job ? w.jobs[row.j].url : w.url;
+                              if (!url.empty()) rap::sys::open_url(url);
+                          }))
+                      .height(4_lines)
+                      .stretch(2),
+                  // Why the selected job failed.
+                  vbox{
+                      text_view{}.read_only().compact().bind(failure_title_).height(3_lines),
+                      list{annotation_model::columns(), annotation_list_.get()}
+                          .headers(false)
+                          .compact()
+                          .selection(rap::selection_mode::single)
+                          .bind(annotations_)
+                          .on_activate(page_guard_(
+                              [this](size_t r)
+                              {
+                                  if (r < annotation_list_->rows.size() &&
+                                      !annotation_list_->rows[r].url.empty())
+                                      rap::sys::open_url(annotation_list_->rows[r].url);
+                              }))
+                          .height(4_lines),
+                      text_view{}
+                          .read_only()
+                          .monospace()
+                          .wrap(false)
+                          .bind(log_tail_)
+                          .height(4_lines)
+                          .stretch(3),
+                      label{_("Open the full log")}
+                          .link(page_guard_(
+                              [this]
+                              {
+                                  if (!full_log_url_.empty()) rap::sys::open_url(full_log_url_);
+                              }))
+                          .bind(full_log_),
+                  }
+                      .stretch(3)
+                      .handle(failure_part_)}
+                 .stretch()
+                 .handle(build_body_)}
+            .visible(false),
+        page{_("Artifacts"),
+             vbox{
+                 list{artifact_model::columns(), artifact_list_.get()}
+                     .compact()
+                     .selection(rap::selection_mode::single)
+                     .bind(artifacts_)
+                     .on_selection_changed(page_guard_(
+                         [this]
+                         {
+                             const auto sel = artifacts_->selection();
+                             enable(download_, !downloading_ && sel.size() == 1 &&
+                                                   sel.front() < artifact_list_->rows.size() &&
+                                                   !artifact_list_->rows[sel.front()].expired);
+                         }))
+                     .on_activate(page_guard_([this](size_t) { download_selected(); }))
+                     .height(4_lines)
+                     .stretch(),
+                 hbox{
+                     button{_("_Download...")}.bind(download_).enabled(false).on_click(
+                         page_guard_([this] { download_selected(); })),
+                     progress_bar{}.bind(download_progress_).stretch(),
+                     spacer{},
+                 },
+                 label{}.wrap().selectable().bind(download_status_),
+             }
+                 .stretch()
+                 .handle(artifact_part_)}
+            .visible(false),
     }
-        .width(30_ch)
-        .visible(visible_)
-        .handle(root_);
+        .hide_single_tab()
+        .stretch(2)
+        .bind(tabs_)
+        .handle(root_)
+        .on_changed(page_guard_([this](int page) { selected_page_ = page; }));
 }
 
 // -- which commits are a PR's -------------------------------------------------
@@ -1041,11 +996,6 @@ void forge_panel::show_commit(std::optional<std::string> sha, std::string author
     author_name_ = std::move(author_name);
     author_email_ = std::move(author_email);
     failed_job_.reset();
-    if (!sha_ || *sha_ != matrix_sha_)
-    {
-        matrix_opened_by_user_ = false;
-        matrix_open_ = false;
-    }
     update();
 }
 
@@ -1054,6 +1004,7 @@ void forge_panel::update()
     if (!root_) return;
     update_pull_request();
     update_build();
+    sync_pages();
     update_watch();
 }
 
@@ -1121,7 +1072,7 @@ void forge_panel::update_pull_request()
     bool head = false;
     std::vector<int> others;
     const pr_entry* e = sha_ ? pull_request_of(*sha_, head, &others) : nullptr;
-    show(pr_part_, e != nullptr);
+    pr_present_ = e != nullptr;
     if (!e)
     {
         pr_url_.clear();
@@ -1138,17 +1089,20 @@ void forge_panel::update_pull_request()
 
         const std::string number = "#" + count(pr.number);
         text(pr_title_, head ? number + " " + pr.title
-                                 : rap::i18n::format(_("Part of {0}: {1}"), number, pr.title));
+                             : rap::i18n::format(_("Part of {0}: {1}"), number, pr.title));
         std::string who = pr.author.empty() ? std::string() : pr.author + " · ";
         who += rap::i18n::format(pr.draft ? _("Draft, into {0}") : _("Open, into {0}"),
                                  pr.base_branch);
         text(pr_author_, who);
-        if (!std::ranges::equal(labels_, pr.labels, [](const pr_label& a, const pr_label& b)
-            {
-                if (a.name != b.name || bool(a.color) != bool(b.color)) return false;
-                return !a.color || (a.color->r == b.color->r && a.color->g == b.color->g &&
-                                    a.color->b == b.color->b && a.color->a == b.color->a);
-            }))
+        if (!std::ranges::equal(labels_, pr.labels,
+                                [](const pr_label& a, const pr_label& b)
+                                {
+                                    if (a.name != b.name || bool(a.color) != bool(b.color))
+                                        return false;
+                                    return !a.color ||
+                                           (a.color->r == b.color->r && a.color->g == b.color->g &&
+                                            a.color->b == b.color->b && a.color->a == b.color->a);
+                                }))
         {
             labels_ = pr.labels;
             ++labels_revision_;
@@ -1169,8 +1123,7 @@ void forge_panel::update_pull_request()
         }
         // The commit's own picture is beside its text already: the PR's
         // author's only when that's someone else.
-        show(pr_avatar_,
-            !author_is(pr.author, author_name_, author_email_, e->pr.into.account));
+        show(pr_avatar_, !author_is(pr.author, author_name_, author_email_, e->pr.into.account));
 
         // Whether it can be merged, coloured as the label's tick is.
         std::string merge = merge_text(pr);
@@ -1236,8 +1189,8 @@ void forge_panel::update_pull_request()
         else if (pr_url_ != pr.url + pr.head_sha || pr_body_text_ != clean_body(pr.body))
         {
             pr_body_text_ = clean_body(pr.body);
-            text(pr_body_, pr_body_text_.empty() ? std::string(_("No description."))
-                                                     : pr_body_text_);
+            text(pr_body_,
+                 pr_body_text_.empty() ? std::string(_("No description.")) : pr_body_text_);
         }
         pr_url_ = pr.url + pr.head_sha;
 
@@ -1262,8 +1215,8 @@ void forge_panel::update_pull_request()
                 // tooltip, so the buttons keep the column narrow.
                 const size_t why = item.label.find(" (");
                 text(pr_buttons_[b], item.label.substr(0, why));
-                tooltip(pr_buttons_[b], why == std::string::npos ? std::string()
-                                                                     : menu_text(item.label));
+                tooltip(pr_buttons_[b],
+                        why == std::string::npos ? std::string() : menu_text(item.label));
                 enable(pr_buttons_[b], item.enabled);
                 show(pr_buttons_[b], true);
                 pr_actions_.push_back(item.action);
@@ -1289,40 +1242,25 @@ void forge_panel::update_build()
     }
     // Shown once there's something to show: not for a commit that's only
     // here, nor while it's asked (it's usually quick, and often nothing).
-    const bool shown = b && b->answered && !b->local && (!b->ci.empty() || !b->error.empty());
-    show(build_part_, shown);
-    const bool pr_shown = sha_ && [&]
+    const bool shown = b && b->answered && !b->local && !b->ci.empty();
+    ci_present_ = shown;
+    artifacts_present_ = b && b->artifacts_known && !b->artifacts.empty();
+    if (b && b->artifacts_known &&
+        !std::ranges::equal(artifact_list_->rows, b->artifacts,
+                            [](const ci_artifact& a, const ci_artifact& b)
+                            {
+                                return a.name == b.name && a.workflow == b.workflow &&
+                                       a.size == b.size && a.expired == b.expired &&
+                                       a.download_url == b.download_url;
+                            }))
     {
-        bool head = false;
-        return pull_request_of(*sha_, head, nullptr) != nullptr;
-    }();
-    show(top_spacer_, !pr_shown);
-    if (const bool visible = shown || pr_shown; visible != visible_)
-    {
-        visible_ = visible;
-        // The host hears while the column's still there to be measured.
-        if (!visible && host_.shown) host_.shown(false);
-        show(root_, visible);
-        if (visible && host_.shown) host_.shown(true);
+        artifact_list_->rows = b->artifacts;
+        artifact_list_->notify_reset();
+        enable(download_, false);
     }
     if (!shown)
     {
         show(failure_part_, false);
-        fit_parts(pr_shown, false);
-        return;
-    }
-
-    if (!b->error.empty() && b->ci.empty())
-    {
-        build_mark_state_ = check_state::none;
-        text(build_summary_, rap::i18n::format(_("CI: {0}"), b->error));
-        show(build_toggle_, false);
-        show(matrix_list_, false);
-        show(artifact_part_, false);
-        show(failure_part_, false);
-        fit_parts(pr_shown, false);
-        show(build_mark_, false);
-        if (old_mark != build_mark_state_) build_mark_->invalidate();
         return;
     }
 
@@ -1333,13 +1271,7 @@ void forge_panel::update_build()
     show(build_mark_, build_mark_state_ != check_state::none);
     if (old_mark != build_mark_state_) build_mark_->invalidate();
     text(build_summary_, rap::i18n::format(_("Build: {0}"), build_text(all)));
-    // Calm when it all passed: a line, opened on asking. A failure opens it.
-    if (!matrix_opened_by_user_) matrix_open_ = all.failed > 0;
-    matrix_sha_ = *sha_;
-    text(build_toggle_, matrix_open_ ? _("Hide") : _("Show all"));
-    show(build_toggle_, true);
-    show(matrix_list_, matrix_open_);
-    if (matrix_open_)
+    show(matrix_list_, true);
     {
         // The rows again keep the job picked, if it's still there.
         const auto picked = failed_job_;
@@ -1372,7 +1304,8 @@ void forge_panel::update_build()
             {
                 const auto& row = matrix_->rows[*match];
                 const ci_job& job = b->ci.workflows[row.w].jobs[row.j];
-                const bool changed = job.name != picked->name || job.id != picked->id ||
+                const bool changed =
+                    job.name != picked->name || job.id != picked->id ||
                     job.state != picked->state || job.started_at != picked->started_at ||
                     job.completed_at != picked->completed_at || job.url != picked->url ||
                     job.failure_reason != picked->failure_reason;
@@ -1389,26 +1322,12 @@ void forge_panel::update_build()
     }
     update_failure();
 
-    const bool artifacts = b->artifacts_known && !b->artifacts.empty();
-    show(artifact_part_, artifacts);
-    fit_parts(pr_shown, matrix_open_ || artifacts);
-    if (b->artifacts_known && !std::ranges::equal(artifact_list_->rows, b->artifacts,
-            [](const ci_artifact& a, const ci_artifact& b)
-            {
-                return a.name == b.name && a.workflow == b.workflow && a.size == b.size &&
-                       a.expired == b.expired && a.download_url == b.download_url;
-            }))
-    {
-        artifact_list_->rows = b->artifacts;
-        artifact_list_->notify_reset();
-        enable(download_, false);
-    }
     show(download_progress_, downloading_);
 }
 
 void forge_panel::update_failure()
 {
-    if (!failed_job_ || !matrix_open_)
+    if (!failed_job_)
     {
         show(failure_part_, false);
         return;
@@ -1446,8 +1365,10 @@ void forge_panel::update_failure()
     const std::vector<ci_annotation> notes = f ? f->annotations : std::vector<ci_annotation>{};
     show(annotations_, !notes.empty());
     if (!std::ranges::equal(annotation_list_->rows, notes,
-            [](const ci_annotation& a, const ci_annotation& b)
-            { return a.path == b.path && a.line == b.line && a.message == b.message && a.url == b.url; }))
+                            [](const ci_annotation& a, const ci_annotation& b) {
+                                return a.path == b.path && a.line == b.line &&
+                                       a.message == b.message && a.url == b.url;
+                            }))
     {
         annotation_list_->rows = notes;
         annotation_list_->notify_reset();
@@ -1705,10 +1626,10 @@ void forge_panel::download_selected()
             const std::string to = chosen.front();
             // The bar fills as the bytes come, when the forge says how many;
             // else it says it's busy.
-            download_started(a.size ? rap::i18n::format(_("Downloading {0} ({1})..."), a.name,
-                                                        size_text(a.size))
-                                    : rap::i18n::format(_("Downloading {0}..."), a.name),
-                             !a.size);
+            download_started(
+                a.size ? rap::i18n::format(_("Downloading {0} ({1})..."), a.name, size_text(a.size))
+                       : rap::i18n::format(_("Downloading {0}..."), a.name),
+                !a.size);
             download_cancel_ = std::make_shared<std::atomic<bool>>(false);
             auto progress = [this, alive = std::weak_ptr<bool>(alive_), &ui = host_.ui,
                              size = a.size, last = std::make_shared<int>(-1)](

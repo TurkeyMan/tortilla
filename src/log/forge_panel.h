@@ -1,14 +1,7 @@
-// The log's forge panel: a column beside the commit's text and files with
-// what the forge knows of the selected commit, in two parts, each shown only
-// when it has something to say (and the column only when either does):
-// - Pull request: the PR the commit belongs to (its head, or one of its
-//   commits), with whether it can be merged, its head's checks in a line,
-//   its reviews, its description and its actions.
-// - Build: the commit's own CI, by workflow and job (a matrix grouped), a
-//   failed job's step, annotations and log's tail, and the artifacts its
-//   runs left, to download.
-// Everything the forge is asked goes on a worker thread, only for what's on
-// show, and is kept: a finished run doesn't change.
+// The log's lower pages: Commit (supplied by the log tab), then the PR,
+// selected commit's CI, and artifacts. Conditional pages retain their
+// indices and the user's choice while visible. Finished forge answers are
+// cached; unchanged presentation does not mutate the native controls.
 #pragma once
 
 #include "forge/ci.h"
@@ -45,8 +38,6 @@ public:
         // A pull request's actions (Open, Merge..., Close...): the log's
         // menu for it, which the buttons follow.
         std::function<rap::menu(const open_pr&)> actions;
-        // The column shown or hidden.
-        std::function<void(bool)> shown;
         // The commit on show, where its CI is, and whether its checks run:
         // for pr_watch's quick asks, which come back through commit_checks.
         std::function<void(std::optional<std::string>, std::optional<forge_remote>, bool)> watch;
@@ -57,21 +48,14 @@ public:
     forge_panel(const forge_panel&) = delete;
     forge_panel& operator=(const forge_panel&) = delete;
 
-    // The column, for the window's layout: shown or hidden as it last was.
-    // Called again for each page the log builds.
-    rap::node layout();
-    // Once the window's built: follows the divider between the PR's part
-    // and the build's, draws what's known, and, the column shown, says so
-    // (host::shown).
+    // The lower pane: Commit content and conditional forge pages.
+    // Choice belongs to this log tab and survives a page rebuild/tear-off.
+    rap::node layout(rap::node commit = {});
     void built();
-    // The page going: its widgets forgotten and their timers stopped. What
-    // the panel knows, and its asking, carry on for the next page.
     void unbind();
-    // Those parts' heights as the divider was last dragged with both shown,
-    // put back whenever both show again; for saving. Empty: as they stretch.
-    const std::vector<float>& part_sizes() const { return part_sizes_; }
-    void set_part_sizes(std::vector<float> sizes);
-    // Actual forge pane width, from the host's existing splitter/resize watch.
+    int selected_page() const { return selected_page_; }
+    void select_page(int page);
+    // Actual full lower-area width, from the host's existing resize watch.
     void set_available_width(float width);
 
     // The open pull requests and the forge remotes, as pr_watch last heard;
@@ -117,7 +101,7 @@ private:
     void update();
     void update_pull_request();
     void update_build();
-    void fit_parts(bool pr, bool lists);
+    void sync_pages();
     void update_failure();
     void update_watch();
     void ask_details(const pr_entry&);
@@ -157,9 +141,10 @@ private:
     std::map<std::int64_t, std::string> failure_errors_;
     std::set<std::int64_t> failures_asked_;
     std::optional<ci_job> failed_job_;  // the job picked in the matrix
-    bool visible_ = false;
-    bool matrix_open_ = false, matrix_opened_by_user_ = false;
-    std::string matrix_sha_;
+    rap::tabs* tabs_ = nullptr;
+    int selected_page_ = 0;
+    bool restore_page_ = true;
+    bool pr_present_ = false, ci_present_ = false, artifacts_present_ = false;
     rap::subscription poll_timer_, download_timer_;
     std::chrono::steady_clock::time_point poll_after_{};  // the answer the poll timer follows
     bool downloading_ = false;
@@ -227,25 +212,10 @@ private:
     rap::label* pr_also_ = nullptr;
     std::array<rap::button*, 3> pr_buttons_{};
     std::vector<std::function<void()>> pr_actions_;
-    rap::splitter* parts_ = nullptr;  // the PR and the build's line; the build's lists
-    std::vector<float> part_sizes_;
-    // What the divider has above and below it: fit_parts sets its place
-    // again only when this changes.
-    enum class parts
-    {
-        unknown,
-        one,           // nothing below it
-        pr_and_lists,  // a PR above
-        lists,         // only the build's line above
-    };
-    parts parts_state_ = parts::unknown;
-    rap::subscription parts_retry_;  // a place put off until there's a layout
-    rap::widget* top_spacer_ = nullptr;
     rap::widget* build_body_ = nullptr;
     rap::widget* build_part_ = nullptr;
     rap::canvas* build_mark_ = nullptr;
     rap::label* build_summary_ = nullptr;
-    rap::label* build_toggle_ = nullptr;
     rap::list* matrix_list_ = nullptr;
     rap::widget* failure_part_ = nullptr;
     rap::text_view* failure_title_ = nullptr;

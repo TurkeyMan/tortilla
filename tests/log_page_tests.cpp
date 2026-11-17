@@ -71,17 +71,59 @@ struct forge_panel_test
     static rap::stack* label_stack(forge_panel& p) { return p.pr_labels_; }
     static rap::label* title(forge_panel& p) { return p.pr_title_; }
     static float label_width(const forge_panel& p)
-    { return p.labels_rendered_ ? p.labels_rendered_->width : 0; }
+    {
+        return p.labels_rendered_ ? p.labels_rendered_->width : 0;
+    }
     static float label_height(const forge_panel& p)
-    { return p.labels_rendered_ ? p.labels_rendered_->height : 0; }
+    {
+        return p.labels_rendered_ ? p.labels_rendered_->height : 0;
+    }
     static void labels(forge_panel& p, std::vector<pr_label> labels)
-    { p.prs_[0].pr.pr.labels = std::move(labels); }
+    {
+        p.prs_[0].pr.pr.labels = std::move(labels);
+    }
     static void build(forge_panel& p)
     {
         auto& b = p.builds_["head"];
         b.local = false;
         b.ci.workflows = {{.jobs = {{.name = "test", .state = check_state::failure}}}};
     }
+    static void presence(forge_panel& p, bool pr, bool ci, bool artifacts)
+    {
+        if (pr)
+        {
+            open_pr item;
+            item.pr.number = 42;
+            item.pr.title = "A useful change";
+            item.pr.head_sha = "head";
+            item.pr.body_known = item.pr.reviews_known = true;
+            p.prs_ = {{.pr = item, .commits = {"head", "one", "two"}, .known = true}};
+        }
+        else
+            p.prs_.clear();
+        for (const char* sha : {"head", "one", "two"})
+        {
+            auto& b = p.builds_[sha];
+            b.asked = b.answered = b.artifacts_known = true;
+            b.local = false;
+            b.ci.workflows =
+                ci ? std::vector<ci_workflow>{{.jobs = {{.name = "test",
+                                                         .state = check_state::success}}}}
+                   : std::vector<ci_workflow>{};
+            ci_artifact artifact;
+            artifact.name = "app.zip";
+            b.artifacts =
+                artifacts ? std::vector<ci_artifact>{artifact} : std::vector<ci_artifact>{};
+        }
+    }
+    static void present_commit(forge_panel& p, const std::string& sha)
+    {
+        presence(p, true, true, true);
+        p.prs_[0].commits.push_back(sha);
+        p.prs_[0].pr.pr.head_sha = sha;
+        p.builds_[sha] = p.builds_["head"];
+    }
+    static rap::tabs* pages(forge_panel& p) { return p.tabs_; }
     static rap::list* matrix(forge_panel& p) { return p.matrix_list_; }
     static bool picked(const forge_panel& p) { return p.failed_job_.has_value(); }
     static std::optional<ci_job> picked_job(const forge_panel& p) { return p.failed_job_; }
@@ -114,6 +156,7 @@ struct forge_panel_test
 // its labels, as far as busy_reason can tell.
 struct log_tab_test
 {
+    static forge_panel& forge(log_tab& t) { return *t.forge_panel_; }
     static void edit_filter(log_tab& t, const std::string& text) { t.edit_filter(text); }
     static const std::string& search(const log_tab& t) { return t.search_text_; }
     static const log_filter& filter(const log_tab& t) { return t.filter_; }
@@ -166,7 +209,12 @@ public:
         ++g_forge_writes;
         shown = on;
     }
-    void set_tooltip(const std::string& value) override { touch(); ++g_forge_writes; tip = value; }
+    void set_tooltip(const std::string& value) override
+    {
+        touch();
+        ++g_forge_writes;
+        tip = value;
+    }
     void focus() override
     {
         touch();
@@ -380,36 +428,71 @@ class kept_canvas : public kept<rap::canvas>
 public:
     explicit kept_canvas(rap::canvas& inner, std::optional<rap::size_f> allocated = {},
                          std::function<void(std::function<void()>)> post = {})
-        : inner_(inner), allocated_(allocated), post_(std::move(post)) {}
-    void invalidate() override { touch(); ++g_forge_invalidates; inner_.invalidate(); request_paint(); }
+        : inner_(inner)
+        , allocated_(allocated)
+        , post_(std::move(post))
+    {
+    }
+    void invalidate() override
+    {
+        touch();
+        ++g_forge_invalidates;
+        inner_.invalidate();
+        request_paint();
+    }
     rap::size_f size() const override { return allocated_ ? *allocated_ : inner_.size(); }
     float device_scale() const override { return inner_.device_scale(); }
     void set_cursor(rap::cursor c) override { inner_.set_cursor(c); }
     void on_paint(std::function<void(rap::painter&, rap::size_f)> f) override
-    { paint = f; inner_.on_paint(std::move(f)); request_paint(); }
+    {
+        paint = f;
+        inner_.on_paint(std::move(f));
+        request_paint();
+    }
     void on_resize(std::function<void(rap::size_f)> f) override { inner_.on_resize(std::move(f)); }
-    void on_pointer(std::function<bool(const rap::pointer_event&)> f) override { inner_.on_pointer(std::move(f)); }
-    void on_scroll(std::function<bool(const rap::scroll_event&)> f) override { inner_.on_scroll(std::move(f)); }
-    void on_key(std::function<bool(const rap::key_event&)> f) override { inner_.on_key(std::move(f)); }
-    rap::subscription on_frame(std::function<void(double)> f) override { return inner_.on_frame(std::move(f)); }
+    void on_pointer(std::function<bool(const rap::pointer_event&)> f) override
+    {
+        inner_.on_pointer(std::move(f));
+    }
+    void on_scroll(std::function<bool(const rap::scroll_event&)> f) override
+    {
+        inner_.on_scroll(std::move(f));
+    }
+    void on_key(std::function<bool(const rap::key_event&)> f) override
+    {
+        inner_.on_key(std::move(f));
+    }
+    rap::subscription on_frame(std::function<void(double)> f) override
+    {
+        return inner_.on_frame(std::move(f));
+    }
     rap::frame_target target() const override { return inner_.target(); }
-    void on_frame_target(std::function<void(const rap::frame_target&)> f) override { inner_.on_frame_target(std::move(f)); }
-    void present(std::shared_ptr<const rap::image> image, rap::frame_color c = {}) override { inner_.present(std::move(image), c); }
+    void on_frame_target(std::function<void(const rap::frame_target&)> f) override
+    {
+        inner_.on_frame_target(std::move(f));
+    }
+    void present(std::shared_ptr<const rap::image> image, rap::frame_color c = {}) override
+    {
+        inner_.present(std::move(image), c);
+    }
     void clear_frame() override { inner_.clear_frame(); }
     std::function<void(rap::painter&, rap::size_f)> paint;
     rap::size_f painted_size;
     std::vector<std::string> painted_strings;
     std::vector<rap::rect_f> painted_rectangles;
     int allocated_paints = 0;
+
 private:
     void request_paint()
     {
         if (!allocated_ || !post_ || !g_allocated_canvas_paint) return;
-        post_([this]
-        {
-            if (!dead && paint && g_allocated_canvas_paint && allocated_->w > 0 && allocated_->h > 0)
-                g_allocated_canvas_paint(*this, *allocated_);
-        });
+        post_(
+            [this]
+            {
+                if (!dead && paint && g_allocated_canvas_paint && allocated_->w > 0 &&
+                    allocated_->h > 0)
+                    g_allocated_canvas_paint(*this, *allocated_);
+            });
     }
     rap::canvas& inner_;
     std::optional<rap::size_f> allocated_;
@@ -431,7 +514,11 @@ public:
 class kept_button : public kept<rap::button>
 {
 public:
-    void set_text(const std::string&) override { touch(); ++g_forge_writes; }
+    void set_text(const std::string&) override
+    {
+        touch();
+        ++g_forge_writes;
+    }
     void set_icon(const rap::icon&) override { touch(); }
     void on_click(std::function<void()> f) override { click = std::move(f); }
     std::function<void()> click;
@@ -516,6 +603,7 @@ public:
 
 class kept_stack;
 class kept_tabs;
+class kept_pages;
 class kept_window;
 
 // What one window was built with, of those kept here, and how to poison
@@ -532,22 +620,22 @@ struct built_window
     std::vector<std::function<void()>> poison;
     kept_window* window = nullptr;
     kept_tabs* tabs = nullptr;
+    std::vector<kept_pages*> page_tabs;
     kept_stack* stack = nullptr;
     // While a stack's page is built: where its widgets' poison goes too.
     std::vector<std::function<void()>>* page = nullptr;
     std::optional<rap::size_f> page_canvas_size;
 };
 
-// The pinned Win32 stack measures its page root's natural size directly.
-// A raw canvas is naturally64x64; only a containing box consumes the
-// canvas child's explicit extents. Preserve that distinction here so a
-// requested width cannot masquerade as a real allocated/painted width.
-rap::size_f allocated_page_size(const rap::node& n)
+// ABI 89 (#92) honors explicit extents on a stack page's root too.
+rap::size_f allocated_page_size(const rap::node& n);
+rap::size_f natural_page_size(const rap::node& n)
 {
     if (std::holds_alternative<rap::spec::canvas>(n.spec)) return {64, 64};
     if (const auto* label = std::get_if<rap::spec::label>(&n.spec))
     {
-        const auto* kept_label_widget = label->bind ? dynamic_cast<kept_label*>(*label->bind) : nullptr;
+        const auto* kept_label_widget =
+            label->bind ? dynamic_cast<kept_label*>(*label->bind) : nullptr;
         const auto& text = kept_label_widget ? kept_label_widget->text : label->text;
         return {float(text.size() * 7), 14};
     }
@@ -578,12 +666,96 @@ rap::size_f allocated_page_size(const rap::node& n)
         s.w = extent(child.common.width, s.w);
         s.h = extent(child.common.height, s.h);
         if (box->dir == rap::orientation::horizontal)
-        { size.w += s.w; size.h = std::max(size.h, s.h); }
+        {
+            size.w += s.w;
+            size.h = std::max(size.h, s.h);
+        }
         else
-        { size.h += s.h; size.w = std::max(size.w, s.w); }
+        {
+            size.h += s.h;
+            size.w = std::max(size.w, s.w);
+        }
     }
     return size;
 }
+
+rap::size_f allocated_page_size(const rap::node& n)
+{
+    auto size = natural_page_size(n);
+    auto extent = [](rap::extent e, float natural)
+    {
+        switch (e.unit)
+        {
+        case rap::extent::unit::px: return e.value;
+        case rap::extent::unit::chars: return e.value * 7;
+        case rap::extent::unit::lines: return e.value * 14;
+        default: return natural;
+        }
+    };
+    size.w = extent(n.common.width, size.w);
+    size.h = extent(n.common.height, size.h);
+    return size;
+}
+
+// A real null tabs control wrapped for mutation/strip/poison observations.
+// New ABI 89 virtuals forward to null, so silent fallback is its actual behavior.
+class kept_pages : public kept<rap::tabs>
+{
+public:
+    kept_pages(rap::tabs& inner, const rap::spec::tabs& spec)
+        : inner_(inner)
+        , hide_single(spec.hide_single_tab)
+        , initial(spec.visible)
+        , titles(spec.titles)
+    {
+    }
+    int current() const override
+    {
+        touch();
+        return dead ? -1 : inner_.current();
+    }
+    void set_current(int page) override
+    {
+        touch();
+        ++g_forge_writes;
+        if (!dead) inner_.set_current(page);
+    }
+    void on_changed(std::function<void(int)> f) override
+    {
+        touch();
+        changed = std::move(f);
+        if (!dead) inner_.on_changed(changed);
+    }
+    void set_page_visible(int page, bool visible) override
+    {
+        touch();
+        ++g_forge_writes;
+        if (!dead) inner_.set_page_visible(page, visible);
+    }
+    bool page_visible(int page) const override
+    {
+        touch();
+        return !dead && inner_.page_visible(page);
+    }
+    void click(int page)
+    {
+        set_current(page);
+        if (changed) changed(current());
+    }
+    bool strip_shown() const
+    {
+        std::vector<bool> visible;
+        for (int i = 0; i < int(titles.size()); ++i) visible.push_back(page_visible(i));
+        return rap::tabs_strip_shown(visible, int(titles.size()), hide_single);
+    }
+    bool hide_single;
+    std::vector<bool> initial;
+    std::vector<std::string> titles;
+    std::function<void(int)> changed;
+
+private:
+    rap::tabs& inner_;
+};
 
 // A window's document tabs: what they're told, and the user's clicks, which
 // call the handlers as the strip would.
@@ -718,7 +890,8 @@ public:
         if (g_allocated_canvas_paint) allocated_sizes_[id] = allocated_page_size(content);
         auto& poison = pages_[id];
         auto* outer = std::exchange(built_.page, &poison);
-        const auto old_size = std::exchange(built_.page_canvas_size,
+        const auto old_size = std::exchange(
+            built_.page_canvas_size,
             g_allocated_canvas_paint ? std::optional{allocated_page_size(content)} : std::nullopt);
         inner_.add(id, std::move(content));
         built_.page_canvas_size = old_size;
@@ -1026,7 +1199,8 @@ private:
             }
             else if (std::holds_alternative<rap::spec::canvas>(n.spec))
                 mine = keep<kept_canvas>(static_cast<rap::canvas&>(w), b.page_canvas_size,
-                    [&backend = backend_](std::function<void()> f) { backend.post(std::move(f)); });
+                                         [&backend = backend_](std::function<void()> f)
+                                         { backend.post(std::move(f)); });
             else if (std::holds_alternative<rap::spec::label>(n.spec))
                 mine = keep<kept_label>();
             else if (const auto* s = std::get_if<rap::spec::button>(&n.spec))
@@ -1048,6 +1222,12 @@ private:
             }
             else if (std::holds_alternative<rap::spec::progress_bar>(n.spec))
                 mine = keep<kept_progress>();
+            else if (const auto* s = std::get_if<rap::spec::tabs>(&n.spec))
+            {
+                auto* tabs = keep<kept_pages>(static_cast<rap::tabs&>(w), *s);
+                b.page_tabs.push_back(tabs);
+                mine = tabs;
+            }
             else if (std::holds_alternative<rap::spec::stack>(n.spec))
             {
                 auto* stack = keep<kept_stack>(static_cast<rap::stack&>(w), b,
@@ -1195,12 +1375,11 @@ page last_page()
             p.files = l;
             p.file_rows = f;
         }
-    // The list over the rest, the forge column beside the commit's text and
-    // files, then the text over the files (log_tab_page.cpp).
-    if (b.splitters.size() >= 3)
+    // The list over the lower tabs, then Commit's text over its files.
+    if (b.splitters.size() >= 2)
     {
         p.panes = b.splitters[0];
-        p.details = b.splitters[2];
+        p.details = b.splitters[1];
     }
     for (kept_entry* e : b.entries)
         if (e->clearable)
@@ -1261,11 +1440,19 @@ void page_tests(rap::ui& ui, const std::string& repo,
         tab->bind_page(std::move(view));
         return w;
     };
+    settings::get().set_numbers("log.panes.forge", {300, 200});
+    settings::get().set_numbers("log.panes.forge.parts", {200, 100});
+    settings::get().set_numbers("log.panes.details", {90, 110});
     auto window = build(std::nullopt);
     page p = last_page();
     check(p.commits && p.files && p.panes && p.details && p.search && p.path_filter,
           "log page: its lists, panes and filter boxes are found");
     if (!p.commits || !p.files || !p.panes || !p.details || !p.search || !p.path_filter) return;
+    check(settings::get().numbers("log.panes.forge").empty() &&
+              settings::get().numbers("log.panes.forge.parts").empty() &&
+              p.details->sizes_ == std::vector<float>{90, 110},
+          "forge tabs: obsolete divider settings dropped while Commit message/files split is "
+          "retained");
     log_model& log = *p.log;
     tab->start(false);
     const bool ready = pump(
@@ -1414,17 +1601,34 @@ class forge_painter : public rap::painter
 public:
     rap::color resolve(const rap::paint&) const override { return {0, 0, 0}; }
     void line(rap::point_f, rap::point_f, const rap::paint&, float, rap::line_cap) override {}
-    void curve(rap::point_f, rap::point_f, rap::point_f, rap::point_f, const rap::paint&, float) override {}
-    void circle(rap::point_f, float, std::optional<rap::paint>, std::optional<rap::paint>) override {}
-    void rect(rap::rect_f r, float, std::optional<rap::paint>, std::optional<rap::paint>) override { rectangles.push_back(r); }
-    void polygon(const std::vector<rap::point_f>&, std::optional<rap::paint>, std::optional<rap::paint>, float) override {}
+    void curve(rap::point_f, rap::point_f, rap::point_f, rap::point_f, const rap::paint&,
+               float) override
+    {
+    }
+    void circle(rap::point_f, float, std::optional<rap::paint>, std::optional<rap::paint>) override
+    {
+    }
+    void rect(rap::rect_f r, float, std::optional<rap::paint>, std::optional<rap::paint>) override
+    {
+        rectangles.push_back(r);
+    }
+    void polygon(const std::vector<rap::point_f>&, std::optional<rap::paint>,
+                 std::optional<rap::paint>, float) override
+    {
+    }
     void arc(rap::point_f, float, float, float, const rap::paint&, float, rap::line_cap) override {}
     void image(const rap::image&, rap::rect_f, rap::rect_f, rap::filter, float) override {}
     float device_scale() const override { return 1; }
     void push_clip(rap::rect_f) override {}
     void pop_clip() override {}
-    void text(rap::point_f, const std::string& text, const rap::text_style&) override { strings.push_back(text); }
-    rap::size_f measure(const std::string& text, const rap::text_style&) const override { return {float(text.size() * 7), 12}; }
+    void text(rap::point_f, const std::string& text, const rap::text_style&) override
+    {
+        strings.push_back(text);
+    }
+    rap::size_f measure(const std::string& text, const rap::text_style&) const override
+    {
+        return {float(text.size() * 7), 12};
+    }
     std::vector<rap::rect_f> rectangles;
     std::vector<std::string> strings;
 };
@@ -1446,10 +1650,8 @@ void forge_presentation_tests(rap::ui& ui, const std::string& repo)
     forge_panel panel({.ui = ui, .workdir = repo});
     panel.set_available_width(192);
     const auto layout = panel.layout();
-    const auto& outer = std::get<rap::spec::box>(layout.spec);
-    const auto& splitter = std::get<rap::spec::splitter>(outer.items.front().spec);
-    const auto& top = std::get<rap::spec::box>(splitter.panes.front().spec);
-    const auto& pr = std::get<rap::spec::box>(top.items.front().spec);
+    const auto& pages = std::get<rap::spec::tabs>(layout.spec);
+    const auto& pr = std::get<rap::spec::box>(pages.pages[1].spec);
     const auto* header = std::get_if<rap::spec::box>(&pr.items.front().spec);
     check(header && header->dir == rap::orientation::horizontal && header->items.size() == 2 &&
               std::holds_alternative<rap::spec::label>(header->items[0].spec) &&
@@ -1474,8 +1676,8 @@ void forge_presentation_tests(rap::ui& ui, const std::string& repo)
     reset();
     if (chip_canvas && chip_canvas->paint) chip_canvas->paint(chips, {87, 24});
     settle(ui);
-    check(g_forge_pages == 0 && chips.rectangles.size() == 2 &&
-              chips.rectangles[0].x == 0 && chips.rectangles[1].x + chips.rectangles[1].w == 87 &&
+    check(g_forge_pages == 0 && chips.rectangles.size() == 2 && chips.rectangles[0].x == 0 &&
+              chips.rectangles[1].x + chips.rectangles[1].w == 87 &&
               forge_panel_test::label_width(panel) == 87,
           "forge presentation: chip strip reserves intrinsic shown width, no paint feedback");
     check(chip_canvas && chip_canvas->tip == "bug\nreview",
@@ -1521,13 +1723,15 @@ void forge_presentation_tests(rap::ui& ui, const std::string& repo)
         forge_panel_test::refresh(panel);
         forge_painter mark_paint;
         if (mark && mark->paint) mark->paint(mark_paint, {16, 16});
-        check(mark_paint.rectangles.empty(), "forge presentation: marks leave panel background untouched");
+        check(mark_paint.rectangles.empty(),
+              "forge presentation: marks leave panel background untouched");
     }
     forge_panel_test::build(panel);
     forge_panel_test::refresh(panel);
     auto* matrix = dynamic_cast<kept_list*>(forge_panel_test::matrix(panel));
     if (matrix) matrix->click({0}, 0);
-    check(forge_panel_test::picked(panel), "forge presentation: selecting a CI job records the picked job");
+    check(forge_panel_test::picked(panel),
+          "forge presentation: selecting a CI job records the picked job");
     forge_observer observer;
     if (matrix && matrix->model) matrix->model->add_observer(&observer);
     reset();
@@ -1541,21 +1745,26 @@ void forge_presentation_tests(rap::ui& ui, const std::string& repo)
     check(picked && picked->id == 71 && picked->url == "https://forge.invalid/job/71" &&
               picked->failure_reason == "new failure reason" && g_forge_selects == 0 &&
               forge_panel_test::failure_url(panel) == picked->url &&
-              forge_panel_test::failure_title(panel).find("new failure reason") != std::string::npos,
-          "forge presentation: same selected row refreshes id, URL and failure reason without reselect");
+              forge_panel_test::failure_title(panel).find("new failure reason") !=
+                  std::string::npos,
+          "forge presentation: same selected row refreshes id, URL and failure reason without "
+          "reselect");
     reset();
-    forge_panel_test::job_metadata(panel, 71, "https://forge.invalid/job/71-new", "new failure reason");
+    forge_panel_test::job_metadata(panel, 71, "https://forge.invalid/job/71-new",
+                                   "new failure reason");
     forge_panel_test::refresh(panel);
     check(forge_panel_test::failure_url(panel) == "https://forge.invalid/job/71-new" &&
               g_forge_writes == 0 && g_forge_selects == 0 && g_forge_invalidates == 0,
           "forge presentation: changed URL refreshes link without repainting identical content");
     reset();
     forge_panel_test::refresh(panel);
-    check(g_forge_writes == 0 && g_forge_selects == 0 && g_forge_pages == 0 && g_forge_invalidates == 0,
+    check(g_forge_writes == 0 && g_forge_selects == 0 && g_forge_pages == 0 &&
+              g_forge_invalidates == 0,
           "forge presentation: identical metadata poll touches no native state");
     if (matrix && matrix->model) matrix->model->remove_observer(&observer);
     reset();
-    forge_panel_test::labels(panel, {{"a-very-long-label", std::nullopt}, {"second", std::nullopt}});
+    forge_panel_test::labels(panel,
+                             {{"a-very-long-label", std::nullopt}, {"second", std::nullopt}});
     forge_panel_test::refresh(panel);
     check(g_forge_pages == 2, "forge presentation: changed labels build one measurement page");
     chip_canvas = dynamic_cast<kept_canvas*>(forge_panel_test::labels(panel));
@@ -1577,9 +1786,10 @@ void forge_presentation_tests(rap::ui& ui, const std::string& repo)
     chip_canvas = dynamic_cast<kept_canvas*>(forge_panel_test::labels(panel));
     forge_painter partial;
     if (chip_canvas && chip_canvas->paint) chip_canvas->paint(partial, {80, 24});
-    check(partial.rectangles.size() == 2 && partial.strings == std::vector<std::string>{"second", "+1"} &&
-              partial.rectangles[0].y == partial.rectangles[1].y &&
-              partial.rectangles[0].x == 0 && partial.rectangles[1].x + partial.rectangles[1].w == 80,
+    check(partial.rectangles.size() == 2 &&
+              partial.strings == std::vector<std::string>{"second", "+1"} &&
+              partial.rectangles[0].y == partial.rectangles[1].y && partial.rectangles[0].x == 0 &&
+              partial.rectangles[1].x + partial.rectangles[1].w == 80,
           "forge presentation: complete label plus counter take only their content width");
     panel.set_available_width(46);
     settle(ui);
@@ -1648,8 +1858,7 @@ void forge_fresh_canvas_tests(rap::ui& ui, const std::string& repo)
     };
     forge_panel panel({.ui = ui, .workdir = repo});
     const auto layout = panel.layout();
-    const auto& split = std::get<rap::spec::splitter>(std::get<rap::spec::box>(layout.spec).items[0].spec);
-    const auto& pr = std::get<rap::spec::box>(std::get<rap::spec::box>(split.panes[0].spec).items[0].spec);
+    const auto& pr = std::get<rap::spec::box>(std::get<rap::spec::tabs>(layout.spec).pages[1].spec);
     const auto& header = pr.items[0];
     auto window = ui.create(rap::layout::window{"Forge fresh", {layout}});
     panel.built();
@@ -1665,7 +1874,8 @@ void forge_fresh_canvas_tests(rap::ui& ui, const std::string& repo)
     auto canvas = [&] { return dynamic_cast<kept_canvas*>(forge_panel_test::labels(panel)); };
     auto* visible_stack = dynamic_cast<kept<rap::stack>*>(forge_panel_test::label_stack(panel));
     check(!allocations.empty() && allocations.front().w >= 64 && allocations.front().h == 24 &&
-              visible_stack && visible_stack->shown && canvas() && canvas()->shown && canvas()->allocated_paints > 0 &&
+              visible_stack && visible_stack->shown && canvas() && canvas()->shown &&
+              canvas()->allocated_paints > 0 &&
               canvas()->painted_strings == std::vector<std::string>{"+1"},
           "forge fresh: unknown-cap label set gets viable allocation and paints naturally");
     check(canvas() && canvas()->painted_size.h == 18 &&
@@ -1701,7 +1911,7 @@ void forge_fresh_canvas_tests(rap::ui& ui, const std::string& repo)
     check(canvas() && canvas()->allocated_paints > 0 && canvas()->painted_size.w == 87 &&
               canvas()->painted_size.h == 18 && allocated_page_size(header).h == 18 &&
               canvas()->painted_strings == std::vector<std::string>{"pm-approved"},
-          "forge fresh: empty-to-new labels bootstrap through declared box sizing");
+          "forge fresh: empty-to-new labels bootstrap through fixed root sizing");
     forge_panel_test::labels(panel, {{"stale measurement", std::nullopt}});
     forge_panel_test::refresh(panel);
     forge_panel_test::labels(panel, {});
@@ -1717,17 +1927,143 @@ void forge_fresh_canvas_tests(rap::ui& ui, const std::string& repo)
     g_stack_allocations.clear();
 }
 
+// Stable lower-page indices and silent fallback, with the real null tabs
+// implementation behind the keeping wrapper (not an emulated selection).
+void forge_tabs_tests(rap::ui& ui, const std::string& repo)
+{
+    using namespace rap::layout;
+    forge_panel panel({.ui = ui, .workdir = repo});
+    const auto layout = panel.layout(label{"Commit contents"});
+    const auto& spec = std::get<rap::spec::tabs>(layout.spec);
+    check(spec.titles == std::vector<std::string>{"Commit", "PR", "CI", "Artifacts"} &&
+              spec.visible == std::vector<bool>{true, false, false, false} && spec.hide_single_tab,
+          "forge tabs: Commit fills lower area, conditional pages initially hidden and strip "
+          "collapses");
+    auto window = ui.create(rap::layout::window{"Lower tabs", {layout}});
+    panel.built();
+    auto tabs = [&] { return dynamic_cast<kept_pages*>(forge_panel_test::pages(panel)); };
+    check(tabs() && tabs()->current() == 0 && !tabs()->strip_shown(),
+          "forge tabs: Commit alone starts without a strip");
+    forge_panel_test::presence(panel, true, false, false);
+    panel.show_commit("head");
+    check(tabs()->page_visible(1) && !tabs()->page_visible(2) && !tabs()->page_visible(3) &&
+              tabs()->strip_shown() && panel.selected_page() == 0,
+          "forge tabs: PR appears without selecting it and restores the strip");
+    tabs()->click(1);
+    forge_panel_test::presence(panel, true, true, true);
+    forge_panel_test::refresh(panel);
+    check(tabs()->current() == 1 && tabs()->page_visible(2) && tabs()->page_visible(3),
+          "forge tabs: CI and artifacts appearing keep the chosen PR page");
+    tabs()->click(2);
+    panel.show_commit("one");
+    check(tabs()->current() == 2 && panel.selected_page() == 2,
+          "forge tabs: a new log row with CI keeps the chosen CI page");
+    g_forge_writes = g_forge_pages = g_forge_invalidates = 0;
+    forge_panel_test::refresh(panel);
+    check(g_forge_writes == 0 && g_forge_pages == 0 && g_forge_invalidates == 0,
+          "forge tabs: identical presentation and visibility do no native work");
+    forge_panel_test::presence(panel, true, false, true);
+    forge_panel_test::refresh(panel);
+    check(tabs()->current() == 3 && panel.selected_page() == 3,
+          "forge tabs: hiding chosen CI records the silent nearest-after fallback");
+    forge_panel_test::presence(panel, true, false, false);
+    forge_panel_test::refresh(panel);
+    check(tabs()->current() == 1 && panel.selected_page() == 1,
+          "forge tabs: hiding chosen artifacts records nearest-before PR");
+    forge_panel_test::presence(panel, false, false, false);
+    forge_panel_test::refresh(panel);
+    check(tabs()->current() == 0 && !tabs()->strip_shown() && panel.selected_page() == 0,
+          "forge tabs: Commit-only hides the strip again and records fallback");
+    forge_panel_test::presence(panel, false, true, true);
+    forge_panel_test::refresh(panel);
+    check(tabs()->current() == 0 && tabs()->strip_shown(),
+          "forge tabs: later pages do not restore a stale choice after fallback");
+    tabs()->click(3);
+    const int chosen = panel.selected_page();
+    panel.unbind();
+    window.reset();
+    settle(ui);
+    window = ui.create(rap::layout::window{"Lower tabs rebuilt", {panel.layout(label{"Commit"})}});
+    panel.built();
+    check(chosen == 3 && tabs()->current() == 3 && panel.selected_page() == 3,
+          "forge tabs: rebuilding the log page restores its own visible choice");
+    forge_panel other({.ui = ui, .workdir = repo});
+    forge_panel_test::presence(other, false, true, true);
+    auto other_window =
+        ui.create(rap::layout::window{"Other log", {other.layout(label{"Commit"})}});
+    other.built();
+    other.show_commit("head");
+    check(other.selected_page() == 0 && panel.selected_page() == 3,
+          "forge tabs: choices belong to each log tab, not the window or all logs");
+    panel.unbind();
+    other.unbind();
+    other_window.reset();
+    window.reset();
+    settle(ui);
+}
+
+void lower_page_view_tests(rap::ui& ui, const std::string& repo)
+{
+    auto opened = log_tab::open(ui, repo);
+    if (!opened)
+    {
+        check(false, "forge tabs: repository opens for view carry");
+        return;
+    }
+    auto tab = std::move(*opened);
+    test_host host;
+    tab->set_host(&host);
+    auto build = [&](std::optional<log_view_state> view)
+    {
+        auto window = ui.create(rap::layout::window{"View carry", {tab->build_page()}});
+        host.w = window.get();
+        tab->bind_page(std::move(view));
+        return window;
+    };
+    auto window = build(std::nullopt);
+    tab->start(false);
+    auto page = last_page();
+    if (!pump(ui, [&] { return !page.log->loading() && page.log->commit_rows() > 0; }))
+    {
+        check(false, "forge tabs: history loads for view carry");
+        tab->drop_page();
+        return;
+    }
+    size_t row = 0;
+    while (row < page.log->row_count() && !page.log->commit(row)) ++row;
+    if (row >= page.log->row_count())
+    {
+        tab->drop_page();
+        return;
+    }
+    const auto sha = page.log->commit(row)->id.hex();
+    auto& panel = log_tab_test::forge(*tab);
+    forge_panel_test::present_commit(panel, sha);
+    page.commits->click({row}, row);
+    panel.select_page(2);
+    auto view = tab->capture_view();
+    check(view.lower_page == 2,
+          "forge tabs: selected CI page is captured in per-log-tab view state");
+    tab->drop_page();
+    window.reset();
+    host.w = nullptr;
+    window = build(std::move(view));
+    settle(ui);
+    check(panel.selected_page() == 2 && forge_panel_test::pages(panel)->current() == 2,
+          "forge tabs: rebuilt or adopted log page restores its CI choice with the commit");
+    tab->drop_page();
+    tab.reset();
+    window.reset();
+    settle(ui);
+}
+
 // A download's line under the forge panel's artifacts, across pages built
 // while it runs and after it ends.
 void forge_download_tests(rap::ui& ui, const std::string& repo)
 {
     using t = forge_panel_test;
-    forge_panel panel(forge_panel::host{.ui = ui,
-                                        .window = [] { return nullptr; },
-                                        .workdir = repo,
-                                        .actions = {},
-                                        .shown = {},
-                                        .watch = {}});
+    forge_panel panel(forge_panel::host{
+        .ui = ui, .window = [] { return nullptr; }, .workdir = repo, .actions = {}, .watch = {}});
     auto build = [&]
     {
         auto w = ui.create(rap::layout::window{"Forge", {panel.layout()}});
@@ -1908,7 +2244,8 @@ void tab_tests(rap::ui& ui, const std::string& first, const std::string& second,
               frame->title.find(folder_name(first)) != std::string::npos,
           "log tabs: closed, its tab and page go, and the one beside it shows");
     settle(ui);
-    pump(ui, [] { return false; }, 300);
+    pump(
+        ui, [] { return false; }, 300);
     check(p2.commits->dead && !p2.search->dead && !p1.commits->dead && !closed,
           "log tabs: the closed tab's page went once the queue ran, the window stays");
 
@@ -1920,8 +2257,7 @@ void tab_tests(rap::ui& ui, const std::string& first, const std::string& second,
     strip->plus();
     settle(ui);
     check(g_backend->choosers == asked + 1 && w->tabs().size() == 2 &&
-              w->current_tab() == w->tabs()[1].get() &&
-              strip->current_id == w->tabs()[1]->id() &&
+              w->current_tab() == w->tabs()[1].get() && strip->current_id == w->tabs()[1]->id() &&
               w->tabs()[1]->repo_location().find(folder_name(third)) != std::string::npos,
           "log tabs: + asks for a folder, and it opens in a tab of its own");
     if (w->tabs().size() == 2)
@@ -2753,7 +3089,8 @@ void toolbar_tests(rap::ui& ui, const std::string& first, const std::string& sec
           "log row: hidden state updates do not touch shared widgets");
     w->select_tab(two->id());
     check(search->value == "Make" && jump->value == 7 && branch->text == "hidden branch" &&
-              search->edits == edits && jump->edits == choices && search->placeholder == second_cue &&
+              search->edits == edits && jump->edits == choices &&
+              search->placeholder == second_cue &&
               log_tab_test::filter(*two).fields == second_fields,
           "log row: switching back restores hidden updates without user edit handlers");
     auto filter_menu = search->menu ? search->menu() : rap::menu{};
@@ -3165,6 +3502,8 @@ void run_log_page_tests(const std::string& root)
     forge_presentation_tests(ui, repo);
     forge_fresh_canvas_tests(ui, repo);
     forge_download_tests(ui, repo);
+    forge_tabs_tests(ui, repo);
+    lower_page_view_tests(ui, repo);
     check(g_stale_calls == 0, "log page: nothing reached a widget after its window went");
 
     // A second repository, and a third, for a window's tabs.
@@ -3176,9 +3515,9 @@ void run_log_page_tests(const std::string& root)
         const std::string at = rap::sys::path_to_utf8(other);
         auto in = [&](std::vector<std::string> args)
         {
-            args.insert(args.begin(), {"-c", "user.name=Tortilla Test", "-c",
-                                       "user.email=test@tortilla.invalid", "-c",
-                                       "commit.gpgsign=false"});
+            args.insert(args.begin(),
+                        {"-c", "user.name=Tortilla Test", "-c", "user.email=test@tortilla.invalid",
+                         "-c", "commit.gpgsign=false"});
             return run_git(at, args, git_output::stdout_only).ok();
         };
         bool ok = in({"init", "-q", "-b", "main"});

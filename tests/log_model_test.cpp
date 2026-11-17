@@ -46,16 +46,15 @@
 #include "git/tree_list.h"
 #include "git/worktrees.h"
 #include "i18n.h"
-#include "log/forge_share.h"
+#include "journal_tests.h"
 #include "log/log_model.h"
 #include "log/ref_labels.h"
-#include "journal_tests.h"
 #include "log_host_tests.h"
 #include "log_page_tests.h"
 #include "raw_client.h"
-#include "test_support.h"
 #include "settings.h"
 #include "shell.h"
+#include "test_support.h"
 #include "ui/menu_items.h"
 #include "util/check_rows.h"
 #include "util/entry_path.h"
@@ -1624,11 +1623,17 @@ public:
     rap::color resolve(const rap::paint&) const override { return {}; }
     void line(rap::point_f, rap::point_f, const rap::paint&, float, rap::line_cap) override {}
     void curve(rap::point_f, rap::point_f, rap::point_f, rap::point_f, const rap::paint&,
-               float) override {}
-    void circle(rap::point_f, float, std::optional<rap::paint>, std::optional<rap::paint>) override {}
+               float) override
+    {
+    }
+    void circle(rap::point_f, float, std::optional<rap::paint>, std::optional<rap::paint>) override
+    {
+    }
     void rect(rap::rect_f, float, std::optional<rap::paint>, std::optional<rap::paint>) override {}
     void polygon(const std::vector<rap::point_f>&, std::optional<rap::paint>,
-                 std::optional<rap::paint>, float) override {}
+                 std::optional<rap::paint>, float) override
+    {
+    }
     void arc(rap::point_f, float, float, float, const rap::paint&, float, rap::line_cap) override {}
     void image(const rap::image&, rap::rect_f, rap::rect_f, rap::filter, float) override {}
     float device_scale() const override { return 1; }
@@ -1695,7 +1700,9 @@ int main(int argc, char** argv)
         using tortilla::ref, tortilla::ref_kind;
         auto local = [](std::string n, std::string up)
         {
-            return ref{.name = n, .full_name = "refs/heads/" + n, .kind = ref_kind::local_branch,
+            return ref{.name = n,
+                       .full_name = "refs/heads/" + n,
+                       .kind = ref_kind::local_branch,
                        .upstream = std::move(up)};
         };
         const std::string up = "refs/remotes/github/master";
@@ -2945,8 +2952,10 @@ int main(int argc, char** argv)
     {
         using tortilla::ignore_item;
         using tortilla::ignore_target;
-        const std::vector<ignore_item> items{{"sub", "build.log", false}, {"sub", "out", true},
-                                             {"", "#odd*.txt", false}, {"sub", "README", false}};
+        const std::vector<ignore_item> items{{"sub", "build.log", false},
+                                             {"sub", "out", true},
+                                             {"", "#odd*.txt", false},
+                                             {"sub", "README", false}};
         auto lines = [](auto plan, std::string file)
         {
             for (auto& [f, l] : plan)
@@ -2954,33 +2963,39 @@ int main(int argc, char** argv)
             return std::vector<std::string>{};
         };
         auto here = tortilla::ignore_patterns(items, false, false, ignore_target::repository);
-        check(here.size() == 1 &&
-                  lines(here, ".gitignore") ==
-                      std::vector<std::string>{"/sub/build.log", "/sub/out/", "/\\#odd\\*.txt", "/sub/README"},
+        check(here.size() == 1 && lines(here, ".gitignore") ==
+                                      std::vector<std::string>{"/sub/build.log", "/sub/out/",
+                                                               "/\\#odd\\*.txt", "/sub/README"},
               "ignore by name, only here, in the repository's .gitignore (anchored, escaped)");
         auto every = tortilla::ignore_patterns(items, false, true, ignore_target::repository);
         check(lines(every, ".gitignore") ==
                   std::vector<std::string>{"build.log", "out/", "\\#odd\\*.txt", "README"},
               "ignore by name in every folder");
         auto masks = tortilla::ignore_patterns(items, true, true, ignore_target::folder);
-        check(lines(masks, "sub/.gitignore") == std::vector<std::string>{"*.log"} &&
-                  lines(masks, ".gitignore") == std::vector<std::string>{"*.txt"},
-              "ignore by extension in each folder's .gitignore (folders and extensionless skipped)");
+        check(
+            lines(masks, "sub/.gitignore") == std::vector<std::string>{"*.log"} &&
+                lines(masks, ".gitignore") == std::vector<std::string>{"*.txt"},
+            "ignore by extension in each folder's .gitignore (folders and extensionless skipped)");
         auto local = tortilla::ignore_patterns(items, true, false, ignore_target::folder);
         check(lines(local, "sub/.gitignore") == std::vector<std::string>{"/*.log"},
               "by extension only here, relative to the folder's own .gitignore");
         auto excl = tortilla::ignore_patterns(items, false, false, ignore_target::exclude);
         check(excl.size() == 1 && excl.front().first.empty() && excl.front().second.size() == 4,
               "the exclude file is one target");
-        check(tortilla::literal_pattern("a b  ") == "a b\\ \\ ", "trailing spaces escaped, each one");
+        check(tortilla::literal_pattern("a b  ") == "a b\\ \\ ",
+              "trailing spaces escaped, each one");
 
         const auto file = std::filesystem::path(argv[1]) / "ignore-test" / ".gitignore";
         std::filesystem::create_directories(file.parent_path());
-        { std::ofstream(file, std::ios::binary) << "keep\n*.log"; }  // no final newline
-        check(tortilla::append_ignore_lines(file, {"*.log", "new/"}).empty(), "append to an ignore file");
+        {
+            std::ofstream(file, std::ios::binary) << "keep\n*.log";
+        }  // no final newline
+        check(tortilla::append_ignore_lines(file, {"*.log", "new/"}).empty(),
+              "append to an ignore file");
         std::ifstream in(file, std::ios::binary);
         const std::string got((std::istreambuf_iterator<char>(in)), {});
-        check(got == "keep\n*.log\nnew/\n", "existing lines kept once, a newline added before new ones");
+        check(got == "keep\n*.log\nnew/\n",
+              "existing lines kept once, a newline added before new ones");
 
         // The file lists' "Add to ignore list" menu goes through the same
         // planner and writer: names literal, after a last line without its
@@ -3005,8 +3020,9 @@ int main(int argc, char** argv)
         check(tortilla::append_ignore_lines(rap::sys::path_from_utf8(ig) / ".gitignore", by_name)
                   .empty(),
               "ignore menu: written");
-        auto ignored = [&](const std::string& p)
-        { return tortilla::run_git(ig, {"check-ignore", "-q", "--no-index", "--", p}).ok(); };
+        auto ignored = [&](const std::string& p) {
+            return tortilla::run_git(ig, {"check-ignore", "-q", "--no-index", "--", p}).ok();
+        };
         check(ignored("[ab].txt") && !ignored("a.txt") && !ignored("b.txt"),
               "ignore menu: [ab].txt ignores that file, not a.txt and b.txt");
         check(ignored("x.log") && ignored("sub/notes.txt") && ignored("out/o.bin") &&
@@ -3352,7 +3368,8 @@ int main(int argc, char** argv)
     // kind of ref reaches is left out of both).
     {
         // Older than the rest: commits of one second tie-break differently.
-        sh(git + "update-ref refs/other/x $(GIT_COMMITTER_DATE=@1000000000 GIT_AUTHOR_DATE=@1000000000 " +
+        sh(git +
+           "update-ref refs/other/x $(GIT_COMMITTER_DATE=@1000000000 GIT_AUTHOR_DATE=@1000000000 " +
            git + "commit-tree -m other HEAD^{tree})");
         auto order = [&](tortilla::walk_options opts)
         {
@@ -3374,13 +3391,15 @@ int main(int argc, char** argv)
             args.insert(args.end(), extra.begin(), extra.end());
             return tortilla::run_git(repo, args).output;
         };
-        check(order({.rev = "refs/heads/side"}) == git_order({"refs/heads/side"}), "walk from a ref");
+        check(order({.rev = "refs/heads/side"}) == git_order({"refs/heads/side"}),
+              "walk from a ref");
         check(order({.refs = tortilla::walk_refs::local}) == git_order({"--branches", "HEAD"}),
               "walk local branches");
         check(order({.refs = tortilla::walk_refs::basic}) ==
                   git_order({"--branches", "--remotes", "--tags", "HEAD"}),
               "walk basic refs");
-        check(order({.refs = tortilla::walk_refs::all}) == git_order({"--all"}), "walk all includes other refs");
+        check(order({.refs = tortilla::walk_refs::all}) == git_order({"--all"}),
+              "walk all includes other refs");
         sh(git + "update-ref -d refs/other/x");
     }
 
@@ -3394,13 +3413,16 @@ int main(int argc, char** argv)
         const std::string row = "feature/x\nFix the Parser\nAda\nabc123";
         check(ref_filter_matches("parser ada", row), "filter: terms all present, any case");
         check(!ref_filter_matches("parser -ada", row), "filter: -term excludes");
-        check(ref_filter_matches("\"the parser\"", row) && !ref_filter_matches("\"parser the\"", row),
+        check(ref_filter_matches("\"the parser\"", row) &&
+                  !ref_filter_matches("\"parser the\"", row),
               "filter: quoted phrase");
-        check(ref_filter_matches("!zzz", row) && !ref_filter_matches("!ada", row), "filter: ! negates");
+        check(ref_filter_matches("!zzz", row) && !ref_filter_matches("!ada", row),
+              "filter: ! negates");
 
         // The tagger is the committer identity, which the environment
         // (makepkg sets one) takes over from the repository's.
-        sh("GIT_COMMITTER_NAME=Ada GIT_COMMITTER_EMAIL=ada@example.com " + git + "tag -a -m 'release one' rel1");
+        sh("GIT_COMMITTER_NAME=Ada GIT_COMMITTER_EMAIL=ada@example.com " + git +
+           "tag -a -m 'release one' rel1");
         sh(git + "config branch.main.description 'the trunk'");
         sh(git + "remote add origin /nowhere");  // the upstream maps through its fetch refspec
         sh(git + "branch gone-up");
@@ -3417,21 +3439,25 @@ int main(int argc, char** argv)
             return nullptr;
         };
         const auto* tag = find("refs/tags/rel1");
-        check(all.error.empty() && tag && tag->type == "tag" && tag->author == "Ada" && tag->subject == "release one" &&
-                  tag->author_date > 0,
+        check(all.error.empty() && tag && tag->type == "tag" && tag->author == "Ada" &&
+                  tag->subject == "release one" && tag->author_date > 0,
               "list_refs: an annotated tag's tagger and message");
         const auto* main = find("refs/heads/main");
-        check(main && main->description == "the trunk" && main->commit(), "list_refs: a branch's description");
+        check(main && main->description == "the trunk" && main->commit(),
+              "list_refs: a branch's description");
         const auto* gone = find("refs/heads/gone-up");
-        check(gone && gone->upstream == "(gone: origin/nowhere)", "list_refs: an upstream that isn't there is gone");
+        check(gone && gone->upstream == "(gone: origin/nowhere)",
+              "list_refs: an upstream that isn't there is gone");
         const auto folders = tortilla::ref_folders(all.refs);
         check(std::ranges::contains(folders, std::string("refs/heads/feature")) &&
                   std::ranges::contains(folders, std::string("refs/tags")) &&
                   !std::ranges::contains(folders, std::string("refs/heads/main")),
               "ref_folders: folders, not refs");
         const auto merged = tortilla::list_refs(repo, tortilla::merged_filter::merged);
-        check(std::ranges::none_of(merged.refs, [](auto& e) { return e.full == "refs/heads/feature/x"; }) &&
-                  std::ranges::any_of(merged.refs, [](auto& e) { return e.full == "refs/heads/main"; }),
+        check(std::ranges::none_of(merged.refs,
+                                   [](auto& e) { return e.full == "refs/heads/feature/x"; }) &&
+                  std::ranges::any_of(merged.refs,
+                                      [](auto& e) { return e.full == "refs/heads/main"; }),
               "list_refs: merged into HEAD");
         // Checking branches (Show > Pick...): folders' boxes from their
         // branches, nested folders and the remotes' too; tags aren't counted.
@@ -3531,7 +3557,8 @@ int main(int argc, char** argv)
         using tortilla::expand_placeholders;
         check(expand_placeholders("meld %base %mine", "a", "b") == "meld \"$LOCAL\" \"$REMOTE\"",
               "placeholders: %base %mine");
-        check(expand_placeholders("tool \"%base\" %mine", "a", "b") == "tool \"$LOCAL\" \"$REMOTE\"",
+        check(expand_placeholders("tool \"%base\" %mine", "a", "b") ==
+                  "tool \"$LOCAL\" \"$REMOTE\"",
               "placeholders: already quoted");
         check(expand_placeholders("x /t1=%bname", "abc12345", "b") ==
                   "x /t1=\"abc12345\" \"$LOCAL\" \"$REMOTE\"",
@@ -3621,7 +3648,7 @@ int main(int argc, char** argv)
 
     code = -2;
     proc = tortilla::git_process::start(**ui, repo, {"branch", "-D", "no-such-branch"}, {},
-                                       [&](int c) { code = c; });
+                                        [&](int c) { code = c; });
     while (code == -2)
     {
         (*ui)->run();
@@ -3780,10 +3807,11 @@ int main(int argc, char** argv)
         check(head && !head->empty() && head->front().selector == "HEAD@{0}" &&
                   head->front().id == tortilla::resolve(repo, "HEAD"),
               "reflog: HEAD's newest entry is where HEAD is");
-        check(head &&
-                  std::ranges::any_of(
-                      *head, [](const tortilla::reflog_entry& e)
-                      { return e.action == "checkout" && e.message.starts_with("moving from"); }),
+        check(head && std::ranges::any_of(*head,
+                                          [](const tortilla::reflog_entry& e) {
+                                              return e.action == "checkout" &&
+                                                     e.message.starts_with("moving from");
+                                          }),
               "reflog: a checkout's entry");
 
         sh("echo stashed >> '" + repo + "/A.txt' && " + git + "stash -q");
@@ -3948,7 +3976,9 @@ int main(int argc, char** argv)
         const std::string dir = std::string(argv[1]) + "/blame";
         // The author through the environment, which CI's own (GIT_AUTHOR_NAME)
         // would override over -c user.name.
-        const std::string g = "cd '" + dir + "' && GIT_AUTHOR_NAME=Ada GIT_AUTHOR_EMAIL=ada@x git -c user.name=Ada -c user.email=ada@x ";
+        const std::string g = "cd '" + dir +
+                              "' && GIT_AUTHOR_NAME=Ada GIT_AUTHOR_EMAIL=ada@x git -c "
+                              "user.name=Ada -c user.email=ada@x ";
         sh("git init -q '" + dir + "'");
         sh("printf 'one\\ntwo\\nthree\\n' > '" + dir + "/f.txt' && " + g + "add . && " + g +
            "commit -qm first");
@@ -5073,8 +5103,7 @@ int main(int argc, char** argv)
                               });
                 return out;
             };
-            auto has = [](const std::vector<tortilla::commit>& cs, const tortilla::oid& id)
-            {
+            auto has = [](const std::vector<tortilla::commit>& cs, const tortilla::oid& id) {
                 return std::ranges::any_of(cs,
                                            [&](const tortilla::commit& c) { return c.id == id; });
             };
@@ -5501,36 +5530,6 @@ int main(int argc, char** argv)
     tortilla::test::run_log_page_tests(argv[1]);
     libgit2_parity_tests(argv[1]);
     libgit2_dialog_parity_tests(argv[1]);
-
-    // The forge column's share of the window: its splitter's width followed
-    // through the window's, which every backend reports as laid out (Win32's
-    // splitter reports the sizes last asked of it, which don't move).
-    {
-        using tortilla::forge_share;
-        forge_share share;
-        check(share.moved(1400) && share.width_now(1400, 1360) == 1360,
-              "forge share: before any fit, the splitter's own width");
-        // Never dragged: a third, at most 480.
-        check(forge_share::side(1360, {}) == 1360.f / 3 && forge_share::side(1760, {}) == 480,
-              "forge share: undragged, a third of the width, 480 at most");
-        share.fitted(1360, 1400);
-        check(!share.moved(1400) && !share.moved(1400.5f), "forge share: the same width isn't a change");
-        check(share.moved(1000) && share.width_now(1000, 1360) == 960,
-              "forge share: a narrower window takes from the splitter what it loses, the sizes asked or not");
-        check(share.width_now(1800, 1360) == 1760, "forge share: a wider window gives it what it gains");
-        check(forge_share::side(share.width_now(1000, 1360), {}) == 320,
-              "forge share: undragged, narrowed, a third of what's left");
-        // Dragged to 900 + 460: that share, as the window grows and shrinks.
-        const std::vector<float> dragged{900, 460};
-        const float wider = share.width_now(1800, 1360), narrower = share.width_now(1000, 1360);
-        check(std::abs(forge_share::side(1360, dragged) - 460) < 0.01f &&
-                  std::abs(forge_share::side(wider, dragged) - 1760.f * 460 / 1360) < 0.01f &&
-                  std::abs(forge_share::side(narrower, dragged) - 960.f * 460 / 1360) < 0.01f,
-              "forge share: dragged, its share kept as the window grows and shrinks");
-        // A drag fits it anew: later changes count from there.
-        share.fitted(1300, 1400);
-        check(share.width_now(1200, 1300) == 1100, "forge share: after a drag, changes count from the drag");
-    }
 
     std::printf("%s\n", failures ? "FAILED" : "all passed");
     return failures ? 1 : 0;

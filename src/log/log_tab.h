@@ -14,7 +14,6 @@
 #include "git/repo_worker.h"
 #include "git/sync.h"
 #include "log/forge_panel.h"
-#include "log/forge_share.h"
 #include "log/log_model.h"
 #include "log/log_page.h"
 #include "log/log_toolbar.h"
@@ -521,13 +520,8 @@ private:
     // The preset chosen, while following a file's renames walks from HEAD
     // instead: restored after, and what's saved.
     std::optional<show_preset> refs_before_follow_;
-    // Under the list: the commit's text over its files, and the forge panel
-    // beside both, a column of its own (shown when it has something to say).
-    std::vector<float> forge_sizes_;  // as last shown, for showing it again
-    forge_share forge_share_;         // what its share was last fitted to
-    bool forge_panel_visible_ = false;
-    void forge_panel_shown(bool);
-    void keep_forge_share(bool showing);
+    float lower_width_ = 0;
+    void update_lower_width();
     void fit_files();
 
     // Options

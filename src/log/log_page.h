@@ -48,7 +48,6 @@ struct log_page
     rap::canvas* avatar_canvas = nullptr;
     rap::splitter* splitter = nullptr;
     rap::splitter* details_splitter = nullptr;
-    rap::splitter* forge_splitter = nullptr;
     // The status bar and the bottom rows.
     rap::canvas* status_mark = nullptr;
     rap::label* status = nullptr;
@@ -71,8 +70,8 @@ struct log_page
     // The page's own timers: the progress bar's pulse, the filters' delays,
     // and the file list fitted to its column.
     rap::subscription pulse_timer, path_filter_timer, fit_timer;
-    // The forge column's width watched while it's shown.
-    rap::subscription forge_width_watch;
+    // Full-width lower pane resize notifications (no sizing state).
+    rap::subscription width_watch;
 };
 
 }  // namespace tortilla

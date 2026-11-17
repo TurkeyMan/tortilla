@@ -116,28 +116,24 @@ log_tab::log_tab(rap::ui& ui, repo repo, std::string path)
               .workdir = repo_.workdir(),
               // Working-tree changes: git runs quietly, and the log reloads after.
               .run =
-                  [this](const std::string& title, std::vector<std::vector<std::string>> commands)
-              {
-                  run_quietly(title, std::move(commands),
-                              [this](bool, const std::string&) { reload(); });
-              },
+                  [this](const std::string& title, std::vector<std::vector<std::string>> commands) {
+                      run_quietly(title, std::move(commands),
+                                  [this](bool, const std::string&) { reload(); });
+                  },
               .refresh = [this] { reload(); },
               .open_settings = [this](settings_page page) { open_settings(page); },
               .selection_changed = [this] { update_status(); }})
-    , forge_panel_(std::make_unique<forge_panel>(
-          forge_panel::host{.ui = ui,
-                            .window = [this] { return parent(); },
-                            .workdir = repo_location(),
-                            .actions = as_tab([this](const open_pr& p)
-                                              { return pull_request_items(p); }),
-                            .shown = [this](bool on) { forge_panel_shown(on); },
-                            .watch =
-                                [this](std::optional<std::string> sha,
-                                       std::optional<forge_remote> where, bool pending)
-                            {
-                                if (pr_watch_)
-                                    pr_watch_->watch(std::move(sha), std::move(where), pending);
-                            }}))
+    , forge_panel_(std::make_unique<forge_panel>(forge_panel::host{
+          .ui = ui,
+          .window = [this] { return parent(); },
+          .workdir = repo_location(),
+          .actions = as_tab([this](const open_pr& p) { return pull_request_items(p); }),
+          .watch =
+              [this](std::optional<std::string> sha, std::optional<forge_remote> where,
+                     bool pending)
+          {
+              if (pr_watch_) pr_watch_->watch(std::move(sha), std::move(where), pending);
+          }}))
 {
     if (!repo_.workdir().empty())
         if (auto rel = repo_relative(repo_.workdir(), path_)) rel_path_ = std::move(*rel);
@@ -324,10 +320,6 @@ void log_tab::save_view_settings()
     settings& st = settings::get();
     st.set_numbers("log.panes", page_->splitter->sizes());
     st.set_numbers("log.panes.details", page_->details_splitter->sizes());
-    if (forge_panel_visible_) forge_sizes_ = page_->forge_splitter->sizes();
-    if (!forge_sizes_.empty()) st.set_numbers("log.panes.forge", forge_sizes_);
-    if (!forge_panel_->part_sizes().empty())
-        st.set_numbers("log.panes.forge.parts", forge_panel_->part_sizes());
     st.set_numbers("log.columns", page_->commit_list->column_widths());
     auto order = [](const std::vector<size_t>& o)
     {
@@ -383,8 +375,9 @@ void log_tab::apply_view_settings()
         page_->splitter->set_sizes(v);
     if (auto v = st.numbers("log.panes.details"); v.size() == 2)
         page_->details_splitter->set_sizes(v);
-    if (auto v = st.numbers("log.panes.forge"); v.size() == 2) forge_sizes_ = v;
-    if (auto v = st.numbers("log.panes.forge.parts"); v.size() == 2) forge_panel_->set_part_sizes(v);
+    // Obsolete horizontal/inner forge dividers have no meaning in the tabbed area.
+    st.remove("log.panes.forge");
+    st.remove("log.panes.forge.parts");
     if (auto v = st.numbers("log.columns"); !v.empty()) page_->commit_list->set_column_widths(v);
     // The lists ignore an order that doesn't fit their columns.
     auto order = [](const std::vector<float>& v)
@@ -674,57 +667,24 @@ void log_tab::update_pull_requests()
     forge_panel_->set_pull_requests(pr_watch_->pull_requests(), pr_watch_->remotes());
 }
 
-// The forge panel's column keeps its share of the width: the share it was
-// last dragged to (else a third, about 60 characters at most), as it shows
-// and as the window's size changes while it's shown. Rapport's splitter
-// keeps a dragged pane's pixels instead, so at a narrower window the
-// column took the commit's text and files down to their least.
-void log_tab::forge_panel_shown(bool on)
+// The lower pages fill the window width. Reuse a lightweight width watch
+// because Rapport has no generic widget resize callback; unchanged ticks do
+// not reach the renderer or file-list setters.
+void log_tab::update_lower_width()
 {
-    if (!on && forge_panel_visible_ && page_) forge_sizes_ = page_->forge_splitter->sizes();
-    forge_panel_visible_ = on;
-    if (!page_) return;
-    page_->forge_width_watch = {};
-    if (on)
-    {
-        keep_forge_share(true);
-        // Rapport has no word of the window's size changing: looked at
-        // while the column's shown.
-        page_->forge_width_watch = ui_.timer(200, true, [this] { keep_forge_share(false); });
-    }
-    // The file list's width changes with it, once the layout's done.
-    page_->fit_timer = ui_.timer(50, false, [this] { fit_files(); });
+    if (!page_ || !parent()) return;
+    const float width = parent()->size().w;
+    if (width <= 0 || std::abs(width - lower_width_) < 0.5f) return;
+    lower_width_ = width;
+    fit_files();
 }
 
-void log_tab::keep_forge_share(bool showing)
-{
-    if (!page_) return;
-    rap::window* window = parent();
-    if (!window) return;
-    const float window_w = window->size().w;
-    if (window_w <= 0 || (!showing && !forge_share_.moved(window_w))) return;
-    float measured = 0;
-    for (float s : page_->forge_splitter->sizes()) measured += s;
-    const float total = forge_share_.width_now(window_w, measured);
-    if (total <= 0) return;  // not laid out yet: the next tick
-    const float side = forge_share::side(total, forge_sizes_);
-    page_->forge_splitter->set_sizes({total - side, side});
-    forge_panel_->set_available_width(side);
-    forge_share_.fitted(total, window_w);
-    if (!showing) fit_files();
-}
-
-// The file list's Path column takes what its other columns leave.
 void log_tab::fit_files()
 {
-    if (!page_) return;
-    const auto sizes = page_->forge_splitter->sizes();
-    if (forge_panel_visible_ && sizes.size() > 1) forge_panel_->set_available_width(sizes.back());
-    float width = 0;
-    if (forge_panel_visible_ && !sizes.empty())
-        width = sizes.front();
-    else
-        for (float s : sizes) width += s;
+    if (!page_ || !parent()) return;
+    const float width = parent()->size().w;
+    if (width <= 0) return;
+    forge_panel_->set_available_width(width);
     files_.fit_path(width);
 }
 
@@ -890,7 +850,7 @@ void log_tab::show_commit(size_t row)
     line(_("Date: "), format_time(c.time, c.offset_minutes));
     if (c.committer != c.author || c.commit_time != c.time)
         line(_("Committer: "), c.committer + " <" + c.committer_email + "> " +
-                                format_time(c.commit_time, c.commit_offset_minutes));
+                                   format_time(c.commit_time, c.commit_offset_minutes));
     for (auto& p : c.parents) line(_("Parent: "), p.hex());
     text += "\n" + c.message;
     page_->details->set_text(text, spans);
@@ -968,7 +928,8 @@ void log_tab::update_status()
     {
         size_t first = log_.row_count() - n;
         s = rap::i18n::format(_("Showing {0} revision(s), from revision {1} to revision {2}"), n,
-                              log_.commit(log_.row_count() - 1)->id.hex(8), log_.commit(first)->id.hex(8));
+                              log_.commit(log_.row_count() - 1)->id.hex(8),
+                              log_.commit(first)->id.hex(8));
     }
     auto sel = page_->commit_list->selection();
     s = rap::i18n::format(_("{0} - {1} revision(s) selected, {2} file(s) selected"), s, sel.size(),
@@ -989,9 +950,9 @@ void log_tab::update_status()
             default: ++mod;
             }
         }
-        s = rap::i18n::format(
-            _("{0}; line: {1}(+) {2}(-) files: modified = {3} added = {4} deleted = {5} replaced = {6}"), s,
-            added, removed, mod, add, del, ren);
+        s = rap::i18n::format(_("{0}; line: {1}(+) {2}(-) files: modified = {3} added = {4} "
+                                "deleted = {5} replaced = {6}"),
+                              s, added, removed, mod, add, del, ren);
     }
     // A sync's warning first, for its while; then what's applied, so a
     // filtered log isn't taken for the whole.
@@ -1246,7 +1207,7 @@ rap::menu log_tab::show_menu()
                               .checked = checked,
                               .radio = true};
     };
-    auto flip = [this](bool branch_filter::* field)
+    auto flip = [this](bool branch_filter::*field)
     {
         return [this, field]
         {
@@ -1313,7 +1274,8 @@ rap::menu log_tab::start_menu()
              [this]
          {
              // One ref to start from; the log walks from one [spec 1.9.1].
-             const std::string initial = walk_options_.rev.empty() ? std::string() : walk_options_.rev;
+             const std::string initial =
+                 walk_options_.rev.empty() ? std::string() : walk_options_.rev;
              pick_ref(ui_, parent(), repo_.workdir().empty() ? repo_.git_dir() : repo_.workdir(),
                       {.initial = initial},
                       [this, alive = std::weak_ptr<bool>(alive_)](const std::string& picked)
@@ -1351,12 +1313,16 @@ rap::menu log_tab::start_menu()
                             .action = pick(r.full_name),
                             .checked = from(r.full_name),
                             .radio = true};
-        (r.kind == ref_kind::local_branch ? local : r.kind == ref_kind::remote_branch ? remote : tags)
+        (r.kind == ref_kind::local_branch    ? local
+         : r.kind == ref_kind::remote_branch ? remote
+                                             : tags)
             .push_back(std::move(item));
     }
-    if (!local.empty() || !remote.empty() || !tags.empty()) out.push_back(rap::menu_item::separator());
+    if (!local.empty() || !remote.empty() || !tags.empty())
+        out.push_back(rap::menu_item::separator());
     if (!local.empty()) out.push_back({.label = _("_Branches"), .children = std::move(local)});
-    if (!remote.empty()) out.push_back({.label = _("_Remote branches"), .children = std::move(remote)});
+    if (!remote.empty())
+        out.push_back({.label = _("_Remote branches"), .children = std::move(remote)});
     if (!tags.empty()) out.push_back({.label = _("_Tags"), .children = std::move(tags)});
 
     // Recently picked, as TortoiseGit lists them under a separator.
@@ -1514,7 +1480,7 @@ bool log_tab::one_file() const
 
 rap::menu log_tab::walk_menu()
 {
-    auto flip = [this](bool walk_options::* field)
+    auto flip = [this](bool walk_options::*field)
     {
         return [this, field]
         {
@@ -1641,8 +1607,7 @@ rap::menu log_tab::header_menu()
                    rap::menu_item::separator()};
     for (size_t i = 0; i < columns.size(); ++i)
         menu.push_back(toggle(columns[i].title, page_->commit_list->column_visible(i),
-                              [this, i]
-                              {
+                              [this, i] {
                                   page_->commit_list->set_column_visible(
                                       i, !page_->commit_list->column_visible(i));
                               }));
@@ -1708,7 +1673,7 @@ void log_tab::update_dates_button()
         dates_tip_ = _("Date range: all dates");
     else
     {
-    const rap::date from = local_date(since_.value_or(0)), to = local_date(until_.value_or(0));
+        const rap::date from = local_date(since_.value_or(0)), to = local_date(until_.value_or(0));
         dates_tip_ = rap::i18n::format(_("Date range: {0} to {1}"), date_text(from), date_text(to));
     }
     toolbar_changed();

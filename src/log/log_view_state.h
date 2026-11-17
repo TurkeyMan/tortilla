@@ -33,6 +33,7 @@ struct log_view_state
     log_filter filter;
     std::optional<int64_t> since, until;
     int jump_type = 0;
+    int lower_page = 0;  // Commit, PR, CI, Artifacts; conditional pages keep stable indices
     // The list over the rest, and the commit's text over its files; empty:
     // as built.
     std::vector<float> panes, details_panes;
