@@ -551,6 +551,7 @@ void forge_panel::restore_page_choice(int page)
     sync_pages();
 }
 
+// Re-clicking the current tab emits no callback and does not cancel a pending restore.
 void forge_panel::user_page_changed(int page)
 {
     if (changing_pages_ || !tabs_ || page < 0 || page > 3) return;

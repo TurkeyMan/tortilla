@@ -2002,10 +2002,11 @@ void forge_tabs_tests(rap::ui& ui, const std::string& repo)
     panel.show_commit("unknown");
     check(tabs()->current() == 0 && panel.remembered_page() == 2,
           "forge tabs: unknown CI falls back to Commit while remembering CI");
+    tabs()->click(0);  // accepted no-op: Commit is already the visible fallback
     forge_panel_test::answer_ci(panel, "unknown", true);
     forge_panel_test::refresh(panel);
     check(tabs()->current() == 2 && panel.remembered_page() == 2,
-          "forge tabs: late same-row CI restores the unchanged user choice");
+          "forge tabs: late same-row CI restores user choice after a no-op Commit re-click");
     forge_panel_test::awaiting(panel, "another");
     panel.show_commit("another");
     // Make PR a real alternative to fallback Commit; selecting a different
@@ -2014,6 +2015,8 @@ void forge_tabs_tests(rap::ui& ui, const std::string& repo)
     forge_panel_test::present_commit(panel, "another");
     forge_panel_test::awaiting(panel, "another");
     forge_panel_test::refresh(panel);
+    check(tabs()->page_visible(1) && tabs()->current() == 0,
+          "forge tabs: PR is a visible different-page choice while CI is unknown");
     tabs()->click(1);
     forge_panel_test::answer_ci(panel, "another", true);
     forge_panel_test::refresh(panel);
