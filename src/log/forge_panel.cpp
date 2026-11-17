@@ -793,7 +793,7 @@ rap::node forge_panel::layout(rap::node commit)
                  .stretch()
                  .handle(pr_part_)}
             .visible(false),
-        page{_("CI"),
+        page{_("Build"),
              vbox{vbox{
                       hbox{
                           mark(build_mark_,

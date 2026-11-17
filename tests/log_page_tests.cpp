@@ -734,7 +734,14 @@ public:
     {
         touch();
         ++g_forge_writes;
-        if (!dead) inner_.set_current(page);
+        if (!dead)
+        {
+            // Exercise #98's silent programmatic contract (null is already
+            // silent), independently of user-driven changed notifications.
+            inner_.on_changed({});
+            inner_.set_current(page);
+            inner_.on_changed(changed);
+        }
     }
     void on_changed(std::function<void(int)> f) override
     {
@@ -759,7 +766,11 @@ public:
         set_current(page);
         // The existing native API reports only selection changes. It cannot
         // report a click on the already-current fallback page.
-        if (changed && current() != before) changed(current());
+        if (changed && current() != before)
+        {
+            ++user_changes;
+            changed(current());
+        }
     }
     bool strip_shown() const
     {
@@ -767,6 +778,7 @@ public:
         for (int i = 0; i < int(titles.size()); ++i) visible.push_back(page_visible(i));
         return rap::tabs_strip_shown(visible, int(titles.size()), hide_single);
     }
+    int user_changes = 0;
     bool hide_single;
     std::vector<bool> initial;
     std::vector<std::string> titles;
@@ -1954,7 +1966,7 @@ void forge_tabs_tests(rap::ui& ui, const std::string& repo)
     forge_panel panel({.ui = ui, .workdir = repo});
     const auto layout = panel.layout(label{"Commit contents"});
     const auto& spec = std::get<rap::spec::tabs>(layout.spec);
-    check(spec.titles == std::vector<std::string>{"Commit", "PR", "CI", "Artifacts"} &&
+    check(spec.titles == std::vector<std::string>{"Commit", "PR", "Build", "Artifacts"} &&
               spec.visible == std::vector<bool>{true, false, false, false} && spec.hide_single_tab,
           "forge tabs: Commit fills lower area, conditional pages initially hidden and strip "
           "collapses");
@@ -2002,11 +2014,14 @@ void forge_tabs_tests(rap::ui& ui, const std::string& repo)
     panel.show_commit("unknown");
     check(tabs()->current() == 0 && panel.remembered_page() == 2,
           "forge tabs: unknown CI falls back to Commit while remembering CI");
+    const int user_changes = tabs()->user_changes;
     tabs()->click(0);  // accepted no-op: Commit is already the visible fallback
     forge_panel_test::answer_ci(panel, "unknown", true);
     forge_panel_test::refresh(panel);
-    check(tabs()->current() == 2 && panel.remembered_page() == 2,
-          "forge tabs: late same-row CI restores user choice after a no-op Commit re-click");
+    check(tabs()->current() == 2 && panel.remembered_page() == 2 &&
+              tabs()->user_changes == user_changes,
+          "forge tabs: late CI restores explicit state with silent set_current and no-op Commit "
+          "re-click");
     forge_panel_test::awaiting(panel, "another");
     panel.show_commit("another");
     // Make PR a real alternative to fallback Commit; selecting a different
