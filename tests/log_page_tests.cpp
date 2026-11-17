@@ -198,6 +198,7 @@ int g_forge_writes = 0;
 int g_forge_pages = 0;
 int g_forge_invalidates = 0;
 int g_forge_selects = 0;
+int g_focus_calls = 0;
 class kept_canvas;
 std::function<void(kept_canvas&, rap::size_f)> g_allocated_canvas_paint;
 std::map<rap::stack*, rap::size_f> g_stack_allocations;
@@ -232,6 +233,7 @@ public:
     void focus() override
     {
         touch();
+        ++g_focus_calls;
         focused = true;
     }
     bool has_focus() const override
@@ -1981,15 +1983,16 @@ void forge_tabs_tests(rap::ui& ui, const std::string& repo)
           "forge tabs: identical presentation and visibility do no native work");
     forge_panel_test::presence(panel, true, false, true);
     forge_panel_test::refresh(panel);
-    check(tabs()->current() == 3 && panel.selected_page() == 3,
-          "forge tabs: hiding chosen CI uses silent nearest-after fallback");
+    check(tabs()->current() == 3 && panel.selected_page() == 3 && panel.remembered_page() == 2,
+          "forge tabs: CI fallback uses nearest-after without overwriting remembered CI");
     forge_panel_test::presence(panel, true, false, false);
     forge_panel_test::refresh(panel);
-    check(tabs()->current() == 1 && panel.selected_page() == 1,
-          "forge tabs: hiding actual artifacts uses nearest-before PR");
+    check(tabs()->current() == 1 && panel.selected_page() == 1 && panel.remembered_page() == 2,
+          "forge tabs: a later fallback to PR still does not overwrite remembered CI");
     forge_panel_test::presence(panel, false, false, false);
     forge_panel_test::refresh(panel);
-    check(tabs()->current() == 0 && !tabs()->strip_shown() && panel.selected_page() == 0,
+    check(tabs()->current() == 0 && !tabs()->strip_shown() && panel.selected_page() == 0 &&
+              panel.remembered_page() == 2,
           "forge tabs: Commit-only hides strip without overwriting remembered CI");
     forge_panel_test::presence(panel, false, true, true);
     forge_panel_test::refresh(panel);
@@ -2036,13 +2039,29 @@ void forge_tabs_tests(rap::ui& ui, const std::string& repo)
     panel.built();
     check(chosen == 3 && tabs()->current() == 3 && panel.selected_page() == 3,
           "forge tabs: rebuilding the log page restores its own visible choice");
+    forge_panel_test::presence(panel, true, false, false);
+    forge_panel_test::refresh(panel);
+    check(tabs()->current() == 1 && panel.remembered_page() == 3,
+          "forge tabs: chosen Artifacts falls back to PR without replacing user memory");
+    forge_panel_test::presence(panel, true, false, true);
+    forge_panel_test::refresh(panel);
+    check(tabs()->current() == 3 && panel.remembered_page() == 3,
+          "forge tabs: same-row artifacts returning restore the remembered Artifacts page");
+    forge_panel_test::presence(panel, true, false, false);
+    forge_panel_test::refresh(panel);
+    tabs()->click(0);  // a real different-page change, observable by this API
+    forge_panel_test::presence(panel, true, false, true);
+    forge_panel_test::refresh(panel);
+    check(tabs()->current() == 0 && panel.remembered_page() == 0,
+          "forge tabs: a later real user choice cancels same-row Artifacts restoration");
     forge_panel other({.ui = ui, .workdir = repo});
     forge_panel_test::presence(other, false, true, true);
     auto other_window =
         ui.create(rap::layout::window{"Other log", {other.layout(label{"Commit"})}});
     other.built();
     other.show_commit("head");
-    check(other.selected_page() == 0 && panel.selected_page() == 3,
+    dynamic_cast<kept_pages*>(forge_panel_test::pages(other))->click(2);
+    check(other.selected_page() == 2 && panel.selected_page() == 0,
           "forge tabs: choices belong to each log tab, not the window or all logs");
     panel.unbind();
     other.unbind();
@@ -2100,6 +2119,27 @@ void lower_page_view_tests(rap::ui& ui, const std::string& repo)
     settle(ui);
     check(panel.selected_page() == 2 && forge_panel_test::pages(panel)->current() == 2,
           "forge tabs: rebuilt or adopted log page restores its CI choice with the commit");
+    // Carry user intent even while the visible fallback is Commit.
+    forge_panel_test::presence(panel, false, false, false);
+    forge_panel_test::awaiting(panel, sha);
+    forge_panel_test::refresh(panel);
+    auto hidden_view = tab->capture_view();
+    check(hidden_view.lower_page == 2 && panel.selected_page() == 0,
+          "forge tabs: view captures remembered CI while the actual page is Commit");
+    tab->drop_page();
+    window.reset();
+    host.w = nullptr;
+    window = build(std::move(hidden_view));
+    settle(ui);
+    check(panel.remembered_page() == 2 && panel.selected_page() == 0,
+          "forge tabs: rebuilding an unknown-CI row preserves memory without a visible CI page");
+    last_page().commits->focus();
+    g_focus_calls = 0;
+    forge_panel_test::answer_ci(panel, sha, true);
+    forge_panel_test::refresh(panel);
+    check(
+        panel.selected_page() == 2 && g_focus_calls == 0 && last_page().commits->focused,
+        "forge tabs: late restoration after rebuild makes no focus call and keeps log-list focus");
     tab->drop_page();
     tab.reset();
     window.reset();
