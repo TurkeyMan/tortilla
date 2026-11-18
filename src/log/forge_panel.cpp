@@ -1309,6 +1309,13 @@ void forge_panel::update_build()
         }
         if (it != builds_.end()) b = &it->second;
     }
+    if (host_.diagnostic)
+    {
+        std::string diagnostic = b ? b->error : std::string();
+        if (b && !b->artifact_error.empty())
+            diagnostic += (diagnostic.empty() ? "" : "\n") + b->artifact_error;
+        host_.diagnostic(std::move(diagnostic));
+    }
     // Shown once there's something to show: not for a commit that's only
     // here, nor while it's asked (it's usually quick, and often nothing).
     const bool shown = b && b->answered && !b->local && !b->ci.empty();
@@ -1341,7 +1348,9 @@ void forge_panel::update_build()
     update_build_icon(build_mark_state_);
     show(build_mark_, build_mark_state_ != check_state::none);
     if (old_mark != build_mark_state_) build_mark_->invalidate();
-    text(build_summary_, rap::i18n::format(_("Build: {0}"), build_text(all)));
+    std::string summary = rap::i18n::format(_("Build: {0}"), build_text(all));
+    if (!b->artifact_error.empty()) summary += "\n" + b->artifact_error;
+    text(build_summary_, summary);
     show(matrix_list_, true);
     {
         // The rows again keep the job picked, if it's still there.
@@ -1634,7 +1643,13 @@ void forge_panel::ask_build(const std::string& sha)
                 {
                     build& b = builds_[sha];
                     b.artifacts_known = true;
-                    if (artifacts) b.artifacts = *artifacts;
+                    if (artifacts)
+                    {
+                        b.artifacts = *artifacts;
+                        b.artifact_error.clear();
+                    }
+                    else
+                        b.artifact_error = artifacts.error();
                     if (sha_ == sha) update();
                 });
         })

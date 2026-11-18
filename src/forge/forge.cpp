@@ -2207,7 +2207,9 @@ rap::sys::http_response http_download(const std::string& url, const std::filesys
     if (const transport f = faked())
     {
         auto r = f("GET", url, {}, options);
-        std::ofstream(to, std::ios::binary) << r.body;
+        if (options.sink && !options.sink(r.body)) r.error = "stopped";
+        if (r.status >= 200 && r.status < 300 && r.error.empty())
+            std::ofstream(to, std::ios::binary) << r.body;
         r.body.clear();
         return r;
     }

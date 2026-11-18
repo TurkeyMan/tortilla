@@ -150,6 +150,14 @@ struct forge_panel_test
         p.builds_[sha] = p.builds_["head"];
     }
     static rap::tabs* pages(forge_panel& p) { return p.tabs_; }
+    static void azure_artifact_error(forge_panel& p, std::string error)
+    { p.builds_["head"].artifact_error = std::move(error); }
+    static rap::label* azure_summary(const forge_panel& p) { return p.build_summary_; }
+    static void azure_lookup_error(forge_panel& p, std::string error)
+    {
+        p.builds_["azure-error-fixture"] = {.asked = true, .answered = true, .error = std::move(error)};
+        p.show_commit("azure-error-fixture");
+    }
     static rap::list* matrix(forge_panel& p) { return p.matrix_list_; }
     static bool picked(const forge_panel& p) { return p.failed_job_.has_value(); }
     static std::optional<ci_job> picked_job(const forge_panel& p) { return p.failed_job_; }
@@ -183,6 +191,8 @@ struct forge_panel_test
 struct log_tab_test
 {
     static forge_panel& forge(log_tab& t) { return *t.forge_panel_; }
+    static forge_panel& azure_panel(log_tab& t) { return *t.forge_panel_; }
+    static rap::label* azure_status(log_tab& t) { return t.page_->status; }
     static void edit_filter(log_tab& t, const std::string& text) { t.edit_filter(text); }
     static const std::string& search(const log_tab& t) { return t.search_text_; }
     static const log_filter& filter(const log_tab& t) { return t.filter_; }
@@ -1556,6 +1566,19 @@ void page_tests(rap::ui& ui, const std::string& repo,
     check(ready && log.is_working_tree(0), "log page: the log loads, the working tree's row first");
     if (!ready) return;
 
+    auto& azure_panel = log_tab_test::azure_panel(*tab);
+    forge_panel_test::azure_lookup_error(azure_panel, "Azure DevOps HTTP 401: fixture denied. Required scope: Build (Read).");
+    auto* azure_status = dynamic_cast<kept_label*>(log_tab_test::azure_status(*tab));
+    check(azure_status && azure_status->shown && azure_status->text.find("HTTP 401: fixture denied") != std::string::npos &&
+              azure_status->text.find("Build (Read)") != std::string::npos,
+          "azure: lookup error reaches always-visible log status without Build data");
+    const auto azure_writes = g_forge_writes;
+    forge_panel_test::refresh(azure_panel);
+    check(g_forge_writes == azure_writes, "azure: identical lookup error does not write widgets again");
+    azure_panel.show_commit(std::nullopt);
+    check(azure_status && azure_status->text.find("Azure DevOps HTTP") == std::string::npos,
+          "azure: changing row clears stale lookup status");
+
     // -- what the user changes, carried to a second window ------------------
     const auto beta = row_of(log, "Add beta"), gamma = row_of(log, "Add gamma");
     check(beta && gamma, "log page: the commits are there");
@@ -1905,6 +1928,13 @@ void forge_presentation_tests(rap::ui& ui, const std::string& repo)
               "forge presentation: marks leave panel background untouched");
     }
     forge_panel_test::build(panel);
+    forge_panel_test::refresh(panel);
+    forge_panel_test::azure_artifact_error(panel, "Azure DevOps HTTP 403: Build (Read) required");
+    forge_panel_test::refresh(panel);
+    const auto* azure_summary = dynamic_cast<kept_label*>(forge_panel_test::azure_summary(panel));
+    check(azure_summary && azure_summary->shown && azure_summary->text.find("Azure DevOps HTTP 403") != std::string::npos,
+          "azure: artifact failure is visible beside intact CI even without artifacts");
+    forge_panel_test::azure_artifact_error(panel, {});
     forge_panel_test::refresh(panel);
     auto* matrix = dynamic_cast<kept_list*>(forge_panel_test::matrix(panel));
     if (matrix) matrix->click({0}, 0);
