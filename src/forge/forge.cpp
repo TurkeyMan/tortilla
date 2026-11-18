@@ -1,4 +1,5 @@
 #include "forge.h"
+#include "azure.h"
 
 #include "forge/forge_detail.h"
 #include "i18n.h"
@@ -39,13 +40,15 @@ std::string_view kind_id(forge_kind k)
     case forge_kind::github: return "github";
     case forge_kind::gitlab: return "gitlab";
     case forge_kind::gitea: return "gitea";
+    case forge_kind::azure: return "azure";
     }
     return "github";
 }
 
 std::optional<forge_kind> kind_of(std::string_view id)
 {
-    for (forge_kind k : {forge_kind::github, forge_kind::gitlab, forge_kind::gitea})
+    for (forge_kind k :
+         {forge_kind::github, forge_kind::gitlab, forge_kind::gitea, forge_kind::azure})
         if (kind_id(k) == id) return k;
     return std::nullopt;
 }
@@ -216,6 +219,7 @@ std::string forge_name(forge_kind k)
     case forge_kind::github: return "GitHub";
     case forge_kind::gitlab: return "GitLab";
     case forge_kind::gitea: return "Gitea / Forgejo";
+    case forge_kind::azure: return "Azure DevOps";
     }
     return {};
 }
@@ -227,6 +231,7 @@ std::string_view default_host(forge_kind k)
     case forge_kind::github: return "github.com";
     case forge_kind::gitlab: return "gitlab.com";
     case forge_kind::gitea: return "codeberg.org";
+    case forge_kind::azure: return "dev.azure.com";
     }
     return {};
 }
@@ -317,9 +322,16 @@ std::optional<forge_account> account_for_url(std::string_view url,
 {
     std::string_view host, path;
     if (!split_remote(url, host, path)) return std::nullopt;
+    if (auto repo = repo_of_url(url); repo && repo->host == "dev.azure.com")
+    {
+        const auto scope = azure::account_host(*repo);
+        for (const auto& a : accounts)
+            if (a.kind == forge_kind::azure && a.host == scope) return a;
+        return std::nullopt;
+    }
     const std::string origin = web_origin(host);
     for (const forge_account& a : accounts)
-        if (same_origin(web_origin(a.host), origin)) return a;
+        if (a.kind != forge_kind::azure && same_origin(web_origin(a.host), origin)) return a;
     return std::nullopt;
 }
 
@@ -453,6 +465,7 @@ std::string api_root(forge_kind k, std::string_view host)
         return host == "github.com" ? "https://api.github.com" : web_root(host) + "/api/v3";
     case forge_kind::gitlab: return web_root(host) + "/api/v4";
     case forge_kind::gitea: return web_root(host) + "/api/v1";
+    case forge_kind::azure: return web_root(host) + "/_apis";
     }
     return {};
 }
@@ -467,20 +480,25 @@ rap::sys::http_headers api_headers(forge_kind k, std::string_view token)
         h.emplace_back("X-GitHub-Api-Version", "2022-11-28");
         break;
     case forge_kind::gitlab:
+    case forge_kind::azure:
     case forge_kind::gitea: h.emplace_back("Accept", "application/json"); break;
     }
     if (!token.empty())
         h.emplace_back("Authorization",
-                       (k == forge_kind::gitea ? "token " : "Bearer ") + std::string(token));
+                       k == forge_kind::azure
+                           ? "Basic " + azure::basic_token(token)
+                           : (k == forge_kind::gitea ? "token " : "Bearer ") + std::string(token));
     return h;
 }
 
 std::optional<forge_kind> known_forge(std::string_view host)
 {
-    for (forge_kind k : {forge_kind::github, forge_kind::gitlab, forge_kind::gitea})
+    for (forge_kind k :
+         {forge_kind::github, forge_kind::gitlab, forge_kind::gitea, forge_kind::azure})
     {
         const std::string_view own = default_host(k);
-        if (std::ranges::equal(host, own, [](char x, char y)
+        if (std::ranges::equal(host, own,
+                               [](char x, char y)
                                { return std::tolower(static_cast<unsigned char>(x)) == y; }))
             return k;
     }
@@ -497,7 +515,8 @@ rate_budget budget;
 std::string_view header(const rap::sys::http_response& r, std::string_view name)
 {
     for (const auto& [n, v] : r.headers)
-        if (std::ranges::equal(n, name, [](char x, char y)
+        if (std::ranges::equal(n, name,
+                               [](char x, char y)
                                { return std::tolower(static_cast<unsigned char>(x)) == y; }))
             return v;
     return {};
@@ -539,6 +558,7 @@ bool budget_allows(const rate_budget& b, int want, int reserve, std::int64_t now
 std::expected<forge_account, std::string> who_am_i(forge_kind k, std::string_view host,
                                                    std::string_view token)
 {
+    if (k == forge_kind::azure) return azure::identity(host, token);
     forge_detail::bind_token(token, host);  // the host it's tried on
     const auto r =
         forge_detail::http_get(api_root(k, host) + "/user", {.headers = api_headers(k, token)});
@@ -567,6 +587,12 @@ std::optional<forge_repo> repo_of_url(std::string_view url)
     while (!path.empty() && path.back() == '/') path.remove_suffix(1);
     if (path.ends_with(".git")) path.remove_suffix(4);
     while (!path.empty() && path.front() == '/') path.remove_prefix(1);
+    std::string lower_host(host);
+    std::ranges::transform(lower_host, lower_host.begin(),
+                           [](unsigned char c) { return char(std::tolower(c)); });
+    if (lower_host == "dev.azure.com" || lower_host == "ssh.dev.azure.com" ||
+        lower_host.ends_with(".visualstudio.com"))
+        return azure::remote(host, path);
     const size_t last = path.rfind('/');
     if (host.empty() || last == std::string_view::npos || last == 0 || last + 1 == path.size())
         return std::nullopt;
@@ -586,6 +612,7 @@ std::string gitlab_project(const forge_repo& r)
 
 std::string repo_api(forge_kind k, const forge_repo& r)
 {
+    if (k == forge_kind::azure) return azure::repository_api(r);
     return k == forge_kind::gitlab ? gitlab_project(r) : api_root(k, r.host) + "/repos/" + r.path();
 }
 
@@ -815,7 +842,8 @@ gitlab_pulls(const forge_repo& r, std::string_view token, bool ask_access, bool 
 {
     const auto headers = api_headers(forge_kind::gitlab, token);
     const auto reply = forge_detail::http_get(
-        gitlab_project(r) + "/merge_requests?state=opened&per_page=100&with_labels_details=true", {.headers = headers});
+        gitlab_project(r) + "/merge_requests?state=opened&per_page=100&with_labels_details=true",
+        {.headers = headers});
     const auto j = json::parse(reply.body);
     if (hidden_reply(reply)) return pull_requests_reply{.access = repo_access::hidden};
     if (reply.status != 200 || !j) return std::unexpected(failure(reply, j));
@@ -845,7 +873,8 @@ gitlab_pulls(const forge_repo& r, std::string_view token, bool ask_access, bool 
         // A fork's merge request: its project isn't this one, and its path
         // would take another request; it's left unmatched.
         if (m["source_project_id"].integer() != m["target_project_id"].integer()) pr.head = {};
-        pr.labels = forge_detail::decode_labels(m["label_details"] ? m["label_details"] : m["labels"]);
+        pr.labels =
+            forge_detail::decode_labels(m["label_details"] ? m["label_details"] : m["labels"]);
         pr.author_avatar = m["author"]["avatar_url"].str();
         pr.body = m["description"].str();
         pr.body_known = true;
@@ -1210,6 +1239,7 @@ std::expected<pull_requests_reply, std::string> open_pull_requests(forge_kind k,
     case forge_kind::github: return github_pulls(r, token, ask_tips);
     case forge_kind::gitlab: return gitlab_pulls(r, token, ask_access, ask_tips);
     case forge_kind::gitea: return gitea_pulls(r, token, ask_access, ask_tips);
+    case forge_kind::azure: return azure::pulls(r, token, ask_tips);
     }
     return {};
 }
@@ -1217,6 +1247,7 @@ std::expected<pull_requests_reply, std::string> open_pull_requests(forge_kind k,
 std::expected<std::string, std::string> default_branch(forge_kind k, const forge_repo& r,
                                                        std::string_view token)
 {
+    if (k == forge_kind::azure) return std::unexpected(azure::unsupported());
     const auto reply = forge_detail::http_get(repo_api(k, r), {.headers = api_headers(k, token)});
     const auto j = json::parse(reply.body);
     if (reply.status != 200 || !j) return std::unexpected(failure(reply, j));
@@ -1228,6 +1259,7 @@ std::expected<std::string, std::string> default_branch(forge_kind k, const forge
 std::expected<std::vector<forge_repo>, std::string>
 pull_request_targets(forge_kind k, const forge_repo& head, std::string_view token)
 {
+    if (k == forge_kind::azure) return std::unexpected(azure::unsupported());
     const auto reply =
         forge_detail::http_get(repo_api(k, head), {.headers = api_headers(k, token)});
     const auto j = json::parse(reply.body);
@@ -1258,6 +1290,7 @@ std::expected<pull_request, std::string> create_pull_request(forge_kind k, const
                                                              const new_pull_request& n,
                                                              std::string_view token)
 {
+    if (k == forge_kind::azure) return std::unexpected(azure::unsupported());
     auto headers = api_headers(k, token);
     headers.push_back({"Content-Type", "application/json"});
     std::string body, url;
@@ -1512,11 +1545,13 @@ std::expected<merge_state, std::string> gitea_merge_state(const forge_repo& r, i
 std::expected<merge_state, std::string> pull_request_merge_state(forge_kind k, const forge_repo& r,
                                                                  int number, std::string_view token)
 {
+    if (k == forge_kind::azure) return std::unexpected(azure::unsupported());
     switch (k)
     {
     case forge_kind::github: return github_merge_state(r, number, token);
     case forge_kind::gitlab: return gitlab_merge_state(r, number, token);
     case forge_kind::gitea: return gitea_merge_state(r, number, token);
+    case forge_kind::azure: return std::unexpected(azure::unsupported());
     }
     return {};
 }
@@ -1524,6 +1559,7 @@ std::expected<merge_state, std::string> pull_request_merge_state(forge_kind k, c
 std::string merge_pull_request(forge_kind k, const forge_repo& r, int number,
                                const merge_request& m, std::string_view token)
 {
+    if (k == forge_kind::azure) return azure::unsupported();
     const std::string n = std::to_string(number);
     switch (k)
     {
@@ -1574,6 +1610,7 @@ std::string merge_pull_request(forge_kind k, const forge_repo& r, int number,
         return send_json(k, "PUT", gitlab_project(r) + "/merge_requests/" + n + "/merge", body,
                          token);
     }
+    case forge_kind::azure: return azure::unsupported();
     case forge_kind::gitea:
     {
         std::string body = "{\"Do\":" + json::quoted(method_word(m.method)) +
@@ -1592,6 +1629,7 @@ std::string merge_pull_request(forge_kind k, const forge_repo& r, int number,
 std::string close_pull_request(forge_kind k, const forge_repo& r, int number,
                                std::string_view comment, std::string_view token)
 {
+    if (k == forge_kind::azure) return azure::unsupported();
     const std::string n = std::to_string(number);
     if (!comment.empty())
     {
@@ -1611,6 +1649,7 @@ std::string close_pull_request(forge_kind k, const forge_repo& r, int number,
 std::string delete_branch(forge_kind k, const forge_repo& r, std::string_view branch,
                           std::string_view token)
 {
+    if (k == forge_kind::azure) return azure::unsupported();
     const std::string escaped = form_escape(branch);
     switch (k)
     {
@@ -1620,6 +1659,7 @@ std::string delete_branch(forge_kind k, const forge_repo& r, std::string_view br
     case forge_kind::gitlab:
         return send_json(k, "DELETE", gitlab_project(r) + "/repository/branches/" + escaped, {},
                          token);
+    case forge_kind::azure: return azure::unsupported();
     case forge_kind::gitea:
         return send_json(k, "DELETE", repo_api(k, r) + "/branches/" + std::string(branch), {},
                          token);
@@ -1846,6 +1886,7 @@ author_avatar(forge_kind k, const forge_repo& r, std::string_view commit, std::s
     case forge_kind::github: return github_avatar(r, commit, px, token, cancelled);
     case forge_kind::gitlab: return gitlab_avatar(r, email, px, token, cancelled);
     case forge_kind::gitea: return gitea_avatar(r, commit, token, cancelled);
+    case forge_kind::azure: return std::string();  // Identity avatars requiring auth are deferred.
     }
     return std::string();
 }
@@ -1868,6 +1909,7 @@ std::string token_page(forge_kind k, std::string_view host)
     case forge_kind::gitlab:
         return web_root(host) + "/-/user_settings/personal_access_tokens?name=Tortilla&scopes=api";
     case forge_kind::gitea: return web_root(host) + "/user/settings/applications";
+    case forge_kind::azure: return web_root(host) + "/_usersSettings/tokens";
     }
     return {};
 }
@@ -1876,6 +1918,9 @@ std::string token_scopes(forge_kind k)
 {
     switch (k)
     {
+    case forge_kind::azure:
+        return _("An organization PAT with Code (Read & Write) and Build (Read). Enter "
+                 "dev.azure.com/organization as the server.");
     case forge_kind::github: return _("A classic token with the “repo” scope.");
     case forge_kind::gitlab: return _("A personal access token with the “api” scope.");
     case forge_kind::gitea:
@@ -1988,10 +2033,15 @@ std::vector<pr_label> decode_labels(const json::value& labels)
         bool valid = hex.size() == 6;
         for (char c : hex)
         {
-            const int digit = c >= '0' && c <= '9' ? c - '0' :
-                              c >= 'a' && c <= 'f' ? c - 'a' + 10 :
-                              c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
-            if (digit < 0) { valid = false; break; }
+            const int digit = c >= '0' && c <= '9'   ? c - '0'
+                              : c >= 'a' && c <= 'f' ? c - 'a' + 10
+                              : c >= 'A' && c <= 'F' ? c - 'A' + 10
+                                                     : -1;
+            if (digit < 0)
+            {
+                valid = false;
+                break;
+            }
             rgb = (rgb << 4) | unsigned(digit);
         }
         if (valid) label.color = rap::color{uint8_t(rgb >> 16), uint8_t(rgb >> 8), uint8_t(rgb)};
@@ -1999,7 +2049,6 @@ std::vector<pr_label> decode_labels(const json::value& labels)
     }
     return out;
 }
-
 
 std::string failure(const rap::sys::http_response& r, const std::optional<json::value>& j)
 {
@@ -2075,7 +2124,8 @@ transport fake;  // the tests'
 std::string_view token_in(const rap::sys::http_headers& headers)
 {
     for (const auto& [name, value] : headers)
-        if (std::ranges::equal(name, std::string_view("authorization"), [](char x, char y)
+        if (std::ranges::equal(name, std::string_view("authorization"),
+                               [](char x, char y)
                                { return std::tolower(static_cast<unsigned char>(x)) == y; }))
         {
             const std::string_view v = value;
@@ -2107,9 +2157,15 @@ void bind_token(std::string_view token, std::string_view host)
     if (token.empty()) return;
     const std::string origin = web_origin(host);
     std::lock_guard lock(gate_mutex);
-    auto it = bound.find(token);
-    if (it == bound.end()) it = bound.emplace(std::string(token), std::vector<std::string>{}).first;
-    if (std::ranges::find(it->second, origin) == it->second.end()) it->second.push_back(origin);
+    const bool azure_scope = host.starts_with("dev.azure.com/");
+    const std::string scope = azure_scope ? "https://" + std::string(host) + "/" : origin;
+    for (const std::string& key :
+         azure_scope ? std::vector<std::string>{std::string(token), azure::basic_token(token)}
+                     : std::vector<std::string>{std::string(token)})
+    {
+        auto& scopes = bound[key];
+        if (std::ranges::find(scopes, scope) == scopes.end()) scopes.push_back(scope);
+    }
 }
 
 bool token_allowed(std::string_view token, std::string_view url)
@@ -2119,13 +2175,14 @@ bool token_allowed(std::string_view token, std::string_view url)
     std::lock_guard lock(gate_mutex);
     const auto it = bound.find(token);
     if (it == bound.end()) return false;  // given for nowhere: sent nowhere
-    return std::ranges::any_of(it->second,
-                               [&](const std::string& origin)
-                               {
-                                   return same_origin(to, origin) ||
-                                          (origin == "https://github.com:443" &&
-                                           to == "https://api.github.com:443");
-                               });
+    return std::ranges::any_of(
+        it->second,
+        [&](const std::string& origin)
+        {
+            return (origin.starts_with("https://dev.azure.com/") ? azure::scope_allows(origin, url)
+                                                                 : same_origin(to, origin)) ||
+                   (origin == "https://github.com:443" && to == "https://api.github.com:443");
+        });
 }
 
 rap::sys::http_response http_request(std::string_view method, const std::string& url,

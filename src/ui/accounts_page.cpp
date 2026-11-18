@@ -1,4 +1,5 @@
 #include "accounts_page.h"
+#include "forge/azure.h"
 
 #include "forge/forge.h"
 #include "forge/pr_watch.h"
@@ -33,13 +34,17 @@ std::string hints_text()
     const auto all = accounts();
     std::string names;
     for (const forge_remote& r : pr_watch::all_hints())
-        if (!account_for_url("https://" + r.repo.host + "/", all))
+        if (!account_for_url(r.account.kind == forge_kind::azure
+                                 ? azure::repository_web(r.repo)
+                                 : "https://" + r.repo.host + "/" + r.repo.path(),
+                             all))
             names += (names.empty() ? "" : ", ") + r.repo.host + "/" + r.repo.path();
     return names.empty() ? std::string()
                          : rap::i18n::format(_("Sign in to see pull requests for: {0}"), names);
 }
 
-constexpr forge_kind k_kinds[] = {forge_kind::github, forge_kind::gitlab, forge_kind::gitea};
+constexpr forge_kind k_kinds[] = {forge_kind::github, forge_kind::gitlab, forge_kind::gitea,
+                                  forge_kind::azure};
 
 // Whether an account's token works, as asked when the page opens.
 struct account_status
@@ -119,7 +124,7 @@ struct accounts_state : std::enable_shared_from_this<accounts_state>
         if (cancelled) *cancelled = true;
     }
 
-    forge_kind chosen_kind() const { return k_kinds[std::clamp(kind->current(), 0, 2)]; }
+    forge_kind chosen_kind() const { return k_kinds[std::clamp(kind->current(), 0, 3)]; }
 
     // The server as typed, without a scheme or a trailing slash.
     std::string chosen_host() const

@@ -1,5 +1,5 @@
 // The forges Tortilla signs in to: GitHub (and GitHub Enterprise), GitLab,
-// and Gitea (Forgejo and Codeberg too: Forgejo speaks Gitea's API). An
+// Gitea (Forgejo and Codeberg too), and Azure DevOps. An
 // account is the forge, its host and the user; its token is in the user's
 // keychain (rap::sys secrets), never in Tortilla's settings.
 //
@@ -28,6 +28,7 @@ enum class forge_kind
     github,
     gitlab,
     gitea,
+    azure,
 };
 
 // "GitHub", "GitLab", "Gitea / Forgejo".
@@ -38,7 +39,7 @@ std::string_view default_host(forge_kind);
 struct forge_account
 {
     forge_kind kind = forge_kind::github;
-    std::string host;        // github.com, gitlab.example.org: no scheme
+    std::string host;        // No scheme; Azure: dev.azure.com/organization.
     std::string login;       // the user name on it
     std::string name;        // their display name; may be empty
     std::string avatar_url;  // may be empty

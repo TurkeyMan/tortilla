@@ -91,6 +91,7 @@ add_library(tortilla_git STATIC
     src/util/search_query.cpp
     src/util/sha256.cpp
     src/util/json.cpp
+    src/forge/azure.cpp
     src/forge/forge.cpp
     src/forge/pr_watch.cpp
     src/forge/remote_sign_in.cpp
@@ -369,7 +370,7 @@ if(NOT MSVC)
     target_compile_options(tortilla_git PUBLIC -Wno-missing-field-initializers)
 endif()
 
-add_executable(tortilla-tests tests/log_model_test.cpp tests/journal_tests.cpp tests/raw_client.cpp
+add_executable(tortilla-tests tests/azure_tests.cpp tests/log_model_test.cpp tests/journal_tests.cpp tests/raw_client.cpp
                tests/log_page_tests.cpp tests/log_host_tests.cpp)
 target_link_libraries(tortilla-tests PRIVATE tortilla_app rapport::rapport)
 
