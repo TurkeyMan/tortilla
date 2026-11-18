@@ -1,5 +1,6 @@
 #include "forge.h"
 #include "azure.h"
+#include "azure_credentials.h"
 
 #include "forge/forge_detail.h"
 #include "i18n.h"
@@ -268,6 +269,7 @@ void save_accounts(const std::vector<forge_account>& accounts)
     std::string saved;
     for (const forge_account& a : accounts)
     {
+        if (a.via_git_credential) continue; // The automatic source is never persisted.
         std::string name = a.name;
         for (char& c : name)
             if (c == '\t' || c == '\n' || c == '\r') c = ' ';
@@ -338,6 +340,7 @@ std::optional<forge_account> account_for_url(std::string_view url,
 // The keychain holds the token as JSON: {"access":..,"refresh":..,"expires_at":..}.
 bool store_token(const forge_account& a, const forge_token& t)
 {
+    if (a.via_git_credential || t.lifetime) return false; // No helper credential enters the keychain.
     if (a.via_gh) return true;  // gh keeps it
     const std::string blob = "{\"access\":" + json::quoted(t.access) +
                              ",\"refresh\":" + json::quoted(t.refresh) +
@@ -348,6 +351,12 @@ bool store_token(const forge_account& a, const forge_token& t)
 
 std::optional<forge_token> load_token(const forge_account& a, std::string* why)
 {
+    if (a.via_git_credential)
+    {
+        const auto got = azure::helper_token(a);
+        if (why) *why = got ? std::string() : got.error();
+        return got ? std::optional(*got) : std::nullopt;
+    }
     if (a.via_gh)
     {
         // Asked of gh once a session per host: starting it costs a process
@@ -384,7 +393,7 @@ std::optional<forge_token> load_token(const forge_account& a, std::string* why)
 
 bool erase_token(const forge_account& a)
 {
-    return a.via_gh || rap::sys::erase_secret(secret_name(a));  // gh's sign-in stays gh's
+    return a.via_git_credential || a.via_gh || rap::sys::erase_secret(secret_name(a));  // gh's sign-in stays gh's
 }
 
 bool gh_installed()
@@ -486,8 +495,10 @@ rap::sys::http_headers api_headers(forge_kind k, std::string_view token)
     if (!token.empty())
         h.emplace_back("Authorization",
                        k == forge_kind::azure
-                           ? "Basic " + azure::basic_token(token)
+                           ? azure::helper_authorization(token).value_or("Basic " + azure::basic_token(token))
                            : (k == forge_kind::gitea ? "token " : "Bearer ") + std::string(token));
+    if (k == forge_kind::azure && azure::is_helper_token(token))
+        h.emplace_back(std::string(azure::credential_context_header), token);
     return h;
 }
 
@@ -2121,8 +2132,9 @@ transport fake;  // the tests'
 
 // The token an Authorization header carries ("Bearer x", "token x"), or ""
 // when there's none.
-std::string_view token_in(const rap::sys::http_headers& headers)
+std::string token_in(const rap::sys::http_headers& headers)
 {
+    if (const auto helper = azure::helper_key_for_headers(headers)) return *helper;
     for (const auto& [name, value] : headers)
         if (std::ranges::equal(name, std::string_view("authorization"),
                                [](char x, char y)
@@ -2130,7 +2142,7 @@ std::string_view token_in(const rap::sys::http_headers& headers)
         {
             const std::string_view v = value;
             const size_t space = v.find(' ');
-            return space == std::string_view::npos ? v : v.substr(space + 1);
+            return std::string(space == std::string_view::npos ? v : v.substr(space + 1));
         }
     return {};
 }
@@ -2150,22 +2162,36 @@ transport faked()
     return fake;
 }
 
+rap::sys::http_options clean_options(const rap::sys::http_options& input)
+{
+    auto out = input;
+    std::erase_if(out.headers, [](const auto& h) { return h.first == azure::credential_context_header; });
+    return out;
+}
+
 }  // namespace
 
 void bind_token(std::string_view token, std::string_view host)
 {
     if (token.empty()) return;
     const std::string origin = web_origin(host);
+    const bool helper = azure::is_helper_token(token);
     std::lock_guard lock(gate_mutex);
     const bool azure_scope = host.starts_with("dev.azure.com/");
     const std::string scope = azure_scope ? "https://" + std::string(host) + "/" : origin;
     for (const std::string& key :
-         azure_scope ? std::vector<std::string>{std::string(token), azure::basic_token(token)}
+         azure_scope && !helper ? std::vector<std::string>{std::string(token), azure::basic_token(token)}
                      : std::vector<std::string>{std::string(token)})
     {
         auto& scopes = bound[key];
         if (std::ranges::find(scopes, scope) == scopes.end()) scopes.push_back(scope);
     }
+}
+
+void forget_token_binding(std::string_view token)
+{
+    std::lock_guard lock(gate_mutex);
+    bound.erase(std::string(token));
 }
 
 bool token_allowed(std::string_view token, std::string_view url)
@@ -2189,31 +2215,34 @@ rap::sys::http_response http_request(std::string_view method, const std::string&
                                      std::string_view body, const rap::sys::http_options& options)
 {
     if (!token_allowed(token_in(options.headers), url)) return refused(url);
-    if (const transport f = faked()) return f(method, url, body, options);
-    return rap::sys::http_request(method, url, body, options);
+    const auto clean = clean_options(options);
+    if (const transport f = faked()) return f(method, url, body, clean);
+    return rap::sys::http_request(method, url, body, clean);
 }
 
 rap::sys::http_response http_get(const std::string& url, const rap::sys::http_options& options)
 {
     if (!token_allowed(token_in(options.headers), url)) return refused(url);
-    if (const transport f = faked()) return f("GET", url, {}, options);
-    return rap::sys::http_get(url, options);
+    const auto clean = clean_options(options);
+    if (const transport f = faked()) return f("GET", url, {}, clean);
+    return rap::sys::http_get(url, clean);
 }
 
 rap::sys::http_response http_download(const std::string& url, const std::filesystem::path& to,
                                       const rap::sys::http_options& options)
 {
     if (!token_allowed(token_in(options.headers), url)) return refused(url);
+    const auto clean = clean_options(options);
     if (const transport f = faked())
     {
-        auto r = f("GET", url, {}, options);
+        auto r = f("GET", url, {}, clean);
         if (options.sink && !options.sink(r.body)) r.error = "stopped";
         if (r.status >= 200 && r.status < 300 && r.error.empty())
             std::ofstream(to, std::ios::binary) << r.body;
         r.body.clear();
         return r;
     }
-    return rap::sys::http_download(url, to, options);
+    return rap::sys::http_download(url, to, clean);
 }
 
 void set_transport(transport t)

@@ -1,10 +1,12 @@
 # Azure DevOps (read-only)
 
-Add an **Azure DevOps** account in Settings with server
-`dev.azure.com/organization` and a pasted Personal Access Token. The token
-instructions request Code (Read & Write) and Build (Read); this integration
-only reads. Browser OAuth and importing Git Credential Manager credentials
-are not implemented.
+For Azure HTTPS remotes, Tortilla automatically consults Git's configured
+credential helper (including GCM) when there is no explicitly configured
+organization account. A pasted **Azure DevOps** PAT in Settings, server
+`dev.azure.com/organization`, overrides the automatic source deterministically.
+PAT instructions request Code (Read & Write) and Build (Read); this integration
+only reads. Browser OAuth app registration is not implemented; existing GCM
+OAuth sign-ins can be reused through Git's credential protocol.
 
 Accounts are per organization, even if a PAT grants access to several.
 The existing account setting and keychain key contain the organization
@@ -40,11 +42,68 @@ GUIDs and build IDs are retained separately from stable process-local numeric
 job cache keys. External commit statuses and run artifacts are also shown;
 artifact size is unknown until downloading.
 
-Git Credential Manager can cache PATs or Entra/OAuth credentials, so its
-stored entry is not necessarily a reusable PAT. Import needs a separately
-designed account/token lifecycle and is deliberately outside this change.
-No credential-manager commands or user secrets were inspected.
-See [GCM Azure credential types](https://github.com/git-ecosystem/git-credential-manager/blob/main/docs/configuration.md#credentialazreposcredentialtype).
+## Git credential source
+
+The automatic account carries canonical organization, the decoded username
+from the original HTTPS remote (if present), and repository workdir for local
+helper/account configuration. No password is copied from a remote URL. This
+metadata is generated per repository, not serialized as a saved account.
+SSH recognition is unchanged; no additional SSH credential work is added.
+
+Only `git credential fill` reads credentials. Tortilla does not call approve,
+reject, GCM list/bind/unbind, Windows Credential/Vault APIs, registry or MSAL
+cache files. It does not copy a helper secret into settings or the keychain.
+Git Credential Manager itself remains responsible for its cache and refresh.
+No helper commands are added to fetch/push/askpass transport.
+
+The stdin protocol begins with `capability[]=authtype`, then `protocol=https`,
+`host=dev.azure.com`, `path={organization}`, optional `username={remote user}`,
+and a terminating blank line. The path is the organization alone, never
+`dev.azure.com/org` or a full project path. Generic, host-specific and exact
+organization-specific command-local `credential.useHttpPath=true` prevent Git
+from stripping it. `git -C` retains repository-local bindings. Legacy HTTPS
+remotes use the same canonical lookup; GCM PATs cached only under a legacy
+visualstudio.com URL might not be found. That produces the explicit paste-PAT
+fallback rather than a different-host/account probe.
+
+The dedicated child runner supplies stdin directly, caps stdout at 64 KiB,
+discards stderr, and has a 10-second deadline. Windows starts hidden/suspended
+into its own kill-on-close job with only the intended pipe handles inherited;
+POSIX creates its own process group. Timeout/output-limit termination affects
+only that child/group/job. The child's environment disables GCM interactivity,
+GUI prompts, terminal prompting, both askpass variables and credential tracing;
+command-local `core.askPass=` also disables configured askpass. No process-global
+Git config/environment is changed. Test execution substitutes a fake runner or
+a dedicated dummy executable, never the user's credential helper/store.
+
+Capability-declared Basic/Bearer credentials use the declared HTTP scheme
+without guessing from token contents. Legacy username/password preserves the
+**exact helper username and password** in Basic authentication. Because that
+legacy shape cannot distinguish PAT from OAuth, a read-only request rejected
+with HTTP401 or HTML203 may retry the same opaque password **once as Bearer**.
+This is a documented compatibility policy, not a claim that Microsoft documents
+OAuth-over-Basic for REST. JSON203, 403, 429 and 5xx do not negotiate. Explicit
+schemes and pasted PATs do not negotiate. Neither failure causes approve/reject,
+credential deletion or a silent switch to another identity. Future write support
+must resolve its scheme with a read-only preflight, not by retrying mutations.
+
+Accepted mode is remembered in a maximum-128-entry, 10-minute in-memory cache
+keyed by a SHA256 fingerprint scoped to organization/workdir/remote username
+and helper credential. It contains no passwords and is never serialized;
+a changed credential resets the mode. Actual credential material belongs to a
+typed worker-owned RAII context. Existing string-token APIs receive only an
+opaque handle; a weak registry bridges them. An internal context marker ensures
+concurrent organizations sharing identical credential bytes cannot alias the
+scope gate, and is stripped before every real/fake HTTP transport. Context
+destruction releases material and removes the opaque binding. Panel and PR
+watch workers do not keep helper tokens in their long-lived token caches.
+
+Sources: [Git credential protocol](https://git-scm.com/docs/git-credential),
+[credential contexts/useHttpPath/askpass](https://git-scm.com/docs/gitcredentials),
+[GCM Azure accounts/tokens](https://github.com/git-ecosystem/git-credential-manager/blob/main/docs/azrepos-users-and-tokens.md),
+[GCM interactivity and tracing settings](https://github.com/git-ecosystem/git-credential-manager/blob/main/docs/configuration.md),
+[GCM PAT/OAuth provider source](https://github.com/git-ecosystem/git-credential-manager/blob/main/src/Microsoft.AzureRepos/AzureReposHostProvider.cs),
+[Microsoft REST Bearer samples](https://learn.microsoft.com/en-us/azure/devops/integrate/get-started/rest/samples?view=azure-devops).
 
 ## Validation and user diagnostics
 
@@ -58,8 +117,8 @@ present. Messages are bounded, control characters are flattened, and raw,
 URL-encoded and Basic-encoded PATs are redacted. Raw HTML is never displayed. Azure artifact responses are validated in a
 unique sibling staging file; HTTP/JSON/HTML errors never replace or delete
 the existing destination content.
-HTTP 401 and HTTP 203 with an HTML sign-in page explain an invalid/expired
-PAT or missing scope; known Git/policy endpoints name Code read access,
+HTTP 401 and HTTP 203 with an HTML sign-in page explain invalid/expired
+Git credentials (or PAT for pasted tokens), or missing scope; known Git/policy endpoints name Code read access,
 and Build/timeline/log/artifact endpoints name Build (Read). HTTP 203 JSON
 is an ordinary unexpected HTTP response, not automatically an auth error.
 A 403 shows the service message plus the endpoint's likely scope, without
@@ -104,6 +163,7 @@ responses. D-series cases deliberately inject unsuccessful HTTP responses.
 | Build `builds/{id}/logs` | [Logs list 7.1](https://learn.microsoft.com/en-us/rest/api/azure/devops/build/builds/get-build-logs?view=azure-devops-rest-7.1) | F9: id/lineCount; lookup errors propagate |
 | Build `builds/{id}/logs/{logId}?startLine=...` with Accept text/plain | [Get log 7.1](https://learn.microsoft.com/en-us/rest/api/azure/devops/build/builds/get-build-log?view=azure-devops-rest-7.1) | F10: plain log tail; bounded startLine request |
 | PAT Basic header / token settings page | [PAT authentication](https://learn.microsoft.com/en-us/azure/devops/organizations/accounts/use-personal-access-tokens-to-authenticate?view=azure-devops) | empty-username Base64, scoped gate, legacy/SSH aliases, no OAuth |
+| Local `git credential fill` (no Azure write endpoint) | [Git protocol](https://git-scm.com/docs/git-credential), [GCM settings](https://github.com/git-ecosystem/git-credential-manager/blob/main/docs/configuration.md) | `azure_credential_tests.cpp`: exact stdin, parser, bounds, source precedence, negotiation/scope/lifetime; `azure_process_tests.cpp`: real isolated dummy child stdin/env/deadline/output cap |
 | Threads, refs mutation, PR creation/completion/abandon | No requests in PR1 | mutation-refusal transport assertion; no network or hidden write fallback |
 
 ## Mappings, ambiguities and limits
@@ -145,4 +205,10 @@ responses. D-series cases deliberately inject unsuccessful HTTP responses.
 - Signed artifact URLs outside the organization receive no PAT. Rapport
   retains its origin-based redirect protection; it does not expose a
   per-path redirect callback. There are no authenticated identity-image
-  requests. No credential-helper probing or live Azure requests are used.
+  requests. No development/test credential-store probing or live Azure requests are used.
+
+Existing per-row completed/error results remain cached by the forge panel.
+PR-watch retries on its existing schedule, but an initial CI lookup failure
+without a subsequent PR-placement/source change may require reopening the
+log tab after credentials become available. No additional timers or layout
+changes are introduced by credential reuse.

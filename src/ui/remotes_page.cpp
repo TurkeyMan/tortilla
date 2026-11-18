@@ -1,5 +1,6 @@
 #include "remotes_page.h"
 #include "forge/azure.h"
+#include "forge/azure_credentials.h"
 
 #include "forge/remote_sign_in.h"
 #include "git/command.h"
@@ -166,7 +167,7 @@ struct remotes_state
         {
             remote_forge f{.url = config_value(dir, "remote." + n + ".url")};
             f.repo = repo_of_url(f.url);
-            if (f.repo) f.account = account_for_url(f.url, signed_in);
+            if (f.repo) f.account = azure::account_for_remote(f.url, dir, signed_in);
             if (auto old = std::ranges::find_if(rows.forges,
                                                 [&](const remote_forge& o) { return o.same(f); });
                 old != rows.forges.end())
@@ -191,8 +192,9 @@ struct remotes_state
                     if (!f.kind) f.kind = probe_forge(f.repo->host);
                     // With an account, as it: whether it can see the repository.
                     std::string token;
+                    std::optional<forge_token> owned;
                     if (f.account)
-                        if (auto t = load_token(*f.account)) token = std::move(t->access);
+                        if ((owned = load_token(*f.account))) token = owned->access;
                     if (f.kind && (!f.account || !token.empty()))
                         f.seen = look_for_repo(*f.kind, *f.repo, token);
                     f.asking = false;

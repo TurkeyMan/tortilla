@@ -1,5 +1,6 @@
 #include "pr_watch.h"
 #include "azure.h"
+#include "azure_credentials.h"
 
 #include "git/command.h"
 #include "git/remotes.h"
@@ -58,7 +59,7 @@ std::vector<forge_remote> forge_remotes(const std::string& workdir)
         const std::string url = config_value(workdir, "remote." + name + ".url");
         auto repo = repo_of_url(url);
         if (!repo) continue;
-        auto account = account_for_url(url, all);
+        auto account = azure::account_for_remote(url, workdir, all);
         // A public forge's without one: asked as no one.
         if (!account)
             if (const auto kind = known_forge(repo->host))
@@ -320,12 +321,13 @@ void pr_watch::ask(bool forced)
                 const std::string key = r.account.host + ' ' + r.account.login,
                                   seen = access_key(r);
                 std::string token;
+                std::optional<forge_token> owned_token;
                 bool ask_access = false;
                 std::int64_t last = 0;
                 {
                     std::lock_guard lock(sh->mutex);
                     if (!sh->alive) return;
-                    if (r.signed_in()) token = sh->tokens[key];
+                    if (r.signed_in() && !r.account.via_git_credential) token = sh->tokens[key];
                     ask_access = !sh->access.contains(seen);
                     last = sh->anonymous_asked[seen];
                 }
@@ -338,8 +340,9 @@ void pr_watch::ask(bool forced)
                 if (r.signed_in() && token.empty())
                 {
                     std::string why;
-                    if (auto t = load_token(r.account, &why))
-                        token = t->access;
+                    owned_token = load_token(r.account, &why);
+                    if (owned_token)
+                        token = owned_token->access;
                     else
                     {
                         error = why;
@@ -355,7 +358,7 @@ void pr_watch::ask(bool forced)
                     error = reply.error();
                     continue;
                 }
-                if (r.signed_in()) sh->tokens[key] = token;
+                if (r.signed_in() && !r.account.via_git_credential) sh->tokens[key] = token;
                 if (reply->rate_limited)
                 {
                     kept.push_back(r.repo);

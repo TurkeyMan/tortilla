@@ -1,5 +1,6 @@
 #include "ci.h"
 #include "azure.h"
+#include "azure_credentials.h"
 
 #include "forge/forge_detail.h"
 #include "i18n.h"
@@ -459,11 +460,13 @@ std::string download_artifact(forge_kind k, const ci_artifact& a, const std::fil
 {
     // GitHub's redirects to a signed address on another host; rapport sends
     // the token only to the host it was asked of.
+    if (k == forge_kind::azure)
+        if (const auto error = azure::helper_preflight(token); !error.empty()) return error;
     auto headers = api_headers(k, token);
     // Azure may supply a signed blob URL; it needs no PAT, and a PAT for
     // the organization must never be forwarded to a separate blob host.
     if (k == forge_kind::azure &&
-        !forge_detail::token_allowed(azure::basic_token(token), a.download_url))
+        !forge_detail::token_allowed(azure::is_helper_token(token) ? std::string(token) : azure::basic_token(token), a.download_url))
         headers = api_headers(k, {});
     std::string preview;
     std::function<bool(std::string_view)> capture;

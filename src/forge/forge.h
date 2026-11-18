@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <expected>
 #include <optional>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -46,6 +47,8 @@ struct forge_account
     // Where its token is: the keychain, or (true) the GitHub CLI's sign-in,
     // asked each time (`gh auth token`), so gh's logins and renewals hold.
     bool via_gh = false;
+    bool via_git_credential = false; // Automatic Azure HTTPS source; never serialized.
+    std::string credential_username, credential_directory; // Remote identity/config context, no password.
 };
 
 // What signing in gives. A GitLab sign-in through the browser expires and
@@ -55,6 +58,7 @@ struct forge_token
     std::string access;
     std::string refresh;          // empty: can't be renewed
     std::int64_t expires_at = 0;  // seconds since 1970; 0: doesn't expire
+    std::shared_ptr<void> lifetime; // Worker-owned ephemeral helper context, never serialized.
 };
 
 // -- accounts -----------------------------------------------------------------

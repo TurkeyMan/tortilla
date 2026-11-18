@@ -12,6 +12,7 @@ std::string project_api(const forge_repo&);
 std::string repository_api(const forge_repo&);
 bool scope_allows(std::string_view scope, std::string_view url);
 std::string basic_token(std::string_view);
+std::string basic_pair(std::string_view username, std::string_view password);
 std::optional<forge_repo> remote(std::string_view host, std::string_view path);
 std::expected<forge_account, std::string> identity(std::string_view host, std::string_view token);
 std::expected<pull_requests_reply, std::string> pulls(const forge_repo&, std::string_view token,
