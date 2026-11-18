@@ -1,4 +1,5 @@
 #include "azure.h"
+#include "azure_credentials.h"
 
 #include "forge/forge_detail.h"
 #include "i18n.h"
@@ -69,7 +70,7 @@ std::string web_repo(const forge_repo& r)
 
 std::expected<std::string, std::string> get(const std::string& url, std::string_view token)
 {
-    const auto reply = http_get(url, {.headers = api_headers(forge_kind::azure, token)});
+    const auto reply = helper_get(url, {.headers = api_headers(forge_kind::azure, token)}, token);
     const auto parsed = json::parse(reply.body);
     if (reply.status != 200 || !parsed || !reply.error.empty())
         return std::unexpected(response_error(reply, url, token));
@@ -255,7 +256,9 @@ std::string response_error(const rap::sys::http_response& reply, std::string_vie
 {
     auto safe = [&](std::string text)
     {
-        for (const auto& secret : {std::string(token), basic_token(token), url_escape(token)})
+        auto secrets = helper_secrets(token);
+        secrets.insert(secrets.end(), {std::string(token), basic_token(token), url_escape(token)});
+        for (const auto& secret : secrets)
         {
             if (secret.empty()) continue;
             size_t pos = 0;
@@ -289,14 +292,16 @@ std::string response_error(const rap::sys::http_response& reply, std::string_vie
         const auto message = (*parsed)["message"].str();
         if (!message.empty()) error += ": " + safe(message);
     }
-    else if (!reply.error.empty())
+    if (!reply.error.empty())
         error += ": " + safe(reply.error);
     else if (reply.status == 200)
         error += ": invalid or incomplete response";
     const bool signin = reply.status == 401 || (reply.status == 203 && html && !parsed);
     if (signin)
-        error +=
-            ". PAT invalid, expired, or missing required scope; check the organization and token";
+        error += is_helper_token(token) ? ". Git credential invalid, expired, or missing required "
+                                          "scope; sign in through Git or paste an organization PAT"
+                                        : ". PAT invalid, expired, or missing required scope; "
+                                          "check the organization and token";
     if (signin || reply.status == 403)
         error += url.find("/build/") != std::string_view::npos ? ". Required scope: Build (Read)."
                  : url.find("/git/") != std::string_view::npos ||
@@ -311,10 +316,10 @@ std::string unsupported()
     return _("Azure DevOps mutations are not supported yet; use the Azure DevOps web page.");
 }
 
-std::string basic_token(std::string_view pat)
+std::string basic_pair(std::string_view username, std::string_view password)
 {
     constexpr char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    const std::string s = ":" + std::string(pat);
+    const std::string s = std::string(username) + ":" + std::string(password);
     std::string out;
     unsigned bits = 0;
     int count = 0;
@@ -331,6 +336,11 @@ std::string basic_token(std::string_view pat)
     if (count) out += alphabet[(bits << (6 - count)) & 63];
     while (out.size() % 4) out += '=';
     return out;
+}
+
+std::string basic_token(std::string_view pat)
+{
+    return basic_pair({}, pat);
 }
 
 std::optional<forge_repo> remote(std::string_view host, std::string_view path)
@@ -421,9 +431,9 @@ std::expected<pull_requests_reply, std::string> pulls(const forge_repo& r, std::
 {
     // https://learn.microsoft.com/en-us/rest/api/azure/devops/git/pull-requests/get-pull-requests?view=azure-devops-rest-7.1
     const auto reply =
-        http_get(repository_api(r) + "/pullrequests?searchCriteria.status=active&$top=100&" +
-                     std::string(version),
-                 {.headers = api_headers(forge_kind::azure, token)});
+        helper_get(repository_api(r) + "/pullrequests?searchCriteria.status=active&$top=100&" +
+                       std::string(version),
+                   {.headers = api_headers(forge_kind::azure, token)}, token);
     pull_requests_reply out;
     const auto j = json::parse(reply.body);
     if (reply.status != 200 || !j || (*j)["value"].kind() != json::value::type::array ||
@@ -501,7 +511,8 @@ std::expected<commit_ci, std::string> checks(const forge_repo& r, std::string_vi
                           "&repositoryType=TfsGit&queryOrder=queueTimeDescending&$top=100&" +
                           std::string(version);
         if (!continuation.empty()) url += "&continuationToken=" + url_escape(continuation);
-        const auto reply = http_get(url, {.headers = api_headers(forge_kind::azure, token)});
+        const auto reply =
+            helper_get(url, {.headers = api_headers(forge_kind::azure, token)}, token);
         const auto j = json::parse(reply.body);
         if (reply.status != 200 || !j || (*j)["value"].kind() != json::value::type::array ||
             !reply.error.empty())
@@ -670,11 +681,11 @@ std::expected<job_failure, std::string> failure_details(const forge_repo& r, con
             for (auto& [name, value] : headers)
                 if (name == "Accept") value = "text/plain";
             // https://learn.microsoft.com/en-us/rest/api/azure/devops/build/builds/get-build-log?view=azure-devops-rest-7.1
-            const auto reply = http_get(
+            const auto reply = helper_get(
                 build_root(r, job.azure_build) + "/logs/" + std::to_string(log_id) +
                     "?startLine=" + std::to_string(std::max<std::int64_t>(0, lines - 100)) + "&" +
                     std::string(version),
-                {.headers = std::move(headers), .max_bytes = size_t(1) << 20});
+                {.headers = std::move(headers), .max_bytes = size_t(1) << 20}, token);
             if (reply.status != 200 || !reply.error.empty())
                 return std::unexpected(
                     response_error(reply, build_root(r, job.azure_build), token));

@@ -47,6 +47,7 @@ std::string url_escape(std::string_view s);
 // (or github.com's API host, api.github.com): a token for forge.example
 // (port 443) never reaches forge.example:8443.
 void bind_token(std::string_view token, std::string_view host);
+void forget_token_binding(std::string_view token);
 // Whether `token` may go to `url`.
 bool token_allowed(std::string_view token, std::string_view url);
 

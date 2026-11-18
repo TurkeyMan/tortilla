@@ -111,6 +111,13 @@ remote_sign_in describe_remote(bool on_forge, const forge_account* account, repo
     if (!on_forge) return {};
     if (account)
     {
+        if (account->via_git_credential && seen != repo_seen::hidden)
+            return {.summary = _("Git credentials"),
+                    .text = seen == repo_seen::shown
+                        ? _("Using Git's saved credentials for this organization.")
+                        : _("Uses Git's saved credentials when available; otherwise paste an organization PAT in Accounts."),
+                    .mark = seen == repo_seen::shown ? check_state::success : check_state::none,
+                    .sign_in = offer::link};
         if (seen == repo_seen::hidden)
             return {.summary = account->login,
                     .text = rap::i18n::format(_("{0} can't see this repository."), account->login),
