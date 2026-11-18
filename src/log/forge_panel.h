@@ -103,6 +103,7 @@ private:
     void update();
     void update_pull_request();
     void update_build();
+    void update_build_icon(check_state);
     void sync_pages();
     void user_page_changed(int page);
     void remember_for_row();
@@ -244,6 +245,7 @@ private:
     int merge_mark_kind_ = 0;  // mergeable
     check_state checks_mark_state_ = check_state::none;
     check_state build_mark_state_ = check_state::none;
+    check_state build_tab_icon_state_ = check_state::pending;
     std::shared_ptr<rap::image> picture_;
     std::string full_log_url_;
     std::string pr_url_;

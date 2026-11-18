@@ -88,6 +88,13 @@ struct forge_panel_test
         b.local = false;
         b.ci.workflows = {{.jobs = {{.name = "test", .state = check_state::failure}}}};
     }
+    static void build_state(forge_panel& p, check_state state)
+    {
+        auto& b = p.builds_["head"];
+        b.asked = b.answered = true;
+        b.local = false;
+        b.ci.workflows = {{.jobs = {{.name = "test", .state = state}}}};
+    }
     static void presence(forge_panel& p, bool pr, bool ci, bool artifacts)
     {
         if (pr)
@@ -723,6 +730,7 @@ public:
         , hide_single(spec.hide_single_tab)
         , initial(spec.visible)
         , titles(spec.titles)
+        , icons(spec.icons)
     {
     }
     int current() const override
@@ -760,6 +768,24 @@ public:
         touch();
         return !dead && inner_.page_visible(page);
     }
+    void set_page_icon(int page, const rap::icon& icon) override
+    {
+        touch();
+        ++g_forge_writes;
+        if (dead) return;
+        ++icon_changes;
+        icons.resize(titles.size());
+        if (page >= 0 && size_t(page) < icons.size()) icons[page] = icon;
+        inner_.set_page_icon(page, icon);
+    }
+    void set_page_title(int page, const std::string& title) override
+    {
+        touch();
+        ++g_forge_writes;
+        if (dead) return;
+        if (page >= 0 && size_t(page) < titles.size()) titles[page] = title;
+        inner_.set_page_title(page, title);
+    }
     void click(int page)
     {
         const int before = current();
@@ -782,6 +808,8 @@ public:
     bool hide_single;
     std::vector<bool> initial;
     std::vector<std::string> titles;
+    std::vector<rap::icon> icons;
+    int icon_changes = 0;
     std::function<void(int)> changed;
 
 private:
@@ -1663,6 +1691,88 @@ public:
     std::vector<rap::rect_f> rectangles;
     std::vector<std::string> strings;
 };
+
+class mark_painter : public forge_painter
+{
+public:
+    void circle(rap::point_f, float, std::optional<rap::paint> fill,
+                std::optional<rap::paint>) override
+    {
+        if (fill)
+            if (auto theme = std::get_if<rap::theme_color>(&*fill)) fills.push_back(*theme);
+    }
+    std::vector<rap::theme_color> fills;
+};
+
+void build_tab_icon_tests(rap::ui& ui, const std::string& repo)
+{
+    forge_panel panel({.ui = ui, .workdir = repo});
+    const auto layout = panel.layout();
+    const auto& spec = std::get<rap::spec::tabs>(layout.spec);
+    const bool initial = spec.icons.size() == 4 && bool(spec.icons[2].draw);
+    check(initial, "build tab icon: pending drawn icon reserves its slot at construction");
+    if (!initial) return;
+    const auto initial_icon = spec.icons[2];
+    mark_painter pending;
+    initial_icon.draw(pending, {16, 16});
+    check(pending.fills == std::vector{rap::theme_color::warning} && pending.rectangles.empty(),
+          "build tab icon: initial pending mark uses the existing themed drawing");
+    auto window = ui.create(rap::layout::window{"Build icon", {layout}});
+    panel.built();
+    auto tabs = [&] { return dynamic_cast<kept_pages*>(forge_panel_test::pages(panel)); };
+    check(tabs() && tabs()->icon_changes == 0 && tabs()->icons[2].draw,
+          "build tab icon: unknown hidden build keeps pending without a setter");
+    forge_panel_test::seed(panel);
+    panel.show_commit("head");
+    forge_panel_test::build_state(panel, check_state::pending);
+    forge_panel_test::refresh(panel);
+    check(tabs()->icon_changes == 0,
+          "build tab icon: first pending answer matches the constructed icon");
+    for (auto [state, theme] :
+         {std::pair{check_state::success, rap::theme_color::positive},
+          std::pair{check_state::failure, rap::theme_color::negative},
+          std::pair{check_state::pending, rap::theme_color::warning}})
+    {
+        const int before = tabs()->icon_changes;
+        forge_panel_test::build_state(panel, state);
+        forge_panel_test::refresh(panel);
+        mark_painter paint;
+        tabs()->icons[2].draw(paint, {24, 24});
+        check(tabs()->icon_changes == before + 1 && paint.fills == std::vector{theme} &&
+                  paint.rectangles.empty(),
+              "build tab icon: changed overall state replaces one themed drawn icon");
+        forge_panel_test::refresh(panel);
+        check(tabs()->icon_changes == before + 1,
+              "build tab icon: unchanged state makes no drawn-icon setter call");
+    }
+    forge_panel_test::presence(panel, false, false, false);
+    forge_panel_test::refresh(panel);
+    check(!tabs()->page_visible(2) && tabs()->icons[2].draw,
+          "build tab icon: no-CI page retains the pending icon slot while hidden");
+    forge_panel_test::build_state(panel, check_state::success);
+    forge_panel_test::refresh(panel);
+    const auto success_icon = tabs()->icons[2];
+    panel.unbind();
+    window.reset();
+    settle(ui);
+    window = ui.create(rap::layout::window{"Build icon rebound", {panel.layout()}});
+    panel.built();
+    mark_painter rebound;
+    tabs()->icons[2].draw(rebound, {16, 16});
+    check(tabs()->icon_changes == 1 &&
+              rebound.fills == std::vector{rap::theme_color::positive},
+          "build tab icon: rebuilt page resets pending cache then applies known state once");
+    panel.unbind();
+    window.reset();
+    settle(ui);
+    mark_painter kept;
+    success_icon.draw(kept, {16, 16});
+    mark_painter old_pending;
+    initial_icon.draw(old_pending, {16, 16});
+    check(kept.fills == std::vector{rap::theme_color::positive} &&
+              old_pending.fills == std::vector{rap::theme_color::warning},
+          "build tab icon: retained drawings keep value state without touching unbound widgets");
+}
 
 class forge_observer : public rap::list_observer
 {
@@ -3626,6 +3736,7 @@ void run_log_page_tests(const std::string& root)
     page_tests(ui, repo, git);
     poll_tests(ui, repo, polled);
     forge_presentation_tests(ui, repo);
+    build_tab_icon_tests(ui, repo);
     forge_fresh_canvas_tests(ui, repo);
     forge_download_tests(ui, repo);
     forge_tabs_tests(ui, repo);

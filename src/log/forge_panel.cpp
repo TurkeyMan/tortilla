@@ -170,6 +170,12 @@ void paint_mark(rap::painter& p, rap::size_f size, check_state s, mergeable m = 
     paint_check_mark(p, {size.w / 2, size.h / 2}, d, s, m);
 }
 
+rap::icon mark_icon(check_state state)
+{
+    return rap::icon::drawn(
+        [state](rap::painter& p, rap::size_f size) { paint_mark(p, size, state); });
+}
+
 }  // namespace
 
 // -- the lists' models ---------------------------------------------------------
@@ -709,6 +715,8 @@ rap::node forge_panel::layout(rap::node commit)
     // A forge-capable repository keeps its navigation strip on every row.
     const bool forge_possible = !forge_remotes(host_.workdir).empty();
     page_guard_.open();
+    // The builder below installs this icon even while the page is hidden.
+    build_tab_icon_state_ = check_state::pending;
     auto mark = [](rap::canvas*& bind, const std::function<void(rap::painter&, rap::size_f)>& paint)
     {
         // The backend clears to the parent surface; a window-colour fill
@@ -870,6 +878,7 @@ rap::node forge_panel::layout(rap::node commit)
                       .handle(failure_part_)}
                  .stretch()
                  .handle(build_body_)}
+            .icon(mark_icon(check_state::pending))
             .visible(false),
         page{_("Artifacts"),
              vbox{
@@ -1266,6 +1275,15 @@ void forge_panel::update_pull_request()
     }
 }
 
+void forge_panel::update_build_icon(check_state state)
+{
+    // Unknown/no CI keeps the pending icon slot, without changing tab width.
+    if (state == check_state::none) state = check_state::pending;
+    if (!tabs_ || build_tab_icon_state_ == state) return;
+    tabs_->set_page_icon(2, mark_icon(state));
+    build_tab_icon_state_ = state;
+}
+
 void forge_panel::update_build()
 {
     const auto old_mark = build_mark_state_;
@@ -1300,6 +1318,7 @@ void forge_panel::update_build()
     }
     if (!shown)
     {
+        update_build_icon(check_state::pending);
         show(failure_part_, false);
         return;
     }
@@ -1308,6 +1327,7 @@ void forge_panel::update_build()
     for (const ci_workflow& w : b->ci.workflows)
         for (const ci_job& j : w.jobs) all.add(j);
     build_mark_state_ = all.state();
+    update_build_icon(build_mark_state_);
     show(build_mark_, build_mark_state_ != check_state::none);
     if (old_mark != build_mark_state_) build_mark_->invalidate();
     text(build_summary_, rap::i18n::format(_("Build: {0}"), build_text(all)));
