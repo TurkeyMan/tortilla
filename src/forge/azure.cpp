@@ -70,8 +70,19 @@ std::string web_repo(const forge_repo& r)
 std::expected<std::string, std::string> get(const std::string& url, std::string_view token)
 {
     const auto reply = http_get(url, {.headers = api_headers(forge_kind::azure, token)});
-    if (reply.status != 200 || !json::parse(reply.body))
-        return std::unexpected(failure(reply, json::parse(reply.body)));
+    const auto parsed = json::parse(reply.body);
+    if (reply.status != 200 || !parsed || !reply.error.empty())
+        return std::unexpected(response_error(reply, url, token));
+    const bool collection = url.find("/refs?") != std::string::npos ||
+                            url.find("/policy/evaluations?") != std::string::npos ||
+                            url.find("/statuses?") != std::string::npos ||
+                            url.find("/artifacts?") != std::string::npos ||
+                            url.find("/logs?") != std::string::npos;
+    if ((collection && (*parsed)["value"].kind() != json::value::type::array) ||
+        (url.find("/timeline?") != std::string::npos &&
+         (*parsed)["records"].kind() != json::value::type::array))
+        return std::unexpected(response_error(reply, url, token) +
+                               ": missing documented response array");
     return reply.body;
 }
 
@@ -80,16 +91,6 @@ std::string branch(const json::value& v)
     std::string s = v.str();
     if (s.starts_with("refs/heads/")) s.erase(0, 11);
     return s;
-}
-
-check_state state(const json::value& record)
-{
-    const std::string result = record["result"].str();
-    if (result == "succeeded" || result == "succeededWithIssues") return check_state::success;
-    if (result == "failed" || result == "canceled" || result == "abandoned")
-        return check_state::failure;
-    if (result == "skipped") return check_state::none;
-    return check_state::pending;
 }
 
 pull_request parse_pr(const json::value& v, const forge_repo& r, bool complete)
@@ -108,22 +109,31 @@ pull_request parse_pr(const json::value& v, const forge_repo& r, bool complete)
     p.head_sha = v["lastMergeSourceCommit"]["commitId"].str();
     p.draft = v["isDraft"].boolean();
     p.conflicts = v["mergeStatus"].str_is("conflicts");
-    p.merge_known = !v["mergeStatus"].str_is("queued") && v["mergeStatus"];
+    const auto merge = v["mergeStatus"].str();
+    p.merge_known = merge == "conflicts" || merge == "succeeded" || merge == "rejectedByPolicy" ||
+                    merge == "failure";
+    p.blocked = merge == "rejectedByPolicy" || merge == "failure";
+    if (p.blocked) p.blocks.push_back(merge_block::blocked_other);
     p.author = v["createdBy"]["uniqueName"].str(v["createdBy"]["displayName"].str());
     // Identity image URLs often need authentication on a different origin.
     // Leave avatars absent rather than forwarding the PAT to an image host.
     p.body = v["description"].str();
     p.body_known = complete;  // Azure's list truncates descriptions to 400 characters.
     p.labels = decode_labels(v["labels"]);
+    p.reviews_known = true;
+    // https://learn.microsoft.com/en-us/rest/api/azure/devops/git/pull-request-reviewers/list?view=azure-devops-rest-7.1
     for (const json::value& reviewer : v["reviewers"].elements())
     {
-        const auto vote = reviewer["vote"].integer().value_or(0);
-        p.reviews.push_back({.who = reviewer["uniqueName"].str(reviewer["displayName"].str()),
-                             .say = vote > 0      ? pr_review::verdict::approved
-                                    : vote == -10 ? pr_review::verdict::changes_requested
-                                                  : pr_review::verdict::requested});
+        const auto vote = reviewer["vote"].integer();
+        const auto verdict = vote ? review_vote(*vote) : std::nullopt;
+        if (!verdict)
+        {
+            p.reviews_known = false;
+            continue;
+        }
+        p.reviews.push_back(
+            {.who = reviewer["uniqueName"].str(reviewer["displayName"].str()), .say = *verdict});
     }
-    p.reviews_known = true;
     p.checks_known = false;
     if (p.draft) p.blocks.push_back(merge_block::draft);
     if (p.conflicts) p.blocks.push_back(merge_block::conflicts);
@@ -132,15 +142,17 @@ pull_request parse_pr(const json::value& v, const forge_repo& r, bool complete)
 
 void policies(const json::value& v, pull_request& p)
 {
-    bool any = false, pending = false, failed = false;
+    bool any = false, pending = false, failed = false, unknown = false;
     for (const json::value& policy : v["value"].elements())
     {
         if (!policy["configuration"]["isEnabled"].boolean(true)) continue;
         const auto status = policy["status"].str();
         if (status == "notApplicable") continue;
-        const bool rejected = status == "rejected" || status == "broken";
-        const bool waiting = status == "queued" || status == "running";
-        any = true;
+        const auto mapped = policy_state(status);
+        unknown |= mapped == check_state::none;
+        const bool rejected = mapped == check_state::failure;
+        const bool waiting = mapped == check_state::pending;
+        any |= mapped != check_state::none;
         failed |= rejected;
         pending |= waiting;
         if ((rejected || waiting) && policy["configuration"]["isBlocking"].boolean())
@@ -149,15 +161,13 @@ void policies(const json::value& v, pull_request& p)
             p.blocks.push_back(merge_block::blocked_other);
         }
         p.runs.push_back({.name = policy["configuration"]["type"]["displayName"].str("Policy"),
-                          .state = rejected  ? check_state::failure
-                                   : waiting ? check_state::pending
-                                             : check_state::success});
+                          .state = mapped});
     }
     p.checks = failed    ? check_state::failure
                : pending ? check_state::pending
                : any     ? check_state::success
                          : check_state::none;
-    p.checks_known = true;
+    p.checks_known = !unknown;
 }
 
 // Build IDs are numeric, but timeline record IDs are GUIDs. Keep both,
@@ -179,6 +189,122 @@ std::string build_root(const forge_repo& r, std::int64_t id)
     return project_api(r) + "/build/builds/" + std::to_string(id);
 }
 }  // namespace
+
+// https://learn.microsoft.com/en-us/rest/api/azure/devops/build/timeline/get?view=azure-devops-rest-7.1
+check_state timeline_state(const json::value& record)
+{
+    const auto result = record["result"].str();
+    if (result == "succeeded" || result == "succeededWithIssues") return check_state::success;
+    if (result == "failed" || result == "canceled" || result == "abandoned")
+        return check_state::failure;
+    if (result == "skipped") return check_state::none;
+    if (!result.empty()) return check_state::none;  // Future result values are unknown.
+    const auto state = record["state"].str();
+    return state == "pending" || state == "inProgress" ? check_state::pending : check_state::none;
+}
+
+// https://learn.microsoft.com/en-us/rest/api/azure/devops/build/builds/list?view=azure-devops-rest-7.1
+check_state build_state(const json::value& record)
+{
+    const auto result = record["result"].str();
+    if (result == "succeeded") return check_state::success;
+    if (result == "failed" || result == "partiallySucceeded" || result == "canceled")
+        return check_state::failure;
+    if (!result.empty() && result != "none") return check_state::none;
+    const auto state = record["status"].str();
+    return state == "inProgress" || state == "cancelling" || state == "postponed" ||
+                   state == "notStarted"
+               ? check_state::pending
+               : check_state::none;
+}
+
+// https://learn.microsoft.com/en-us/rest/api/azure/devops/git/statuses/list?view=azure-devops-rest-7.1
+check_state status_state(std::string_view state)
+{
+    if (state == "succeeded") return check_state::success;
+    if (state == "failed" || state == "error") return check_state::failure;
+    if (state == "pending") return check_state::pending;
+    return check_state::none;  // notSet, notApplicable and future values.
+}
+
+// https://learn.microsoft.com/en-us/rest/api/azure/devops/policy/evaluations/list?view=azure-devops-rest-7.1
+check_state policy_state(std::string_view state)
+{
+    if (state == "approved") return check_state::success;
+    if (state == "rejected" || state == "broken") return check_state::failure;
+    if (state == "queued" || state == "running") return check_state::pending;
+    return check_state::none;  // notApplicable and future values.
+}
+
+// https://learn.microsoft.com/en-us/rest/api/azure/devops/git/pull-request-reviewers/list?view=azure-devops-rest-7.1
+std::optional<pr_review::verdict> review_vote(std::int64_t vote)
+{
+    switch (vote)
+    {
+    case 10:
+    case 5: return pr_review::verdict::approved;
+    case -10: return pr_review::verdict::changes_requested;
+    case 0:
+    case -5: return pr_review::verdict::requested;
+    default: return std::nullopt;
+    }
+}
+
+std::string response_error(const rap::sys::http_response& reply, std::string_view url,
+                           std::string_view token)
+{
+    auto safe = [&](std::string text)
+    {
+        for (const auto& secret : {std::string(token), basic_token(token), url_escape(token)})
+        {
+            if (secret.empty()) continue;
+            size_t pos = 0;
+            while ((pos = text.find(secret, pos)) != std::string::npos)
+            {
+                text.replace(pos, secret.size(), "[redacted]");
+                pos += 10;
+            }
+        }
+        for (char& c : text)
+            if (static_cast<unsigned char>(c) < 32) c = ' ';
+        if (text.size() > 512) text = text.substr(0, 512) + "...";
+        return text;
+    };
+    std::string prefix = reply.body.substr(0, 8192);
+    std::ranges::transform(prefix, prefix.begin(),
+                           [](unsigned char c) { return char(std::tolower(c)); });
+    bool html = prefix.find("<html") != std::string::npos ||
+                prefix.find("<!doctype html") != std::string::npos;
+    for (const auto& [name, value] : reply.headers)
+    {
+        std::string n = name, v = value;
+        std::ranges::transform(n, n.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+        std::ranges::transform(v, v.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+        html |= n == "content-type" && v.find("text/html") != std::string::npos;
+    }
+    const auto parsed = json::parse(reply.body);
+    std::string error = "Azure DevOps HTTP " + std::to_string(reply.status);
+    if (parsed)
+    {
+        const auto message = (*parsed)["message"].str();
+        if (!message.empty()) error += ": " + safe(message);
+    }
+    else if (!reply.error.empty())
+        error += ": " + safe(reply.error);
+    else if (reply.status == 200)
+        error += ": invalid or incomplete response";
+    const bool signin = reply.status == 401 || (reply.status == 203 && html && !parsed);
+    if (signin)
+        error +=
+            ". PAT invalid, expired, or missing required scope; check the organization and token";
+    if (signin || reply.status == 403)
+        error += url.find("/build/") != std::string_view::npos ? ". Required scope: Build (Read)."
+                 : url.find("/git/") != std::string_view::npos ||
+                         url.find("/policy/") != std::string_view::npos
+                     ? ". Required scope: Code (Read), or Code (Read & Write)."
+                     : ". Check PAT organization access and Code/Build read scopes.";
+    return error;
+}
 
 std::string unsupported()
 {
@@ -274,36 +400,35 @@ std::expected<forge_account, std::string> identity(std::string_view host, std::s
             std::string(_("Enter the Azure organization as dev.azure.com/organization.")));
     const std::string scope = account_host(*r);
     bind_token(token, scope);
-    const auto body =
-        get("https://" + scope + "/_apis/connectionData?" + std::string(version), token);
+    // https://github.com/microsoft/azure-devops-node-api/blob/master/api/WebApi.ts (WebApi.connect; unversioned)
+    // https://learn.microsoft.com/en-us/javascript/api/azure-devops-extension-api/connectiondata
+    const auto body = get("https://" + scope + "/_apis/connectionData", token);
     if (!body) return std::unexpected(body.error());
     const auto j = *json::parse(*body);
     const auto user = j["authenticatedUser"];
     const std::string id = user["id"].str();
     if (id.empty() || id == "00000000-0000-0000-0000-000000000000")
-        return std::unexpected(std::string(_("The server didn't identify the token's user.")));
-    return forge_account{
-        .kind = forge_kind::azure,
-        .host = scope,
-        .login = user["properties"]["Account"]["$value"].str(user["uniqueName"].str(id)),
-        .name = user["providerDisplayName"].str(user["customDisplayName"].str())};
+        return std::unexpected(
+            std::string(_("Azure DevOps HTTP 200: authenticatedUser.id is missing or anonymous.")));
+    return forge_account{.kind = forge_kind::azure,
+                         .host = scope,
+                         .login = id,
+                         .name = user["providerDisplayName"].str(user["customDisplayName"].str())};
 }
 
 std::expected<pull_requests_reply, std::string> pulls(const forge_repo& r, std::string_view token,
                                                       bool tips)
 {
+    // https://learn.microsoft.com/en-us/rest/api/azure/devops/git/pull-requests/get-pull-requests?view=azure-devops-rest-7.1
     const auto reply =
         http_get(repository_api(r) + "/pullrequests?searchCriteria.status=active&$top=100&" +
                      std::string(version),
                  {.headers = api_headers(forge_kind::azure, token)});
     pull_requests_reply out;
-    if (reply.status == 404 || reply.status == 403)
-    {
-        out.access = repo_access::hidden;
-        return out;
-    }
     const auto j = json::parse(reply.body);
-    if (reply.status != 200 || !j) return std::unexpected(failure(reply, j));
+    if (reply.status != 200 || !j || (*j)["value"].kind() != json::value::type::array ||
+        !reply.error.empty())
+        return std::unexpected(response_error(reply, repository_api(r), token));
     out.access = repo_access::read;  // PR1 deliberately exposes no mutation capabilities.
     for (const json::value& v : (*j)["value"].elements())
     {
@@ -313,9 +438,10 @@ std::expected<pull_requests_reply, std::string> pulls(const forge_repo& r, std::
     }
     if (tips)
     {
+        // https://learn.microsoft.com/en-us/rest/api/azure/devops/git/refs/list?view=azure-devops-rest-7.1
         const auto body =
             get(repository_api(r) + "/refs?filter=heads/&$top=100&" + std::string(version), token);
-        if (body)
+        if (!body) return std::unexpected(body.error());
         {
             remote_tips branches;
             for (const json::value& v : (*json::parse(*body))["value"].elements())
@@ -330,6 +456,7 @@ std::expected<pull_requests_reply, std::string> pulls(const forge_repo& r, std::
 std::expected<pull_request, std::string> details(const forge_repo& r, pull_request pr,
                                                  std::string_view token)
 {
+    // https://learn.microsoft.com/en-us/rest/api/azure/devops/git/pull-requests/get-pull-request?view=azure-devops-rest-7.1
     const auto body = get(repository_api(r) + "/pullrequests/" + std::to_string(pr.number) + "?" +
                               std::string(version),
                           token);
@@ -341,11 +468,13 @@ std::expected<pull_request, std::string> details(const forge_repo& r, pull_reque
     {
         const std::string artifact =
             "vstfs:///CodeReview/CodeReviewId/" + project + "/" + std::to_string(p.number);
+        // https://learn.microsoft.com/en-us/rest/api/azure/devops/policy/evaluations/list?view=azure-devops-rest-7.1
         const auto policy =
             get(project_api(r) + "/policy/evaluations?artifactId=" + url_escape(artifact) +
                     "&api-version=7.1-preview.1",
                 token);
-        if (policy) policies(*json::parse(*policy), p);
+        if (!policy) return std::unexpected(policy.error());
+        policies(*json::parse(*policy), p);
     }
     return p;
 }
@@ -353,11 +482,12 @@ std::expected<pull_request, std::string> details(const forge_repo& r, pull_reque
 std::expected<commit_ci, std::string> checks(const forge_repo& r, std::string_view sha,
                                              std::string_view token)
 {
+    // https://learn.microsoft.com/en-us/rest/api/azure/devops/git/repositories/get-repository?view=azure-devops-rest-7.1
     const auto repo = get(repository_api(r) + "?" + std::string(version), token);
     if (!repo) return std::unexpected(repo.error());
     const auto repo_id = (*json::parse(*repo))["id"].str();
     if (repo_id.empty())
-        return std::unexpected(std::string(_("Azure DevOps didn't return a repository ID.")));
+        return std::unexpected(std::string(_("Azure DevOps HTTP 200: repository.id is missing.")));
     std::map<std::int64_t, std::string> builds;
     std::string continuation;
     // Azure has no sourceVersion query parameter. Walk all returned pages,
@@ -366,13 +496,16 @@ std::expected<commit_ci, std::string> checks(const forge_repo& r, std::string_vi
     std::set<std::string> seen;
     do
     {
+        // https://learn.microsoft.com/en-us/rest/api/azure/devops/build/builds/list?view=azure-devops-rest-7.1
         std::string url = project_api(r) + "/build/builds?repositoryId=" + url_escape(repo_id) +
                           "&repositoryType=TfsGit&queryOrder=queueTimeDescending&$top=100&" +
                           std::string(version);
         if (!continuation.empty()) url += "&continuationToken=" + url_escape(continuation);
         const auto reply = http_get(url, {.headers = api_headers(forge_kind::azure, token)});
         const auto j = json::parse(reply.body);
-        if (reply.status != 200 || !j) return std::unexpected(failure(reply, j));
+        if (reply.status != 200 || !j || (*j)["value"].kind() != json::value::type::array ||
+            !reply.error.empty())
+            return std::unexpected(response_error(reply, url, token));
         for (const json::value& v : (*j)["value"].elements())
             if (v["sourceVersion"].str_is(sha))
                 builds.try_emplace(v["definition"]["id"].integer().value_or(0),
@@ -384,7 +517,7 @@ std::expected<commit_ci, std::string> checks(const forge_repo& r, std::string_vi
                 continuation = value;
         if (!continuation.empty() && !seen.insert(continuation).second)
             return std::unexpected(
-                std::string(_("Azure DevOps repeated a build continuation token.")));
+                std::string(_("Azure DevOps HTTP 200: repeated build continuation token.")));
     } while (!continuation.empty());
     commit_ci out;
     for (const auto& [definition, text] : builds)
@@ -392,6 +525,7 @@ std::expected<commit_ci, std::string> checks(const forge_repo& r, std::string_vi
         const auto b = *json::parse(text);
         const auto id = b["id"].integer().value_or(0);
         const std::string url = b["_links"]["web"]["href"].str();
+        // https://learn.microsoft.com/en-us/rest/api/azure/devops/build/timeline/get?view=azure-devops-rest-7.1
         const auto timeline = get(build_root(r, id) + "/timeline?" + std::string(version), token);
         if (!timeline) return std::unexpected(timeline.error());
         const auto records = (*json::parse(*timeline))["records"];
@@ -429,7 +563,7 @@ std::expected<commit_ci, std::string> checks(const forge_repo& r, std::string_vi
             }
             ci_job job{
                 .name = record["name"].str(),
-                .state = state(record),
+                .state = timeline_state(record),
                 .started_at = time_of(record["startTime"]),
                 .completed_at = time_of(record["finishTime"]),
                 .url = url,
@@ -447,11 +581,12 @@ std::expected<commit_ci, std::string> checks(const forge_repo& r, std::string_vi
                                      .run_id = id,
                                      .run_number = id,
                                      .jobs = {{.name = b["definition"]["name"].str(),
-                                               .state = state(b),
+                                               .state = build_state(b),
                                                .started_at = time_of(b["startTime"]),
                                                .completed_at = time_of(b["finishTime"]),
                                                .url = url}}});
     }
+    // https://learn.microsoft.com/en-us/rest/api/azure/devops/git/statuses/list?view=azure-devops-rest-7.1
     const auto statuses = get(repository_api(r) + "/commits/" + url_escape(sha) +
                                   "/statuses?latestOnly=true&" + std::string(version),
                               token);
@@ -464,12 +599,8 @@ std::expected<commit_ci, std::string> checks(const forge_repo& r, std::string_vi
         if (!contexts.insert(name).second) continue;
         const auto word = v["state"].str();
         external.jobs.push_back({.name = name,
-                                 .state = word == "succeeded" ? check_state::success
-                                          : word == "failed" || word == "error"
-                                              ? check_state::failure
-                                          : word == "notApplicable" ? check_state::none
-                                                                    : check_state::pending,
-                                 .completed_at = time_of(v["updatedDate"]),
+                                 .state = status_state(word),
+                                 .completed_at = time_of(v["creationDate"]),
                                  .url = v["targetUrl"].str()});
     }
     if (!external.jobs.empty()) out.workflows.push_back(std::move(external));
@@ -484,6 +615,7 @@ artifacts(const forge_repo& r, const commit_ci& ci, std::string_view token)
     for (const auto& w : ci.workflows)
     {
         if (!w.run_id || !seen.insert(w.run_id).second) continue;
+        // https://learn.microsoft.com/en-us/rest/api/azure/devops/build/artifacts/list?view=azure-devops-rest-7.1
         const auto body =
             get(build_root(r, w.run_id) + "/artifacts?" + std::string(version), token);
         if (!body) return std::unexpected(body.error());
@@ -503,6 +635,7 @@ std::expected<job_failure, std::string> failure_details(const forge_repo& r, con
 {
     job_failure out{.log_url = job.url};
     if (job.azure_record.empty()) return out;
+    // https://learn.microsoft.com/en-us/rest/api/azure/devops/build/timeline/get?view=azure-devops-rest-7.1
     const auto body =
         get(build_root(r, job.azure_build) + "/timeline?" + std::string(version), token);
     if (!body) return std::unexpected(body.error());
@@ -516,7 +649,7 @@ std::expected<job_failure, std::string> failure_details(const forge_repo& r, con
         while (parent != job.azure_record && parents.contains(parent) &&
                visited.insert(parent).second)
             parent = parents[parent];
-        if (parent != job.azure_record || state(v) != check_state::failure) continue;
+        if (parent != job.azure_record || timeline_state(v) != check_state::failure) continue;
         if (v["type"].str_is("Task")) out.step = v["name"].str();
         for (const json::value& issue : v["issues"].elements())
             if (issue["type"].str_is("error"))
@@ -525,8 +658,10 @@ std::expected<job_failure, std::string> failure_details(const forge_repo& r, con
         if (log_id)
         {
             std::int64_t lines = 0;
+            // https://learn.microsoft.com/en-us/rest/api/azure/devops/build/builds/get-build-logs?view=azure-devops-rest-7.1
             const auto logs =
                 get(build_root(r, job.azure_build) + "/logs?" + std::string(version), token);
+            if (!logs) return std::unexpected(logs.error());
             if (logs)
                 for (const json::value& log : (*json::parse(*logs))["value"].elements())
                     if (log["id"].integer().value_or(0) == log_id)
@@ -534,12 +669,16 @@ std::expected<job_failure, std::string> failure_details(const forge_repo& r, con
             auto headers = api_headers(forge_kind::azure, token);
             for (auto& [name, value] : headers)
                 if (name == "Accept") value = "text/plain";
+            // https://learn.microsoft.com/en-us/rest/api/azure/devops/build/builds/get-build-log?view=azure-devops-rest-7.1
             const auto reply = http_get(
                 build_root(r, job.azure_build) + "/logs/" + std::to_string(log_id) +
                     "?startLine=" + std::to_string(std::max<std::int64_t>(0, lines - 100)) + "&" +
                     std::string(version),
                 {.headers = std::move(headers), .max_bytes = size_t(1) << 20});
-            if (reply.status == 200) out.log_tail = log_tail(reply.body, 80);
+            if (reply.status != 200 || !reply.error.empty())
+                return std::unexpected(
+                    response_error(reply, build_root(r, job.azure_build), token));
+            out.log_tail = log_tail(reply.body, 80);
         }
     }
     return out;

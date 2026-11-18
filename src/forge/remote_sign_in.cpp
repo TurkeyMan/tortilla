@@ -84,6 +84,7 @@ std::optional<forge_kind> probe_forge(std::string_view host)
 
 repo_seen look_for_repo(forge_kind k, const forge_repo& r, std::string_view token)
 {
+    // Azure: https://learn.microsoft.com/en-us/rest/api/azure/devops/git/repositories/get-repository?view=azure-devops-rest-7.1
     const std::string url = k == forge_kind::azure ? azure::repository_api(r) + "?api-version=7.1"
                             : k == forge_kind::gitlab
                                 ? api_root(k, r.host) + "/projects/" + escaped(r.path())

@@ -123,17 +123,21 @@ log_tab::log_tab(rap::ui& ui, repo repo, std::string path)
               .refresh = [this] { reload(); },
               .open_settings = [this](settings_page page) { open_settings(page); },
               .selection_changed = [this] { update_status(); }})
-    , forge_panel_(std::make_unique<forge_panel>(forge_panel::host{
-          .ui = ui,
-          .window = [this] { return parent(); },
-          .workdir = repo_location(),
-          .actions = as_tab([this](const open_pr& p) { return pull_request_items(p); }),
-          .watch =
-              [this](std::optional<std::string> sha, std::optional<forge_remote> where,
-                     bool pending)
-          {
-              if (pr_watch_) pr_watch_->watch(std::move(sha), std::move(where), pending);
-          }}))
+    , forge_panel_(std::make_unique<forge_panel>(
+          forge_panel::host{.ui = ui,
+                            .window = [this] { return parent(); },
+                            .workdir = repo_location(),
+                            .actions = as_tab([this](const open_pr& p)
+                                              { return pull_request_items(p); }),
+                            .watch =
+                                [this](std::optional<std::string> sha,
+                                       std::optional<forge_remote> where, bool pending)
+                            {
+                                if (pr_watch_)
+                                    pr_watch_->watch(std::move(sha), std::move(where), pending);
+                            },
+                            .diagnostic = [this](std::string error)
+                            { forge_diagnostic(std::move(error)); }}))
 {
     if (!repo_.workdir().empty())
         if (auto rel = repo_relative(repo_.workdir(), path_)) rel_path_ = std::move(*rel);
@@ -665,6 +669,11 @@ void log_tab::update_pull_requests()
         (now.known != before.known || now.all != before.all || now.mine != before.mine))
         reload();
     forge_panel_->set_pull_requests(pr_watch_->pull_requests(), pr_watch_->remotes());
+    if (forge_pr_error_ != pr_watch_->error())
+    {
+        forge_pr_error_ = pr_watch_->error();
+        update_status();
+    }
 }
 
 // The lower pages fill the window width. Reuse a lightweight width watch
@@ -919,6 +928,13 @@ void log_tab::show_commit(size_t row)
 // "Showing %1 revision(s), from revision %2 to revision %3 - %4
 // revision(s) selected, %5 file(s) selected" plus, for one revision, the
 // line and file statistics [spec 1.10].
+void log_tab::forge_diagnostic(std::string error)
+{
+    if (forge_error_ == error) return;
+    forge_error_ = std::move(error);
+    update_status(); // An unbound/detached page has no status widget to touch.
+}
+
 void log_tab::update_status()
 {
     if (log_.loading() || !page_) return;
@@ -958,6 +974,8 @@ void log_tab::update_status()
     // filtered log isn't taken for the whole.
     s = show_summary() + " — " + s;
     if (!notice_.empty()) s = rap::i18n::format(_("{0} - {1}"), notice_, s);
+    if (!forge_error_.empty()) s = forge_error_ + " — " + s;
+    if (!forge_pr_error_.empty()) s = forge_pr_error_ + " — " + s;
     page_->status->set_text(s);
 }
 
