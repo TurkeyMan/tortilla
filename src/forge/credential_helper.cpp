@@ -93,7 +93,16 @@ std::expected<reply, std::string> native(const request& r)
     if (errors.value == INVALID_HANDLE_VALUE)
         return std::unexpected("Couldn't discard Git credential stderr.");
 
-    std::map<std::wstring, std::wstring> env;
+    // https://learn.microsoft.com/en-us/windows/win32/procthread/changing-environment-variables
+    // CreateProcess requires case-insensitive Unicode ordering, without locale.
+    struct environment_less
+    {
+        bool operator()(const std::wstring& a, const std::wstring& b) const
+        {
+            return CompareStringOrdinal(a.c_str(), -1, b.c_str(), -1, TRUE) == CSTR_LESS_THAN;
+        }
+    };
+    std::map<std::wstring, std::wstring, environment_less> env;
     if (auto block = GetEnvironmentStringsW())
     {
         for (const wchar_t* p = block; *p; p += wcslen(p) + 1)
