@@ -1,4 +1,5 @@
 #include "ci.h"
+#include "azure.h"
 
 #include "forge/forge_detail.h"
 #include "i18n.h"
@@ -432,6 +433,7 @@ std::expected<commit_ci, std::string> commit_checks(forge_kind k, const forge_re
         break;
     case forge_kind::gitlab: out = gitlab_checks(r, sha, token); break;
     case forge_kind::gitea: out = gitea_checks(r, sha, token); break;
+    case forge_kind::azure: out = azure::checks(r, sha, token); break;
     }
     if (out) order_failures_first(*out);
     return out;
@@ -446,6 +448,7 @@ commit_artifacts(forge_kind k, const forge_repo& r, std::string_view sha, const 
     case forge_kind::github: return github_artifacts(r, ci, token);
     case forge_kind::gitlab: return gitlab_artifacts(r, sha, token);
     case forge_kind::gitea: return gitea_artifacts(r, sha, token);
+    case forge_kind::azure: return azure::artifacts(r, ci, token);
     }
     return {};
 }
@@ -456,8 +459,14 @@ std::string download_artifact(forge_kind k, const ci_artifact& a, const std::fil
 {
     // GitHub's redirects to a signed address on another host; rapport sends
     // the token only to the host it was asked of.
+    auto headers = api_headers(k, token);
+    // Azure may supply a signed blob URL; it needs no PAT, and a PAT for
+    // the organization must never be forwarded to a separate blob host.
+    if (k == forge_kind::azure &&
+        !forge_detail::token_allowed(azure::basic_token(token), a.download_url))
+        headers = api_headers(k, {});
     const auto reply = forge_detail::http_download(a.download_url, to,
-                                                   {.headers = api_headers(k, token),
+                                                   {.headers = std::move(headers),
                                                     .timeout = std::chrono::seconds(30),
                                                     .stall = std::chrono::seconds(60),
                                                     .cancelled = cancelled,
@@ -474,6 +483,7 @@ job_failure_details(forge_kind k, const forge_repo& r, const ci_job& job, std::s
     case forge_kind::github: return github_failure(r, job, token);
     case forge_kind::gitlab: return gitlab_failure(r, job, token);
     case forge_kind::gitea: return job_failure{.log_url = job.url};
+    case forge_kind::azure: return azure::failure_details(r, job, token);
     }
     return {};
 }

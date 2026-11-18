@@ -1,4 +1,5 @@
 #include "remotes_page.h"
+#include "forge/azure.h"
 
 #include "forge/remote_sign_in.h"
 #include "git/command.h"
@@ -136,8 +137,7 @@ struct remotes_state
     void show(const std::string& remote)
     {
         editing = remote;
-        auto value = [&](const char* key)
-        {
+        auto value = [&](const char* key) {
             return remote.empty() ? std::string()
                                   : config_value(dir, "remote." + remote + "." + key);
         };
@@ -244,7 +244,9 @@ struct remotes_state
     void sign_in_shown()
     {
         const remote_forge* f = shown_forge();
-        if (f && f->repo && f->kind && sign_in) sign_in(*f->kind, f->repo->host);
+        if (f && f->repo && f->kind && sign_in)
+            sign_in(*f->kind,
+                    *f->kind == forge_kind::azure ? azure::account_host(*f->repo) : f->repo->host);
     }
 
     // Adds the remote, or renames and changes the one shown, through git.

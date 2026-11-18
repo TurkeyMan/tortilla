@@ -85,6 +85,8 @@
 #include <thread>
 #include <vector>
 
+namespace tortilla::test { void run_azure_tests(); }
+
 namespace
 {
 
@@ -5527,6 +5529,7 @@ int main(int argc, char** argv)
     diff_sides_tests(**ui, argv[1]);
     tortilla::test::run_journal_tests(**ui, argv[1]);
     tortilla::test::run_log_host_tests(**ui, repo);
+    tortilla::test::run_azure_tests();
     tortilla::test::run_log_page_tests(argv[1]);
     libgit2_parity_tests(argv[1]);
     libgit2_dialog_parity_tests(argv[1]);

@@ -1,4 +1,5 @@
 #include "remote_sign_in.h"
+#include "azure.h"
 
 #include "forge/forge_detail.h"
 #include "i18n.h"
@@ -83,7 +84,8 @@ std::optional<forge_kind> probe_forge(std::string_view host)
 
 repo_seen look_for_repo(forge_kind k, const forge_repo& r, std::string_view token)
 {
-    const std::string url = k == forge_kind::gitlab
+    const std::string url = k == forge_kind::azure ? azure::repository_api(r) + "?api-version=7.1"
+                            : k == forge_kind::gitlab
                                 ? api_root(k, r.host) + "/projects/" + escaped(r.path())
                                 : api_root(k, r.host) + "/repos/" + r.path();
     // GitHub's sixty an hour as no one are the log's first: its pull

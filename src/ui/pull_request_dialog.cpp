@@ -21,7 +21,6 @@ namespace tortilla
 namespace
 {
 
-
 bool same_repo(const forge_repo& a, const forge_repo& b)
 {
     // Forges' paths ignore case: TurkeyMan/CLI is turkeyman/cli.
@@ -56,7 +55,8 @@ pull_request_dialog::open(rap::ui& ui, const std::string& workdir, const ref& br
                           std::vector<forge_remote> remotes)
 {
     // A public forge's remote without an account can't open one.
-    std::erase_if(remotes, [](const forge_remote& r) { return !r.signed_in(); });
+    std::erase_if(remotes, [](const forge_remote& r)
+                  { return !r.signed_in() || r.account.kind == forge_kind::azure; });
     if (remotes.empty())
         return std::unexpected(std::string(
             _("None of this repository's remotes is on a forge you're signed in to: sign in on "
