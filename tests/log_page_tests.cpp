@@ -1963,23 +1963,42 @@ void forge_fresh_canvas_tests(rap::ui& ui, const std::string& repo)
 void forge_tabs_tests(rap::ui& ui, const std::string& repo)
 {
     using namespace rap::layout;
-    forge_panel panel({.ui = ui, .workdir = repo});
+    // A separate fixture keeps remote/account discovery out of the other log tests.
+    const std::string forge_repo = repo + "-forge-tabs";
+    std::filesystem::create_directories(rap::sys::path_from_utf8(forge_repo));
+    check(run_git(forge_repo, {"init", "-q"}, git_output::stdout_only).ok() &&
+              run_git(forge_repo, {"remote", "add", "origin", "https://github.com/example/repo.git"},
+                      git_output::stdout_only).ok(),
+          "forge tabs: recognized public forge fixture needs no account");
+    forge_panel local({.ui = ui, .workdir = repo});
+    const auto local_layout = local.layout(label{"Commit contents"});
+    check(forge_remotes(repo).empty() && std::get<rap::spec::tabs>(local_layout.spec).hide_single_tab,
+          "forge tabs: no forge uses the zero-strip-space single-page contract");
+    auto local_window = ui.create(rap::layout::window{"Local lower tabs", {local_layout}});
+    local.built();
+    auto* local_tabs = dynamic_cast<kept_pages*>(forge_panel_test::pages(local));
+    check(local_tabs && local_tabs->current() == 0 && !local_tabs->strip_shown(),
+          "forge tabs: repository without a forge gives Commit the entire area");
+    local.unbind();
+    local_window.reset();
+
+    forge_panel panel({.ui = ui, .workdir = forge_repo});
     const auto layout = panel.layout(label{"Commit contents"});
     const auto& spec = std::get<rap::spec::tabs>(layout.spec);
     check(spec.titles == std::vector<std::string>{"Commit", "PR", "Build", "Artifacts"} &&
-              spec.visible == std::vector<bool>{true, false, false, false} && spec.hide_single_tab,
+              spec.visible == std::vector<bool>{true, false, false, false} && !spec.hide_single_tab,
           "forge tabs: Commit fills lower area, conditional pages initially hidden and strip "
-          "collapses");
+          "stays present for a forge-capable repository");
     auto window = ui.create(rap::layout::window{"Lower tabs", {layout}});
     panel.built();
     auto tabs = [&] { return dynamic_cast<kept_pages*>(forge_panel_test::pages(panel)); };
-    check(tabs() && tabs()->current() == 0 && !tabs()->strip_shown(),
-          "forge tabs: Commit alone starts without a strip");
+    check(tabs() && tabs()->current() == 0 && tabs()->strip_shown(),
+          "forge tabs: forge-capable Commit alone starts with a strip");
     forge_panel_test::presence(panel, true, false, false);
     panel.show_commit("head");
     check(tabs()->page_visible(1) && !tabs()->page_visible(2) && !tabs()->page_visible(3) &&
               tabs()->strip_shown() && panel.selected_page() == 0,
-          "forge tabs: PR appears without selecting it and restores the strip");
+          "forge tabs: PR appears without selecting it or changing strip policy");
     tabs()->click(1);
     forge_panel_test::presence(panel, true, true, true);
     forge_panel_test::refresh(panel);
@@ -2003,9 +2022,9 @@ void forge_tabs_tests(rap::ui& ui, const std::string& repo)
           "forge tabs: a later fallback to PR still does not overwrite remembered CI");
     forge_panel_test::presence(panel, false, false, false);
     forge_panel_test::refresh(panel);
-    check(tabs()->current() == 0 && !tabs()->strip_shown() && panel.selected_page() == 0 &&
+    check(tabs()->current() == 0 && tabs()->strip_shown() && panel.selected_page() == 0 &&
               panel.remembered_page() == 2,
-          "forge tabs: Commit-only hides strip without overwriting remembered CI");
+          "forge tabs: Commit-only keeps strip without overwriting remembered CI");
     forge_panel_test::presence(panel, false, true, true);
     forge_panel_test::refresh(panel);
     check(tabs()->current() == 2 && tabs()->strip_shown() && panel.remembered_page() == 2,

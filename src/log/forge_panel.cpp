@@ -705,6 +705,9 @@ void forge_panel::layout_labels()
 rap::node forge_panel::layout(rap::node commit)
 {
     using namespace rap::layout;
+    // Reuse the query path's eligibility, including anonymous public forges.
+    // A forge-capable repository keeps its navigation strip on every row.
+    const bool forge_possible = !forge_remotes(host_.workdir).empty();
     page_guard_.open();
     auto mark = [](rap::canvas*& bind, const std::function<void(rap::painter&, rap::size_f)>& paint)
     {
@@ -897,7 +900,7 @@ rap::node forge_panel::layout(rap::node commit)
                  .handle(artifact_part_)}
             .visible(false),
     }
-        .hide_single_tab()
+        .hide_single_tab(!forge_possible)
         .stretch(2)
         .bind(tabs_)
         .handle(root_)
