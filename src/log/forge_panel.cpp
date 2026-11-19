@@ -1625,8 +1625,12 @@ void forge_panel::ask_build(const std::string& sha)
                 if (!ci || !ci->empty() || tries == 2) break;
                 if (&other == where) continue;
                 ++tries;
-                const auto other_token = token_for(*sh, other.account);
-                if (!other_token) return;
+                const auto other_token = token_for(*sh, other.account, &why);
+                if (!other_token)
+                {
+                    ci = std::unexpected(why);
+                    break;  // Publish the error and clear asking through the common completion.
+                }
                 auto found =
                     tortilla::commit_checks(other.account.kind, other.repo, sha, other_token->access);
                 if (found && !found->empty())

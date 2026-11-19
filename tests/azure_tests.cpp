@@ -24,6 +24,27 @@ void run_azure_tests()
           "fabrikam@vs-ssh.visualstudio.com:v3/fabrikam/My%20Project/My%20Repo"})
         check(repo_of_url(url) == repo,
               "azure: modern, userinfo, SSH and legacy URLs decode project/repository names");
+    // Azure clone URLs name the repository literally, including a .git suffix.
+    // https://learn.microsoft.com/en-us/azure/devops/repos/git/clone?view=azure-devops
+    for (const char* url :
+         {"https://dev.azure.com/fabrikam/project/_git/sdk.git",
+          "https://user@dev.azure.com/fabrikam/project/_git/sdk.git",
+          "https://fabrikam.visualstudio.com/project/_git/sdk.git",
+          "https://fabrikam.visualstudio.com/DefaultCollection/project/_git/sdk.git",
+          "git@ssh.dev.azure.com:v3/fabrikam/project/sdk.git",
+          "ssh://git@ssh.dev.azure.com/v3/fabrikam/project/sdk.git"})
+    {
+        const auto literal = repo_of_url(url);
+        check(literal && literal->name == "sdk.git" &&
+                  repo_of_url(azure::repository_web(*literal)) == literal,
+              "azure: literal .git repository name survives parsing and web URL roundtrip");
+    }
+    check(repo_of_url("https://github.com/owner/sdk.git")->name == "sdk",
+          "azure: other forges retain conventional clone suffix stripping");
+    check(token_scopes(forge_kind::azure).find("Code (Read) and Build (Read)") !=
+                  std::string::npos &&
+              token_scopes(forge_kind::azure).find("Write") == std::string::npos,
+          "azure: readonly PAT instructions request Code Read and Build Read only");
     check(!repo_of_url("https://dev.azure.com/org%2Fother/project/_git/repo"),
           "azure: encoded scope separator refused");
     check(known_forge("DEV.AZURE.COM") == forge_kind::azure, "azure: shared hostname recognized");
@@ -454,6 +475,7 @@ void run_azure_tests()
     {
         std::ofstream(destination) << "existing artifact";
     }
+    fault.status = 200;
     const auto preserve_html = download_artifact(
         forge_kind::azure,
         {.name = "fixture",
@@ -465,7 +487,22 @@ void run_azure_tests()
         std::getline(in, preserved);
     }
     check(!preserve_html.empty() && preserved == "existing artifact",
-          "azure: 2xx HTML artifact rejection preserves the existing destination content");
+          "azure: HTTP200 HTML artifact rejection preserves the existing destination content");
+    fault.headers.clear();
+    fault.body = R"({"message":"artifact error returned with success status"})";
+    const auto preserve_json = download_artifact(
+        forge_kind::azure,
+        {.name = "fixture",
+         .download_url = "https://dev.azure.com/fabrikam/My%20Project/_apis/build/"
+                         "builds/23/artifacts?artifactName=fixture&api-version=7.1"},
+        destination, "azure-fixture-pat");
+    {
+        std::ifstream in(destination);
+        std::getline(in, preserved);
+    }
+    check(preserve_json.find("HTTP 200: artifact error") != std::string::npos &&
+              preserved == "existing artifact",
+          "azure: HTTP200 JSON error never replaces existing artifact content");
     std::filesystem::remove(destination);
     forge_detail::set_transport({});
 }

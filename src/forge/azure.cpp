@@ -251,6 +251,23 @@ std::optional<pr_review::verdict> review_vote(std::int64_t vote)
     }
 }
 
+bool html_response(const rap::sys::http_response& reply)
+{
+    std::string prefix = reply.body.substr(0, 8192);
+    std::ranges::transform(prefix, prefix.begin(),
+                           [](unsigned char c) { return char(std::tolower(c)); });
+    bool html = prefix.find("<html") != std::string::npos ||
+                prefix.find("<!doctype html") != std::string::npos;
+    for (const auto& [name, value] : reply.headers)
+    {
+        std::string n = name, v = value;
+        std::ranges::transform(n, n.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+        std::ranges::transform(v, v.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+        html |= n == "content-type" && v.find("text/html") != std::string::npos;
+    }
+    return html;
+}
+
 std::string response_error(const rap::sys::http_response& reply, std::string_view url,
                            std::string_view token)
 {
@@ -273,18 +290,7 @@ std::string response_error(const rap::sys::http_response& reply, std::string_vie
         if (text.size() > 512) text = text.substr(0, 512) + "...";
         return text;
     };
-    std::string prefix = reply.body.substr(0, 8192);
-    std::ranges::transform(prefix, prefix.begin(),
-                           [](unsigned char c) { return char(std::tolower(c)); });
-    bool html = prefix.find("<html") != std::string::npos ||
-                prefix.find("<!doctype html") != std::string::npos;
-    for (const auto& [name, value] : reply.headers)
-    {
-        std::string n = name, v = value;
-        std::ranges::transform(n, n.begin(), [](unsigned char c) { return char(std::tolower(c)); });
-        std::ranges::transform(v, v.begin(), [](unsigned char c) { return char(std::tolower(c)); });
-        html |= n == "content-type" && v.find("text/html") != std::string::npos;
-    }
+    const bool html = html_response(reply);
     const auto parsed = json::parse(reply.body);
     std::string error = "Azure DevOps HTTP " + std::to_string(reply.status);
     if (parsed)
@@ -306,7 +312,7 @@ std::string response_error(const rap::sys::http_response& reply, std::string_vie
         error += url.find("/build/") != std::string_view::npos ? ". Required scope: Build (Read)."
                  : url.find("/git/") != std::string_view::npos ||
                          url.find("/policy/") != std::string_view::npos
-                     ? ". Required scope: Code (Read), or Code (Read & Write)."
+                     ? ". Required scope: Code (Read)."
                      : ". Check PAT organization access and Code/Build read scopes.";
     return error;
 }

@@ -1,5 +1,6 @@
 #include "remote_sign_in.h"
 #include "azure.h"
+#include "azure_credentials.h"
 
 #include "forge/forge_detail.h"
 #include "i18n.h"
@@ -82,8 +83,10 @@ std::optional<forge_kind> probe_forge(std::string_view host)
     return kind;
 }
 
-repo_seen look_for_repo(forge_kind k, const forge_repo& r, std::string_view token)
+repo_seen look_for_repo(forge_kind k, const forge_repo& r, std::string_view token,
+                        std::string* error)
 {
+    if (error) error->clear();
     // Azure: https://learn.microsoft.com/en-us/rest/api/azure/devops/git/repositories/get-repository?view=azure-devops-rest-7.1
     const std::string url = k == forge_kind::azure ? azure::repository_api(r) + "?api-version=7.1"
                             : k == forge_kind::gitlab
@@ -97,8 +100,16 @@ repo_seen look_for_repo(forge_kind k, const forge_repo& r, std::string_view toke
     if (token.empty() && k == forge_kind::github && !budget_allows(anonymous_budget(), 1, 10, now))
         return repo_seen::unknown;
     // Only whether there's an answer matters, not what it says.
-    const auto reply = forge_detail::http_get(
-        url, {.headers = api_headers(k, token), .max_bytes = std::size_t(256) << 10});
+    const rap::sys::http_options options{.headers = api_headers(k, token),
+                                         .max_bytes = std::size_t(256) << 10};
+    const auto reply = k == forge_kind::azure ? azure::helper_get(url, options, token)
+                                              : forge_detail::http_get(url, options);
+    if (k == forge_kind::azure &&
+        (reply.status != 200 || !reply.error.empty() || !json::parse(reply.body)))
+    {
+        if (error) *error = azure::response_error(reply, url, token);
+        return reply.status == 404 ? repo_seen::hidden : repo_seen::unknown;
+    }
     if (reply.status == 200) return repo_seen::shown;
     if (reply.status == 404) return repo_seen::hidden;
     return repo_seen::unknown;
@@ -114,8 +125,9 @@ remote_sign_in describe_remote(bool on_forge, const forge_account* account, repo
         if (account->via_git_credential && seen != repo_seen::hidden)
             return {.summary = _("Git credentials"),
                     .text = seen == repo_seen::shown
-                        ? _("Using Git's saved credentials for this organization.")
-                        : _("Uses Git's saved credentials when available; otherwise paste an organization PAT in Accounts."),
+                                ? _("Using Git's saved credentials for this organization.")
+                                : _("Uses Git's saved credentials when available; otherwise paste "
+                                    "an organization PAT in Accounts."),
                     .mark = seen == repo_seen::shown ? check_state::success : check_state::none,
                     .sign_in = offer::link};
         if (seen == repo_seen::hidden)

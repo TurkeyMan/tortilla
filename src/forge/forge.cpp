@@ -596,7 +596,6 @@ std::optional<forge_repo> repo_of_url(std::string_view url)
     std::string_view host, path;
     if (!split_remote(url, host, path)) return std::nullopt;
     while (!path.empty() && path.back() == '/') path.remove_suffix(1);
-    if (path.ends_with(".git")) path.remove_suffix(4);
     while (!path.empty() && path.front() == '/') path.remove_prefix(1);
     std::string lower_host(host);
     std::ranges::transform(lower_host, lower_host.begin(),
@@ -604,6 +603,7 @@ std::optional<forge_repo> repo_of_url(std::string_view url)
     if (lower_host == "dev.azure.com" || lower_host == "ssh.dev.azure.com" ||
         lower_host.ends_with(".visualstudio.com"))
         return azure::remote(host, path);
+    if (path.ends_with(".git")) path.remove_suffix(4);
     const size_t last = path.rfind('/');
     if (host.empty() || last == std::string_view::npos || last == 0 || last + 1 == path.size())
         return std::nullopt;
@@ -1930,7 +1930,7 @@ std::string token_scopes(forge_kind k)
     switch (k)
     {
     case forge_kind::azure:
-        return _("An organization PAT with Code (Read & Write) and Build (Read). Enter "
+        return _("An organization PAT with Code (Read) and Build (Read). Enter "
                  "dev.azure.com/organization as the server.");
     case forge_kind::github: return _("A classic token with the “repo” scope.");
     case forge_kind::gitlab: return _("A personal access token with the “api” scope.");

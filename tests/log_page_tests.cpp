@@ -20,6 +20,8 @@
 #include "git/command.h"
 #include "git/ssh_client.h"
 #include "git/sync.h"
+#include "forge/azure_credentials.h"
+#include "forge/forge_detail.h"
 #include "log/forge_panel.h"
 #include "log/log_model.h"
 #include "log/log_tab.h"
@@ -158,6 +160,24 @@ struct forge_panel_test
         p.builds_["azure-error-fixture"] = {.asked = true, .answered = true, .error = std::move(error)};
         p.show_commit("azure-error-fixture");
     }
+    static void azure_fallback_lookup(forge_panel& p)
+    {
+        p.prs_[0].pr.into = {.name="origin", .repo={.host="gitlab.com", .owner="fixture", .name="repo"},
+                              .account={.kind=forge_kind::gitlab, .host="gitlab.com"}};
+        const auto automatic = azure::automatic_account(
+            "https://dev.azure.com/fabrikam/project/_git/repo", "offline-fixture");
+        p.remotes_ = {{.name="azure", .repo={.host="dev.azure.com", .owner="fabrikam/project", .name="repo"},
+                        .account=*automatic}};
+        p.builds_.erase("head");
+        p.sha_ = "head";
+        p.ask_build("head");
+    }
+    static bool azure_lookup_pending(const forge_panel& p)
+    { return p.builds_.at("head").asking; }
+    static bool azure_lookup_answered(const forge_panel& p)
+    { return p.builds_.at("head").answered; }
+    static void diagnostic(forge_panel& p, std::function<void(std::string)> f)
+    { p.host_.diagnostic = std::move(f); }
     static rap::list* matrix(forge_panel& p) { return p.matrix_list_; }
     static bool picked(const forge_panel& p) { return p.failed_job_.has_value(); }
     static std::optional<ci_job> picked_job(const forge_panel& p) { return p.failed_job_; }
@@ -2044,6 +2064,32 @@ void forge_presentation_tests(rap::ui& ui, const std::string& repo)
     matrix = dynamic_cast<kept_list*>(forge_panel_test::matrix(panel));
     check(matrix && matrix->selected == std::vector<size_t>{0},
           "forge presentation: rebuilt page restores picked job without resetting unchanged model");
+    // An empty primary lookup followed by failed fallback credentials must complete.
+    // https://docs.gitlab.com/api/pipelines/#list-project-pipelines
+    std::string lookup_error;
+    forge_panel_test::diagnostic(panel, [&](std::string error) { lookup_error = std::move(error); });
+    credential_helper::set_runner([](const credential_helper::request&)
+        -> std::expected<credential_helper::reply, std::string>
+        { return std::unexpected("offline Azure credential fixture failed"); });
+    forge_detail::set_transport([](std::string_view, const std::string&, std::string_view,
+                                   const rap::sys::http_options&)
+        { return rap::sys::http_response{.status=200, .body="[]"}; });
+    forge_panel_test::azure_fallback_lookup(panel);
+    const auto lookup_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (forge_panel_test::azure_lookup_pending(panel) &&
+           std::chrono::steady_clock::now() < lookup_deadline)
+    {
+        settle(ui);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    settle(ui);
+    check(forge_panel_test::azure_lookup_answered(panel) &&
+              !forge_panel_test::azure_lookup_pending(panel) &&
+              lookup_error.find("Git credential lookup couldn't start") != std::string::npos,
+          "azure: fallback credential failure clears pending CI lookup and publishes visible error");
+    credential_helper::set_runner({});
+    forge_detail::set_transport({});
+    forge_panel_test::diagnostic(panel, {});
     panel.unbind();
     window.reset();
     settle(ui);

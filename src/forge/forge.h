@@ -132,7 +132,8 @@ std::expected<forge_account, std::string> who_am_i(forge_kind, std::string_view 
 // -- repositories and their pull requests -------------------------------------
 
 // A repository on a forge, from a remote's URL: its host, and its path there
-// as owner (a GitLab group may hold slashes) and name, without ".git".
+// as owner (a GitLab group may hold slashes) and name. Conventional .git
+// clone suffixes are removed except for Azure, where they are literal names.
 struct forge_repo
 {
     std::string host, owner, name;
