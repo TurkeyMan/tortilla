@@ -156,11 +156,6 @@ std::string sign_in_to(const forge_remote& r)
 pr_menu_labels pr_menu_for(const open_pr& p, repo_access access)
 {
     pr_menu_labels m{.merge = _("_Merge..."), .close = _("_Close...")};
-    if (p.into.account.kind == forge_kind::azure)
-        return {.merge = _("_Merge... (Azure DevOps read-only)"),
-                .close = _("_Close... (Azure DevOps read-only)"),
-                .can_merge = false,
-                .can_close = false};
     std::string why;
     if (!p.into.signed_in())
         why = sign_in_to(p.into);
@@ -199,11 +194,8 @@ pr_menu_labels pr_menu_for(const open_pr& p, repo_access access)
 std::string create_pr_blocker(const std::vector<forge_remote>& remotes)
 {
     if (remotes.empty()) return {};
-    if (std::ranges::all_of(remotes, [](const forge_remote& r)
-                            { return r.account.kind == forge_kind::azure; }))
-        return azure::unsupported();
     if (std::ranges::any_of(remotes, [](const forge_remote& r)
-                            { return r.signed_in() && r.account.kind != forge_kind::azure; }))
+                            { return r.signed_in(); }))
         return {};
     return sign_in_to(remotes.front());
 }

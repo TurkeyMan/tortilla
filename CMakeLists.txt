@@ -373,8 +373,8 @@ if(NOT MSVC)
 endif()
 
 add_executable(tortilla-tests tests/azure_credential_tests.cpp tests/azure_process_tests.cpp
-               tests/azure_tests.cpp tests/log_model_test.cpp tests/journal_tests.cpp tests/raw_client.cpp
-               tests/log_page_tests.cpp tests/log_host_tests.cpp)
+               tests/azure_tests.cpp tests/azure_actions_tests.cpp tests/log_model_test.cpp
+               tests/journal_tests.cpp tests/raw_client.cpp tests/log_page_tests.cpp tests/log_host_tests.cpp)
 target_link_libraries(tortilla-tests PRIVATE tortilla_app rapport::rapport)
 
 add_executable(tortilla-icon-preview tools/icon_preview.cpp)

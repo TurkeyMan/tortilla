@@ -41,10 +41,11 @@ void run_azure_tests()
     }
     check(repo_of_url("https://github.com/owner/sdk.git")->name == "sdk",
           "azure: other forges retain conventional clone suffix stripping");
-    check(token_scopes(forge_kind::azure).find("Code (Read) and Build (Read)") !=
-                  std::string::npos &&
-              token_scopes(forge_kind::azure).find("Write") == std::string::npos,
-          "azure: readonly PAT instructions request Code Read and Build Read only");
+    check(token_scopes(forge_kind::azure).find("Code (Read & Write)") != std::string::npos &&
+              token_scopes(forge_kind::azure).find("Build (Read)") != std::string::npos &&
+              token_scopes(forge_kind::azure).find("Read-only use needs only Code (Read)") !=
+                  std::string::npos,
+          "azure: PAT instructions distinguish PR write scopes from read-only use");
     check(!repo_of_url("https://dev.azure.com/org%2Fother/project/_git/repo"),
           "azure: encoded scope separator refused");
     check(known_forge("DEV.AZURE.COM") == forge_kind::azure, "azure: shared hostname recognized");
@@ -184,7 +185,7 @@ void run_azure_tests()
               account->login == "d6245f20-2af8-44f4-9451-8107cb2767db" && account->name == "Alice",
           "azure: organization connectionData retains friendly identity");
     const auto list = open_pull_requests(forge_kind::azure, repo, "azure-fixture-pat", true, true);
-    check(list && list->access == repo_access::read && list->prs.size() == 1 &&
+    check(list && list->access == repo_access::unknown && list->prs.size() == 1 &&
               list->prs[0].head_sha == "sha" && list->prs[0].head_branch == "topic" &&
               list->prs[0].base_branch == "main" && list->prs[0].labels.size() == 1 &&
               list->prs[0].author_avatar.empty() && !list->prs[0].body_known && list->tips &&
@@ -223,14 +224,6 @@ void run_azure_tests()
         check(a && a->size() == 1 && artifact_requests == 1 && (*a)[0].size == 0,
               "azure: artifact names/download URLs with unknown size and one request per run");
     }
-    const int before = requests;
-    check(!create_pull_request(forge_kind::azure, repo, {}, "azure-fixture-pat") &&
-              !merge_pull_request(forge_kind::azure, repo, 42, {}, "azure-fixture-pat").empty() &&
-              !close_pull_request(forge_kind::azure, repo, 42, "reason", "azure-fixture-pat")
-                   .empty() &&
-              !delete_branch(forge_kind::azure, repo, "topic", "azure-fixture-pat").empty() &&
-              before == requests,
-          "azure: unsupported mutations never reach the transport");
     check(auth_ok && urls_ok,
           "azure: scoped Basic auth and API 7.1; connectionData follows unversioned SDK route");
 

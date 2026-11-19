@@ -57,7 +57,7 @@ pull_request_dialog::open(rap::ui& ui, const std::string& workdir, const ref& br
 {
     // A public forge's remote without an account can't open one.
     std::erase_if(remotes, [](const forge_remote& r)
-                  { return !r.signed_in() || r.account.kind == forge_kind::azure; });
+                  { return !r.signed_in(); });
     if (remotes.empty())
         return std::unexpected(std::string(
             _("None of this repository's remotes is on a forge you're signed in to: sign in on "
