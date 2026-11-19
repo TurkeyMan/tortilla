@@ -1,4 +1,6 @@
 #include "pr_watch.h"
+#include "azure.h"
+#include "azure_credentials.h"
 
 #include "git/command.h"
 #include "git/remotes.h"
@@ -57,11 +59,14 @@ std::vector<forge_remote> forge_remotes(const std::string& workdir)
         const std::string url = config_value(workdir, "remote." + name + ".url");
         auto repo = repo_of_url(url);
         if (!repo) continue;
-        auto account = account_for_url(url, all);
+        auto account = azure::account_for_remote(url, workdir, all);
         // A public forge's without one: asked as no one.
         if (!account)
             if (const auto kind = known_forge(repo->host))
-                account = forge_account{.kind = *kind, .host = std::string(default_host(*kind))};
+                account = forge_account{.kind = *kind,
+                                        .host = *kind == forge_kind::azure
+                                                    ? azure::account_host(*repo)
+                                                    : std::string(default_host(*kind))};
         if (account)
             out.push_back({.name = name, .repo = std::move(*repo), .account = std::move(*account)});
     }
@@ -148,6 +153,11 @@ std::string sign_in_to(const forge_remote& r)
 pr_menu_labels pr_menu_for(const open_pr& p, repo_access access)
 {
     pr_menu_labels m{.merge = _("_Merge..."), .close = _("_Close...")};
+    if (p.into.account.kind == forge_kind::azure)
+        return {.merge = _("_Merge... (Azure DevOps read-only)"),
+                .close = _("_Close... (Azure DevOps read-only)"),
+                .can_merge = false,
+                .can_close = false};
     std::string why;
     if (!p.into.signed_in())
         why = sign_in_to(p.into);
@@ -185,7 +195,13 @@ pr_menu_labels pr_menu_for(const open_pr& p, repo_access access)
 
 std::string create_pr_blocker(const std::vector<forge_remote>& remotes)
 {
-    if (remotes.empty() || std::ranges::any_of(remotes, &forge_remote::signed_in)) return {};
+    if (remotes.empty()) return {};
+    if (std::ranges::all_of(remotes, [](const forge_remote& r)
+                            { return r.account.kind == forge_kind::azure; }))
+        return azure::unsupported();
+    if (std::ranges::any_of(remotes, [](const forge_remote& r)
+                            { return r.signed_in() && r.account.kind != forge_kind::azure; }))
+        return {};
     return sign_in_to(remotes.front());
 }
 
@@ -305,12 +321,13 @@ void pr_watch::ask(bool forced)
                 const std::string key = r.account.host + ' ' + r.account.login,
                                   seen = access_key(r);
                 std::string token;
+                std::optional<forge_token> owned_token;
                 bool ask_access = false;
                 std::int64_t last = 0;
                 {
                     std::lock_guard lock(sh->mutex);
                     if (!sh->alive) return;
-                    if (r.signed_in()) token = sh->tokens[key];
+                    if (r.signed_in() && !r.account.via_git_credential) token = sh->tokens[key];
                     ask_access = !sh->access.contains(seen);
                     last = sh->anonymous_asked[seen];
                 }
@@ -323,8 +340,9 @@ void pr_watch::ask(bool forced)
                 if (r.signed_in() && token.empty())
                 {
                     std::string why;
-                    if (auto t = load_token(r.account, &why))
-                        token = t->access;
+                    owned_token = load_token(r.account, &why);
+                    if (owned_token)
+                        token = owned_token->access;
                     else
                     {
                         error = why;
@@ -340,7 +358,7 @@ void pr_watch::ask(bool forced)
                     error = reply.error();
                     continue;
                 }
-                if (r.signed_in()) sh->tokens[key] = token;
+                if (r.signed_in() && !r.account.via_git_credential) sh->tokens[key] = token;
                 if (reply->rate_limited)
                 {
                     kept.push_back(r.repo);
@@ -444,8 +462,7 @@ void pr_watch::update_fast_timer()
     // GitHub's only: GitLab's and Gitea's checks wait for the list's ask.
     const bool any = (watched_pending_ && watched_where_->account.kind == forge_kind::github) ||
                      std::ranges::any_of(prs_,
-                                         [](const open_pr& p)
-                                         {
+                                         [](const open_pr& p) {
                                              return p.pr.checks == check_state::pending &&
                                                     p.into.account.kind == forge_kind::github;
                                          });
@@ -495,8 +512,7 @@ void pr_watch::fast_tick()
         plan.insert(plan.begin(), first.begin(), first.end());
     }
     std::erase_if(fast_,
-                  [&](const auto& f)
-                  {
+                  [&](const auto& f) {
                       return std::ranges::none_of(plan, [&](const fast_poll& p)
                                                   { return p.sha == f.first; });
                   });

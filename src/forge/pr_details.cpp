@@ -1,4 +1,5 @@
 #include "pr_details.h"
+#include "azure.h"
 
 #include "forge/forge_detail.h"
 #include "git/command.h"
@@ -153,6 +154,7 @@ pull_request_details(forge_kind k, const forge_repo& into, pull_request pr, std:
 {
     switch (k)
     {
+    case forge_kind::azure: return azure::details(into, std::move(pr), token);
     case forge_kind::github:
         if (pr.body_known && pr.reviews_known) return pr;
         return github_details(into, std::move(pr), token);

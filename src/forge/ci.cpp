@@ -1,4 +1,6 @@
 #include "ci.h"
+#include "azure.h"
+#include "azure_credentials.h"
 
 #include "forge/forge_detail.h"
 #include "i18n.h"
@@ -432,6 +434,7 @@ std::expected<commit_ci, std::string> commit_checks(forge_kind k, const forge_re
         break;
     case forge_kind::gitlab: out = gitlab_checks(r, sha, token); break;
     case forge_kind::gitea: out = gitea_checks(r, sha, token); break;
+    case forge_kind::azure: out = azure::checks(r, sha, token); break;
     }
     if (out) order_failures_first(*out);
     return out;
@@ -446,6 +449,7 @@ commit_artifacts(forge_kind k, const forge_repo& r, std::string_view sha, const 
     case forge_kind::github: return github_artifacts(r, ci, token);
     case forge_kind::gitlab: return gitlab_artifacts(r, sha, token);
     case forge_kind::gitea: return gitea_artifacts(r, sha, token);
+    case forge_kind::azure: return azure::artifacts(r, ci, token);
     }
     return {};
 }
@@ -456,12 +460,57 @@ std::string download_artifact(forge_kind k, const ci_artifact& a, const std::fil
 {
     // GitHub's redirects to a signed address on another host; rapport sends
     // the token only to the host it was asked of.
-    const auto reply = forge_detail::http_download(a.download_url, to,
-                                                   {.headers = api_headers(k, token),
-                                                    .timeout = std::chrono::seconds(30),
-                                                    .stall = std::chrono::seconds(60),
-                                                    .cancelled = cancelled,
-                                                    .progress = std::move(progress)});
+    if (k == forge_kind::azure)
+        if (const auto error = azure::helper_preflight(token); !error.empty()) return error;
+    auto headers = api_headers(k, token);
+    // Azure may supply a signed blob URL; it needs no PAT, and a PAT for
+    // the organization must never be forwarded to a separate blob host.
+    if (k == forge_kind::azure &&
+        !forge_detail::token_allowed(azure::is_helper_token(token) ? std::string(token) : azure::basic_token(token), a.download_url))
+        headers = api_headers(k, {});
+    std::string preview;
+    std::function<bool(std::string_view)> capture;
+    if (k == forge_kind::azure)
+        capture = [&](std::string_view piece)
+        {
+            preview.append(piece.substr(0, 8192 - preview.size()));
+            return true;
+        };
+    // Validate Azure's response before touching the caller's destination:
+    // a 2xx HTML sign-in page must not replace an existing valid artifact.
+    std::filesystem::path destination = to;
+    if (k == forge_kind::azure)
+        destination += ".azure-download-" +
+                       std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    // Azure resource.downloadUrl: https://learn.microsoft.com/en-us/rest/api/azure/devops/build/artifacts/list?view=azure-devops-rest-7.1
+    auto reply = forge_detail::http_download(a.download_url, destination,
+                                             {.headers = std::move(headers),
+                                              .timeout = std::chrono::seconds(30),
+                                              .stall = std::chrono::seconds(60),
+                                              .cancelled = cancelled,
+                                              .sink = std::move(capture),
+                                              .progress = std::move(progress)});
+    if (k == forge_kind::azure)
+    {
+        reply.body = std::move(preview);
+        const auto j = json::parse(reply.body);
+        if (reply.status < 200 || reply.status >= 300 || reply.status == 203 ||
+            !reply.error.empty() || azure::html_response(reply) || j)
+        {
+            // Do not leave an HTML sign-in page or JSON error saved as an artifact.
+            std::error_code ec;
+            std::filesystem::remove(destination, ec);
+            return azure::response_error(reply, "/build/artifacts", token);
+        }
+        std::error_code ec;
+        std::filesystem::rename(destination, to, ec);
+        if (ec)
+        {
+            std::error_code ignored;
+            std::filesystem::remove(destination, ignored);
+            return "Couldn't save the Azure artifact: " + ec.message();
+        }
+    }
     if (reply.status < 200 || reply.status >= 300) return failure(reply, std::nullopt);
     return reply.error;  // "" when whole
 }
@@ -474,6 +523,7 @@ job_failure_details(forge_kind k, const forge_repo& r, const ci_job& job, std::s
     case forge_kind::github: return github_failure(r, job, token);
     case forge_kind::gitlab: return gitlab_failure(r, job, token);
     case forge_kind::gitea: return job_failure{.log_url = job.url};
+    case forge_kind::azure: return azure::failure_details(r, job, token);
     }
     return {};
 }

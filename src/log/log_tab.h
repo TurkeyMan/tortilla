@@ -313,6 +313,8 @@ private:
     std::unique_ptr<pr_watch> pr_watch_;
     std::unordered_map<std::string, open_pr> pr_heads_;
     void update_pull_requests();
+    void forge_diagnostic(std::string);
+    std::string forge_error_, forge_pr_error_;
     // A label's pull request: a remote branch's, if it's one's head; a
     // local branch's upstream's.
     const open_pr* pull_request_of(const ref&) const;
