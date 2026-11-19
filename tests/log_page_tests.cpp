@@ -2235,6 +2235,7 @@ void forge_tabs_tests(rap::ui& ui, const std::string& repo)
     local.unbind();
     local_window.reset();
 
+<<<<<<< HEAD
     // One source: what pr_watch said, not a fresh read, decides each build.
     {
         const std::vector<forge_remote> eligible{
@@ -2328,6 +2329,38 @@ void forge_tabs_tests(rap::ui& ui, const std::string& repo)
         pr_watch::no_worker_for_tests = false;
         save_accounts(saved);
     }
+=======
+    // Azure must reach the actual forge_remotes eligibility path without a helper/store lookup.
+    // https://learn.microsoft.com/en-us/azure/devops/repos/git/clone?view=azure-devops
+    const std::string azure_repo = forge_repo + "-azure";
+    std::filesystem::create_directories(rap::sys::path_from_utf8(azure_repo));
+    check(run_git(azure_repo, {"init", "-q"}, git_output::stdout_only).ok() &&
+              run_git(azure_repo, {"remote", "add", "origin",
+                                  "https://fixture-user@dev.azure.com/offline-azure-eligibility/"
+                                  "My%20Project/_git/sdk.git"}, git_output::stdout_only).ok(),
+          "azure forge tabs: local HTTPS remote fixture initialized without network");
+    const auto azure_remotes = forge_remotes(azure_repo);
+    check(azure_remotes.size() == 1 && azure_remotes[0].account.kind == forge_kind::azure &&
+              azure_remotes[0].account.host == "dev.azure.com/offline-azure-eligibility" &&
+              azure_remotes[0].repo.owner == "offline-azure-eligibility/My Project" &&
+              azure_remotes[0].repo.name == "sdk.git",
+          "azure forge tabs: real remote discovery recognizes canonical organization and literal name");
+    forge_panel azure_panel({.ui = ui, .workdir = azure_repo});
+    azure_panel.set_forge_possible(!azure_remotes.empty());
+    const auto azure_layout = azure_panel.layout(label{"Commit contents"});
+    check(!std::get<rap::spec::tabs>(azure_layout.spec).hide_single_tab,
+          "azure forge tabs: actual Azure remote keeps strip enabled with Commit only");
+    auto azure_window = ui.create(rap::layout::window{"Azure lower tabs", {azure_layout}});
+    azure_panel.built();
+    auto* azure_tabs = dynamic_cast<kept_pages*>(forge_panel_test::pages(azure_panel));
+    azure_panel.show_commit("offline-row");
+    check(azure_tabs && azure_tabs->strip_shown() && azure_tabs->current() == 0 &&
+              !azure_tabs->page_visible(1) && !azure_tabs->page_visible(2) &&
+              !azure_tabs->page_visible(3),
+          "azure forge tabs: absent PR Build artifacts preserve strict visibility and stable strip");
+    azure_panel.unbind();
+    azure_window.reset();
+>>>>>>> 65b4ed9 (Keep Azure lower tabs eligible after forge tab integration)
 
     forge_panel panel({.ui = ui, .workdir = forge_repo});
     panel.set_forge_possible(true);
