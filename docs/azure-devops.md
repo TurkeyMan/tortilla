@@ -1,11 +1,12 @@
-# Azure DevOps (read-only)
+# Azure DevOps
 
 For Azure HTTPS remotes, Tortilla automatically consults Git's configured
 credential helper (including GCM) when there is no explicitly configured
 organization account. A pasted **Azure DevOps** PAT in Settings, server
 `dev.azure.com/organization`, overrides the automatic source deterministically.
-PAT instructions request Code (Read) and Build (Read); this integration
-only reads. Browser OAuth app registration is not implemented; existing GCM
+PAT instructions request Code (Read & Write) for PR actions and Build (Read).
+Read-only use needs only Code (Read). Browser OAuth app registration is not
+implemented; existing GCM
 OAuth sign-ins can be reused through Git's credential protocol.
 
 Accounts are per organization, even if a PAT grants access to several.
@@ -30,8 +31,9 @@ on a different origin.
 
 PR lists include labels, branches, head commit, drafts and reviewer votes.
 The selected PR fetches its full description (the list truncates it), reviews
-and policy evaluations. Write actions (create, merge, auto-complete, close,
-branch deletion and fork targeting) are explicitly unsupported.
+and policy evaluations. Same-repository PR creation, merge/auto-complete, close
+with an optional reason, and guarded branch deletion are supported. Fork
+targeting is explicitly unsupported.
 
 Pipelines are found by repository GUID, paging build history and selecting
 the newest matching source commit per definition. Azure's Build list has no
@@ -93,8 +95,10 @@ with HTTP401 or HTML203 may retry the same opaque password **once as Bearer**.
 This is a documented compatibility policy, not a claim that Microsoft documents
 OAuth-over-Basic for REST. JSON203, 403, 429 and 5xx do not negotiate. Explicit
 schemes and pasted PATs do not negotiate. Neither failure causes approve/reject,
-credential deletion or a silent switch to another identity. Future write support
-must resolve its scheme with a read-only preflight, not by retrying mutations.
+credential deletion or a silent switch to another identity. Writes resolve ambiguous schemes with a read-only identity preflight, then send
+the mutation exactly once. Authentication failures, rate limits and lost responses
+never automatically retry writes. Check Azure before manually retrying an
+unconfirmed create or comment to avoid duplication.
 
 Accepted mode is remembered in a maximum-128-entry, 10-minute in-memory cache
 keyed by a SHA256 fingerprint scoped to organization/workdir/remote username
@@ -173,7 +177,11 @@ responses. D-series cases deliberately inject unsuccessful HTTP responses.
 | Build `builds/{id}/logs/{logId}?startLine=...` with Accept text/plain | [Get log 7.1](https://learn.microsoft.com/en-us/rest/api/azure/devops/build/builds/get-build-log?view=azure-devops-rest-7.1) | F10: plain log tail; bounded startLine request |
 | PAT Basic header / token settings page | [PAT authentication](https://learn.microsoft.com/en-us/azure/devops/organizations/accounts/use-personal-access-tokens-to-authenticate?view=azure-devops) | empty-username Base64, scoped gate, legacy/SSH aliases, no OAuth |
 | Local `git credential fill` (no Azure write endpoint) | [Git protocol](https://git-scm.com/docs/git-credential), [GCM settings](https://github.com/git-ecosystem/git-credential-manager/blob/main/docs/configuration.md) | `azure_credential_tests.cpp`: exact stdin, parser, bounds, source precedence, negotiation/scope/lifetime; `azure_process_tests.cpp`: real isolated dummy child stdin/env/deadline/output cap |
-| Threads, refs mutation, PR creation/completion/abandon | No requests in PR1 | mutation-refusal transport assertion; no network or hidden write fallback |
+| Git `pullrequests` POST | [Create PR 7.1](https://learn.microsoft.com/en-us/rest/api/azure/devops/git/pull-requests/create?view=azure-devops-rest-7.1) | W1: exact source/target/title/description/draft, fork/invalid-branch refusal |
+| Git `pullrequests/{id}` PATCH | [Update PR 7.1](https://learn.microsoft.com/en-us/rest/api/azure/devops/git/pull-requests/update?view=azure-devops-rest-7.1) | W1: all three UI strategies, expected-head guard, auto-complete identity, abandonment, no write retry |
+| Git `pullrequests/{id}/threads` POST | [Create thread 7.1](https://learn.microsoft.com/en-us/rest/api/azure/devops/git/pull-request-threads/create?view=azure-devops-rest-7.1) | W4: reason before abandonment, unconfirmed/partially failed close |
+| Git `refs` POST | [Update refs 7.1](https://learn.microsoft.com/en-us/rest/api/azure/devops/git/refs/update-refs?view=azure-devops-rest-7.1) | W5: exact ref lookup, oldObjectId guard/zero newObjectId; HTTP200 per-ref failure and unknown status |
+| Git repository default branch GET | [Get repository 7.1](https://learn.microsoft.com/en-us/rest/api/azure/devops/git/repositories/get-repository?view=azure-devops-rest-7.1) | W2: defaultBranch stripping refs/heads/ |
 
 ## Mappings, ambiguities and limits
 
@@ -195,7 +203,7 @@ responses. D-series cases deliberately inject unsuccessful HTTP responses.
   failure, pending → pending, notSet/notApplicable/unknown → none.
 - PR merge notSet/queued/unknown → unknown; conflicts → known conflict;
   succeeded → known; rejectedByPolicy/failure → known blocked. The integration
-  remains read-only regardless of those values.
+  never treats unknown merge states as ready.
 - Active PRs and refs are capped at the first 100, matching the existing
   forge-list contract; a full refs page is marked incomplete. Build history
   follows continuation tokens without an invented sourceVersion parameter,
@@ -230,3 +238,47 @@ their strip even on a Commit-only row, using the same `forge_possible` predicate
 as other providers. PR, Build and Artifacts visibility remains strict per row;
 errors use the always-visible log status without fabricating Build presence.
 The master sticky-choice and silent-fallback behavior is retained unchanged.
+
+## Write behavior and remaining live-validation limits
+
+The three existing merge choices map to Azure `noFastForward`, `squash` and
+`rebase` respectively. Azure `rebaseMerge` is a fourth distinct strategy with
+no existing UI choice, so Tortilla does not send or silently substitute it.
+Azure documents that both rebase strategies update the source branch.
+Repository policies still enforce permitted strategies; the REST PR response
+has no exhaustive allowed-methods field, so an unavailable strategy produces
+Azure's error instead of bypassing policy. No `bypassPolicy`, optional-policy
+exclusions or automatic source deletion is requested.
+
+Every completion carries the expected `lastMergeSourceCommit.commitId`.
+Auto-complete sets `autoCompleteSetBy.id` from the authenticated identity and
+leaves status active. Azure manages future completion under its policies;
+Tortilla does not claim to lock a future auto-complete to the current head.
+An immediate completion is confirmed only by a completed PR response: an
+asynchronous/queued response is reported as unconfirmed, and Tortilla does
+not proceed to branch deletion. There is no mutation retry or completion poll.
+
+Write-capable scope is Code (Read & Write), plus the relevant repository/branch
+permissions. Authentication is not proof of write permission: the PR list
+leaves access unknown and Azure validates each action. A denied write shows
+HTTP status, sanitized service message and the write-scope hint. If a reason
+thread was posted but abandonment failed, the error says the reason was
+already posted. Branch deletion first reads the exact named ref, then sends
+that old object ID and a zero new object ID. Per-ref HTTP200 errors (including
+stale head, Force push/write permission, policy, lock and unknown statuses)
+are failures; documented succeeded/nonexistent/corrupt deletion outcomes
+require `success=true`.
+
+These write paths have only official-schema fixtures and fake transport
+validation. No live organization, credential store, PR creation/completion,
+comment or deletion was accessed. The first live use must establish the
+organization's policy permissions and completion behavior; any reported
+service response should be reproduced offline without asking for secrets.
+
+### Redirect safety dependency (draft blocker)
+
+The current Rapport pin does not expose redirect control. Before this PR is
+ready, the pending Rapport #111 API must land and be pinned: every mutation
+must reject 301/302/303/307/308 redirects before any resend, even within the
+same organization. Auth filtering alone cannot enforce single-send writes.
+The original green CI run is not evidence that this blocker is resolved.

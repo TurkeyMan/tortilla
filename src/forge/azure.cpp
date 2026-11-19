@@ -317,9 +317,252 @@ std::string response_error(const rap::sys::http_response& reply, std::string_vie
     return error;
 }
 
-std::string unsupported()
+namespace
 {
-    return _("Azure DevOps mutations are not supported yet; use the Azure DevOps web page.");
+bool valid_branch(std::string_view name)
+{
+    if (name.empty() || name.starts_with('/') || name.ends_with('/') || name.ends_with('.') ||
+        name.find("..") != name.npos || name.find("@{") != name.npos || name == "@")
+        return false;
+    while (!name.empty())
+    {
+        const auto slash = name.find('/');
+        const auto part = name.substr(0, slash);
+        if (part.empty() || part.starts_with('.') || part.ends_with(".lock")) return false;
+        for (const unsigned char c : part)
+            if (c <= 32 || c == 127 || std::string_view("~^:?*[\\").find(char(c)) != name.npos)
+                return false;
+        if (slash == name.npos) break;
+        name.remove_prefix(slash + 1);
+    }
+    return true;
+}
+
+bool object_id(std::string_view id)
+{
+    return id.size() == 40 &&
+           std::ranges::all_of(id,
+                               [](unsigned char c) {
+                                   return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') ||
+                                          (c >= 'A' && c <= 'F');
+                               }) &&
+           id != std::string(40, '0');
+}
+
+std::string pr_url(const forge_repo& r, int number)
+{
+    return repository_api(r) + "/pullrequests/" + std::to_string(number);
+}
+
+// Only GETs negotiate helper authentication. A mutation is sent exactly once,
+// including when its response is lost: a retry could duplicate a PR or comment.
+std::expected<std::string, std::string> write(std::string_view method, const std::string& url,
+                                              const std::string& body, std::string_view token,
+                                              int expected_status)
+{
+    if (token.empty()) return std::unexpected(std::string(_("Sign in to Azure DevOps first.")));
+    if (auto why = helper_preflight(token); !why.empty()) return std::unexpected(std::move(why));
+    auto headers = api_headers(forge_kind::azure, token);
+    headers.emplace_back("Content-Type", "application/json");
+    const auto reply = forge_detail::http_request(method, url, body, {.headers = headers});
+    const auto parsed = json::parse(reply.body);
+    if (reply.status != expected_status || !reply.error.empty() || html_response(reply) || !parsed ||
+        parsed->kind() != json::value::type::object)
+        return std::unexpected(
+            response_error(reply, url, token) +
+            ". Required scope: Code (Read & Write); check repository permissions. "
+            "The write was not retried; check Azure before trying again.");
+    return reply.body;
+}
+}  // namespace
+
+std::expected<std::string, std::string> default_branch(const forge_repo& r, std::string_view token)
+{
+    // https://learn.microsoft.com/en-us/rest/api/azure/devops/git/repositories/get-repository?view=azure-devops-rest-7.1
+    const auto reply = get(repository_api(r) + "?api-version=7.1", token);
+    if (!reply) return std::unexpected(reply.error());
+    const auto ref = (*json::parse(*reply))["defaultBranch"].str();
+    if (!ref.starts_with("refs/heads/") || !valid_branch(std::string_view(ref).substr(11)))
+        return std::unexpected(std::string(_("Azure DevOps HTTP 200: no valid default branch.")));
+    return ref.substr(11);
+}
+
+std::expected<pull_request, std::string> create(const forge_repo& r, const new_pull_request& n,
+                                                std::string_view token)
+{
+    if (!(r == n.head))
+        return std::unexpected(
+            std::string(_("Azure DevOps pull requests between forks are not supported; choose "
+                          "branches in the same repository.")));
+    if (!valid_branch(n.head_branch) || !valid_branch(n.base_branch) ||
+        n.head_branch == n.base_branch || n.title.empty())
+        return std::unexpected(
+            std::string(_("Choose distinct valid source and target branches and a title.")));
+    const auto body = "{\"sourceRefName\":" + json::quoted("refs/heads/" + n.head_branch) +
+                      ",\"targetRefName\":" + json::quoted("refs/heads/" + n.base_branch) +
+                      ",\"title\":" + json::quoted(n.title) +
+                      ",\"description\":" + json::quoted(n.body) +
+                      ",\"isDraft\":" + (n.draft ? "true" : "false") + "}";
+    // https://learn.microsoft.com/en-us/rest/api/azure/devops/git/pull-requests/create?view=azure-devops-rest-7.1
+    const auto reply =
+        write("POST", repository_api(r) + "/pullrequests?api-version=7.1", body, token, 201);
+    if (!reply) return std::unexpected(reply.error());
+    auto pr = parse_pr(*json::parse(*reply), r, true);
+    if (pr.number <= 0)
+        return std::unexpected(std::string(
+            _("Azure DevOps HTTP 201: missing pullRequestId; check Azure before creating again.")));
+    return pr;
+}
+
+std::expected<merge_state, std::string> merge_status(const forge_repo& r, int number,
+                                                     std::string_view token)
+{
+    if (number <= 0) return std::unexpected(std::string(_("Invalid Azure pull request number.")));
+    // https://learn.microsoft.com/en-us/rest/api/azure/devops/git/pull-requests/get-pull-request?view=azure-devops-rest-7.1
+    const auto reply = get(pr_url(r, number) + "?api-version=7.1", token);
+    if (!reply) return std::unexpected(reply.error());
+    const auto j = *json::parse(*reply);
+    const auto full = details(r, parse_pr(j, r, true), token);
+    if (!full) return std::unexpected(full.error());
+    merge_state out;
+    out.title = full->title;
+    out.head_sha = full->head_sha;
+    out.methods = {merge_method::merge, merge_method::squash, merge_method::rebase};
+    out.can_merge_when_ready = true;
+    out.merge_when_ready_set = !j["autoCompleteSetBy"]["id"].str().empty();
+    const auto strategy = j["completionOptions"]["mergeStrategy"].str();
+    if (strategy == "squash") out.preferred = merge_method::squash;
+    if (strategy == "rebase") out.preferred = merge_method::rebase;
+    // rebaseMerge is distinct from the UI's rebase/fast-forward option; never silently select it.
+    using v = merge_state::verdict;
+    if (!j["status"].str_is("active") || full->draft || full->conflicts)
+        out.state = v::blocked,
+        out.why = _("The pull request is inactive, draft, or has conflicts.");
+    else if (!object_id(out.head_sha) || !full->merge_known || !full->checks_known)
+        out.state = v::checking;
+    else if (full->blocked && full->checks != check_state::pending)
+        out.state = v::blocked, out.why = _("Azure DevOps policies prevent completion.");
+    else if (full->checks == check_state::pending)
+        out.state = v::waiting;
+    else if (full->checks == check_state::failure)
+        out.state = v::blocked, out.why = _("Azure DevOps policies failed.");
+    else
+        out.state = v::ready;
+    return out;
+}
+
+std::string merge(const forge_repo& r, int number, const merge_request& m, std::string_view token)
+{
+    if (number <= 0 || !object_id(m.head_sha))
+        return _("A valid expected head commit is required.");
+    std::string strategy;
+    switch (m.method)
+    {
+    case merge_method::merge: strategy = "noFastForward"; break;
+    case merge_method::squash: strategy = "squash"; break;
+    case merge_method::rebase: strategy = "rebase"; break;
+    }
+    if (strategy.empty()) return _("Unsupported Azure DevOps merge strategy.");
+    std::string options = "{\"mergeStrategy\":" + json::quoted(strategy);
+    if (!m.commit_title.empty() || !m.commit_message.empty())
+        options += ",\"mergeCommitMessage\":" +
+                   json::quoted(m.commit_title +
+                                (m.commit_title.empty() || m.commit_message.empty() ? "" : "\n\n") +
+                                m.commit_message);
+    options += "}";  // No bypassPolicy or optional-policy exclusions: Azure enforces its policies.
+    std::string body = "{\"lastMergeSourceCommit\":{\"commitId\":" + json::quoted(m.head_sha) +
+                       "},\"completionOptions\":" + options;
+    if (m.when_ready)
+    {
+        const auto user = identity(account_host(r), token);
+        if (!user) return user.error();
+        if (user->login.empty()) return _("Azure DevOps did not identify the signed-in user.");
+        body += ",\"autoCompleteSetBy\":{\"id\":" + json::quoted(user->login) + "}";
+    }
+    else
+        body += ",\"status\":\"completed\"";
+    body += "}";
+    // https://learn.microsoft.com/en-us/rest/api/azure/devops/git/pull-requests/update?view=azure-devops-rest-7.1
+    const auto reply = write("PATCH", pr_url(r, number) + "?api-version=7.1", body, token, 200);
+    if (!reply) return reply.error();
+    const auto j = *json::parse(*reply);
+    if (m.when_ready ? j["autoCompleteSetBy"]["id"].str().empty()
+                     : !j["status"].str_is("completed"))
+        return _("Azure DevOps did not confirm completion or auto-complete; check the PR before "
+                 "retrying.");
+    return {};
+}
+
+std::string close(const forge_repo& r, int number, std::string_view reason, std::string_view token)
+{
+    if (number <= 0) return _("Invalid Azure pull request number.");
+    if (!reason.empty())
+    {
+        const auto body =
+            "{\"comments\":[{\"parentCommentId\":0,\"content\":" + json::quoted(reason) +
+            ",\"commentType\":1}],\"status\":1}";
+        // https://learn.microsoft.com/en-us/rest/api/azure/devops/git/pull-request-threads/create?view=azure-devops-rest-7.1
+        const auto reply =
+            write("POST", pr_url(r, number) + "/threads?api-version=7.1", body, token, 200);
+        if (!reply)
+            return "The reason could not be confirmed; the PR was not abandoned. " + reply.error();
+        if ((*json::parse(*reply))["id"].integer().value_or(0) <= 0)
+            return _("Azure DevOps HTTP 200: no thread ID; the PR was not abandoned. Check Azure "
+                     "before posting again.");
+    }
+    // https://learn.microsoft.com/en-us/rest/api/azure/devops/git/pull-requests/update?view=azure-devops-rest-7.1
+    const auto reply = write("PATCH", pr_url(r, number) + "?api-version=7.1",
+                             "{\"status\":\"abandoned\"}", token, 200);
+    if (!reply)
+        return (reason.empty() ? ""
+                               : "The reason was posted, but abandonment was not confirmed. ") +
+               reply.error();
+    if (!(*json::parse(*reply))["status"].str_is("abandoned"))
+        return reason.empty() ? _("Azure DevOps did not confirm abandonment; check the PR.")
+                              : _("The reason was posted, but Azure DevOps did not confirm "
+                                  "abandonment; check the PR.");
+    return {};
+}
+
+std::string delete_branch(const forge_repo& r, std::string_view name, std::string_view token)
+{
+    if (!valid_branch(name)) return _("Invalid Azure DevOps branch name.");
+    const auto ref = "refs/heads/" + std::string(name);
+    // https://learn.microsoft.com/en-us/rest/api/azure/devops/git/refs/list?view=azure-devops-rest-7.1
+    const auto current =
+        get(repository_api(r) + "/refs?filter=" + url_escape("heads/" + std::string(name)) +
+                "&api-version=7.1",
+            token);
+    if (!current) return current.error();
+    std::string sha;
+    for (const json::value& v : (*json::parse(*current))["value"].elements())
+        if (v["name"].str() == ref) sha = v["objectId"].str();
+    if (!object_id(sha))
+        return _("Azure DevOps did not return the exact branch and current commit; nothing was "
+                 "deleted.");
+    const auto body = "[{\"name\":" + json::quoted(ref) + ",\"oldObjectId\":" + json::quoted(sha) +
+                      ",\"newObjectId\":\"0000000000000000000000000000000000000000\"}]";
+    // https://learn.microsoft.com/en-us/rest/api/azure/devops/git/refs/update-refs?view=azure-devops-rest-7.1
+    const auto reply = write("POST", repository_api(r) + "/refs?api-version=7.1", body, token, 200);
+    if (!reply) return reply.error();
+    for (const json::value& v : (*json::parse(*reply))["value"].elements())
+        if (v["name"].str() == ref)
+        {
+            const auto state = v["updateStatus"].str();
+            if (v["success"].boolean() &&
+                (state == "succeeded" || state == "succeededNonExistentRef" ||
+                 state == "succeededCorruptRef"))
+                return {};
+            // Reuse bounded/redacted message handling even for an HTTP 200 per-ref failure.
+            rap::sys::http_response failed;
+            failed.status = 200;
+            failed.body =
+                "{\"message\":" + json::quoted(state + ": " + v["customMessage"].str()) + "}";
+            return response_error(failed, repository_api(r), token) +
+                   ". Required scope: Code (Read & Write), plus branch deletion/Force push "
+                   "permission.";
+        }
+    return _("Azure DevOps HTTP 200: missing ref update result; check Azure before retrying.");
 }
 
 std::string basic_pair(std::string_view username, std::string_view password)
@@ -445,7 +688,9 @@ std::expected<pull_requests_reply, std::string> pulls(const forge_repo& r, std::
     if (reply.status != 200 || !j || (*j)["value"].kind() != json::value::type::array ||
         !reply.error.empty())
         return std::unexpected(response_error(reply, repository_api(r), token));
-    out.access = repo_access::read;  // PR1 deliberately exposes no mutation capabilities.
+    out.access = token.empty()
+                     ? repo_access::read
+                     : repo_access::unknown;  // Azure enforces write permissions at the action.
     for (const json::value& v : (*j)["value"].elements())
     {
         auto p = parse_pr(v, r, false);

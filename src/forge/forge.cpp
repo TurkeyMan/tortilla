@@ -1258,7 +1258,7 @@ std::expected<pull_requests_reply, std::string> open_pull_requests(forge_kind k,
 std::expected<std::string, std::string> default_branch(forge_kind k, const forge_repo& r,
                                                        std::string_view token)
 {
-    if (k == forge_kind::azure) return std::unexpected(azure::unsupported());
+    if (k == forge_kind::azure) return azure::default_branch(r, token);
     const auto reply = forge_detail::http_get(repo_api(k, r), {.headers = api_headers(k, token)});
     const auto j = json::parse(reply.body);
     if (reply.status != 200 || !j) return std::unexpected(failure(reply, j));
@@ -1270,7 +1270,7 @@ std::expected<std::string, std::string> default_branch(forge_kind k, const forge
 std::expected<std::vector<forge_repo>, std::string>
 pull_request_targets(forge_kind k, const forge_repo& head, std::string_view token)
 {
-    if (k == forge_kind::azure) return std::unexpected(azure::unsupported());
+    if (k == forge_kind::azure) return std::vector<forge_repo>{head};
     const auto reply =
         forge_detail::http_get(repo_api(k, head), {.headers = api_headers(k, token)});
     const auto j = json::parse(reply.body);
@@ -1301,7 +1301,7 @@ std::expected<pull_request, std::string> create_pull_request(forge_kind k, const
                                                              const new_pull_request& n,
                                                              std::string_view token)
 {
-    if (k == forge_kind::azure) return std::unexpected(azure::unsupported());
+    if (k == forge_kind::azure) return azure::create(into, n, token);
     auto headers = api_headers(k, token);
     headers.push_back({"Content-Type", "application/json"});
     std::string body, url;
@@ -1556,13 +1556,12 @@ std::expected<merge_state, std::string> gitea_merge_state(const forge_repo& r, i
 std::expected<merge_state, std::string> pull_request_merge_state(forge_kind k, const forge_repo& r,
                                                                  int number, std::string_view token)
 {
-    if (k == forge_kind::azure) return std::unexpected(azure::unsupported());
     switch (k)
     {
     case forge_kind::github: return github_merge_state(r, number, token);
     case forge_kind::gitlab: return gitlab_merge_state(r, number, token);
     case forge_kind::gitea: return gitea_merge_state(r, number, token);
-    case forge_kind::azure: return std::unexpected(azure::unsupported());
+    case forge_kind::azure: return azure::merge_status(r, number, token);
     }
     return {};
 }
@@ -1570,7 +1569,6 @@ std::expected<merge_state, std::string> pull_request_merge_state(forge_kind k, c
 std::string merge_pull_request(forge_kind k, const forge_repo& r, int number,
                                const merge_request& m, std::string_view token)
 {
-    if (k == forge_kind::azure) return azure::unsupported();
     const std::string n = std::to_string(number);
     switch (k)
     {
@@ -1621,7 +1619,7 @@ std::string merge_pull_request(forge_kind k, const forge_repo& r, int number,
         return send_json(k, "PUT", gitlab_project(r) + "/merge_requests/" + n + "/merge", body,
                          token);
     }
-    case forge_kind::azure: return azure::unsupported();
+    case forge_kind::azure: return azure::merge(r, number, m, token);
     case forge_kind::gitea:
     {
         std::string body = "{\"Do\":" + json::quoted(method_word(m.method)) +
@@ -1640,7 +1638,7 @@ std::string merge_pull_request(forge_kind k, const forge_repo& r, int number,
 std::string close_pull_request(forge_kind k, const forge_repo& r, int number,
                                std::string_view comment, std::string_view token)
 {
-    if (k == forge_kind::azure) return azure::unsupported();
+    if (k == forge_kind::azure) return azure::close(r, number, comment, token);
     const std::string n = std::to_string(number);
     if (!comment.empty())
     {
@@ -1660,7 +1658,6 @@ std::string close_pull_request(forge_kind k, const forge_repo& r, int number,
 std::string delete_branch(forge_kind k, const forge_repo& r, std::string_view branch,
                           std::string_view token)
 {
-    if (k == forge_kind::azure) return azure::unsupported();
     const std::string escaped = form_escape(branch);
     switch (k)
     {
@@ -1670,7 +1667,7 @@ std::string delete_branch(forge_kind k, const forge_repo& r, std::string_view br
     case forge_kind::gitlab:
         return send_json(k, "DELETE", gitlab_project(r) + "/repository/branches/" + escaped, {},
                          token);
-    case forge_kind::azure: return azure::unsupported();
+    case forge_kind::azure: return azure::delete_branch(r, branch, token);
     case forge_kind::gitea:
         return send_json(k, "DELETE", repo_api(k, r) + "/branches/" + std::string(branch), {},
                          token);
@@ -1930,7 +1927,8 @@ std::string token_scopes(forge_kind k)
     switch (k)
     {
     case forge_kind::azure:
-        return _("An organization PAT with Code (Read) and Build (Read). Enter "
+        return _("An organization PAT with Code (Read & Write) for PR actions and Build (Read). "
+                 "Read-only use needs only Code (Read). Enter "
                  "dev.azure.com/organization as the server.");
     case forge_kind::github: return _("A classic token with the “repo” scope.");
     case forge_kind::gitlab: return _("A personal access token with the “api” scope.");

@@ -25,8 +25,15 @@ std::expected<std::vector<ci_artifact>, std::string> artifacts(const forge_repo&
                                                                std::string_view token);
 std::expected<job_failure, std::string> failure_details(const forge_repo&, const ci_job&,
                                                         std::string_view token);
-std::string unsupported();
 bool html_response(const rap::sys::http_response&);
+std::expected<std::string, std::string> default_branch(const forge_repo&, std::string_view token);
+std::expected<pull_request, std::string> create(const forge_repo&, const new_pull_request&,
+                                                std::string_view token);
+std::expected<merge_state, std::string> merge_status(const forge_repo&, int,
+                                                     std::string_view token);
+std::string merge(const forge_repo&, int, const merge_request&, std::string_view token);
+std::string close(const forge_repo&, int, std::string_view reason, std::string_view token);
+std::string delete_branch(const forge_repo&, std::string_view branch, std::string_view token);
 std::string response_error(const rap::sys::http_response&, std::string_view url,
                            std::string_view token);
 check_state timeline_state(const json::value&);
