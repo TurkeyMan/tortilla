@@ -87,6 +87,7 @@
 
 namespace tortilla::test {
 void run_azure_tests();
+void run_azure_actions_tests();
 void run_azure_credential_tests();
 void run_azure_process_tests(const std::string& executable);
 int azure_credential_child(int argc, char** argv);
@@ -5536,6 +5537,7 @@ int main(int argc, char** argv)
     tortilla::test::run_journal_tests(**ui, argv[1]);
     tortilla::test::run_log_host_tests(**ui, repo);
     tortilla::test::run_azure_tests();
+    tortilla::test::run_azure_actions_tests();
     tortilla::test::run_azure_credential_tests();
     tortilla::test::run_azure_process_tests(argv[0]);
     tortilla::test::run_log_page_tests(argv[1]);
