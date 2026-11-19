@@ -19,6 +19,8 @@
 #include "changes/file_model.h"
 #include "git/command.h"
 #include "git/sync.h"
+#include "forge/azure_credentials.h"
+#include "forge/forge_detail.h"
 #include "log/forge_panel.h"
 #include "log/log_model.h"
 #include "log/log_tab.h"
@@ -145,6 +147,32 @@ struct forge_panel_test
         p.builds_[sha] = p.builds_["head"];
     }
     static rap::tabs* pages(forge_panel& p) { return p.tabs_; }
+    static void azure_artifact_error(forge_panel& p, std::string error)
+    { p.builds_["head"].artifact_error = std::move(error); }
+    static rap::label* azure_summary(const forge_panel& p) { return p.build_summary_; }
+    static void azure_lookup_error(forge_panel& p, std::string error)
+    {
+        p.builds_["azure-error-fixture"] = {.asked = true, .answered = true, .error = std::move(error)};
+        p.show_commit("azure-error-fixture");
+    }
+    static void azure_fallback_lookup(forge_panel& p)
+    {
+        p.prs_[0].pr.into = {.name="origin", .repo={.host="gitlab.com", .owner="fixture", .name="repo"},
+                              .account={.kind=forge_kind::gitlab, .host="gitlab.com"}};
+        const auto automatic = azure::automatic_account(
+            "https://dev.azure.com/fabrikam/project/_git/repo", "offline-fixture");
+        p.remotes_ = {{.name="azure", .repo={.host="dev.azure.com", .owner="fabrikam/project", .name="repo"},
+                        .account=*automatic}};
+        p.builds_.erase("head");
+        p.sha_ = "head";
+        p.ask_build("head");
+    }
+    static bool azure_lookup_pending(const forge_panel& p)
+    { return p.builds_.at("head").asking; }
+    static bool azure_lookup_answered(const forge_panel& p)
+    { return p.builds_.at("head").answered; }
+    static void diagnostic(forge_panel& p, std::function<void(std::string)> f)
+    { p.host_.diagnostic = std::move(f); }
     static rap::list* matrix(forge_panel& p) { return p.matrix_list_; }
     static bool picked(const forge_panel& p) { return p.failed_job_.has_value(); }
     static std::optional<ci_job> picked_job(const forge_panel& p) { return p.failed_job_; }
@@ -178,6 +206,8 @@ struct forge_panel_test
 struct log_tab_test
 {
     static forge_panel& forge(log_tab& t) { return *t.forge_panel_; }
+    static forge_panel& azure_panel(log_tab& t) { return *t.forge_panel_; }
+    static rap::label* azure_status(log_tab& t) { return t.page_->status; }
     static void edit_filter(log_tab& t, const std::string& text) { t.edit_filter(text); }
     static const std::string& search(const log_tab& t) { return t.search_text_; }
     static const log_filter& filter(const log_tab& t) { return t.filter_; }
@@ -1519,6 +1549,19 @@ void page_tests(rap::ui& ui, const std::string& repo,
     check(ready && log.is_working_tree(0), "log page: the log loads, the working tree's row first");
     if (!ready) return;
 
+    auto& azure_panel = log_tab_test::azure_panel(*tab);
+    forge_panel_test::azure_lookup_error(azure_panel, "Azure DevOps HTTP 401: fixture denied. Required scope: Build (Read).");
+    auto* azure_status = dynamic_cast<kept_label*>(log_tab_test::azure_status(*tab));
+    check(azure_status && azure_status->shown && azure_status->text.find("HTTP 401: fixture denied") != std::string::npos &&
+              azure_status->text.find("Build (Read)") != std::string::npos,
+          "azure: lookup error reaches always-visible log status without Build data");
+    const auto azure_writes = g_forge_writes;
+    forge_panel_test::refresh(azure_panel);
+    check(g_forge_writes == azure_writes, "azure: identical lookup error does not write widgets again");
+    azure_panel.show_commit(std::nullopt);
+    check(azure_status && azure_status->text.find("Azure DevOps HTTP") == std::string::npos,
+          "azure: changing row clears stale lookup status");
+
     // -- what the user changes, carried to a second window ------------------
     const auto beta = row_of(log, "Add beta"), gamma = row_of(log, "Add gamma");
     check(beta && gamma, "log page: the commits are there");
@@ -1869,6 +1912,13 @@ void forge_presentation_tests(rap::ui& ui, const std::string& repo)
     }
     forge_panel_test::build(panel);
     forge_panel_test::refresh(panel);
+    forge_panel_test::azure_artifact_error(panel, "Azure DevOps HTTP 403: Build (Read) required");
+    forge_panel_test::refresh(panel);
+    const auto* azure_summary = dynamic_cast<kept_label*>(forge_panel_test::azure_summary(panel));
+    check(azure_summary && azure_summary->shown && azure_summary->text.find("Azure DevOps HTTP 403") != std::string::npos,
+          "azure: artifact failure is visible beside intact CI even without artifacts");
+    forge_panel_test::azure_artifact_error(panel, {});
+    forge_panel_test::refresh(panel);
     auto* matrix = dynamic_cast<kept_list*>(forge_panel_test::matrix(panel));
     if (matrix) matrix->click({0}, 0);
     check(forge_panel_test::picked(panel),
@@ -1977,6 +2027,32 @@ void forge_presentation_tests(rap::ui& ui, const std::string& repo)
     matrix = dynamic_cast<kept_list*>(forge_panel_test::matrix(panel));
     check(matrix && matrix->selected == std::vector<size_t>{0},
           "forge presentation: rebuilt page restores picked job without resetting unchanged model");
+    // An empty primary lookup followed by failed fallback credentials must complete.
+    // https://docs.gitlab.com/api/pipelines/#list-project-pipelines
+    std::string lookup_error;
+    forge_panel_test::diagnostic(panel, [&](std::string error) { lookup_error = std::move(error); });
+    credential_helper::set_runner([](const credential_helper::request&)
+        -> std::expected<credential_helper::reply, std::string>
+        { return std::unexpected("offline Azure credential fixture failed"); });
+    forge_detail::set_transport([](std::string_view, const std::string&, std::string_view,
+                                   const rap::sys::http_options&)
+        { return rap::sys::http_response{.status=200, .body="[]"}; });
+    forge_panel_test::azure_fallback_lookup(panel);
+    const auto lookup_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (forge_panel_test::azure_lookup_pending(panel) &&
+           std::chrono::steady_clock::now() < lookup_deadline)
+    {
+        settle(ui);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    settle(ui);
+    check(forge_panel_test::azure_lookup_answered(panel) &&
+              !forge_panel_test::azure_lookup_pending(panel) &&
+              lookup_error.find("Git credential lookup couldn't start") != std::string::npos,
+          "azure: fallback credential failure clears pending CI lookup and publishes visible error");
+    credential_helper::set_runner({});
+    forge_detail::set_transport({});
+    forge_panel_test::diagnostic(panel, {});
     panel.unbind();
     window.reset();
     settle(ui);
@@ -2091,6 +2167,36 @@ void forge_tabs_tests(rap::ui& ui, const std::string& repo)
           "forge tabs: repository without a forge gives Commit the entire area");
     local.unbind();
     local_window.reset();
+
+    // Azure must reach the actual forge_remotes eligibility path without a helper/store lookup.
+    // https://learn.microsoft.com/en-us/azure/devops/repos/git/clone?view=azure-devops
+    const std::string azure_repo = forge_repo + "-azure";
+    std::filesystem::create_directories(rap::sys::path_from_utf8(azure_repo));
+    check(run_git(azure_repo, {"init", "-q"}, git_output::stdout_only).ok() &&
+              run_git(azure_repo, {"remote", "add", "origin",
+                                  "https://fixture-user@dev.azure.com/offline-azure-eligibility/"
+                                  "My%20Project/_git/sdk.git"}, git_output::stdout_only).ok(),
+          "azure forge tabs: local HTTPS remote fixture initialized without network");
+    const auto azure_remotes = forge_remotes(azure_repo);
+    check(azure_remotes.size() == 1 && azure_remotes[0].account.kind == forge_kind::azure &&
+              azure_remotes[0].account.host == "dev.azure.com/offline-azure-eligibility" &&
+              azure_remotes[0].repo.owner == "offline-azure-eligibility/My Project" &&
+              azure_remotes[0].repo.name == "sdk.git",
+          "azure forge tabs: real remote discovery recognizes canonical organization and literal name");
+    forge_panel azure_panel({.ui = ui, .workdir = azure_repo});
+    const auto azure_layout = azure_panel.layout(label{"Commit contents"});
+    check(!std::get<rap::spec::tabs>(azure_layout.spec).hide_single_tab,
+          "azure forge tabs: actual Azure remote keeps strip enabled with Commit only");
+    auto azure_window = ui.create(rap::layout::window{"Azure lower tabs", {azure_layout}});
+    azure_panel.built();
+    auto* azure_tabs = dynamic_cast<kept_pages*>(forge_panel_test::pages(azure_panel));
+    azure_panel.show_commit("offline-row");
+    check(azure_tabs && azure_tabs->strip_shown() && azure_tabs->current() == 0 &&
+              !azure_tabs->page_visible(1) && !azure_tabs->page_visible(2) &&
+              !azure_tabs->page_visible(3),
+          "azure forge tabs: absent PR Build artifacts preserve strict visibility and stable strip");
+    azure_panel.unbind();
+    azure_window.reset();
 
     forge_panel panel({.ui = ui, .workdir = forge_repo});
     const auto layout = panel.layout(label{"Commit contents"});

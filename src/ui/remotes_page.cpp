@@ -1,4 +1,6 @@
 #include "remotes_page.h"
+#include "forge/azure.h"
+#include "forge/azure_credentials.h"
 
 #include "forge/remote_sign_in.h"
 #include "git/command.h"
@@ -34,12 +36,14 @@ struct remote_forge
     std::optional<forge_kind> kind;  // by the account, the host's name, or asked
     std::optional<forge_account> account;
     repo_seen seen = repo_seen::unknown;
+    std::string error;
     bool asking = false;
     remote_sign_in said;  // what's shown of it, kept for the list's paints
 
     void describe()
     {
         said = describe_remote(repo && kind, account ? &*account : nullptr, seen, asking);
+        if (!error.empty()) said.text += "\n" + error;
     }
     // The same remote, as the same account: what's known of it still holds.
     bool same(const remote_forge& o) const
@@ -136,8 +140,7 @@ struct remotes_state
     void show(const std::string& remote)
     {
         editing = remote;
-        auto value = [&](const char* key)
-        {
+        auto value = [&](const char* key) {
             return remote.empty() ? std::string()
                                   : config_value(dir, "remote." + remote + "." + key);
         };
@@ -166,7 +169,7 @@ struct remotes_state
         {
             remote_forge f{.url = config_value(dir, "remote." + n + ".url")};
             f.repo = repo_of_url(f.url);
-            if (f.repo) f.account = account_for_url(f.url, signed_in);
+            if (f.repo) f.account = azure::account_for_remote(f.url, dir, signed_in);
             if (auto old = std::ranges::find_if(rows.forges,
                                                 [&](const remote_forge& o) { return o.same(f); });
                 old != rows.forges.end())
@@ -191,10 +194,11 @@ struct remotes_state
                     if (!f.kind) f.kind = probe_forge(f.repo->host);
                     // With an account, as it: whether it can see the repository.
                     std::string token;
+                    std::optional<forge_token> owned;
                     if (f.account)
-                        if (auto t = load_token(*f.account)) token = std::move(t->access);
+                        if ((owned = load_token(*f.account, &f.error))) token = owned->access;
                     if (f.kind && (!f.account || !token.empty()))
-                        f.seen = look_for_repo(*f.kind, *f.repo, token);
+                        f.seen = look_for_repo(*f.kind, *f.repo, token, &f.error);
                     f.asking = false;
                     ui.post(
                         [weak, f]
@@ -244,7 +248,9 @@ struct remotes_state
     void sign_in_shown()
     {
         const remote_forge* f = shown_forge();
-        if (f && f->repo && f->kind && sign_in) sign_in(*f->kind, f->repo->host);
+        if (f && f->repo && f->kind && sign_in)
+            sign_in(*f->kind,
+                    *f->kind == forge_kind::azure ? azure::account_host(*f->repo) : f->repo->host);
     }
 
     // Adds the remote, or renames and changes the one shown, through git.

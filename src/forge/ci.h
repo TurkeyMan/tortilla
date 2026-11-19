@@ -32,7 +32,9 @@ struct ci_job
     std::int64_t started_at = 0, completed_at = 0;
     std::string url;      // its page on the forge
     std::int64_t id = 0;  // GitHub's check run (an Actions job's id too), GitLab's job; 0: a status
-    std::string failure_reason;  // GitLab's, for a failed job
+    std::int64_t azure_build = 0;  // Azure build ID; id is a stable local cache key.
+    std::string azure_record;      // Azure timeline job GUID.
+    std::string failure_reason;    // GitLab's, for a failed job
 };
 
 // A workflow's run on the commit (GitHub Actions, Forgejo), a pipeline's

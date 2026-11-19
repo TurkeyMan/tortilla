@@ -152,6 +152,7 @@ std::optional<std::string> avatars::fetch(const job& j, bool& failed)
     for (const forge_remote& r : leading_remotes(j.who.workdir, j.who.remotes))
     {
         if (cancelled_) return std::nullopt;
+        if (r.account.kind == forge_kind::azure) continue; // Authenticated identity avatars are deferred.
         // Without an account, a public forge is asked as no one (GitHub
         // within its hourly allowance, shared with the pull requests' polls).
         std::string token;

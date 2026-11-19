@@ -359,21 +359,21 @@ namespace
 
 // On a worker: the account's token, from what's kept or the keychain.
 template <class Shared>
-std::optional<std::string> token_for(Shared& sh, const forge_account& a)
+std::optional<forge_token> token_for(Shared& sh, const forge_account& a, std::string* why = nullptr)
 {
-    // A public forge asked as no one: no token, and nothing to look up.
-    if (a.login.empty()) return std::string();
+    if (a.login.empty()) return forge_token{};
     const std::string key = a.host + ' ' + a.login;
     {
         std::lock_guard lock(sh.mutex);
         if (!sh.alive) return std::nullopt;
-        if (auto it = sh.tokens.find(key); it != sh.tokens.end()) return it->second;
+        if (!a.via_git_credential)
+            if (auto it = sh.tokens.find(key); it != sh.tokens.end()) return forge_token{.access = it->second};
     }
-    std::string token;
-    if (auto t = load_token(a)) token = t->access;
+    auto token = load_token(a, why); // Keep a helper's RAII context for this worker operation.
     std::lock_guard lock(sh.mutex);
     if (!sh.alive) return std::nullopt;
-    if (!token.empty()) sh.tokens[key] = token;
+    if (!token) return std::nullopt;
+    if (!token->access.empty() && !a.via_git_credential) sh.tokens[key] = token->access;
     return token;
 }
 
@@ -399,11 +399,20 @@ void forge_panel::with_token(const forge_remote& r,
                              std::function<std::function<void()>(std::string token)> work)
 {
     std::thread(
-        [sh = shared_, account = r.account, work = std::move(work), &ui = host_.ui]
+        [sh = shared_, account = r.account, work = std::move(work), expected_sha = sha_, this, &ui = host_.ui]
         {
-            const auto token = token_for(*sh, account);
-            if (!token) return;
-            auto done = work(*token);
+            std::string why;
+            const auto token = token_for(*sh, account, &why);
+            if (!token)
+            {
+                if (!why.empty()) ui.post([sh, this, expected_sha, why]
+                {
+                    { std::lock_guard lock(sh->mutex); if (!sh->alive) return; }
+                    if (root_ && sha_ == expected_sha && host_.diagnostic) host_.diagnostic(why);
+                });
+                return;
+            }
+            auto done = work(token->access);
             ui.post(
                 [sh, done = std::move(done)]
                 {
@@ -1298,6 +1307,13 @@ void forge_panel::update_build()
         }
         if (it != builds_.end()) b = &it->second;
     }
+    if (host_.diagnostic)
+    {
+        std::string diagnostic = b ? b->error : std::string();
+        if (b && !b->artifact_error.empty())
+            diagnostic += (diagnostic.empty() ? "" : "\n") + b->artifact_error;
+        host_.diagnostic(std::move(diagnostic));
+    }
     // Shown once there's something to show: not for a commit that's only
     // here, nor while it's asked (it's usually quick, and often nothing).
     const bool shown = b && b->answered && !b->local && !b->ci.empty();
@@ -1330,7 +1346,9 @@ void forge_panel::update_build()
     update_build_icon(build_mark_state_);
     show(build_mark_, build_mark_state_ != check_state::none);
     if (old_mark != build_mark_state_) build_mark_->invalidate();
-    text(build_summary_, rap::i18n::format(_("Build: {0}"), build_text(all)));
+    std::string summary = rap::i18n::format(_("Build: {0}"), build_text(all));
+    if (!b->artifact_error.empty()) summary += "\n" + b->artifact_error;
+    text(build_summary_, summary);
     show(matrix_list_, true);
     {
         // The rows again keep the job picked, if it's still there.
@@ -1574,9 +1592,19 @@ void forge_panel::ask_build(const std::string& sha)
                     });
                 return;
             }
-            auto token = token_for(*sh, where->account);
-            if (!token) return;
-            auto ci = tortilla::commit_checks(where->account.kind, where->repo, sha, *token);
+            std::string why;
+            auto token = token_for(*sh, where->account, &why);
+            if (!token)
+            {
+                post([this, sha, why]
+                {
+                    auto& b = builds_[sha];
+                    b.answered = true; b.asking = false; b.error = why;
+                    if (sha_ == sha) update();
+                });
+                return;
+            }
+            auto ci = tortilla::commit_checks(where->account.kind, where->repo, sha, token->access);
             // A fork's commit whose CI ran where it was proposed (a pull
             // request's runs are the upstream's): the other remotes, until
             // one has some; two at most.
@@ -1586,10 +1614,14 @@ void forge_panel::ask_build(const std::string& sha)
                 if (!ci || !ci->empty() || tries == 2) break;
                 if (&other == where) continue;
                 ++tries;
-                const auto other_token = token_for(*sh, other.account);
-                if (!other_token) return;
+                const auto other_token = token_for(*sh, other.account, &why);
+                if (!other_token)
+                {
+                    ci = std::unexpected(why);
+                    break;  // Publish the error and clear asking through the common completion.
+                }
                 auto found =
-                    tortilla::commit_checks(other.account.kind, other.repo, sha, *other_token);
+                    tortilla::commit_checks(other.account.kind, other.repo, sha, other_token->access);
                 if (found && !found->empty())
                 {
                     ci = std::move(found);
@@ -1617,13 +1649,19 @@ void forge_panel::ask_build(const std::string& sha)
             // The artifacts once, and again only while the runs go on.
             if (!ci || ci->empty() || (had_artifacts && ci->state() != check_state::pending))
                 return;
-            auto artifacts = commit_artifacts(where->account.kind, where->repo, sha, *ci, *token);
+            auto artifacts = commit_artifacts(where->account.kind, where->repo, sha, *ci, token->access);
             post(
                 [this, sha, artifacts = std::move(artifacts)]
                 {
                     build& b = builds_[sha];
                     b.artifacts_known = true;
-                    if (artifacts) b.artifacts = *artifacts;
+                    if (artifacts)
+                    {
+                        b.artifacts = *artifacts;
+                        b.artifact_error.clear();
+                    }
+                    else
+                        b.artifact_error = artifacts.error();
                     if (sha_ == sha) update();
                 });
         })

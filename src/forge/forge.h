@@ -1,5 +1,5 @@
 // The forges Tortilla signs in to: GitHub (and GitHub Enterprise), GitLab,
-// and Gitea (Forgejo and Codeberg too: Forgejo speaks Gitea's API). An
+// Gitea (Forgejo and Codeberg too), and Azure DevOps. An
 // account is the forge, its host and the user; its token is in the user's
 // keychain (rap::sys secrets), never in Tortilla's settings.
 //
@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <expected>
 #include <optional>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -28,6 +29,7 @@ enum class forge_kind
     github,
     gitlab,
     gitea,
+    azure,
 };
 
 // "GitHub", "GitLab", "Gitea / Forgejo".
@@ -38,13 +40,15 @@ std::string_view default_host(forge_kind);
 struct forge_account
 {
     forge_kind kind = forge_kind::github;
-    std::string host;        // github.com, gitlab.example.org: no scheme
+    std::string host;        // No scheme; Azure: dev.azure.com/organization.
     std::string login;       // the user name on it
     std::string name;        // their display name; may be empty
     std::string avatar_url;  // may be empty
     // Where its token is: the keychain, or (true) the GitHub CLI's sign-in,
     // asked each time (`gh auth token`), so gh's logins and renewals hold.
     bool via_gh = false;
+    bool via_git_credential = false; // Automatic Azure HTTPS source; never serialized.
+    std::string credential_username, credential_directory; // Remote identity/config context, no password.
 };
 
 // What signing in gives. A GitLab sign-in through the browser expires and
@@ -54,6 +58,7 @@ struct forge_token
     std::string access;
     std::string refresh;          // empty: can't be renewed
     std::int64_t expires_at = 0;  // seconds since 1970; 0: doesn't expire
+    std::shared_ptr<void> lifetime; // Worker-owned ephemeral helper context, never serialized.
 };
 
 // -- accounts -----------------------------------------------------------------
@@ -127,7 +132,8 @@ std::expected<forge_account, std::string> who_am_i(forge_kind, std::string_view 
 // -- repositories and their pull requests -------------------------------------
 
 // A repository on a forge, from a remote's URL: its host, and its path there
-// as owner (a GitLab group may hold slashes) and name, without ".git".
+// as owner (a GitLab group may hold slashes) and name. Conventional .git
+// clone suffixes are removed except for Azure, where they are literal names.
 struct forge_repo
 {
     std::string host, owner, name;

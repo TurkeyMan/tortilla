@@ -31,7 +31,8 @@ enum class repo_seen
 // Asks for the repository as `token`'s owner; with no token, as anyone
 // (GitHub's only while anonymous_budget() has some to spare). Blocking: for
 // a worker thread.
-repo_seen look_for_repo(forge_kind, const forge_repo&, std::string_view token = {});
+repo_seen look_for_repo(forge_kind, const forge_repo&, std::string_view token = {},
+                        std::string* error = nullptr);
 
 // What the Remotes page shows of a remote.
 struct remote_sign_in

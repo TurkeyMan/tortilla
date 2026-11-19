@@ -41,6 +41,8 @@ public:
         // The commit on show, where its CI is, and whether its checks run:
         // for pr_watch's quick asks, which come back through commit_checks.
         std::function<void(std::optional<std::string>, std::optional<forge_remote>, bool)> watch;
+        // Selected-row lookup errors, visible outside conditional forge pages.
+        std::function<void(std::string)> diagnostic;
     };
 
     explicit forge_panel(host);
@@ -91,6 +93,7 @@ private:
         bool asking = false;  // on its way (again, perhaps: what's kept shows meanwhile)
         bool local = false;   // on no forge remote: nothing to ask
         std::string error;
+        std::string artifact_error;
         commit_ci ci;
         std::vector<ci_artifact> artifacts;
         bool artifacts_known = false;
