@@ -1,6 +1,7 @@
 #include "forge/azure.h"
 #include "forge/azure_credentials.h"
 #include "forge/forge_detail.h"
+#include "forge/remote_sign_in.h"
 #include "test_support.h"
 
 #include <algorithm>
@@ -289,6 +290,50 @@ void run_azure_credential_tests()
         api_url, {.headers = api_headers(forge_kind::azure, both->access)}, both->access);
     check(calls == 2 && html_retry.status == 200,
           "azure helper: HTML203 permits exactly one documented Bearer compatibility retry");
+
+    // Remotes uses the documented repository route and the same auth negotiation.
+    // https://learn.microsoft.com/en-us/rest/api/azure/devops/git/repositories/get-repository?view=azure-devops-rest-7.1
+    output = "username=helper-user\npassword=probe-negotiation-fixture\n\n";
+    auto probe_token = load_token(*account);
+    calls = 0;
+    forge_detail::set_transport(
+        [&](std::string_view, const std::string&, std::string_view,
+            const rap::sys::http_options& options)
+        {
+            ++calls;
+            const bool basic = std::ranges::any_of(
+                options.headers, [](const auto& h)
+                { return h.first == "Authorization" && h.second.starts_with("Basic "); });
+            return basic ? rap::sys::http_response{.status = 401,
+                                                   .body = R"({"message":"Basic rejected"})"}
+                         : rap::sys::http_response{.status = 200, .body = R"({"id":"repo-guid"})"};
+        });
+    const forge_repo probe_repo{
+        .host = "dev.azure.com", .owner = "fabrikam/project", .name = "repo"};
+    std::string probe_error;
+    check(look_for_repo(forge_kind::azure, probe_repo, probe_token->access, &probe_error) ==
+                  repo_seen::shown &&
+              calls == 2 && probe_error.empty(),
+          "azure helper: Remotes repository probe negotiates Basic401 to Bearer success");
+    output = "username=helper-user\npassword=probe-both-denied-fixture\n\n";
+    probe_token = load_token(*account);
+    calls = 0;
+    forge_detail::set_transport(
+        [&](std::string_view, const std::string&, std::string_view, const rap::sys::http_options&)
+        {
+            ++calls;
+            return rap::sys::http_response{.status = 401,
+                                           .body = calls == 1
+                                                       ? R"({"message":"probe Basic denied"})"
+                                                       : R"({"message":"probe Bearer denied"})"};
+        });
+    check(look_for_repo(forge_kind::azure, probe_repo, probe_token->access, &probe_error) ==
+                  repo_seen::unknown &&
+              calls == 2 && probe_error.find("probe Basic denied") != std::string::npos &&
+              probe_error.find("probe Bearer denied") != std::string::npos &&
+              probe_error.find("Code (Read)") != std::string::npos &&
+              probe_error.find("Write") == std::string::npos,
+          "azure helper: Remotes probe retains both safe failures and least privilege scope hint");
 
     // Identical credential bytes in two orgs must not alias a gate binding.
     output = "username=helper-user\npassword=shared-fixture-only\n\n";

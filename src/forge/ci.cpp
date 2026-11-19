@@ -495,7 +495,7 @@ std::string download_artifact(forge_kind k, const ci_artifact& a, const std::fil
         reply.body = std::move(preview);
         const auto j = json::parse(reply.body);
         if (reply.status < 200 || reply.status >= 300 || reply.status == 203 ||
-            !reply.error.empty() || j)
+            !reply.error.empty() || azure::html_response(reply) || j)
         {
             // Do not leave an HTML sign-in page or JSON error saved as an artifact.
             std::error_code ec;

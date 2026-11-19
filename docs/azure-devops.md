@@ -4,7 +4,7 @@ For Azure HTTPS remotes, Tortilla automatically consults Git's configured
 credential helper (including GCM) when there is no explicitly configured
 organization account. A pasted **Azure DevOps** PAT in Settings, server
 `dev.azure.com/organization`, overrides the automatic source deterministically.
-PAT instructions request Code (Read & Write) and Build (Read); this integration
+PAT instructions request Code (Read) and Build (Read); this integration
 only reads. Browser OAuth app registration is not implemented; existing GCM
 OAuth sign-ins can be reused through Git's credential protocol.
 
@@ -54,6 +54,13 @@ Only `git credential fill` reads credentials. Tortilla does not call approve,
 reject, GCM list/bind/unbind, Windows Credential/Vault APIs, registry or MSAL
 cache files. It does not copy a helper secret into settings or the keychain.
 Git Credential Manager itself remains responsible for its cache and refresh.
+`fill` is not a cache-only or provider-read-only guarantee: in optional PAT mode,
+GCM can create a PAT from an existing Entra session without showing UI.
+`GCM_INTERACTIVE=never` prevents interactive prompts, not provider-side token
+creation/refresh or helper-managed cache writes. We found no documented
+cache-only `fill` capability; Tortilla does not claim one or bypass the helper.
+See the [GCM provider implementation](https://github.com/git-ecosystem/git-credential-manager/blob/main/src/Microsoft.AzureRepos/AzureReposHostProvider.cs)
+and [noninteractive setting](https://github.com/git-ecosystem/git-credential-manager/blob/main/docs/environment.md#gcm_interactive).
 No helper commands are added to fetch/push/askpass transport.
 
 The stdin protocol begins with `capability[]=authtype`, then `protocol=https`,

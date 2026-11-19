@@ -36,12 +36,14 @@ struct remote_forge
     std::optional<forge_kind> kind;  // by the account, the host's name, or asked
     std::optional<forge_account> account;
     repo_seen seen = repo_seen::unknown;
+    std::string error;
     bool asking = false;
     remote_sign_in said;  // what's shown of it, kept for the list's paints
 
     void describe()
     {
         said = describe_remote(repo && kind, account ? &*account : nullptr, seen, asking);
+        if (!error.empty()) said.text += "\n" + error;
     }
     // The same remote, as the same account: what's known of it still holds.
     bool same(const remote_forge& o) const
@@ -194,9 +196,9 @@ struct remotes_state
                     std::string token;
                     std::optional<forge_token> owned;
                     if (f.account)
-                        if ((owned = load_token(*f.account))) token = owned->access;
+                        if ((owned = load_token(*f.account, &f.error))) token = owned->access;
                     if (f.kind && (!f.account || !token.empty()))
-                        f.seen = look_for_repo(*f.kind, *f.repo, token);
+                        f.seen = look_for_repo(*f.kind, *f.repo, token, &f.error);
                     f.asking = false;
                     ui.post(
                         [weak, f]

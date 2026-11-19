@@ -26,6 +26,7 @@ std::expected<std::vector<ci_artifact>, std::string> artifacts(const forge_repo&
 std::expected<job_failure, std::string> failure_details(const forge_repo&, const ci_job&,
                                                         std::string_view token);
 std::string unsupported();
+bool html_response(const rap::sys::http_response&);
 std::string response_error(const rap::sys::http_response&, std::string_view url,
                            std::string_view token);
 check_state timeline_state(const json::value&);
