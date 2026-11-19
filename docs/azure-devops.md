@@ -59,6 +59,8 @@ GCM can create a PAT from an existing Entra session without showing UI.
 `GCM_INTERACTIVE=never` prevents interactive prompts, not provider-side token
 creation/refresh or helper-managed cache writes. We found no documented
 cache-only `fill` capability; Tortilla does not claim one or bypass the helper.
+The owner accepts helper-managed creation/refresh as the same credential
+behavior as an ordinary Git fetch; Tortilla still issues only `fill`.
 See the [GCM provider implementation](https://github.com/git-ecosystem/git-credential-manager/blob/main/src/Microsoft.AzureRepos/AzureReposHostProvider.cs)
 and [noninteractive setting](https://github.com/git-ecosystem/git-credential-manager/blob/main/docs/environment.md#gcm_interactive).
 No helper commands are added to fetch/push/askpass transport.
@@ -219,3 +221,12 @@ PR-watch retries on its existing schedule, but an initial CI lookup failure
 without a subsequent PR-placement/source change may require reopening the
 log tab after credentials become available. No additional timers or layout
 changes are introduced by credential reuse.
+
+## Lower-pane integration
+
+Azure HTTPS remotes enter the existing `forge_remotes(workdir)` discovery path
+with a canonical per-organization account. The lower tabs therefore retain
+their strip even on a Commit-only row, using the same `forge_possible` predicate
+as other providers. PR, Build and Artifacts visibility remains strict per row;
+errors use the always-visible log status without fabricating Build presence.
+The master sticky-choice and silent-fallback behavior is retained unchanged.
