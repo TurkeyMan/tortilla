@@ -63,6 +63,11 @@ public:
     // The open pull requests and the forge remotes, as pr_watch last heard;
     // which commits are each one's is worked out on a worker.
     void set_pull_requests(const std::vector<open_pr>&, const std::vector<forge_remote>&);
+    // Whether the repository is forge-capable, as pr_watch reads its remotes
+    // (set_pull_requests says so too): a forge-capable one keeps the lower
+    // strip even with only Commit visible. Built or not, the next layout()
+    // uses it; built, the strip follows at once, and only on a change.
+    void set_forge_possible(bool);
     // The selected commit (its id), or none: the working tree, several.
     void show_commit(std::optional<std::string> sha, std::string author_name = {},
                      std::string author_email = {});
@@ -147,10 +152,8 @@ private:
     std::set<std::int64_t> failures_asked_;
     std::optional<ci_job> failed_job_;  // the job picked in the matrix
     rap::tabs* tabs_ = nullptr;
-    // Whether the repository is forge-capable, as last set on the strip: a
-    // forge-capable one keeps it even with only Commit visible.
+    // Whether the repository is forge-capable, as pr_watch last said.
     bool forge_possible_ = false;
-    void set_forge_possible(bool);
     int selected_page_ = 0, remembered_page_ = 0;
     std::uint64_t row_revision_ = 0, user_choice_revision_ = 0;
     struct page_restore

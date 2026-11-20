@@ -40,11 +40,14 @@ bool anonymous_github(const forge_remote& r)
 }
 
 // The open watches, for all_hints(): the UI thread's.
-std::vector<const pr_watch*>& watches()
+std::vector<pr_watch*>& watches()
 {
-    static std::vector<const pr_watch*> all;
+    static std::vector<pr_watch*> all;
     return all;
 }
+
+// Recheck local remote/account metadata even when there is no forge to ask.
+constexpr int k_no_forge_poll_ms = 60 * 1000;
 
 }  // namespace
 
@@ -229,7 +232,7 @@ struct pr_watch::shared
 };
 
 pr_watch::pr_watch(rap::ui& ui, std::string workdir, std::function<void()> changed,
-                   bool branch_tips)
+                   bool branch_tips, bool deferred)
     : ui_(ui)
     , workdir_(std::move(workdir))
     , changed_(std::move(changed))
@@ -237,7 +240,8 @@ pr_watch::pr_watch(rap::ui& ui, std::string workdir, std::function<void()> chang
     , shared_(std::make_shared<shared>())
 {
     watches().push_back(this);
-    refresh();
+    remotes_ = forge_remotes(workdir_);
+    if (!deferred) refresh();
 }
 
 pr_watch::~pr_watch()
@@ -263,6 +267,14 @@ std::vector<forge_remote> pr_watch::all_hints()
     return out;
 }
 
+void pr_watch::forge_settings_changed()
+{
+    // A copy: an ask's callbacks may open or close a watch.
+    const std::vector<pr_watch*> all = watches();
+    for (pr_watch* w : all)
+        if (std::ranges::find(watches(), w) != watches().end()) w->refresh();
+}
+
 void pr_watch::refresh()
 {
     ask(true);
@@ -279,19 +291,27 @@ void pr_watch::ask(bool forced)
     timer_.reset();
     const bool had_remotes = !remotes_.empty();
     remotes_ = forge_remotes(workdir_);
+    if (had_remotes != !remotes_.empty() && forge_possible_) forge_possible_(!remotes_.empty());
     if (remotes_.empty())
     {
         hints_.clear();
         tips_.clear();
         // The last forge remote gone (an account removed, a remote changed):
-        // told even with no PRs, so the log follows its forge eligibility.
+        // told even with no PRs, so the PRs' views drop the old remotes.
         if (!prs_.empty() || had_remotes)
         {
             prs_.clear();
             if (changed_) changed_();
         }
+        // Settings notifies immediately; this local-only fallback also
+        // discovers accounts or remotes changed outside this window.
+        timer_ = ui_.timer(k_no_forge_poll_ms, false, [this] { ask(false); });
         return;
     }
+    // Eligibility is known before the asynchronous answer. Publish both
+    // directions, including when there are no PRs to change.
+    if (!had_remotes && changed_) changed_();
+    if (no_worker_for_tests) return;
     asking_ = true;
     asked_ = std::chrono::steady_clock::now();
     std::thread(

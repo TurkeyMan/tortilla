@@ -1220,8 +1220,17 @@ public:
     }
     rap::subscription timer(int ms, bool repeat, std::function<void()> fn) override
     {
+        // Recurring background polls must not requeue forever on null's
+        // clockless timer. Tests advance these long timers explicitly.
+        if (ms >= 60000)
+        {
+            auto alive = std::make_shared<bool>(true);
+            long_timers.push_back([alive, fn = std::move(fn)] { if (*alive) fn(); });
+            return rap::subscription([alive] { *alive = false; });
+        }
         return null().timer(ms, repeat, std::move(fn));
     }
+    std::vector<std::function<void()>> long_timers;
     void set_busy(bool on) override { null().set_busy(on); }
 
     // While set, messages and file dialogs stay open (as a desktop's do
@@ -2097,6 +2106,7 @@ void forge_tabs_tests(rap::ui& ui, const std::string& repo)
                       git_output::stdout_only).ok(),
           "forge tabs: recognized public forge fixture needs no account");
     forge_panel local({.ui = ui, .workdir = repo});
+    local.set_forge_possible(false);
     const auto local_layout = local.layout(label{"Commit contents"});
     check(forge_remotes(repo).empty() && std::get<rap::spec::tabs>(local_layout.spec).hide_single_tab,
           "forge tabs: no forge uses the zero-strip-space single-page contract");
@@ -2137,7 +2147,102 @@ void forge_tabs_tests(rap::ui& ui, const std::string& repo)
     local.unbind();
     local_window.reset();
 
+    // One source: what pr_watch said, not a fresh read, decides each build.
+    {
+        const std::vector<forge_remote> eligible{
+            {.name = "origin",
+             .repo = {.host = "github.com", .owner = "example", .name = "repo"},
+             .account = {.kind = forge_kind::github, .host = "github.com"}}};
+        // Said before the page is built: the build uses it, though the
+        // repository's own remotes (none) would say otherwise.
+        forge_panel early({.ui = ui, .workdir = repo});
+        early.set_forge_possible(true);
+        auto first = early.layout(label{"Commit contents"});
+        check(!std::get<rap::spec::tabs>(first.spec).hide_single_tab,
+              "forge tabs: eligibility set before the build is the build's");
+        auto early_window = ui.create(rap::layout::window{"Early lower tabs", {first}});
+        early.built();
+        auto* early_tabs = dynamic_cast<kept_pages*>(forge_panel_test::pages(early));
+        check(early_tabs && early_tabs->strip_shown() && early_tabs->hide_single_calls == 0,
+              "forge tabs: the early value shows the strip with no live call");
+        // A rebuild (tear-off, view rebuild), then a reload with the same
+        // pr_watch state: never a toggle.
+        early.unbind();
+        early_window.reset();
+        auto again = early.layout(label{"Commit contents"});
+        check(!std::get<rap::spec::tabs>(again.spec).hide_single_tab,
+              "forge tabs: a rebuild keeps pr_watch's eligibility, not a fresh read");
+        early_window = ui.create(rap::layout::window{"Rebuilt lower tabs", {again}});
+        early.built();
+        early_tabs = dynamic_cast<kept_pages*>(forge_panel_test::pages(early));
+        early.set_pull_requests({}, eligible);
+        early.set_pull_requests({}, eligible);
+        check(early_tabs && early_tabs->hide_single_calls == 0 && early_tabs->strip_shown(),
+              "forge tabs: rebuild then reload with the same remotes never toggles the strip");
+        early.unbind();
+        early_window.reset();
+
+        forge_panel unbuilt({.ui = ui, .workdir = forge_repo});
+        unbuilt.set_forge_possible(false);
+        const auto hidden = unbuilt.layout(label{"Commit contents"});
+        check(std::get<rap::spec::tabs>(hidden.spec).hide_single_tab,
+              "forge tabs: ineligibility set before the build hides the single tab");
+        unbuilt.unbind();
+    }
+
+    // pr_watch tells eligibility as it reads the remotes again: an account
+    // saved, or removed. No worker: nothing asked of a forge, no keychain.
+    {
+        const std::string acct_repo = repo + "-forge-account";
+        std::filesystem::create_directories(rap::sys::path_from_utf8(acct_repo));
+        check(run_git(acct_repo, {"init", "-q"}, git_output::stdout_only).ok() &&
+                  run_git(acct_repo,
+                          {"remote", "add", "origin", "https://forge.example.test/team/repo.git"},
+                          git_output::stdout_only).ok(),
+              "forge watch: a remote on a forge known only by an account");
+        const auto saved = saved_accounts();
+        save_accounts({});
+        pr_watch::no_worker_for_tests = true;
+        int changed = 0;
+        std::vector<bool> said;
+        {
+            pr_watch watch(ui, acct_repo, [&] { ++changed; });
+            watch.on_forge_possible([&](bool on) { said.push_back(on); });
+            check(watch.remotes().empty() && said.empty() && changed == 0,
+                  "forge watch: no account, no forge remote");
+            save_accounts({{.kind = forge_kind::gitlab,
+                            .host = "forge.example.test",
+                            .login = "tester"}});
+            pr_watch::forge_settings_changed();
+            check(watch.remotes().size() == 1 && said == std::vector<bool>{true} && changed == 1,
+                  "forge watch: an account saved makes it forge-capable at once");
+            pr_watch::forge_settings_changed();
+            check(said == std::vector<bool>{true} && changed == 1,
+                  "forge watch: the same remotes again: not told");
+            save_accounts({});
+            pr_watch::forge_settings_changed();
+            check(watch.remotes().empty() && said == std::vector<bool>{true, false} && changed == 2,
+                  "forge watch: the account removed: told, and changed though no PRs");
+            pr_watch::forge_settings_changed();
+            check(said.size() == 2 && changed == 2,
+                  "forge watch: still none: neither told nor changed");
+            save_accounts({{.kind = forge_kind::gitlab,
+                            .host = "forge.example.test",
+                            .login = "tester"}});
+            // No Settings notification: an elapsed slow poll still discovers it.
+            auto timers = std::move(g_backend->long_timers);
+            g_backend->long_timers.clear();
+            for (const auto& tick : timers) tick();
+            check(watch.remotes().size() == 1 && changed == 3 &&
+                      said == std::vector<bool>{true, false, true},
+                  "forge watch: the slow local poll discovers a new account without a nudge");
+        }
+        pr_watch::no_worker_for_tests = false;
+        save_accounts(saved);
+    }
+
     forge_panel panel({.ui = ui, .workdir = forge_repo});
+    panel.set_forge_possible(true);
     const auto layout = panel.layout(label{"Commit contents"});
     const auto& spec = std::get<rap::spec::tabs>(layout.spec);
     check(spec.titles == std::vector<std::string>{"Commit", "PR", "Build", "Artifacts"} &&

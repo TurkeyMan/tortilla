@@ -1,5 +1,6 @@
 #include "remotes_page.h"
 
+#include "forge/pr_watch.h"
 #include "forge/remote_sign_in.h"
 #include "git/command.h"
 #include "git/remotes.h"
@@ -281,6 +282,7 @@ struct remotes_state
             }
         }
         reload(new_name);
+        pr_watch::forge_settings_changed();  // open logs' forge remotes, read anew
     }
 
     void remove_shown()
@@ -301,6 +303,7 @@ struct remotes_state
                 if (const git_result r = run_git(dir, {"remote", "remove", "--", remote}); !r.ok())
                     complain(_("git couldn't remove the remote."), r.output);
                 reload({});
+                pr_watch::forge_settings_changed();
             });
     }
 };

@@ -92,9 +92,10 @@ class pr_watch
 {
 public:
     // `changed` after each answer that changes what's known. `branch_tips`:
-    // want_branch_tips from the first ask.
+    // want_branch_tips from the first ask. Deferred: read only the local
+    // remotes now, for the first layout; refresh() starts the requests later.
     pr_watch(rap::ui&, std::string workdir, std::function<void()> changed,
-             bool branch_tips = false);
+             bool branch_tips = false, bool deferred = false);
     ~pr_watch();
 
     // Asks now: after a push, a fetch, or a PR made or merged here.
@@ -124,6 +125,18 @@ public:
     // Every open watch's hints, each repository once: for Settings >
     // Accounts. The UI thread's.
     static std::vector<forge_remote> all_hints();
+    // Forge accounts or a repository's remotes saved (Settings > Accounts,
+    // Remotes): every open watch asks again, its remotes read anew. The UI
+    // thread's.
+    static void forge_settings_changed();
+
+    // Whether there are forge remotes at all, each time that changes as the
+    // remotes are read again (at once, before any answer): the log's lower
+    // strip follows it. Not called for the first read, in the constructor.
+    void on_forge_possible(std::function<void(bool)> f) { forge_possible_ = std::move(f); }
+    // Tests: asks read the remotes and stop there, with no worker (no
+    // network, no keychain).
+    static inline bool no_worker_for_tests = false;
 
     // Checks that run are asked after quickly (GitHub's, conditionally: a
     // reply that hasn't changed costs nothing): every open PR's head whose
@@ -162,6 +175,7 @@ private:
     rap::ui& ui_;
     std::string workdir_;
     std::function<void()> changed_;
+    std::function<void(bool)> forge_possible_;
     std::vector<forge_remote> remotes_;
     std::vector<open_pr> prs_;
     std::map<std::string, remote_tips, std::less<>> tips_;

@@ -711,10 +711,10 @@ void forge_panel::layout_labels()
 rap::node forge_panel::layout(rap::node commit)
 {
     using namespace rap::layout;
-    // Reuse the query path's eligibility, including anonymous public forges.
     // A forge-capable repository keeps its navigation strip on every row.
-    const bool forge_possible = !forge_remotes(host_.workdir).empty();
-    forge_possible_ = forge_possible;  // later changes: set_forge_possible
+    // One source: pr_watch's remotes, as last passed in, including before
+    // the first build. Rebuilding a page never discovers remotes itself.
+    const bool forge_possible = forge_possible_;
     page_guard_.open();
     // The builder below installs this icon even while the page is hidden.
     build_tab_icon_state_ = check_state::pending;
@@ -917,11 +917,9 @@ rap::node forge_panel::layout(rap::node commit)
         .on_changed(page_guard_([this](int page) { user_page_changed(page); }));
 }
 
-// The strip follows eligibility live; only on a change. Unbuilt, the next
-// layout() asks again.
 void forge_panel::set_forge_possible(bool possible)
 {
-    if (possible == forge_possible_) return;
+    if (forge_possible_ == possible) return;
     forge_possible_ = possible;
     if (tabs_) tabs_->set_hide_single_tab(!possible);
 }

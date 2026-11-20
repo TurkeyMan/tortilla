@@ -280,6 +280,7 @@ struct accounts_state : std::enable_shared_from_this<accounts_state>
         accounts.push_back(*who);
         save_accounts(accounts);
         if (who->via_gh) set_gh_account_off(*who, false);
+        pr_watch::forge_settings_changed();  // open logs' forge remotes, read anew
         token->set_text("");
         status->set_text(rap::i18n::format(_("Signed in as {0} on {1}."), who->login, who->host));
         reload();
@@ -387,6 +388,7 @@ struct accounts_state : std::enable_shared_from_this<accounts_state>
                             { return b.kind == a.kind && b.host == a.host && b.login == a.login; });
                         save_accounts(accounts);
                         if (a.via_gh) set_gh_account_off(a, true);  // or it's back from gh
+                        pr_watch::forge_settings_changed();
                         s.status->set_text("");
                         s.reload();
                     });

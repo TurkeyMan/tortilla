@@ -148,6 +148,22 @@ log_tab::log_tab(rap::ui& ui, repo repo, std::string path)
     // Today until the loaded range replaces it (not 1970 while loading).
     loaded_from_ = loaded_to_ = local_date(std::time(nullptr));
     load_options();
+    // Read local eligibility before the first page is built. Network
+    // requests remain deferred until start().
+    pr_watch_ = std::make_unique<pr_watch>(
+        ui_, repo_location(),
+        [this]
+        {
+            prs_known_ = true;
+            update_pull_requests();
+            tips_heard(pr_watch_->branch_tips());
+        },
+        allowed_now(check_setting()), true);
+    // The lower strip follows the remotes as they're read again (an account
+    // saved, a remote changed), before any answer.
+    pr_watch_->on_forge_possible([this](bool possible)
+                                 { forge_panel_->set_forge_possible(possible); });
+    forge_panel_->set_forge_possible(!pr_watch_->remotes().empty());
 }
 
 rap::menu log_tab::tab_menu(rap::menu m) const
@@ -165,17 +181,7 @@ void log_tab::start(bool all_branches)
     if (all_branches) set_walk(walk_refs::all);
     // What a write said after its window closed, once this one is up.
     ui_.post(guarded([this] { show_notices(); }));
-    // Before the first load: it knows the forge remotes, and so whether
-    // there are pull requests to wait for.
-    pr_watch_ = std::make_unique<pr_watch>(
-        ui_, repo_location(),
-        [this]
-        {
-            prs_known_ = true;
-            update_pull_requests();
-            tips_heard(pr_watch_->branch_tips());
-        },
-        allowed_now(check_setting()));
+    pr_watch_->refresh();
     reload();
     watch_repository();
     start_sync_watch();
