@@ -11,8 +11,9 @@
 // a lock held across processes the file is read again, the change applied,
 // and the result written beside it and renamed over it, so a reader sees
 // the old document or the new one, whole. This process's copy becomes what
-// was written; when the write fails the file keeps its last good contents,
-// and the copy what the file holds.
+// was written; ordinary write failures preserve the last good document. A
+// partial Windows ReplaceFile failure retains a recovery copy and reports its
+// path; this process keeps its previously read snapshot on failure.
 //
 // A save that can't take the lock (its file can't be opened, or another
 // writer holds it past the wait) saves nothing and says why. Where the
@@ -191,8 +192,14 @@ std::filesystem::path settings_lock_file(const std::filesystem::path& file);
 
 // One failure on this test thread: an I/O stage after a real temporary is
 // created, or ENOLCK while taking the writer lock. Normal operation is unchanged.
-enum class settings_test_failure { none, flush, close, replace, no_locks };
+enum class settings_test_failure { none, flush, close, replace, no_locks, partial_replace, encrypted_target, unprotected_temp };
 void settings_fail_next(settings_test_failure);
+#ifdef _WIN32
+// Test-only final-name substitution/normalization denial and a borrowed temp
+// handle observed immediately after protected CREATE_NEW, before any contents.
+void settings_final_path_for_tests(const std::filesystem::path& candidate = {}, bool opened_only = false);
+void settings_temp_created_for_tests(std::function<void(std::intptr_t)>);
+#endif
 
 // For the tests: holds the writers' lock on `file`, as another process's
 // save would, until destroyed. Check it with held().

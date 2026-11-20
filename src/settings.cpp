@@ -28,6 +28,8 @@
 #include <fcntl.h>
 #include <io.h>
 #include <windows.h>
+#include <aclapi.h>
+#include <cstring>
 #else
 #include <cerrno>
 #include <fcntl.h>
@@ -86,6 +88,10 @@ struct settings_target
 };
 
 #ifdef _WIN32
+thread_local fs::path final_candidate_for_tests;
+thread_local bool opened_path_only_for_tests = false;
+thread_local std::function<void(std::intptr_t)> temp_created_for_tests;
+
 struct settings_native_handle
 {
     HANDLE value = INVALID_HANDLE_VALUE;
@@ -95,17 +101,23 @@ struct settings_native_handle
 std::optional<fs::path> final_settings_path(HANDLE handle, DWORD& error)
 {
     // https://learn.microsoft.com/windows/win32/api/fileapi/nf-fileapi-getfinalpathnamebyhandlew
-    // DOS may be unavailable for an unmounted volume, GUID for a network share.
-    // Keep normalized names: FILE_NAME_OPENED could retain link substitution.
+    // Normalization can need ancestor permissions on SMB. Opened-name fallbacks
+    // are safe only after reopening and matching the original volume/file ID.
+    FILE_ID_INFO original{};
+    if (!GetFileInformationByHandleEx(handle, FileIdInfo, &original, sizeof original))
+    { error = GetLastError(); return {}; }
     constexpr DWORD limit = 32768;
+    for (DWORD spelling : {DWORD(FILE_NAME_NORMALIZED), DWORD(FILE_NAME_OPENED)})
     for (DWORD volume : {DWORD(VOLUME_NAME_DOS), DWORD(VOLUME_NAME_GUID), DWORD(VOLUME_NAME_NT)})
     {
+        if (opened_path_only_for_tests && spelling == FILE_NAME_NORMALIZED)
+        { error = ERROR_ACCESS_DENIED; continue; }
         std::vector<wchar_t> buffer(512);
         for (int attempt = 0; attempt < 4; ++attempt)
         {
             error = ERROR_INSUFFICIENT_BUFFER;
             const DWORD length = GetFinalPathNameByHandleW(handle, buffer.data(), DWORD(buffer.size()),
-                                                           FILE_NAME_NORMALIZED | volume);
+                                                           spelling | volume);
             const DWORD native = length ? ERROR_SUCCESS : GetLastError();
             if (!length) { error = native; break; }
             if (length >= buffer.size())
@@ -118,7 +130,20 @@ std::optional<fs::path> final_settings_path(HANDLE handle, DWORD& error)
             // NT returns \Device\..., not a Win32 pathname. GLOBALROOT selects
             // that namespace while remaining usable by CreateFile/_wfopen.
             if (volume == VOLUME_NAME_NT) path = L"\\\\?\\GLOBALROOT" + path;
-            return fs::path(std::move(path));
+            fs::path candidate = final_candidate_for_tests.empty() ?
+                                     fs::path(std::move(path)) : final_candidate_for_tests;
+            settings_native_handle checked{CreateFileW(candidate.c_str(), 0,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr)};
+            if (checked.value == INVALID_HANDLE_VALUE) { error = GetLastError(); break; }
+            FILE_ID_INFO reopened{};
+            if (!GetFileInformationByHandleEx(checked.value, FileIdInfo, &reopened, sizeof reopened))
+            { error = GetLastError(); break; }
+            if (original.VolumeSerialNumber != reopened.VolumeSerialNumber ||
+                std::memcmp(original.FileId.Identifier, reopened.FileId.Identifier,
+                            sizeof original.FileId.Identifier) != 0)
+            { error = ERROR_FILE_INVALID; break; }
+            return candidate;
         }
     }
     return {};
@@ -419,6 +444,134 @@ std::optional<values> read_file(const fs::path& file, std::string* error = nullp
     return out;
 }
 
+struct settings_replacement
+{
+    bool existing = false;
+    std::uint32_t attributes = 0;
+};
+
+#ifdef _WIN32
+struct settings_file_security
+{
+    settings_replacement replacement;
+    std::string failure;
+    PSECURITY_DESCRIPTOR source = nullptr;
+    SECURITY_DESCRIPTOR descriptor{};
+    std::vector<unsigned char> token_user, owner_acl;
+    ~settings_file_security() { if (source) LocalFree(source); }
+
+    bool verify(HANDLE handle, DWORD& error)
+    {
+        PACL expected_acl = nullptr, actual_acl = nullptr;
+        PSID expected_owner = nullptr, actual_owner = nullptr;
+        BOOL present = FALSE, defaulted = FALSE;
+        if (!GetSecurityDescriptorOwner(&descriptor, &expected_owner, &defaulted) ||
+            !GetSecurityDescriptorDacl(&descriptor, &present, &expected_acl, &defaulted))
+        { error = GetLastError(); return false; }
+        PSECURITY_DESCRIPTOR actual = nullptr;
+        error = GetSecurityInfo(handle, SE_FILE_OBJECT,
+            OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+            &actual_owner, nullptr, &actual_acl, nullptr, &actual);
+        if (error != ERROR_SUCCESS) return false;
+        SECURITY_DESCRIPTOR_CONTROL control{};
+        DWORD revision = 0;
+        bool same = GetSecurityDescriptorControl(actual, &control, &revision) != 0;
+        if (!same) error = GetLastError();
+        same = same && (control & SE_DACL_PROTECTED) && actual_owner && actual_acl &&
+               IsValidAcl(actual_acl) && EqualSid(actual_owner, expected_owner) &&
+               actual_acl->AceCount == expected_acl->AceCount;
+        for (DWORD i = 0; same && i < expected_acl->AceCount; ++i)
+        {
+            void* expected_ace = nullptr;
+            void* actual_ace = nullptr;
+            same = GetAce(expected_acl, i, &expected_ace) && GetAce(actual_acl, i, &actual_ace);
+            if (!same) { error = GetLastError(); break; }
+            const auto size = static_cast<ACE_HEADER*>(expected_ace)->AceSize;
+            same = size == static_cast<ACE_HEADER*>(actual_ace)->AceSize &&
+                   std::memcmp(expected_ace, actual_ace, size) == 0;
+        }
+        LocalFree(actual);
+        if (!same && error == ERROR_SUCCESS) error = ERROR_INVALID_SECURITY_DESCR;
+        return same;
+    }
+
+    bool prepare(const fs::path& target, DWORD& error)
+    {
+        PACL dacl = nullptr;
+        PSID owner = nullptr;
+        settings_native_handle existing{CreateFileW(target.c_str(), READ_CONTROL,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS, nullptr)};
+        const DWORD opened = existing.value == INVALID_HANDLE_VALUE ? GetLastError() : ERROR_SUCCESS;
+        if (existing.value != INVALID_HANDLE_VALUE)
+        {
+            // https://learn.microsoft.com/windows/win32/api/aclapi/nf-aclapi-getsecurityinfo
+            error = GetSecurityInfo(existing.value, SE_FILE_OBJECT,
+                                     OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+                                     &owner, nullptr, &dacl, nullptr, &source);
+            if (error != ERROR_SUCCESS) return false;
+            if (!owner || !IsValidSid(owner))
+            { error = ERROR_INVALID_SECURITY_DESCR; return false; }
+            BY_HANDLE_FILE_INFORMATION information{};
+            if (!GetFileInformationByHandle(existing.value, &information))
+            { error = GetLastError(); return false; }
+            if (fail(settings_test_failure::encrypted_target))
+                information.dwFileAttributes |= FILE_ATTRIBUTE_ENCRYPTED;
+            if (information.dwFileAttributes & FILE_ATTRIBUTE_ENCRYPTED)
+            {
+                error = ERROR_NOT_SUPPORTED;
+                failure = _("Atomic settings saves are not supported for encrypted files.");
+                return false;
+            }
+            replacement = {true, information.dwFileAttributes};
+            if (information.dwFileAttributes & FILE_ATTRIBUTE_READONLY)
+            { error = ERROR_ACCESS_DENIED; return false; }
+            // An explicitly NULL DACL on the source grants everyone access. Do
+            // not create a NULL-DACL temp: use a narrower current-user DACL.
+        }
+        else if (opened != ERROR_FILE_NOT_FOUND && opened != ERROR_PATH_NOT_FOUND)
+        { error = opened; return false; }
+        if (!dacl)
+        {
+            HANDLE raw = nullptr;
+            if (!OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, TRUE, &raw))
+            {
+                const DWORD native = GetLastError();
+                if (native != ERROR_NO_TOKEN) { error = native; return false; }
+                if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw))
+                { error = GetLastError(); return false; }
+            }
+            settings_native_handle token{raw};
+            DWORD size = 0;
+            GetTokenInformation(token.value, TokenUser, nullptr, 0, &size);
+            const DWORD native = GetLastError();
+            if (native != ERROR_INSUFFICIENT_BUFFER) { error = native; return false; }
+            token_user.resize(size);
+            if (!GetTokenInformation(token.value, TokenUser, token_user.data(), size, &size))
+            { error = GetLastError(); return false; }
+            PSID user = reinterpret_cast<TOKEN_USER*>(token_user.data())->User.Sid;
+            if (!owner) owner = user;
+            owner_acl.resize(sizeof(ACL) + sizeof(ACCESS_ALLOWED_ACE) - sizeof(DWORD) + GetLengthSid(user));
+            dacl = reinterpret_cast<PACL>(owner_acl.data());
+            if (!InitializeAcl(dacl, DWORD(owner_acl.size()), ACL_REVISION) ||
+                !AddAccessAllowedAceEx(dacl, ACL_REVISION, 0, FILE_ALL_ACCESS, user))
+            { error = GetLastError(); return false; }
+        }
+        if (!owner || !IsValidSid(owner) || !IsValidAcl(dacl))
+        { error = ERROR_INVALID_SECURITY_DESCR; return false; }
+        // Protected explicit DACL prevents broader parent inheritance at the
+        // instant CREATE_NEW makes the temp visible. Owner assignment can fail
+        // if the caller cannot assign the existing owner; never silently drop it.
+        if (!InitializeSecurityDescriptor(&descriptor, SECURITY_DESCRIPTOR_REVISION) ||
+            !SetSecurityDescriptorOwner(&descriptor, owner, FALSE) ||
+            !SetSecurityDescriptorDacl(&descriptor, TRUE, dacl, FALSE) ||
+            !SetSecurityDescriptorControl(&descriptor, SE_DACL_PROTECTED, SE_DACL_PROTECTED))
+        { error = GetLastError(); return false; }
+        return true;
+    }
+};
+#endif
+
 #ifdef _WIN32
 bool sharing_error(DWORD e)
 {
@@ -427,19 +580,47 @@ bool sharing_error(DWORD e)
 #endif
 
 // Renames `from` over `to`, in one step.
-std::string replace(const fs::path& from, const fs::path& to)
+std::string replace(const fs::path& from, const fs::path& to, bool& retain_temp,
+                    const settings_replacement& replacement)
 {
     if (fail(settings_test_failure::replace)) return crt_error(errno);
 #ifdef _WIN32
+    if (fail(settings_test_failure::partial_replace))
+    {
+        retain_temp = true;
+        return rap::i18n::format(_("Windows could not finish replacing {0}; recovery copy retained at {1}."),
+                                 shown(to), shown(from));
+    }
     // A reader that opened the file without FILE_SHARE_DELETE (the C
     // runtime and std::ifstream, as the shell extension uses) holds off the
     // rename until it closes it, which is a moment: wait a little for it.
     for (int attempt = 0;; ++attempt)
     {
-        if (MoveFileExW(from.c_str(), to.c_str(),
-                        MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
-            return {};
-        const DWORD e = GetLastError();
+        BOOL done = FALSE;
+        if (replacement.existing)
+        {
+            const DWORD attributes = replacement.attributes;
+            constexpr DWORD carried = FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM |
+                FILE_ATTRIBUTE_ARCHIVE | FILE_ATTRIBUTE_NOT_CONTENT_INDEXED | FILE_ATTRIBUTE_TEMPORARY;
+            const DWORD flags = attributes & carried;
+            if (!SetFileAttributesW(from.c_str(), flags ? flags : FILE_ATTRIBUTE_NORMAL))
+            { const DWORD e = GetLastError(); return native_error(e); }
+            // https://learn.microsoft.com/windows/win32/api/winbase/nf-winbase-replacefilew
+            // Do NOT ignore merge/ACL errors. ReplaceFile preserves the DACL
+            // and absent named streams; owner was explicitly set at creation.
+            done = ReplaceFileW(to.c_str(), from.c_str(), nullptr, 0, nullptr, nullptr);
+        }
+        else // Frozen first-save mode: a newly appeared file must not be overwritten.
+            done = MoveFileExW(from.c_str(), to.c_str(), MOVEFILE_WRITE_THROUGH);
+        const DWORD e = done ? ERROR_SUCCESS : GetLastError();
+        if (done) return {};
+        if (e == ERROR_UNABLE_TO_MOVE_REPLACEMENT || e == ERROR_UNABLE_TO_MOVE_REPLACEMENT_2)
+        {
+            retain_temp = true;
+            return rap::i18n::format(
+                _("Windows could not finish replacing {0}: {1}. The original may have moved; recovery copy retained at {2}."),
+                shown(to), native_error(e), shown(from));
+        }
         if (attempt == 200 || !sharing_error(e)) return native_error(e);
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
@@ -453,12 +634,21 @@ std::string replace(const fs::path& from, const fs::path& to)
 // A temporary file beside `target`, made anew (never one already there,
 // whatever it is: a leftover, a link, a folder), open for writing, private
 // until it takes the mode of the file it replaces.
-std::FILE* create_temp(const fs::path& target, fs::path& made, std::string& error)
+std::FILE* create_temp(const fs::path& target, fs::path& made, std::string& error,
+                       settings_replacement& replacement)
 {
+#ifdef _WIN32
+    settings_file_security security;
+    DWORD native = ERROR_SUCCESS;
+    if (!security.prepare(target, native))
+    { error = security.failure.empty() ? native_error(native) : security.failure; return nullptr; }
+    replacement = security.replacement;
+    SECURITY_ATTRIBUTES attributes{sizeof(SECURITY_ATTRIBUTES), &security.descriptor, FALSE};
+#endif
     for (const fs::path& name : settings_temp_files(target))
     {
 #ifdef _WIN32
-        HANDLE h = CreateFileW(name.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
+        HANDLE h = CreateFileW(name.c_str(), GENERIC_WRITE | READ_CONTROL, 0, &attributes, CREATE_NEW,
                                FILE_ATTRIBUTE_NORMAL, nullptr);
         if (h == INVALID_HANDLE_VALUE)
         {
@@ -470,6 +660,17 @@ std::FILE* create_temp(const fs::path& target, fs::path& made, std::string& erro
             error = native_error(e);
             return nullptr;
         }
+        const bool secure = security.verify(h, native);
+        const bool unprotected = fail(settings_test_failure::unprotected_temp);
+        if (!secure || unprotected)
+        {
+            error = _("The filesystem did not enforce the required private settings-file permissions.");
+            if (!secure) error += ": " + native_error(native);
+            CloseHandle(h);
+            DeleteFileW(name.c_str());  // still empty: no secret bytes were written
+            return nullptr;
+        }
+        if (temp_created_for_tests) temp_created_for_tests(reinterpret_cast<std::intptr_t>(h));
         const int fd = _open_osfhandle(reinterpret_cast<intptr_t>(h), _O_WRONLY | _O_BINARY);
         if (fd < 0)
         {
@@ -526,13 +727,15 @@ std::FILE* create_temp(const fs::path& target, fs::path& made, std::string& erro
 }
 
 // Writes `v` to a file beside `target` and renames it over `target`. On any
-// failure `target` is untouched, the temporary file is gone, and the error
-// is said.
+// ordinary failure `target` is untouched and the temporary is removed. The
+// documented partial Windows replacement failures retain a recovery copy and
+// report its path instead of deleting potentially the last remaining data.
 std::string write_file(const fs::path& target, const values& v)
 {
     fs::path temp;
     std::string why;
-    std::FILE* f = create_temp(target, temp, why);
+    settings_replacement replacement;
+    std::FILE* f = create_temp(target, temp, why, replacement);
     if (!f)
         return rap::i18n::format(_("Couldn't make a file beside {0} to save the settings to: {1}"),
                                  shown(target), why);
@@ -573,12 +776,13 @@ std::string write_file(const fs::path& target, const values& v)
         if (why.empty()) why = crt_error(injected_close ? EIO : close_error);
         ok = false;
     }
-    if (ok) why = replace(temp, target);
+    bool retain_temp = false;
+    if (ok) why = replace(temp, target, retain_temp, replacement);
     ok = ok && why.empty();
     if (!ok)
     {
         std::error_code ec;
-        fs::remove(temp, ec);  // ours: made above
+        if (!retain_temp) fs::remove(temp, ec);  // never delete the last recoverable replacement
         return rap::i18n::format(_("Couldn't save the settings to {0}: {1}"), shown(target), why);
     }
     return {};
@@ -594,6 +798,12 @@ std::string numbers_value(const std::vector<float>& v)
 }  // namespace
 
 void settings_fail_next(settings_test_failure failure) { next_failure = failure; }
+#ifdef _WIN32
+void settings_final_path_for_tests(const fs::path& candidate, bool opened_only)
+{ final_candidate_for_tests = candidate; opened_path_only_for_tests = opened_only; }
+void settings_temp_created_for_tests(std::function<void(std::intptr_t)> observer)
+{ temp_created_for_tests = std::move(observer); }
+#endif
 
 #ifndef _WIN32
 settings_path_parts split_settings_path(const fs::path& file)

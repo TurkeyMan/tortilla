@@ -97,6 +97,7 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#include <aclapi.h>
 #endif
 
 namespace
@@ -1794,6 +1795,230 @@ void settings_key_cases(const std::string& scratch)
           "settings keys: explicit unchanged empty-document save writes one format marker");
 }
 
+#ifdef _WIN32
+struct security_snapshot
+{
+    std::vector<unsigned char> acl, owner;
+    bool protected_acl = false;
+};
+
+void settings_windows_security_cases(const std::filesystem::path& root)
+{
+    namespace fs = std::filesystem;
+    auto& st = tortilla::settings::get();
+    const auto file = root / "security-prefs";
+    st.use_file(file);
+    tortilla::settings_changes changes;
+    changes.set("secure", "first");
+    wchar_t volume[MAX_PATH];
+    DWORD flags = 0;
+    const bool volume_known = GetVolumePathNameW(root.c_str(), volume, MAX_PATH) &&
+        GetVolumeInformationW(volume, nullptr, 0, nullptr, nullptr, &flags, nullptr, 0);
+    check(volume_known, "settings security: filesystem capabilities queried");
+    if (!volume_known) return;
+    if (!(flags & FILE_PERSISTENT_ACLS))
+    {
+        const auto refused = st.apply(changes);
+        check(!refused && !fs::exists(file),
+              "settings security: filesystem without ACLs cannot create secret settings");
+        std::printf("settings security: exact ACL assertions skipped (filesystem has no persistent ACLs)\n");
+        return;
+    }
+    check(bool(st.apply(changes)), "settings security: initial owner-only file saved");
+    auto security = [&](HANDLE handle) -> std::optional<security_snapshot>
+    {
+        PACL acl = nullptr;
+        PSID owner = nullptr;
+        PSECURITY_DESCRIPTOR descriptor = nullptr;
+        const DWORD e = GetSecurityInfo(handle, SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION | OWNER_SECURITY_INFORMATION,
+            &owner, nullptr, &acl, nullptr, &descriptor);
+        if (e != ERROR_SUCCESS) return {};
+        security_snapshot out;
+        if (acl && owner)
+        {
+            const auto* data = reinterpret_cast<unsigned char*>(acl);
+            out.acl.assign(data, data + acl->AclSize);
+            data = reinterpret_cast<unsigned char*>(owner);
+            out.owner.assign(data, data + GetLengthSid(owner));
+            SECURITY_DESCRIPTOR_CONTROL control{};
+            DWORD revision = 0;
+            GetSecurityDescriptorControl(descriptor, &control, &revision);
+            out.protected_acl = (control & SE_DACL_PROTECTED) != 0;
+        }
+        LocalFree(descriptor);
+        return out.acl.empty() || out.owner.empty() ? std::nullopt : std::optional<security_snapshot>(std::move(out));
+    };
+    auto file_security = [&]() -> std::optional<security_snapshot>
+    {
+        HANDLE h = CreateFileW(file.c_str(), READ_CONTROL,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, 0, nullptr);
+        if (h == INVALID_HANDLE_VALUE) return {};
+        auto out = security(h);
+        CloseHandle(h);
+        return out;
+    };
+    auto initial = file_security();
+    bool owner_only = false;
+    if (initial)
+    {
+        auto* acl = reinterpret_cast<PACL>(initial->acl.data());
+        void* raw = nullptr;
+        if (acl->AceCount == 1 && GetAce(acl, 0, &raw))
+        {
+            auto* ace = static_cast<ACCESS_ALLOWED_ACE*>(raw);
+            owner_only = ace->Header.AceType == ACCESS_ALLOWED_ACE_TYPE &&
+                EqualSid(&ace->SidStart, initial->owner.data()) &&
+                (ace->Mask & FILE_ALL_ACCESS) == FILE_ALL_ACCESS;
+        }
+    }
+    check(initial && initial->protected_acl && owner_only,
+          "settings security: first save grants only its owner full access in a protected DACL");
+    if (!initial) return;
+    // Explicit restrictive DACL distinct from inherited parent permissions.
+    auto* user = initial->owner.data();
+    std::vector<unsigned char> restrictive(sizeof(ACL) + sizeof(ACCESS_ALLOWED_ACE) - sizeof(DWORD) + GetLengthSid(user));
+    auto* acl = reinterpret_cast<PACL>(restrictive.data());
+    bool configured = InitializeAcl(acl, DWORD(restrictive.size()), ACL_REVISION) &&
+                      AddAccessAllowedAceEx(acl, ACL_REVISION, 0, FILE_ALL_ACCESS, user);
+    DWORD configured_error = configured ? ERROR_SUCCESS : GetLastError();
+    HANDLE writable = CreateFileW(file.c_str(), WRITE_DAC,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (writable != INVALID_HANDLE_VALUE)
+    {
+        const DWORD result = SetSecurityInfo(writable, SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+            nullptr, nullptr, acl, nullptr);
+        if (result != ERROR_SUCCESS) configured_error = result;
+        configured = configured && result == ERROR_SUCCESS;
+        CloseHandle(writable);
+    }
+    else { configured_error = GetLastError(); configured = false; }
+    if (!configured && (configured_error == ERROR_ACCESS_DENIED ||
+                        configured_error == ERROR_PRIVILEGE_NOT_HELD))
+        std::printf("settings security: manual ACL mutation unavailable (%lu); testing verified explicit owner-only source ACL\n",
+                    configured_error);
+    else
+    {
+        check(configured, "settings security: explicit restrictive source ACL configured");
+        if (!configured) return;
+    }
+    const auto before = file_security();
+    int observed = 0;
+    bool temp_private = true;
+    tortilla::settings_temp_created_for_tests([&](std::intptr_t raw) {
+        ++observed;
+        const auto temp = security(reinterpret_cast<HANDLE>(raw));
+        temp_private = temp_private && before && temp && temp->protected_acl &&
+                       temp->acl == before->acl && temp->owner == before->owner;
+    });
+    const auto stream = fs::path(file.native() + L":notes");
+    if (flags & FILE_NAMED_STREAMS) write_text(stream, "retained ADS");
+    const bool hidden = SetFileAttributesW(file.c_str(), FILE_ATTRIBUTE_HIDDEN) != 0;
+    changes.set("secure", "updated");
+    const auto saved = st.apply(changes);
+    tortilla::settings_temp_created_for_tests({});
+    const auto after = file_security();
+    check(saved && hidden && observed == 1 && temp_private && before && after &&
+              after->acl == before->acl && after->owner == before->owner &&
+              (GetFileAttributesW(file.c_str()) & FILE_ATTRIBUTE_HIDDEN),
+          "settings security: temp is restrictive at creation, replacement preserves DACL/owner/hidden");
+    if (flags & FILE_NAMED_STREAMS)
+        check(slurp(stream) == "retained ADS", "settings security: replacement preserves original named stream");
+    observed = 0;
+    tortilla::settings_temp_created_for_tests([&](std::intptr_t) { ++observed; });
+    const auto old_bytes = slurp(file);
+    const bool readonly = SetFileAttributesW(file.c_str(), FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_READONLY) != 0;
+    changes.set("secure", "must fail");
+    const auto refused = st.apply(changes);
+    tortilla::settings_temp_created_for_tests({});
+    check(readonly && !refused && !refused.error.empty() && observed == 0 && slurp(file) == old_bytes &&
+              (GetFileAttributesW(file.c_str()) & FILE_ATTRIBUTE_READONLY),
+          "settings security: read-only fails before temp creation without clearing attributes");
+    SetFileAttributesW(file.c_str(), FILE_ATTRIBUTE_HIDDEN);
+    if (flags & FILE_SUPPORTS_HARD_LINKS)
+    {
+        const auto alias = root / "security-alias";
+        std::error_code ec;
+        fs::create_hard_link(file, alias, ec);
+        check(!ec, "settings security: hardlink fixture created");
+        changes.set("secure", "new object");
+        check(st.apply(changes) && slurp(alias) == old_bytes && slurp(file) != slurp(alias),
+              "settings security: atomic replacement leaves other hardlink aliases on old object");
+    }
+    const auto other = root / "different-file";
+    write_text(other, "different=object\n");
+    const auto untouched = slurp(file);
+    const auto other_bytes = slurp(other);
+    observed = 0;
+    tortilla::settings_temp_created_for_tests([&](std::intptr_t) { ++observed; });
+    tortilla::settings_final_path_for_tests(other);
+    const auto mismatch = st.apply(changes);
+    tortilla::settings_final_path_for_tests();
+    tortilla::settings_temp_created_for_tests({});
+    check(!mismatch && !mismatch.error.empty() && observed == 0 &&
+              slurp(file) == untouched && slurp(other) == other_bytes,
+          "settings identity: mismatching candidate refuses save before any temp writes");
+    tortilla::settings_final_path_for_tests({}, true);
+    changes.set("opened-fallback", "identity checked");
+    const auto fallback = st.apply(changes);
+    tortilla::settings_final_path_for_tests();
+    check(fallback && st.value("opened-fallback") == "identity checked",
+          "settings identity: opened-name fallback succeeds only after reopening same volume/file ID");
+    for (bool existed : {false, true})
+    {
+        const auto mode_file = root / (existed ? "mode-existing" : "mode-first-save");
+        if (existed) write_text(mode_file, "previous=read\n");
+        st.use_file(mode_file);
+        tortilla::settings_temp_created_for_tests([&](std::intptr_t) {
+            if (existed) fs::remove(mode_file);
+            else write_text(mode_file, "external=unread\n");
+        });
+        const auto refused_mode_change = st.apply(changes);
+        tortilla::settings_temp_created_for_tests({});
+        check(!refused_mode_change && (existed ? !fs::exists(mode_file) :
+                  slurp(mode_file) == "external=unread\n"),
+              "settings replacement: frozen mode never recreates removed file or overwrites newly appeared file");
+    }
+    st.use_file(file);
+    changes.set("permission-probe", "must not publish");
+    const auto before_unprotected = slurp(file);
+    observed = 0;
+    tortilla::settings_temp_created_for_tests([&](std::intptr_t) { ++observed; });
+    tortilla::settings_fail_next(tortilla::settings_test_failure::unprotected_temp);
+    const auto unprotected = st.apply(changes);
+    tortilla::settings_temp_created_for_tests({});
+    check(!unprotected && unprotected.error.find("permissions") != std::string::npos && observed == 0 &&
+              slurp(file) == before_unprotected,
+          "settings security: unverifiable temp protection fails before writing secret bytes");
+    changes.set("encrypted-probe", "must not publish");
+    const auto before_encrypted = slurp(file);
+    observed = 0;
+    tortilla::settings_temp_created_for_tests([&](std::intptr_t) { ++observed; });
+    tortilla::settings_fail_next(tortilla::settings_test_failure::encrypted_target);
+    const auto encrypted = st.apply(changes);
+    tortilla::settings_temp_created_for_tests({});
+    check(!encrypted && encrypted.error.find("encrypted") != std::string::npos && observed == 0 &&
+              slurp(file) == before_encrypted,
+          "settings security: encrypted attribute policy fails before any plaintext temp is created");
+    changes.set("recovery", "retained");
+    tortilla::settings_fail_next(tortilla::settings_test_failure::partial_replace);
+    const auto partial = st.apply(changes);
+    const auto canonical = tortilla::settings_lock_file(file).native();
+    const fs::path target(canonical.substr(0, canonical.size() - 5));
+    bool retained = false;
+    for (const auto& name : tortilla::settings_temp_files(target))
+        if (fs::exists(name))
+        {
+            retained = slurp(name).find("recovery=retained\n") != std::string::npos &&
+                       partial.error.find(rap::sys::path_to_utf8(name)) != std::string::npos;
+            fs::remove(name);
+        }
+    check(!partial && retained && st.value("recovery").empty(),
+          "settings replacement: partial failure retains recovery bytes and reports their path");
+}
+#endif
+
 // Windows delegates link/parent substitution to the same native open as readers.
 void settings_path_cases(const std::string& scratch)
 {
@@ -1802,6 +2027,7 @@ void settings_path_cases(const std::string& scratch)
     const auto root = fs::absolute(rap::sys::path_from_utf8(scratch) / "settings-native-paths");
     fs::create_directories(root / "base");
     fs::create_directories(root / "elsewhere/child");
+    settings_windows_security_cases(root);
     auto& st = tortilla::settings::get();
     tortilla::settings_changes changes;
     changes.set("saved", "yes");
