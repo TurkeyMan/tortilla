@@ -98,6 +98,9 @@
 #endif
 #include <windows.h>
 #include <aclapi.h>
+#else
+#include <sys/stat.h>
+#include <unistd.h>
 #endif
 
 namespace
@@ -2455,6 +2458,86 @@ void settings_pending_recovery_cases(const std::filesystem::path& root)
 }
 #endif
 
+#ifndef _WIN32
+void settings_posix_identity_cases(const std::filesystem::path& root)
+{
+    namespace fs=std::filesystem;
+    fs::create_directories(root);
+    auto& st=tortilla::settings::get();
+    const auto file=root/"group-failure";
+    write_text(file,"secret=unchanged\n");::chmod(file.c_str(),0640);
+    struct stat before{},after{};::stat(file.c_str(),&before);
+    bool empty=false,private_mode=false;
+    tortilla::settings_temp_created_for_tests([&](std::intptr_t fd) {
+        struct stat temp{};
+        empty=::fstat(int(fd),&temp)==0&&temp.st_size==0;
+        private_mode=empty&&(temp.st_mode&0777)==0600;
+    });
+    st.use_file(file);tortilla::settings_changes change;change.set("delta","not published");
+    tortilla::settings_fail_next(tortilla::settings_test_failure::group);
+    const auto refused=st.apply(change);
+    tortilla::settings_temp_created_for_tests({});
+    const bool same=::stat(file.c_str(),&after)==0&&before.st_uid==after.st_uid&&
+        before.st_gid==after.st_gid&&before.st_mode==after.st_mode;
+    bool clean=true;for(const auto& temp:tortilla::settings_temp_files(file))clean=clean&&!fs::exists(temp);
+    check(refused.failed()&&refused.message.find(rap::sys::path_to_utf8(file))!=std::string::npos&&
+              empty&&same&&slurp(file)=="secret=unchanged\n"&&clean&&!st.contains("delta"),
+          "settings POSIX: failed group change preserves original identity/mode/bytes and removes its empty temp");
+    if(private_mode)check(true,"settings POSIX: group-change failure occurs while temp is still private0600");
+    else std::printf("settings POSIX: private0600 mode assertion skipped (filesystem mode enforcement unavailable); empty fail-closed temp verified\n");
+
+    // Exercise genuine setgid inheritance where the filesystem and current
+    // credentials permit it; the injected failure above needs no extra group.
+    const auto directory=root/"setgid";fs::create_directory(directory);
+    const auto grouped=directory/"settings";write_text(grouped,"unrelated=keep\n");
+    ::chmod(grouped.c_str(),0640);struct stat original{};::stat(grouped.c_str(),&original);
+    std::optional<gid_t> other;
+    const int count=::getgroups(0,nullptr);std::vector<gid_t> groups(count>0?count:0);
+    if(count>0&&::getgroups(count,groups.data())==count)
+        for(gid_t group:groups)if(group!=original.st_gid){other=group;break;}
+    if(!other&&::geteuid()==0)other=original.st_gid==0?1:0;
+    bool supported=other&&::chown(directory.c_str(),static_cast<uid_t>(-1),*other)==0&&
+        ::chmod(directory.c_str(),02770)==0;
+    const auto probe=directory/"probe";
+    if(supported)
+    {
+        write_text(probe,"");struct stat inherited{};
+        supported=::stat(probe.c_str(),&inherited)==0&&inherited.st_gid==*other&&inherited.st_gid!=original.st_gid;
+        fs::remove(probe);
+    }
+    if(supported)
+    {
+        st.use_file(grouped);bool inherited=false;
+        tortilla::settings_temp_created_for_tests([&](std::intptr_t fd){struct stat temp{};
+            inherited=::fstat(int(fd),&temp)==0&&temp.st_gid==*other&&(temp.st_mode&0777)==0600&&temp.st_size==0;});
+        tortilla::settings_changes delta;delta.set("added","saved");const auto saved=st.apply(delta);
+        tortilla::settings_temp_created_for_tests({});struct stat published{};
+        check(saved.committed()&&inherited&&::stat(grouped.c_str(),&published)==0&&
+                  published.st_uid==original.st_uid&&published.st_gid==original.st_gid&&(published.st_mode&07777)==(original.st_mode&07777)&&
+                  st.value("unrelated")=="keep"&&st.value("added")=="saved",
+              "settings POSIX: inherited setgid group is restored before original0640 permissions and contents");
+    }
+    else std::printf("settings POSIX: real differing-group setgid fixture skipped (group/inheritance capability unavailable)\n");
+
+    const auto old_target=root/"wait-old",new_target=root/"wait-new",alias=root/"wait-alias";
+    write_text(old_target,"old=keep\n");write_text(new_target,"new=keep\n");
+    std::error_code ec;fs::create_symlink(old_target,alias,ec);
+    if(ec){std::printf("settings POSIX: lock-wait alias repoint skipped (symlinks unavailable)\n");return;}
+    st.use_file(alias);auto held=std::make_unique<tortilla::settings_lock_holder>(old_target);
+    if(!held->held()){std::printf("settings POSIX: lock-wait alias repoint skipped (writer locking unavailable)\n");return;}
+    const auto unchanged=slurp(old_target);std::atomic<bool> ready=false,done=false;
+    tortilla::settings::saved saved;
+    std::thread writer([&]{tortilla::settings_before_lock_for_tests([&]{ready=true;});
+        tortilla::settings_changes delta;delta.set("pending","new target only");saved=st.apply(delta);done=true;});
+    for(int i=0;i<1000&&!ready;++i)std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));const bool waited=ready&&!done;
+    fs::remove(alias);fs::create_symlink(new_target,alias,ec);held.reset();writer.join();
+    check(waited&&!ec&&saved.committed()&&slurp(old_target)==unchanged&&
+              settings_on_disk(new_target)==std::map<std::string,std::string>{{"new","keep"},{"pending","new target only"}},
+          "settings POSIX: alias repointed while writer waits on old lock restarts and changes only new target");
+}
+#endif
+
 // Windows delegates link/parent substitution to the same native open as readers.
 void settings_path_cases(const std::string& scratch)
 {
@@ -2546,6 +2629,7 @@ void settings_path_cases(const std::string& scratch)
               "settings native: dangling reparse path fails before lock/temp/target writes");
     }
 #else
+    settings_posix_identity_cases(fs::absolute(rap::sys::path_from_utf8(scratch)/"settings-posix-identity"));
     struct path_case
     {
         const char* name;

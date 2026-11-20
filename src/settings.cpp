@@ -49,6 +49,8 @@ using values = std::map<std::string, std::string>;
 using steady = std::chrono::steady_clock;
 
 thread_local settings_test_failure next_failure = settings_test_failure::none;
+thread_local std::function<void(std::intptr_t)> temp_created_for_tests;
+thread_local std::function<void()> before_lock_for_tests;
 bool fail(settings_test_failure at)
 {
     if (next_failure != at) return false;
@@ -95,8 +97,6 @@ struct settings_target
 #ifdef _WIN32
 thread_local fs::path final_candidate_for_tests;
 thread_local bool opened_path_only_for_tests = false;
-thread_local std::function<void(std::intptr_t)> temp_created_for_tests;
-thread_local std::function<void()> before_lock_for_tests;
 
 struct settings_native_handle
 {
@@ -874,12 +874,39 @@ std::FILE* create_temp(const fs::path& target, fs::path& made, std::string& erro
             error = crt_error(e);
             return nullptr;
         }
-        // Kept as private as the file it replaces.
-        if (struct stat st;
-            ::stat(target.c_str(), &st) == 0 && ::fchmod(fd, st.st_mode & 07777) != 0)
+        if (temp_created_for_tests) temp_created_for_tests(fd);
+        // Set the original access identity while still empty and 0600. A setgid
+        // directory may have supplied a different group to the new file.
+        struct stat original{}, created{};
+        bool secure = true;
+        if (::stat(target.c_str(), &original) == 0)
+        {
+            if (::fstat(fd, &created) != 0) { error = crt_error(errno); secure = false; }
+            else if (created.st_uid != original.st_uid)
+            { error = _("The settings owner cannot be preserved."); secure = false; }
+            else
+            {
+                const bool injected = fail(settings_test_failure::group);
+                if (created.st_gid != original.st_gid || injected)
+                {
+                    if (injected || ::fchown(fd, static_cast<uid_t>(-1), original.st_gid) != 0)
+                    { error = crt_error(errno); secure = false; }
+                    else if (::fstat(fd, &created) != 0)
+                    { error = crt_error(errno); secure = false; }
+                    else if (created.st_gid != original.st_gid)
+                    { error = _("The settings group cannot be preserved."); secure = false; }
+                }
+                if (secure && ::fchmod(fd, original.st_mode & 07777) != 0)
+                { error = crt_error(errno); secure = false; }
+            }
+        }
+        else
         {
             const int e = errno;
-            error = crt_error(e);
+            if (e != ENOENT) { error = crt_error(e); secure = false; }
+        }
+        if (!secure)
+        {
             ::close(fd);
             ::unlink(name.c_str());
             return nullptr;
@@ -983,11 +1010,11 @@ void settings_fail_next(settings_test_failure failure) { next_failure = failure;
 #ifdef _WIN32
 void settings_final_path_for_tests(const fs::path& candidate, bool opened_only)
 { final_candidate_for_tests = candidate; opened_path_only_for_tests = opened_only; }
+#endif
 void settings_temp_created_for_tests(std::function<void(std::intptr_t)> observer)
 { temp_created_for_tests = std::move(observer); }
 void settings_before_lock_for_tests(std::function<void()> action)
 { before_lock_for_tests = std::move(action); }
-#endif
 
 #ifndef _WIN32
 settings_path_parts split_settings_path(const fs::path& file)
@@ -1164,11 +1191,9 @@ settings::saved settings::apply_for(const settings_changes& changes, std::chrono
 #endif
             return {error};
         }
-#ifdef _WIN32
         auto before_lock = std::move(before_lock_for_tests);
         before_lock_for_tests = {};
         if (before_lock) before_lock();
-#endif
         std::error_code ec;
         const fs::path folder = target->path.parent_path();
         if (!folder.empty() && !fs::is_directory(folder, ec))
@@ -1203,13 +1228,11 @@ settings::saved settings::apply_for(const settings_changes& changes, std::chrono
         const auto recovered = recover_settings_before_save(file, target->path, deadline);
         if (!recovered.error.empty()) return {recovered.error};
         if (recovered.restored) { retried = true; continue; }
-#ifdef _WIN32
         // Receipts can locate a former target after an alias is repointed.
-        // Only fresh native resolution AFTER cleanup authorizes this delta.
+        // Only fresh configured-path resolution AFTER cleanup authorizes this delta.
         const auto configured_after_recovery = resolve(file, error, &changed);
         if (!configured_after_recovery || configured_after_recovery->path != target->path)
         { retried = true; continue; }
-#endif
         std::string read_error;
         bool version_two = false;
         uint64_t generation = 0;

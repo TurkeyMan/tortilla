@@ -206,16 +206,17 @@ std::filesystem::path settings_lock_file(const std::filesystem::path& file);
 
 // One failure on this test thread: an I/O stage after a real temporary is
 // created, or ENOLCK while taking the writer lock. Normal operation is unchanged.
-enum class settings_test_failure { none, flush, close, replace, no_locks, partial_replace, encrypted_target, unprotected_temp, partial_replace_retained, partial_replace_2, backup_cleanup, backup_retry, cleanup_warning, remove_replaced_retry };
+enum class settings_test_failure { none, flush, close, replace, no_locks, partial_replace, encrypted_target, unprotected_temp, partial_replace_retained, partial_replace_2, backup_cleanup, backup_retry, cleanup_warning, remove_replaced_retry, group };
 void settings_fail_next(settings_test_failure);
 #ifdef _WIN32
-// Test-only final-name substitution/normalization denial and a borrowed temp
-// handle observed immediately after protected CREATE_NEW, before any contents.
+// Test-only final-name substitution/normalization denial.
 void settings_final_path_for_tests(const std::filesystem::path& candidate = {}, bool opened_only = false);
-void settings_temp_created_for_tests(std::function<void(std::intptr_t)>);
-void settings_before_lock_for_tests(std::function<void()>);
 std::vector<std::filesystem::path> settings_backup_files(const std::filesystem::path&);
 #endif
+// Borrowed protected native HANDLE (Windows) or fresh0600 fd (POSIX), before
+// copied permissions or any contents; and an action just before writer locking.
+void settings_temp_created_for_tests(std::function<void(std::intptr_t)>);
+void settings_before_lock_for_tests(std::function<void()>);
 
 // For the tests: holds the writers' lock on `file`, as another process's
 // save would, until destroyed. Check it with held().
