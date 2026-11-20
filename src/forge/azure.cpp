@@ -797,6 +797,16 @@ rap::sys::http_response redirected_outside(std::string_view org, std::string_vie
     return r;
 }
 
+rap::sys::http_response redirected_write(int status, std::string_view url)
+{
+    rap::sys::http_response r;
+    r.url = std::string(url);
+    r.error = rap::i18n::format(_("Azure DevOps answered the change with a redirect (HTTP {0}); "
+                                  "it wasn't followed or sent again"),
+                                std::to_string(status));
+    return r;
+}
+
 std::string repository_web(const forge_repo& r)
 {
     return web_repo(r);

@@ -231,6 +231,67 @@ void run_azure_actions_tests()
     }
     ref_status = "succeeded";
     ref_success = true;
+    {
+        // A write follows no redirect, not even one within the organization:
+        // a 307/308 would send the change again, a 301-303 turn it into a GET.
+        // This transport asks on_redirect as rapport's does, before the hop.
+        int redirect_status = 307;
+        bool hooked = true;
+        const std::string elsewhere =
+            "https://dev.azure.com/fabrikam/My%20Project/_apis/git/elsewhere?api-version=7.1";
+        forge_detail::set_transport(
+            [&](std::string_view method, const std::string& url, std::string_view body,
+                const rap::sys::http_options& options) -> rap::sys::http_response
+            {
+                if (method == "GET") return transport(method, url, body, options);
+                requests.push_back({std::string(method), url, std::string(body)});
+                if (!options.on_redirect)
+                {
+                    hooked = false;
+                    return transport(method, url, body, options);
+                }
+                if (options.on_redirect(url, elsewhere, redirect_status) ==
+                    rap::sys::redirect_action::stop)
+                    return {.status = redirect_status,
+                            .headers = {{"Location", elsewhere}},
+                            .url = url};
+                return transport(method, elsewhere, body, options);  // sent again
+            });
+        const auto writes = [&]
+        {
+            return std::ranges::count_if(requests,
+                                         [](const request& r) { return r.method != "GET"; });
+        };
+        for (const int s : {301, 302, 303, 307, 308})
+        {
+            redirect_status = s;
+            requests.clear();
+            const auto created_again = create_pull_request(forge_kind::azure, repo, n, token);
+            check(!created_again && writes() == 1 && hooked &&
+                      created_again.error().find("redirect (HTTP " + std::to_string(s) + ")") !=
+                          std::string::npos &&
+                      created_again.error().find("wasn't followed or sent again") !=
+                          std::string::npos,
+                  "azure writes: a redirected create stops, sent once and not followed");
+        }
+        redirect_status = 307;
+        requests.clear();
+        const auto merged = merge_pull_request(
+            forge_kind::azure, repo, 42,
+            {.method = merge_method::squash, .head_sha = sha}, token);
+        check(merged.find("wasn't followed") != std::string::npos && writes() == 1 && hooked,
+              "azure writes: a redirected merge PATCH stops, sent once");
+        requests.clear();
+        const auto closed = close_pull_request(forge_kind::azure, repo, 42, "Reason", token);
+        check(closed.find("wasn't followed") != std::string::npos && writes() == 1 && hooked,
+              "azure writes: a redirected close stops at its first write");
+        requests.clear();
+        const auto deleted = delete_branch(forge_kind::azure, repo, "topic/one", token);
+        check(deleted.find("wasn't followed") != std::string::npos && writes() == 1 && hooked &&
+                  requests.size() == 2,
+              "azure writes: a redirected ref update stops, sent once");
+        forge_detail::set_transport(transport);
+    }
     for (const int rejected : {401, 403, 429, 500})
     {
         status = rejected;
