@@ -147,6 +147,10 @@ private:
     std::set<std::int64_t> failures_asked_;
     std::optional<ci_job> failed_job_;  // the job picked in the matrix
     rap::tabs* tabs_ = nullptr;
+    // Whether the repository is forge-capable, as last set on the strip: a
+    // forge-capable one keeps it even with only Commit visible.
+    bool forge_possible_ = false;
+    void set_forge_possible(bool);
     int selected_page_ = 0, remembered_page_ = 0;
     std::uint64_t row_revision_ = 0, user_choice_revision_ = 0;
     struct page_restore

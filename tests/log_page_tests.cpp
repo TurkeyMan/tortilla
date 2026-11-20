@@ -65,6 +65,7 @@ struct forge_panel_test
             p.builds_[sha] = {.asked = true, .answered = true, .local = true};
     }
     static void refresh(forge_panel& p) { p.update(); }
+    static void forge_possible(forge_panel& p, bool on) { p.set_forge_possible(on); }
     static rap::canvas* checks(forge_panel& p) { return p.pr_checks_mark_; }
     static void checks(forge_panel& p, check_state state) { p.prs_[0].pr.pr.checks = state; }
     static rap::canvas* labels(forge_panel& p) { return p.labels_canvas_; }
@@ -786,6 +787,21 @@ public:
         if (page >= 0 && size_t(page) < titles.size()) titles[page] = title;
         inner_.set_page_title(page, title);
     }
+    void set_hide_single_tab(bool on) override
+    {
+        touch();
+        ++g_forge_writes;
+        if (dead) return;
+        ++hide_single_calls;
+        hide_single = on;
+        inner_.set_hide_single_tab(on);
+    }
+    bool hide_single_tab() const override
+    {
+        touch();
+        return !dead && inner_.hide_single_tab();
+    }
+    int hide_single_calls = 0;
     void click(int page)
     {
         const int before = current();
@@ -2089,6 +2105,35 @@ void forge_tabs_tests(rap::ui& ui, const std::string& repo)
     auto* local_tabs = dynamic_cast<kept_pages*>(forge_panel_test::pages(local));
     check(local_tabs && local_tabs->current() == 0 && !local_tabs->strip_shown(),
           "forge tabs: repository without a forge gives Commit the entire area");
+    // Eligibility as pr_watch reads it again (an account added, a remote
+    // changed): the strip follows it live, only on a change.
+    {
+        const std::vector<forge_remote> eligible{
+            {.name = "origin",
+             .repo = {.host = "github.com", .owner = "example", .name = "repo"},
+             .account = {.kind = forge_kind::github, .host = "github.com"}}};
+        const int page_before = local_tabs->current(), selected = local.selected_page(),
+                  remembered = local.remembered_page();
+        local.set_pull_requests({}, eligible);
+        check(local_tabs->hide_single_calls == 1 && !local_tabs->hide_single_tab() &&
+                  local_tabs->strip_shown() && local_tabs->page_visible(0) &&
+                  !local_tabs->page_visible(1) && !local_tabs->page_visible(2) &&
+                  !local_tabs->page_visible(3),
+              "forge tabs: becoming forge-capable shows the strip with only Commit");
+        local.set_pull_requests({}, eligible);
+        check(local_tabs->hide_single_calls == 1,
+              "forge tabs: unchanged eligibility makes no strip call");
+        local.set_pull_requests({}, {});
+        check(local_tabs->hide_single_calls == 2 && local_tabs->hide_single_tab() &&
+                  !local_tabs->strip_shown() && local_tabs->page_visible(0),
+              "forge tabs: losing forge eligibility hides the strip again");
+        local.set_pull_requests({}, {});
+        check(local_tabs->hide_single_calls == 2,
+              "forge tabs: unchanged ineligibility makes no strip call");
+        check(local_tabs->current() == page_before && local.selected_page() == selected &&
+                  local.remembered_page() == remembered && local_tabs->user_changes == 0,
+              "forge tabs: eligibility changes keep the current page and choice");
+    }
     local.unbind();
     local_window.reset();
 
@@ -2118,6 +2163,23 @@ void forge_tabs_tests(rap::ui& ui, const std::string& repo)
     panel.show_commit("one");
     check(tabs()->current() == 2 && panel.selected_page() == 2,
           "forge tabs: a new log row with CI keeps the chosen CI page");
+    {
+        // Several pages visible: the option changes, the page and choice stay.
+        const int calls = tabs()->hide_single_calls, remembered = panel.remembered_page();
+        forge_panel_test::forge_possible(panel, false);
+        check(tabs()->hide_single_calls == calls + 1 && tabs()->hide_single_tab() &&
+                  tabs()->strip_shown() && tabs()->current() == 2 && panel.selected_page() == 2 &&
+                  panel.remembered_page() == remembered,
+              "forge tabs: losing eligibility with pages shown keeps the chosen page");
+        forge_panel_test::forge_possible(panel, false);
+        check(tabs()->hide_single_calls == calls + 1,
+              "forge tabs: the same eligibility again makes no strip call");
+        forge_panel_test::forge_possible(panel, true);
+        check(tabs()->hide_single_calls == calls + 2 && !tabs()->hide_single_tab() &&
+                  tabs()->current() == 2 && panel.selected_page() == 2 &&
+                  panel.remembered_page() == remembered,
+              "forge tabs: regaining eligibility keeps the chosen page");
+    }
     g_forge_writes = g_forge_pages = g_forge_invalidates = 0;
     forge_panel_test::refresh(panel);
     check(g_forge_writes == 0 && g_forge_pages == 0 && g_forge_invalidates == 0,

@@ -714,6 +714,7 @@ rap::node forge_panel::layout(rap::node commit)
     // Reuse the query path's eligibility, including anonymous public forges.
     // A forge-capable repository keeps its navigation strip on every row.
     const bool forge_possible = !forge_remotes(host_.workdir).empty();
+    forge_possible_ = forge_possible;  // later changes: set_forge_possible
     page_guard_.open();
     // The builder below installs this icon even while the page is hidden.
     build_tab_icon_state_ = check_state::pending;
@@ -916,12 +917,24 @@ rap::node forge_panel::layout(rap::node commit)
         .on_changed(page_guard_([this](int page) { user_page_changed(page); }));
 }
 
+// The strip follows eligibility live; only on a change. Unbuilt, the next
+// layout() asks again.
+void forge_panel::set_forge_possible(bool possible)
+{
+    if (possible == forge_possible_) return;
+    forge_possible_ = possible;
+    if (tabs_) tabs_->set_hide_single_tab(!possible);
+}
+
 // -- which commits are a PR's -------------------------------------------------
 
 void forge_panel::set_pull_requests(const std::vector<open_pr>& prs,
                                     const std::vector<forge_remote>& remotes)
 {
     remotes_ = remotes;
+    // pr_watch's remotes are forge_remotes(), read again on each ask: an
+    // account added or removed, a remote changed.
+    set_forge_possible(!remotes.empty());
     // A PR's head branch as fetched from the repository it's in, and its
     // base as fetched from where it's open.
     const auto heads = match_pull_requests(remotes, prs);

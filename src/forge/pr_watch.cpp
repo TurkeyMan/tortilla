@@ -277,12 +277,15 @@ void pr_watch::ask(bool forced)
         return;
     }
     timer_.reset();
+    const bool had_remotes = !remotes_.empty();
     remotes_ = forge_remotes(workdir_);
     if (remotes_.empty())
     {
         hints_.clear();
         tips_.clear();
-        if (!prs_.empty())
+        // The last forge remote gone (an account removed, a remote changed):
+        // told even with no PRs, so the log follows its forge eligibility.
+        if (!prs_.empty() || had_remotes)
         {
             prs_.clear();
             if (changed_) changed_();
