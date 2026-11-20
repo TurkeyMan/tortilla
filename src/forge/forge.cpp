@@ -2226,13 +2226,16 @@ std::string azure_organization(std::string_view token, std::string_view url)
 }
 
 // Every request goes through here: refused unsent when its token isn't for
-// `url`. An Azure credential's request decides each redirect with
+// `url`. An Azure credential's read decides each redirect with
 // azure::redirect_decision: on within its organization; stopped, unsent, at
 // another organization (every organization shares https://dev.azure.com,
 // where the transport keeps Authorization on) or a downgrade to http; on to
 // another host (a signed download) without credentials, then and after.
+// An Azure write (anything but GET or HEAD) follows no redirect at all, even
+// within the organization: a 307/308 would send the change again, a 301-303
+// turn it into a GET.
 rap::sys::http_response guarded(
-    const std::string& url, const rap::sys::http_options& options,
+    std::string_view method, const std::string& url, const rap::sys::http_options& options,
     const std::function<rap::sys::http_response(const rap::sys::http_options&)>& send)
 {
     using rap::sys::redirect_action;
@@ -2241,11 +2244,19 @@ rap::sys::http_response guarded(
     auto clean = clean_options(options);
     const std::string org = azure_organization(token, url);
     if (org.empty()) return send(clean);
+    const bool write = method != "GET" && method != "HEAD";
     auto outside = std::make_shared<bool>(false);
     auto stripped = std::make_shared<bool>(false);
-    clean.on_redirect = [org, outside, stripped, inner = std::move(clean.on_redirect)](
-                            std::string_view from, std::string_view to, int status)
+    auto write_redirected = std::make_shared<int>(0);
+    clean.on_redirect = [org, write, outside, stripped, write_redirected,
+                         inner = std::move(clean.on_redirect)](std::string_view from,
+                                                               std::string_view to, int status)
     {
+        if (write)
+        {
+            *write_redirected = status ? status : 300;
+            return redirect_action::stop;
+        }
         redirect_action action = azure::redirect_decision(org, from, to);
         if (action == redirect_action::stop)
         {
@@ -2265,6 +2276,7 @@ rap::sys::http_response guarded(
     };
     auto reply = send(clean);
     if (*outside) return azure::redirected_outside(org, url);
+    if (*write_redirected) return azure::redirected_write(*write_redirected, url);
     return reply;
 }
 }  // namespace
@@ -2272,7 +2284,7 @@ rap::sys::http_response guarded(
 rap::sys::http_response http_request(std::string_view method, const std::string& url,
                                      std::string_view body, const rap::sys::http_options& options)
 {
-    return guarded(url, options,
+    return guarded(method, url, options,
                    [&](const rap::sys::http_options& clean)
                    {
                        if (const transport f = faked()) return f(method, url, body, clean);
@@ -2282,7 +2294,7 @@ rap::sys::http_response http_request(std::string_view method, const std::string&
 
 rap::sys::http_response http_get(const std::string& url, const rap::sys::http_options& options)
 {
-    return guarded(url, options,
+    return guarded("GET", url, options,
                    [&](const rap::sys::http_options& clean)
                    {
                        if (const transport f = faked()) return f("GET", url, {}, clean);
@@ -2293,7 +2305,7 @@ rap::sys::http_response http_get(const std::string& url, const rap::sys::http_op
 rap::sys::http_response http_download(const std::string& url, const std::filesystem::path& to,
                                       const rap::sys::http_options& options)
 {
-    return guarded(url, options,
+    return guarded("GET", url, options,
                    [&](const rap::sys::http_options& clean)
                    {
                        if (const transport f = faked())

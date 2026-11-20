@@ -30,6 +30,9 @@ rap::sys::redirect_action redirect_decision(std::string_view org, std::string_vi
 std::string scope_organization(std::string_view scope);
 // What a request stopped at such a redirect answers: no response, and why.
 rap::sys::http_response redirected_outside(std::string_view org, std::string_view url);
+// What a write (POST, PATCH, ...) stopped at a redirect answers: none of
+// them is followed, so a change is sent once.
+rap::sys::http_response redirected_write(int status, std::string_view url);
 std::string basic_token(std::string_view);
 std::string basic_pair(std::string_view username, std::string_view password);
 std::optional<forge_repo> remote(std::string_view host, std::string_view path);

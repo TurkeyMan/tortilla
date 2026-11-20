@@ -291,10 +291,12 @@ comment or deletion was accessed. The first live use must establish the
 organization's policy permissions and completion behavior; any reported
 service response should be reproduced offline without asking for secrets.
 
-### Redirect safety dependency (draft blocker)
+### Redirect safety
 
-The current Rapport pin does not expose redirect control. Before this PR is
-ready, the pending Rapport #111 API must land and be pinned: every mutation
-must reject 301/302/303/307/308 redirects before any resend, even within the
-same organization. Auth filtering alone cannot enforce single-send writes.
-The original green CI run is not evidence that this blocker is resolved.
+Every Azure mutation (POST, PATCH and the refs update) follows no redirect:
+Rapport's per-hop `on_redirect` stops 301/302/303/307/308 before any resend,
+even within the same organization, and the write fails with `Azure DevOps
+answered the change with a redirect (HTTP N); it wasn't followed or sent
+again`. Reads follow the organization rule above (signed downloads on other
+hosts go on without credentials). The
+Rapport pin is a development pin of Rapport #114 until it lands on master.
