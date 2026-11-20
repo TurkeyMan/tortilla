@@ -15,8 +15,14 @@ and legacy visualstudio.com remotes normalize to the same organization.
 Each path component is decoded once and independently encoded for API URLs.
 Encoded separators and dot segments are rejected. Basic authentication uses
 an empty username and PAT password, restricted to that organization's path.
-Redirects retain Rapport's existing origin protections. Signed artifact URLs
-outside the organization are fetched without the PAT.
+Every authenticated request checks each redirect before it is sent: a hop is
+followed only to https://dev.azure.com/{organization}/... (its first path
+segment after percent-decoding and resolving dot segments, in any case) or
+the legacy https://{organization}.visualstudio.com. Anything else (another
+organization on the shared dev.azure.com origin, an encoded slash or
+backslash, a path that climbs out, another host, port or scheme) stops
+before the hop, with the error `Azure DevOps redirected outside organization
+X`. Requests without credentials are not checked.
 
 Identity uses only the documented `connectionData.authenticatedUser.id` as
 its stable login and `providerDisplayName` (or `customDisplayName`) as the
@@ -211,9 +217,10 @@ responses. D-series cases deliberately inject unsuccessful HTTP responses.
 - Log-list lineCount selects the final approximately 100 lines, then the
   existing log-tail helper keeps 80. Each failure retrieval is bounded;
   missing log references leave issues available without fabricating a log.
-- Signed artifact URLs outside the organization receive no PAT. Rapport
-  retains its origin-based redirect protection; it does not expose a
-  per-path redirect callback. There are no authenticated identity-image
+- Artifact URLs outside the organization receive no PAT (refused before
+  sending), and redirects out of the organization stop at Rapport's per-hop
+  `on_redirect` (`azure::redirect_in_scope`, applied by `forge_detail`'s
+  guard to every authenticated request). There are no authenticated identity-image
   requests. No development/test credential-store probing or live Azure requests are used.
 
 Existing per-row completed/error results remain cached by the forge panel.

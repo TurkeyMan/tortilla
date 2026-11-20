@@ -100,6 +100,8 @@ void run_azure_tests()
                        options.headers,
                        std::pair<std::string, std::string>{"Authorization", "Basic " + encoded}) !=
                    options.headers.end();
+        // Every authenticated Azure request is held to its organization's redirects.
+        auth_ok &= bool(options.on_redirect);
         urls_ok &= method == "GET" && url.starts_with("https://dev.azure.com/fabrikam/") &&
                    (url.find("api-version=7.1") != std::string::npos ||
                     url.ends_with("/_apis/connectionData")) &&
@@ -504,6 +506,149 @@ void run_azure_tests()
               preserved == "existing artifact",
           "azure: HTTP200 JSON error never replaces existing artifact content");
     std::filesystem::remove(destination);
+
+    // Redirects: every organization shares https://dev.azure.com, so a hop is
+    // followed only while it stays in the credential's organization.
+    {
+        const std::string from = "https://dev.azure.com/fabrikam/My%20Project/_apis/git?x=1";
+        const auto in = [&](std::string_view to) { return azure::redirect_in_scope("fabrikam", from, to); };
+        check(in("https://dev.azure.com/fabrikam/My%20Project/_apis/other"),
+              "azure redirect: same organization is followed");
+        check(!in("https://dev.azure.com/contoso/My%20Project/_apis/git") &&
+                  !in("https://dev.azure.com/fabrikam-other/x") &&
+                  !in("https://dev.azure.com/fabrika/x"),
+              "azure redirect: another organization stops");
+        check(in("https://dev.azure.com/FABRIKAM/x") && in("https://DEV.AZURE.COM/FabriKam/x") &&
+                  in("https://dev.azure.com:443/fabrikam/x") &&
+                  in("https://dev.azure.com/fabri%6Bam/x") &&
+                  in("https://dev.azure.com/fabri%4Bam/x") &&
+                  !in("https://dev.azure.com/contos%6F/x"),
+              "azure redirect: organization compared case-insensitively after percent-decoding");
+        check(!in("https://dev.azure.com/fabrikam/../contoso/x") &&
+                  !in("https://dev.azure.com/fabrikam/%2e%2e/contoso") &&
+                  !in("https://dev.azure.com/fabrikam/%2E%2E/contoso/x") &&
+                  !in("https://dev.azure.com/fabrikam/.%2e/contoso/x") &&
+                  !in("https://dev.azure.com/fabrikam/x/../../contoso/x") &&
+                  !in("https://dev.azure.com/fabrikam/..") &&
+                  !in("https://dev.azure.com/../fabrikam/x"),
+              "azure redirect: dot segments that leave the organization stop");
+        check(in("https://dev.azure.com/fabrikam/./x") &&
+                  in("https://dev.azure.com/fabrikam/%2e/x") &&
+                  in("https://dev.azure.com/fabrikam/x/../y") &&
+                  in("https://dev.azure.com/./fabrikam/x") &&
+                  in("https://dev.azure.com/fabrikam/x?next=/../contoso#/../contoso"),
+              "azure redirect: dot segments within the organization, and queries, are followed");
+        check(!in("https://dev.azure.com/fabrikam%2fcontoso") &&
+                  !in("https://dev.azure.com/fabrikam%2Fcontoso/x") &&
+                  !in("https://dev.azure.com/fabrikam%5ccontoso/x") &&
+                  !in("https://dev.azure.com/fabrikam\\..\\contoso/x") &&
+                  !in("https://dev.azure.com/fabrikam/x%2f..%2f..%2fcontoso") &&
+                  !in("https://dev.azure.com/fabrikam%00/x") &&
+                  !in("https://dev.azure.com/fabrikam%zz/x") &&
+                  !in("https://dev.azure.com/fabrikam%2"),
+              "azure redirect: encoded separators, backslashes and bad escapes stop");
+        check(!in("https://dev.azure.com/") && !in("https://dev.azure.com") &&
+                  !in("https://dev.azure.com//fabrikam/x") &&
+                  !in("https://dev.azure.com?fabrikam"),
+              "azure redirect: an empty organization stops");
+        check(!in("http://dev.azure.com/fabrikam/x") &&
+                  !in("https://dev.azure.com:8443/fabrikam/x") &&
+                  !in("https://dev.azure.com.example/fabrikam/x") &&
+                  !in("https://dev.azure.com@example.com/fabrikam/x") &&
+                  !in("https://example.com/fabrikam/x") && !in("/fabrikam/x") &&
+                  !in("ftp://dev.azure.com/fabrikam/x"),
+              "azure redirect: another scheme, port or host stops");
+        check(in("https://fabrikam.visualstudio.com/My%20Project/_apis/git") &&
+                  in("https://FABRIKAM.visualstudio.com/x") &&
+                  !in("https://contoso.visualstudio.com/fabrikam/x") &&
+                  !in("https://artifacts.fabrikam.visualstudio.com/x") &&
+                  !in("https://visualstudio.com/fabrikam/x") &&
+                  !in("http://fabrikam.visualstudio.com/x"),
+              "azure redirect: a legacy host is in its own organization only");
+        check(azure::redirect_in_scope("fabrikam", "https://fabrikam.visualstudio.com/x",
+                                       "https://dev.azure.com/fabrikam/y") &&
+                  !azure::redirect_in_scope("fabrikam", "https://fabrikam.visualstudio.com/x",
+                                            "https://dev.azure.com/contoso/y"),
+              "azure redirect: from a legacy host, dev.azure.com of the same organization only");
+        check(in("") && in("#section") &&
+                  !azure::redirect_in_scope("fabrikam", "https://dev.azure.com/contoso/x", "") &&
+                  !azure::redirect_in_scope("fabrikam", "https://dev.azure.com/contoso/x", "#a"),
+              "azure redirect: an empty or fragment-only Location stays on the current URL");
+        check(!azure::redirect_in_scope("", from, from),
+              "azure redirect: no organization, nothing in it");
+        check(azure::scope_organization("https://dev.azure.com/fabrikam/") == "fabrikam" &&
+                  azure::scope_organization("dev.azure.com/Fabrikam") == "fabrikam",
+              "azure redirect: an account scope's organization");
+    }
+    {
+        // The decision is applied to each hop: this transport plays a chain of
+        // redirects, asking on_redirect before each, as rapport's does.
+        std::vector<std::string> chain;
+        std::vector<std::string> sent;
+        bool hooked = true;
+        forge_detail::set_transport(
+            [&](std::string_view, const std::string& url, std::string_view,
+                const rap::sys::http_options& options)
+            {
+                sent.push_back(url);
+                rap::sys::http_response r{.status = 200, .body = R"({"value":[]})", .url = url};
+                std::string at = url;
+                for (const std::string& to : chain)
+                {
+                    if (!options.on_redirect)
+                    {
+                        hooked = false;
+                        break;
+                    }
+                    const auto action = options.on_redirect(at, to, 302);
+                    if (action == rap::sys::redirect_action::stop)
+                        return rap::sys::http_response{
+                            .status = 302, .headers = {{"Location", to}}, .url = at};
+                    sent.push_back(to);
+                    at = to;
+                }
+                r.url = at;
+                return r;
+            });
+        const std::string start = "https://dev.azure.com/fabrikam/My%20Project/_apis/git?x=1";
+        const rap::sys::http_options signed_in{
+            .headers = api_headers(forge_kind::azure, "azure-fixture-pat")};
+        chain = {"https://dev.azure.com/fabrikam/a", "https://dev.azure.com/FabriKam/./b"};
+        sent.clear();
+        auto r = forge_detail::http_get(start, signed_in);
+        check(r.status == 200 && r.error.empty() && sent.size() == 3 && hooked,
+              "azure redirect: hops within the organization are each followed");
+        chain = {"https://dev.azure.com/fabrikam/a", "https://dev.azure.com/fabrikam/../contoso/b",
+                 "https://dev.azure.com/contoso/c"};
+        sent.clear();
+        r = forge_detail::http_get(start, signed_in);
+        check(r.status == 0 && sent.size() == 2 &&
+                  r.error.find("redirected outside organization fabrikam") != std::string::npos,
+              "azure redirect: the first hop out of the organization stops, unsent, as an error");
+        chain = {"https://dev.azure.com/contoso/a"};
+        sent.clear();
+        r = forge_detail::http_request("GET", start, {}, signed_in);
+        check(r.status == 0 && sent.size() == 1 && !r.error.empty(),
+              "azure redirect: http_request is guarded too");
+        const auto path = std::filesystem::temp_directory_path() / "tortilla-azure-redirect.zip";
+        std::filesystem::remove(path);
+        sent.clear();
+        r = forge_detail::http_download(start, path, signed_in);
+        check(r.status == 0 && sent.size() == 1 && !std::filesystem::exists(path),
+              "azure redirect: downloads are guarded too, nothing saved");
+        const auto stopped = open_pull_requests(forge_kind::azure, repo, "azure-fixture-pat");
+        check(!stopped &&
+                  stopped.error().find("redirected outside organization fabrikam") !=
+                      std::string::npos,
+              "azure redirect: a stopped redirect surfaces through the API error");
+        chain = {"https://dev.azure.com/contoso/a"};
+        sent.clear();
+        hooked = true;
+        r = forge_detail::http_get(start, {.headers = api_headers(forge_kind::azure, "")});
+        check(!hooked && r.status == 200,
+              "azure redirect: a request without credentials needs no hook");
+        std::filesystem::remove(path);
+    }
     forge_detail::set_transport({});
 }
 }  // namespace tortilla::test

@@ -2211,38 +2211,90 @@ bool token_allowed(std::string_view token, std::string_view url)
         });
 }
 
+namespace
+{
+// The organization of the Azure scope `token` was given for that `url` is
+// in, or "" (no token, or not an Azure one).
+std::string azure_organization(std::string_view token, std::string_view url)
+{
+    if (token.empty()) return {};
+    std::lock_guard lock(gate_mutex);
+    const auto it = bound.find(token);
+    if (it == bound.end()) return {};
+    for (const std::string& scope : it->second)
+        if (scope.starts_with("https://dev.azure.com/") && azure::scope_allows(scope, url))
+            return azure::scope_organization(scope);
+    return {};
+}
+
+// Every request goes through here: refused unsent when its token isn't for
+// `url`; an Azure credential's request follows only the redirects that stay
+// in its organization and stops at any other, unsent (every organization
+// shares https://dev.azure.com, where the transport keeps Authorization on).
+rap::sys::http_response guarded(
+    const std::string& url, const rap::sys::http_options& options,
+    const std::function<rap::sys::http_response(const rap::sys::http_options&)>& send)
+{
+    const std::string token = token_in(options.headers);
+    if (!token_allowed(token, url)) return refused(url);
+    auto clean = clean_options(options);
+    const std::string org = azure_organization(token, url);
+    if (org.empty()) return send(clean);
+    auto outside = std::make_shared<bool>(false);
+    clean.on_redirect = [org, outside, inner = std::move(clean.on_redirect)](
+                            std::string_view from, std::string_view to, int status)
+    {
+        if (!azure::redirect_in_scope(org, from, to))
+        {
+            *outside = true;
+            return rap::sys::redirect_action::stop;
+        }
+        return inner ? inner(from, to, status) : rap::sys::redirect_action::follow;
+    };
+    auto reply = send(clean);
+    if (*outside) return azure::redirected_outside(org, url);
+    return reply;
+}
+}  // namespace
+
 rap::sys::http_response http_request(std::string_view method, const std::string& url,
                                      std::string_view body, const rap::sys::http_options& options)
 {
-    if (!token_allowed(token_in(options.headers), url)) return refused(url);
-    const auto clean = clean_options(options);
-    if (const transport f = faked()) return f(method, url, body, clean);
-    return rap::sys::http_request(method, url, body, clean);
+    return guarded(url, options,
+                   [&](const rap::sys::http_options& clean)
+                   {
+                       if (const transport f = faked()) return f(method, url, body, clean);
+                       return rap::sys::http_request(method, url, body, clean);
+                   });
 }
 
 rap::sys::http_response http_get(const std::string& url, const rap::sys::http_options& options)
 {
-    if (!token_allowed(token_in(options.headers), url)) return refused(url);
-    const auto clean = clean_options(options);
-    if (const transport f = faked()) return f("GET", url, {}, clean);
-    return rap::sys::http_get(url, clean);
+    return guarded(url, options,
+                   [&](const rap::sys::http_options& clean)
+                   {
+                       if (const transport f = faked()) return f("GET", url, {}, clean);
+                       return rap::sys::http_get(url, clean);
+                   });
 }
 
 rap::sys::http_response http_download(const std::string& url, const std::filesystem::path& to,
                                       const rap::sys::http_options& options)
 {
-    if (!token_allowed(token_in(options.headers), url)) return refused(url);
-    const auto clean = clean_options(options);
-    if (const transport f = faked())
-    {
-        auto r = f("GET", url, {}, clean);
-        if (options.sink && !options.sink(r.body)) r.error = "stopped";
-        if (r.status >= 200 && r.status < 300 && r.error.empty())
-            std::ofstream(to, std::ios::binary) << r.body;
-        r.body.clear();
-        return r;
-    }
-    return rap::sys::http_download(url, to, clean);
+    return guarded(url, options,
+                   [&](const rap::sys::http_options& clean)
+                   {
+                       if (const transport f = faked())
+                       {
+                           auto r = f("GET", url, {}, clean);
+                           if (clean.sink && !clean.sink(r.body)) r.error = "stopped";
+                           if (r.status >= 200 && r.status < 300 && r.error.empty())
+                               std::ofstream(to, std::ios::binary) << r.body;
+                           r.body.clear();
+                           return r;
+                       }
+                       return rap::sys::http_download(url, to, clean);
+                   });
 }
 
 void set_transport(transport t)

@@ -388,6 +388,102 @@ bool scope_allows(std::string_view scope, std::string_view url)
     return !segments(path.substr(0, path.find_first_of("?#"))).empty();
 }
 
+namespace
+{
+std::string lowered(std::string s)
+{
+    std::ranges::transform(s, s.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+    return s;
+}
+
+// The organization an https URL is in, read the way a server would: the
+// legacy host's label, or dev.azure.com's first path segment after
+// percent-decoding and resolving "." and ".." (RFC 3986 5.2.4). None when
+// that can't be read one way only: an encoded slash or backslash, a raw
+// backslash or control character, bad escapes, a climb above the root.
+std::optional<std::string> url_organization(std::string_view url)
+{
+    const auto o = rap::sys::url_origin(url);
+    if (!o || o->scheme != "https" || o->port != 443) return {};
+    constexpr std::string_view legacy = ".visualstudio.com";
+    if (o->host.ends_with(legacy))
+    {
+        std::string label = o->host.substr(0, o->host.size() - legacy.size());
+        if (label.empty() || label.find('.') != std::string::npos) return {};
+        return label;  // url_origin's host is in lower case
+    }
+    if (o->host != "dev.azure.com") return {};
+    const size_t authority = url.find("://");
+    if (authority == std::string_view::npos) return {};
+    const size_t at = url.find_first_of("/?#", authority + 3);
+    if (at == std::string_view::npos || url[at] != '/') return {};
+    std::string_view path = url.substr(at + 1);
+    path = path.substr(0, path.find_first_of("?#"));
+    std::vector<std::string> kept;
+    for (;;)
+    {
+        const size_t slash = path.find('/');
+        const std::string_view piece = path.substr(0, slash);
+        std::string segment;
+        for (size_t i = 0; i < piece.size(); ++i)
+        {
+            unsigned char c = static_cast<unsigned char>(piece[i]);
+            if (c == '%')
+            {
+                unsigned v = 0;
+                if (i + 2 >= piece.size()) return {};
+                const auto [end, error] =
+                    std::from_chars(piece.data() + i + 1, piece.data() + i + 3, v, 16);
+                if (error != std::errc{} || end != piece.data() + i + 3) return {};
+                c = static_cast<unsigned char>(v);
+                i += 2;
+                if (c == '/') return {};
+            }
+            if (c == '\\' || c < 32 || c == 127) return {};
+            segment += char(c);
+        }
+        if (segment == "..")
+        {
+            if (kept.empty()) return {};
+            kept.pop_back();
+        }
+        else if (segment != ".")
+            kept.push_back(std::move(segment));
+        if (slash == std::string_view::npos) break;
+        path.remove_prefix(slash + 1);
+    }
+    if (kept.empty() || kept.front().empty()) return {};
+    return lowered(std::move(kept.front()));
+}
+}  // namespace
+
+bool redirect_in_scope(std::string_view org, std::string_view from_url, std::string_view to_url)
+{
+    // Location: "" or "#x" is the same document (RFC 3986 5.2.2).
+    const std::string_view target = to_url.empty() || to_url.front() == '#' ? from_url : to_url;
+    const auto in = url_organization(target);
+    return in && !org.empty() && *in == lowered(std::string(org));
+}
+
+std::string scope_organization(std::string_view scope)
+{
+    constexpr std::string_view prefix = "https://dev.azure.com/";
+    if (scope.starts_with(prefix)) scope.remove_prefix(prefix.size());
+    else if (scope.starts_with("dev.azure.com/")) scope.remove_prefix(14);
+    while (scope.ends_with('/')) scope.remove_suffix(1);
+    return lowered(decoded(scope));
+}
+
+rap::sys::http_response redirected_outside(std::string_view org, std::string_view url)
+{
+    rap::sys::http_response r;
+    r.url = std::string(url);
+    r.error = rap::i18n::format(_("Azure DevOps redirected outside organization {0}; the "
+                                  "sign-in wasn't sent there."),
+                                std::string(org));
+    return r;
+}
+
 std::string repository_web(const forge_repo& r)
 {
     return web_repo(r);

@@ -11,6 +11,18 @@ std::string account_host(const forge_repo&);
 std::string project_api(const forge_repo&);
 std::string repository_api(const forge_repo&);
 bool scope_allows(std::string_view scope, std::string_view url);
+// Whether a redirect of a request made with organization `org`'s credential
+// stays in that organization: https://dev.azure.com/{org}/... (the first
+// path segment once percent-decoded and its dot segments resolved, in any
+// case) or the legacy https://{org}.visualstudio.com. An encoded slash or a
+// backslash, a path that climbs out of the organization, an empty
+// organization, another host, port or scheme: not. An empty or
+// fragment-only `to_url` stays at `from_url`.
+bool redirect_in_scope(std::string_view org, std::string_view from_url, std::string_view to_url);
+// The organization a dev.azure.com/{org} account scope names, in lower case.
+std::string scope_organization(std::string_view scope);
+// What a request stopped at such a redirect answers: no response, and why.
+rap::sys::http_response redirected_outside(std::string_view org, std::string_view url);
 std::string basic_token(std::string_view);
 std::string basic_pair(std::string_view username, std::string_view password);
 std::optional<forge_repo> remote(std::string_view host, std::string_view path);
