@@ -640,6 +640,11 @@ DWORD remove_backup(const fs::path& backup, const FILE_ID_INFO& placeholder,
 // returning an error before the operation under test has changed any names.
 DWORD native_replace(const fs::path& to, const fs::path& from, const fs::path& backup)
 {
+    if (fail(settings_test_failure::remove_replaced_retry))
+    {
+        if (!DeleteFileW(backup.c_str())) return GetLastError();
+        return ERROR_UNABLE_TO_REMOVE_REPLACED;
+    }
     if (fail(settings_test_failure::backup_retry))
     {
         if (!DeleteFileW(backup.c_str())) return GetLastError();
@@ -774,7 +779,12 @@ settings::saved replace(const fs::path& from, const fs::path& to, const fs::path
                 _("Couldn't save settings to {0}: {1}. Last-good settings restored or retained; attempted data retained at {2}."),
                 shown(to), native_error(e), shown(from));
         }
-        if (attempt == 200 || !sharing_error(e) || steady::now() >= deadline)
+        // ReplaceFile's 1175 retains both original names, so retry the same
+        // transaction under this lock/deadline, including backup re-reservation.
+        // https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-replacefilew#return-value
+        const bool retry = sharing_error(e) ||
+                           (replacement.existing && e == ERROR_UNABLE_TO_REMOVE_REPLACED);
+        if (attempt == 200 || !retry || steady::now() >= deadline)
         {
             std::string why = native_error(e);
             if (!backup.empty())

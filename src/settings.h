@@ -206,7 +206,7 @@ std::filesystem::path settings_lock_file(const std::filesystem::path& file);
 
 // One failure on this test thread: an I/O stage after a real temporary is
 // created, or ENOLCK while taking the writer lock. Normal operation is unchanged.
-enum class settings_test_failure { none, flush, close, replace, no_locks, partial_replace, encrypted_target, unprotected_temp, partial_replace_retained, partial_replace_2, backup_cleanup, backup_retry, cleanup_warning };
+enum class settings_test_failure { none, flush, close, replace, no_locks, partial_replace, encrypted_target, unprotected_temp, partial_replace_retained, partial_replace_2, backup_cleanup, backup_retry, cleanup_warning, remove_replaced_retry };
 void settings_fail_next(settings_test_failure);
 #ifdef _WIN32
 // Test-only final-name substitution/normalization denial and a borrowed temp

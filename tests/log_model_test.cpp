@@ -1682,6 +1682,12 @@ int settings_child(char** argv)
     {
         st.set(tag + ".key" + std::to_string(i), std::to_string(i));
         st.add_to_history("shared.history", tag + "-" + std::to_string(i), 1000);
+        const auto report = st.take_save_report();
+        if (report.failed())
+        {
+            std::fprintf(stderr, "settings child save failed: %s\n", report.message.c_str());
+            return 4;
+        }
     }
     return 0;
 }
@@ -2096,6 +2102,17 @@ void settings_windows_security_cases(const std::filesystem::path& root)
     check(st.apply(backup_retry).committed() && st.value("backup-retry") == "reserved again" &&
               slurp(backup_names.front()) == "preexisting recovery sentinel\n",
           "settings recovery: sharing retry recreates a lost protected reservation without overwriting foreign backups");
+    st.add_to_history("native-retry-history", "earlier", 1000);
+    tortilla::settings_changes history_retry;
+    history_retry.add_to_history("native-retry-history", "after-1175", 1000);
+    tortilla::settings_fail_next(tortilla::settings_test_failure::remove_replaced_retry);
+    const auto history_saved=st.apply(history_retry);
+    st.use_file(file);
+    check(history_saved.committed()&&st.history("native-retry-history")==
+              std::vector<std::string>{"after-1175","earlier"}&&
+              st.value("unrelated-recovery")=="keep across rollback"&&
+              slurp(backup_names.front())=="preexisting recovery sentinel\n",
+          "settings recovery: native1175 retries with a new owned reservation and commits every history entry");
     tortilla::settings_changes published;
     published.set("published-before-cleanup-error", "yes");
     tortilla::settings_fail_next(tortilla::settings_test_failure::backup_cleanup);
