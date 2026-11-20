@@ -70,6 +70,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <cerrno>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -84,6 +85,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <system_error>
 #include <thread>
 #include <vector>
 
@@ -1851,6 +1853,86 @@ void settings_across_processes(const std::string& scratch)
               "settings: the next save after a failed one saves");
     }
 
+    // Failures after creation must never promote partial/new contents, must
+    // clean their own temporary, and must retain the first useful reason.
+    for (auto fault : {tortilla::settings_test_failure::flush,
+                       tortilla::settings_test_failure::close,
+                       tortilla::settings_test_failure::replace})
+    {
+        const fs::path file = dir / "io-fails";
+        write_text(file, "kept=1\n");
+        st.use_file(file);
+        tortilla::settings_changes c;
+        c.set("lost", "1");
+        tortilla::settings_fail_next(fault);
+        const auto saved = st.apply(c);
+        bool clean = true;
+        for (const auto& temp : tortilla::settings_temp_files(file))
+            clean = clean && !fs::exists(temp);
+        check(!saved && saved.error.find(std::generic_category().message(EIO)) != std::string::npos &&
+                  slurp(file) == "kept=1\n" &&
+                  st.value("kept") == "1" && !st.contains("lost") && clean,
+              fault == tortilla::settings_test_failure::flush
+                  ? "settings: flush failure preserves file/copy, reports reason and removes temp"
+              : fault == tortilla::settings_test_failure::close
+                  ? "settings: close failure preserves file/copy, reports reason and removes temp"
+                  : "settings: replace failure preserves file/copy, reports reason and removes temp");
+        check(st.apply(c) && st.value("lost") == "1",
+              "settings: a save succeeds after an I/O failure");
+    }
+
+    // Convenience calls cannot return an error: retain it for the next window
+    // and log immediately, without changing the previous saved value.
+    {
+        const fs::path file = dir / "reported";
+        write_text(file, "kept=1\n");
+        st.use_file(file);
+        (void)st.take_save_error();
+        tortilla::settings_fail_next(tortilla::settings_test_failure::close);
+        st.set("lost", "1");
+        check(!st.take_save_error().empty() && st.take_save_error().empty() &&
+                  slurp(file) == "kept=1\n" && !st.contains("lost"),
+              "settings: convenience save failures are retained until reported once");
+    }
+#ifndef _WIN32
+    {
+        const fs::path file = dir / "no-lock-records";
+        write_text(file, "kept=1\n");
+        st.use_file(file);
+        tortilla::settings_changes c;
+        c.set("lost", "1");
+        tortilla::settings_fail_next(tortilla::settings_test_failure::no_locks);
+        const auto saved = st.apply(c);
+        check(!saved && !saved.error.empty() && slurp(file) == "kept=1\n" &&
+                  !st.contains("lost"),
+              "settings: ENOLCK fails the save rather than proceeding unlocked");
+    }
+    {
+        const fs::path root = dir / "link-parent";
+        fs::create_directories(root / "elsewhere" / "child");
+        write_text(root / "prefs", "wrong=1\n");
+        write_text(root / "elsewhere" / "prefs", "kept=1\n");
+        std::error_code ec;
+        fs::create_directory_symlink("elsewhere/child", root / "link", ec);
+        if (!ec) fs::create_symlink("link/../prefs", root / "settings", ec);
+        if (ec)
+            check(true, "settings: link/../prefs filesystem semantics (no symlinks here)");
+        else
+        {
+            const auto file = root / "settings";
+            st.use_file(file);
+            const bool read_right = st.value("kept") == "1";
+            st.set("new", "2");
+            check(read_right && slurp(root / "prefs") == "wrong=1\n" &&
+                      slurp(root / "elsewhere" / "prefs") == "kept=1\nnew=2\n" &&
+                      fs::is_symlink(file) &&
+                      tortilla::settings_lock_file(file) ==
+                          tortilla::settings_lock_file(root / "elsewhere" / "prefs"),
+                  "settings: link/../prefs resolves links before .. for reads, locks and saves");
+        }
+    }
+#endif
+
     // Whatever is already at a temporary file's name (a link to someone's
     // file, here) is passed over and left as it was: not written through,
     // not installed as the settings, not removed.
@@ -1929,6 +2011,7 @@ void settings_across_processes(const std::string& scratch)
         st.set("b", "2");
         check(slurp(file) == "a=1\nb=2\n", "settings: the lock let go, saves save");
     }
+    (void)st.take_save_error();  // expected convenience failures above were observed
 }
 
 }  // namespace

@@ -1525,15 +1525,15 @@ void page_tests(rap::ui& ui, const std::string& repo,
         return w;
     };
     settings::get().set_numbers("log.panes.forge", {300, 200});
-    settings::get().set_numbers("log.panes.forge.parts", {200, 100});
+    settings::get().set("log.panes.forge.parts", "");
     settings::get().set_numbers("log.panes.details", {90, 110});
     auto window = build(std::nullopt);
     page p = last_page();
     check(p.commits && p.files && p.panes && p.details && p.search && p.path_filter,
           "log page: its lists, panes and filter boxes are found");
     if (!p.commits || !p.files || !p.panes || !p.details || !p.search || !p.path_filter) return;
-    check(settings::get().numbers("log.panes.forge").empty() &&
-              settings::get().numbers("log.panes.forge.parts").empty() &&
+    check(!settings::get().contains("log.panes.forge") &&
+              !settings::get().contains("log.panes.forge.parts") &&
               p.details->sizes_ == std::vector<float>{90, 110},
           "forge tabs: obsolete divider settings dropped while Commit message/files split is "
           "retained");
@@ -3832,6 +3832,37 @@ void forward_tests(rap::ui& ui, const std::string& first, const std::string& sec
     check(!log_window::forward_target(), "log forward: the windows gone, none to go into");
 }
 
+void settings_close_failure_tests(rap::ui& ui, const std::string& first,
+                                   const std::string& second)
+{
+    auto& st = settings::get();
+    (void)st.take_save_error();
+    auto opened = log_window::open(ui, first);
+    if (!opened) return check(false, "settings reporting: window opens");
+    auto w = std::move(*opened);
+    kept_window* frame = g_backend->built.back().window;
+    if (!w->open_tab(second)) return check(false, "settings reporting: second tab opens");
+    const std::string id = w->tabs().front()->id();
+    st.set("log.jumpType", "unsaved-test");  // make the close save differ
+    const int before_tab = g_backend->messages;
+    settings_fail_next(settings_test_failure::replace);
+    check(w->close_tab(id) && g_backend->messages == before_tab + 1,
+          "settings reporting: tab close reports a failed save on the surviving window");
+
+    st.remove("log.window.size");
+    const int before_window = g_backend->messages;
+    settings_fail_next(settings_test_failure::close);
+    const bool closed = frame->close_request && frame->close_request();
+    check(closed && g_backend->messages == before_window,
+          "settings reporting: window close proceeds without a blocking error dialog");
+    w.reset();
+    auto next = log_window::open(ui, first);
+    if (!next) return check(false, "settings reporting: next window opens");
+    (*next)->show();
+    check(g_backend->messages == before_window + 1 && st.take_save_error().empty(),
+          "settings reporting: next shown window reports the retained close failure once");
+}
+
 // Folders shown and remembered without trailing separators, a root's own
 // kept: "C:" alone is a folder on that drive, not its top.
 void folder_text_tests()
@@ -3937,6 +3968,7 @@ void run_log_page_tests(const std::string& root)
     g_stale_calls = 0;
     tab_tests(ui, repo, others[0], others[1]);
     toolbar_tests(ui, repo, others[0]);
+    settings_close_failure_tests(ui, repo, others[0]);
     recent_tests(root, repo, others[0]);
     identity_tests(ui, repo, others[0]);
     teardown_tests(ui, repo, others[0]);

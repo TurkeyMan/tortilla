@@ -7,12 +7,14 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cerrno>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <optional>
 #include <system_error>
 #include <thread>
+#include <utility>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -41,6 +43,20 @@ namespace fs = std::filesystem;
 using values = std::map<std::string, std::string>;
 using steady = std::chrono::steady_clock;
 
+thread_local settings_test_failure next_failure = settings_test_failure::none;
+bool fail(settings_test_failure at)
+{
+    if (next_failure != at) return false;
+    next_failure = settings_test_failure::none;
+    errno = at == settings_test_failure::no_locks ? ENOLCK : EIO;
+    return true;
+}
+
+std::string crt_error(int e) { return std::generic_category().message(e); }
+#ifdef _WIN32
+std::string native_error(DWORD e) { return std::system_category().message(int(e)); }
+#endif
+
 fs::path settings_file()
 {
     return rap::sys::config_dir("tortilla") / "settings";
@@ -56,16 +72,6 @@ fs::path with_suffix(const fs::path& file, const std::string& suffix)
 std::string shown(const fs::path& p)
 {
     return rap::sys::path_to_utf8(p);
-}
-
-// The last system error, for the user.
-std::string system_error()
-{
-#ifdef _WIN32
-    return std::system_category().message(int(GetLastError()));
-#else
-    return std::generic_category().message(errno);
-#endif
 }
 
 // Where the settings are really kept: `file`, or where the link it is
@@ -85,6 +91,16 @@ std::optional<settings_target> resolve(const fs::path& file, std::string& error)
     for (int hops = 0;; ++hops)
     {
         std::error_code ec;
+        // Resolve the parent through the filesystem *before* reducing '..'.
+        // In link/../prefs, '..' belongs to the directory link points into.
+        const fs::path parent = fs::weakly_canonical(t.path.parent_path(), ec);
+        if (ec)
+        {
+            error = rap::i18n::format(_("Couldn't read the settings in {0}: {1}"),
+                                      shown(file), ec.message());
+            return std::nullopt;
+        }
+        t.path = parent / t.path.filename();
         const fs::file_status st = fs::symlink_status(t.path, ec);
         if (st.type() != fs::file_type::symlink) return t;
         const fs::path to = fs::read_symlink(t.path, ec);
@@ -93,7 +109,7 @@ std::optional<settings_target> resolve(const fs::path& file, std::string& error)
             error = rap::i18n::format(_("{0} is a link that doesn't lead to a file."), shown(file));
             return std::nullopt;
         }
-        t.path = (to.is_absolute() ? to : t.path.parent_path() / to).lexically_normal();
+        t.path = to.is_absolute() ? to : t.path.parent_path() / to;
         t.linked = true;
     }
 }
@@ -122,10 +138,10 @@ lock_taken take_lock(const fs::path& lock_file, steady::time_point deadline)
                 _("Another Tortilla is saving its settings and hasn't finished ({0} is held)."),
                 shown(lock_file))};
     };
-    auto failed = [&]
+    auto failed = [&](const std::string& why)
     {
         return lock_taken{.error = rap::i18n::format(_("Couldn't lock the settings ({0}): {1}"),
-                                                     shown(lock_file), system_error())};
+                                                     shown(lock_file), why)};
     };
     std::chrono::milliseconds pause(1);
 #ifdef _WIN32
@@ -133,12 +149,15 @@ lock_taken take_lock(const fs::path& lock_file, steady::time_point deadline)
         CreateFileW(lock_file.c_str(), GENERIC_READ | GENERIC_WRITE,
                     FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_ALWAYS,
                     FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
-    if (h == INVALID_HANDLE_VALUE) return failed();
+    if (h == INVALID_HANDLE_VALUE)
+    {
+        const DWORD e = GetLastError();
+        return failed(native_error(e));
+    }
     if (GetFileType(h) != FILE_TYPE_DISK)
     {
         CloseHandle(h);
-        SetLastError(ERROR_INVALID_FUNCTION);
-        return failed();
+        return failed(native_error(ERROR_INVALID_FUNCTION));
     }
     for (;;)
     {
@@ -153,7 +172,7 @@ lock_taken take_lock(const fs::path& lock_file, steady::time_point deadline)
         }
         if (e != ERROR_LOCK_VIOLATION && e != ERROR_IO_PENDING)
         {
-            lock_taken out = failed();
+            lock_taken out = failed(native_error(e));
             CloseHandle(h);
             return out;
         }
@@ -168,20 +187,25 @@ lock_taken take_lock(const fs::path& lock_file, steady::time_point deadline)
 #else
     // O_NOFOLLOW: a link planted in the lock's place isn't followed.
     const int fd = ::open(lock_file.c_str(), O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
-    if (fd < 0) return failed();
+    if (fd < 0)
+    {
+        const int e = errno;
+        return failed(crt_error(e));
+    }
     for (;;)
     {
-        if (::flock(fd, LOCK_EX | LOCK_NB) == 0) return {.handle = fd};
+        if (!fail(settings_test_failure::no_locks) && ::flock(fd, LOCK_EX | LOCK_NB) == 0)
+            return {.handle = fd};
         const int e = errno;
         if (e == EINTR) continue;
-        if (e == ENOLCK || e == EOPNOTSUPP || e == ENOSYS || e == EINVAL)
+        if (e == ENOTSUP || e == EOPNOTSUPP || e == EINVAL)
         {
             ::close(fd);  // no locks here: unlocked
             return {};
         }
         if (e != EWOULDBLOCK)
         {
-            lock_taken out = failed();
+            lock_taken out = failed(crt_error(e));
             ::close(fd);
             return out;
         }
@@ -240,22 +264,30 @@ void parse(std::string_view text, values& out)
 
 // The file as it is now: empty if there is none; nullopt if it is there but
 // can't be read, so an update doesn't replace what it couldn't see.
-std::optional<values> read_file(const fs::path& file)
+std::optional<values> read_file(const fs::path& file, std::string* error = nullptr)
 {
     std::FILE* f = open_replaced_file(
         file, [&] { return rap::sys::fopen(file, "rb"); }, 20, std::chrono::milliseconds(10));
     if (!f)
     {
+        const int e = errno;
         std::error_code ec;
         if (!fs::exists(file, ec) && !ec) return values{};
+        if (error) *error = crt_error(e);
         return std::nullopt;
     }
     std::string text;
     char buf[8192];
     while (size_t n = std::fread(buf, 1, sizeof buf, f)) text.append(buf, n);
+    const int read_error = errno;
     const bool ok = !std::ferror(f);
-    std::fclose(f);
-    if (!ok) return std::nullopt;
+    const int closed = std::fclose(f);
+    const int close_error = errno;
+    if (!ok || closed != 0)
+    {
+        if (error) *error = crt_error(ok ? close_error : read_error);
+        return std::nullopt;
+    }
     values out;
     parse(text, out);
     return out;
@@ -269,8 +301,9 @@ bool sharing_error(DWORD e)
 #endif
 
 // Renames `from` over `to`, in one step.
-bool replace(const fs::path& from, const fs::path& to)
+std::string replace(const fs::path& from, const fs::path& to)
 {
+    if (fail(settings_test_failure::replace)) return crt_error(errno);
 #ifdef _WIN32
     // A reader that opened the file without FILE_SHARE_DELETE (the C
     // runtime and std::ifstream, as the shell extension uses) holds off the
@@ -279,12 +312,15 @@ bool replace(const fs::path& from, const fs::path& to)
     {
         if (MoveFileExW(from.c_str(), to.c_str(),
                         MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
-            return true;
-        if (attempt == 200 || !sharing_error(GetLastError())) return false;
+            return {};
+        const DWORD e = GetLastError();
+        if (attempt == 200 || !sharing_error(e)) return native_error(e);
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
 #else
-    return std::rename(from.c_str(), to.c_str()) == 0;
+    if (std::rename(from.c_str(), to.c_str()) == 0) return {};
+    const int e = errno;
+    return crt_error(e);
 #endif
 }
 
@@ -305,13 +341,14 @@ std::FILE* create_temp(const fs::path& target, fs::path& made, std::string& erro
             if (e == ERROR_FILE_EXISTS || e == ERROR_ALREADY_EXISTS ||
                 fs::symlink_status(name, ec).type() != fs::file_type::not_found)
                 continue;  // someone else's
-            error = system_error();
+            error = native_error(e);
             return nullptr;
         }
         const int fd = _open_osfhandle(reinterpret_cast<intptr_t>(h), _O_WRONLY | _O_BINARY);
         if (fd < 0)
         {
-            error = system_error();
+            const int e = errno;
+            error = crt_error(e);
             CloseHandle(h);
             DeleteFileW(name.c_str());
             return nullptr;
@@ -319,7 +356,8 @@ std::FILE* create_temp(const fs::path& target, fs::path& made, std::string& erro
         std::FILE* f = _fdopen(fd, "wb");
         if (!f)
         {
-            error = system_error();
+            const int e = errno;
+            error = crt_error(e);
             _close(fd);
             DeleteFileW(name.c_str());
             return nullptr;
@@ -329,15 +367,17 @@ std::FILE* create_temp(const fs::path& target, fs::path& made, std::string& erro
             ::open(name.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600);
         if (fd < 0)
         {
-            if (errno == EEXIST) continue;  // someone else's
-            error = system_error();
+            const int e = errno;
+            if (e == EEXIST) continue;  // someone else's
+            error = crt_error(e);
             return nullptr;
         }
         // Kept as private as the file it replaces.
         if (struct stat st;
             ::stat(target.c_str(), &st) == 0 && ::fchmod(fd, st.st_mode & 07777) != 0)
         {
-            error = system_error();
+            const int e = errno;
+            error = crt_error(e);
             ::close(fd);
             ::unlink(name.c_str());
             return nullptr;
@@ -345,7 +385,8 @@ std::FILE* create_temp(const fs::path& target, fs::path& made, std::string& erro
         std::FILE* f = ::fdopen(fd, "wb");
         if (!f)
         {
-            error = system_error();
+            const int e = errno;
+            error = crt_error(e);
             ::close(fd);
             ::unlink(name.c_str());
             return nullptr;
@@ -369,25 +410,39 @@ std::string write_file(const fs::path& target, const values& v)
     if (!f)
         return rap::i18n::format(_("Couldn't make a file beside {0} to save the settings to: {1}"),
                                  shown(target), why);
+    auto checked = [&](bool ok)
+    {
+        const int e = errno;  // CRT error, before formatting or cleanup changes it
+        if (!ok && why.empty()) why = crt_error(e ? e : EIO);
+        return ok;
+    };
     bool ok = true;
     for (auto& [k, val] : v)
-        ok = ok && std::fwrite(k.data(), 1, k.size(), f) == k.size() && std::fputc('=', f) != EOF &&
-             std::fwrite(val.data(), 1, val.size(), f) == val.size() && std::fputc('\n', f) != EOF;
-    ok = ok && std::fflush(f) == 0 && !std::ferror(f);
+        ok = ok && checked(std::fwrite(k.data(), 1, k.size(), f) == k.size()) &&
+             checked(std::fputc('=', f) != EOF) &&
+             checked(std::fwrite(val.data(), 1, val.size(), f) == val.size()) &&
+             checked(std::fputc('\n', f) != EOF);
+    ok = ok && checked(!fail(settings_test_failure::flush) && std::fflush(f) == 0) &&
+         checked(!std::ferror(f));
     // On disk before the rename, so a crash leaves the old file or the new
     // one, not an empty one.
 #ifdef _WIN32
-    ok = ok && _commit(_fileno(f)) == 0;
+    ok = ok && checked(_commit(_fileno(f)) == 0);
 #else
-    ok = ok && ::fsync(::fileno(f)) == 0;
+    ok = ok && checked(::fsync(::fileno(f)) == 0);
 #endif
-    if (!ok) why = system_error();
-    ok = std::fclose(f) == 0 && ok;
-    if (ok && !replace(temp, target))
+    // Always close, including after an earlier failure. A close can be the
+    // first operation to report buffered I/O failure and must supply its reason.
+    const int closed = std::fclose(f);
+    const int close_error = errno;
+    const bool injected_close = fail(settings_test_failure::close);
+    if (closed != 0 || injected_close)
     {
-        why = system_error();
+        if (why.empty()) why = crt_error(injected_close ? EIO : close_error);
         ok = false;
     }
+    if (ok) why = replace(temp, target);
+    ok = ok && why.empty();
     if (!ok)
     {
         std::error_code ec;
@@ -405,6 +460,8 @@ std::string numbers_value(const std::vector<float>& v)
 }
 
 }  // namespace
+
+void settings_fail_next(settings_test_failure failure) { next_failure = failure; }
 
 std::vector<fs::path> settings_temp_files(const fs::path& file)
 {
@@ -540,10 +597,11 @@ settings::saved settings::apply(const settings_changes& changes)
     }
     writer_lock across_processes(with_suffix(target->path, ".lock"), deadline);
     if (!across_processes.error().empty()) return {across_processes.error()};
-    std::optional<values> now = read_file(target->path);
+    std::string read_error;
+    std::optional<values> now = read_file(target->path, &read_error);
     if (!now)
         return {rap::i18n::format(_("Couldn't read the settings in {0}: {1}"), shown(target->path),
-                                  system_error())};
+                                  read_error)};
     values next = *now;
     for (auto& change : changes.changes_) change(next);
     if (next != *now) error = write_file(target->path, next);
@@ -559,18 +617,46 @@ std::string settings::value(const std::string& key, const std::string& fallback)
     return it == values_.end() ? fallback : it->second;
 }
 
+bool settings::contains(const std::string& key) const
+{
+    std::shared_lock lock(mutex_);
+    return values_.contains(key);
+}
+
+void settings::remember_failure(const saved& done)
+{
+    if (done) return;
+    {
+        std::scoped_lock lock(error_mutex_);
+        // Retain distinct failures until a window can display them.
+        if (save_error_.find(done.error) == std::string::npos)
+            save_error_ += (save_error_.empty() ? "" : "\n") + done.error;
+    }
+    std::fprintf(stderr, "tortilla: settings were not saved: %s\n", done.error.c_str());
+#ifdef _WIN32
+    const std::string diagnostic = "Tortilla: settings were not saved: " + done.error + "\n";
+    OutputDebugStringA(diagnostic.c_str());
+#endif
+}
+
+std::string settings::take_save_error()
+{
+    std::scoped_lock lock(error_mutex_);
+    return std::exchange(save_error_, {});
+}
+
 void settings::set(const std::string& key, const std::string& value)
 {
     settings_changes c;
     c.set(key, value);
-    apply(c);
+    remember_failure(apply(c));
 }
 
 void settings::remove(const std::string& key)
 {
     settings_changes c;
     c.remove(key);
-    apply(c);
+    remember_failure(apply(c));
 }
 
 std::vector<std::string> history_entries(std::string_view stored)
@@ -606,7 +692,7 @@ void settings::add_to_history(const std::string& key, const std::string& entry, 
 {
     settings_changes c;
     c.add_to_history(key, entry, keep);
-    apply(c);
+    remember_failure(apply(c));
 }
 
 std::vector<float> settings::numbers(const std::string& key) const
@@ -627,14 +713,14 @@ void settings::set_numbers(const std::string& key, const std::vector<float>& v)
 {
     settings_changes c;
     c.set_numbers(key, v);
-    apply(c);
+    remember_failure(apply(c));
 }
 
 void settings::save_window(const std::string& prefix, const rap::window& w)
 {
     settings_changes c;
     c.save_window(prefix, w);
-    apply(c);
+    remember_failure(apply(c));
 }
 
 void settings::restore_window(const std::string& prefix, rap::window& w) const

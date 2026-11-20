@@ -8,6 +8,7 @@
 #include "settings.h"
 #include "ui/modal_dialogs.h"
 #include "ui/repo_icon.h"
+#include "ui/settings_dialog.h"
 #include "ui/trust_repository.h"
 #include "ui/windows.h"
 
@@ -103,12 +104,16 @@ void log_window::show()
 {
     used();
     window_->show();
+    if (auto error = settings::get().take_save_error(); !error.empty())
+        report_unsaved_settings(ui_, window_.get(), error);
 }
 
 void log_window::present()
 {
     used();
     window_->present();
+    if (auto error = settings::get().take_save_error(); !error.empty())
+        report_unsaved_settings(ui_, window_.get(), error);
 }
 
 std::expected<std::unique_ptr<log_window>, std::string>
@@ -454,7 +459,8 @@ bool log_window::close_tab(const std::string& id)
         settings_changes st;
         tab.save_view_settings(st);
         tab.save_options(st);
-        settings::get().apply(st);
+        if (const auto done = settings::get().apply(st); !done)
+            report_unsaved_settings(ui_, window_.get(), done.error);
     }
     tab.drop_page();
     stack_->remove(id);
@@ -628,7 +634,8 @@ void log_window::closing()
         now->save_view_settings(st);
         now->save_options(st);
     }
-    settings::get().apply(st);
+    // The window is going away: never hold its close on a message dialog.
+    settings::get().remember_failure(settings::get().apply(st));
     close_patch();
 }
 

@@ -64,6 +64,7 @@ public:
     static settings& get();
 
     std::string value(const std::string& key, const std::string& fallback = {}) const;
+    bool contains(const std::string& key) const;
     void set(const std::string& key, const std::string& value);
     // Back to the fallback.
     void remove(const std::string& key);
@@ -97,6 +98,10 @@ public:
     // the file is as it was, and so is this process's copy of it (as the
     // file has it, when it could be read).
     saved apply(const settings_changes& changes);
+    // Convenience saves have no dialog owner. Log and retain their failures;
+    // the next log window shown reports them without blocking a closing window.
+    void remember_failure(const saved&);
+    std::string take_save_error();
 
     // For the tests: the settings read from, and written to, `file` instead
     // of the user's.
@@ -117,6 +122,8 @@ private:
     std::atomic<std::chrono::milliseconds> lock_wait_{std::chrono::milliseconds(5000)};
     std::filesystem::path file_;
     std::map<std::string, std::string> values_;
+    std::mutex error_mutex_;
+    std::string save_error_;
 };
 
 // Appearance [Settings > General]: "light", "dark", or as the desktop has
@@ -138,6 +145,11 @@ std::vector<std::filesystem::path> settings_temp_files(const std::filesystem::pa
 // For the tests: the lock writers to `file` hold, and the file it guards
 // (`file`, or where the link it is leads).
 std::filesystem::path settings_lock_file(const std::filesystem::path& file);
+
+// One failure on this test thread: an I/O stage after a real temporary is
+// created, or ENOLCK while taking the writer lock. Normal operation is unchanged.
+enum class settings_test_failure { none, flush, close, replace, no_locks };
+void settings_fail_next(settings_test_failure);
 
 // For the tests: holds the writers' lock on `file`, as another process's
 // save would, until destroyed. Check it with held().
