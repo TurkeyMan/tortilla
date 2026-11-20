@@ -2158,6 +2158,68 @@ void settings_pending_recovery_cases(const std::filesystem::path& root)
         tortilla::settings_fail_next(tortilla::settings_test_failure::partial_replace_2);
         return st.apply(attempted);
     };
+    // Both receipt publication stages remain outside the discoverable namespace.
+    // Enumeration/open races restart the SAME discovery, for readers and writers.
+    for (int mode=0;mode<6;++mode)
+    {
+        const auto raced=root/("receipt-interleave-"+std::to_string(mode));
+        initialize(raced);const auto expected=slurp(raced);
+        const auto temp=fs::path(raced.native()+L".candidate.tmp");
+        const auto backup=fs::path(raced.native()+L".candidate.bak");
+        write_text(temp,std::string(tortilla::k_settings_format_marker)+"\n"+
+            tortilla::settings_generation_line(*tortilla::settings_document_generation(expected)+1)+"attempt=unpublished\n");
+        write_text(backup,"");
+        bool partial_hidden=false,complete_hidden=false;
+        tortilla::settings_recovery_before_publish_for_tests([&](const fs::path& pending,const fs::path& published,bool complete) {
+            const auto view=tortilla::inspect_settings_recovery(raced);
+            const auto bytes=tortilla::read_settings_document(raced);
+            const bool invisible=fs::exists(pending)&&!fs::exists(published)&&view.records.empty()&&bytes&&*bytes==expected;
+            (complete?complete_hidden:partial_hidden)=invisible;
+        });
+        auto record=tortilla::begin_settings_recovery(raced,raced,backup,temp);
+        check(record&&partial_hidden&&complete_hidden,
+              "settings receipts: partial and flushed private temp stay invisible until atomic publication");
+        if(!record)continue;
+        HANDLE held=INVALID_HANDLE_VALUE;std::thread release;
+        fs::path hidden;bool interleaved=false;
+        if(mode)
+            tortilla::settings_recovery_after_enumerate_for_tests([&](const fs::path& path) {
+                interleaved=true;
+                if(mode<=2||mode==5)
+                {
+                    held=CreateFileW(path.c_str(),GENERIC_READ,0,nullptr,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,nullptr);
+                    if(held!=INVALID_HANDLE_VALUE)release=std::thread([&] {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(mode==5?150:20));CloseHandle(held);
+                    });
+                }
+                else {hidden=fs::path(path.native()+L".hidden");fs::rename(path,hidden);}
+            });
+        bool good=false;
+        if(mode==2||mode==4||mode==5)
+        {
+            tortilla::settings_changes change;change.set("after-interleave","merged");
+            if(mode==5)st.set_lock_wait(std::chrono::milliseconds(30));
+            const auto started=std::chrono::steady_clock::now();
+            const auto saved=mode==5?st.save_on_close(change):st.apply(change);
+            const auto elapsed=std::chrono::steady_clock::now()-started;
+            st.set_lock_wait(std::chrono::milliseconds(5000));
+            good=mode==5?(saved.failed()&&elapsed<std::chrono::milliseconds(120)&&slurp(raced)==expected):
+                (saved.committed()&&st.value("unrelated.one")=="preserve all"&&st.value("after-interleave")=="merged");
+            if(mode==5)(void)st.take_save_report();
+        }
+        else
+        {
+            auto bytes=tortilla::read_settings_document(raced);
+            good=bytes&&*bytes==expected;
+        }
+        if(release.joinable())release.join();
+        check(good&&(!mode||interleaved)&&(!(mode==1||mode==2||mode==5)||held!=INVALID_HANDLE_VALUE),
+              "settings receipts: reader/writer retries sharing or vanished discovery without empty or lost values");
+        tortilla::settings_recovery_after_enumerate_for_tests({});
+        if(!hidden.empty())fs::remove(hidden);
+        tortilla::finish_settings_recovery(*record);
+        fs::remove(temp);fs::remove(backup);
+    }
     const auto file=root/"recovery/settings";
     initialize(file);const auto original=slurp(file);
     const auto failed=fail_rollback();
@@ -2319,6 +2381,36 @@ void settings_pending_recovery_cases(const std::filesystem::path& root)
                   tortilla::inspect_settings_recovery(alias).records.empty()&&
                   tortilla::inspect_settings_recovery(file).records.empty(),
               "settings recovery: alias save restores canonical target and cleans both receipt copies");
+        const auto second_alias=root/"recovery-alias-two";
+        fs::create_symlink(file,second_alias,ec);
+        check(!ec,"settings recovery: second native alias created");
+        if(!ec)
+        {
+            tortilla::settings_changes first;first.set("first-alias","published");
+            tortilla::settings_fail_next(tortilla::settings_test_failure::backup_cleanup);
+            const auto warning=st.apply(first);
+            auto pending=tortilla::inspect_settings_recovery(alias);
+            bool renamed=true;
+            for(const auto& record:pending.records)
+                for(const auto& receipt:record.receipts)
+                    if(fs::exists(receipt))
+                    {
+                        auto name=receipt.filename().native();const auto at=name.find(L".recovery.");
+                        const auto end=name.find(L'.',at+10);name.replace(at+10,end-(at+10),L"424242");
+                        std::error_code rename_error;fs::rename(receipt,receipt.parent_path()/name,rename_error);
+                        renamed=renamed&&!rename_error;
+                    }
+            st.use_file(second_alias);
+            tortilla::settings_changes second;second.set("second-alias","merged");
+            const auto saved=st.apply(second);
+            check(warning.has_cleanup_warning()&&renamed&&saved.committed()&&
+                      st.value("first-alias")=="published"&&st.value("second-alias")=="merged"&&
+                      st.value("unrelated.one")=="preserve all"&&
+                      tortilla::inspect_settings_recovery(file).records.empty()&&
+                      tortilla::inspect_settings_recovery(alias).records.empty()&&
+                      tortilla::inspect_settings_recovery(second_alias).records.empty(),
+                  "settings recovery: second alias reconciles canonical any-PID cleanup receipts before next generation");
+        }
     }
     else
     {

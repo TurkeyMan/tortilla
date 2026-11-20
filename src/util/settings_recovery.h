@@ -43,12 +43,18 @@ struct settings_recovery_step
 // Read-only: never restores or deletes anything. A missing target may read a
 // complete identity/hash-verified last-good backup. Invalid/ambiguous receipts
 // block writes; PID and modification times never select a winner.
-settings_recovery_view inspect_settings_recovery(const std::filesystem::path&);
+settings_recovery_view inspect_settings_recovery(const std::filesystem::path&,
+    const std::filesystem::path& locked_target = {},
+    std::chrono::steady_clock::time_point deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5));
 // Both app and shell parse this owned document, never a pathname reopened after
 // recovery inspection. Ordinary reads hold one file handle; ENOENT reinspects.
-std::expected<std::string, std::string> read_settings_document(const std::filesystem::path&);
+std::expected<std::string, std::string> read_settings_document(const std::filesystem::path&,
+    std::chrono::steady_clock::time_point deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5));
 void settings_recovery_after_inspect_for_tests(std::function<void()>);
+void settings_recovery_before_publish_for_tests(std::function<void(const std::filesystem::path&, const std::filesystem::path&, bool)>);
+void settings_recovery_after_enumerate_for_tests(std::function<void(const std::filesystem::path&)>);
 settings_recovery_step recover_settings_before_save(const std::filesystem::path&,
+                                                    const std::filesystem::path& locked_target,
                                                     std::chrono::steady_clock::time_point deadline);
 std::expected<settings_recovery_record, std::string> begin_settings_recovery(
     const std::filesystem::path& target, const std::filesystem::path& configured,

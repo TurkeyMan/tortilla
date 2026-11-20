@@ -32,6 +32,9 @@ constexpr std::string_view magic = "#tortilla-settings-recovery 1\n";
 constexpr size_t receipt_limit = 16384, document_limit = 64 * 1024 * 1024, record_limit = 128;
 thread_local bool fail_restore = false;
 thread_local std::function<void()> after_inspect_for_tests;
+thread_local std::function<void(const fs::path&, const fs::path&, bool)> before_publish_for_tests;
+thread_local std::function<void(const fs::path&)> after_enumerate_for_tests;
+thread_local bool transient_discovery = false;
 std::string utf8(const fs::path& p) { auto s = p.u8string(); return {s.begin(), s.end()}; }
 std::string pending(const fs::path& p, const std::string& why)
 { return "Settings recovery pending at " + utf8(p) + ": " + why; }
@@ -127,7 +130,14 @@ std::expected<std::string, std::string> read_bytes(const fs::path& p, size_t lim
     handle file{CreateFileW(p.c_str(), GENERIC_READ | READ_CONTROL,
         FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
         FILE_FLAG_BACKUP_SEMANTICS | ((receipt || snapshot) ? FILE_FLAG_OPEN_REPARSE_POINT : 0), nullptr)};
-    if (file.h == INVALID_HANDLE_VALUE) return std::unexpected(native(GetLastError()));
+    if (file.h == INVALID_HANDLE_VALUE)
+    {
+        const DWORD error = GetLastError();
+        if (error == ERROR_SHARING_VIOLATION || error == ERROR_LOCK_VIOLATION ||
+            error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND)
+            transient_discovery = true;
+        return std::unexpected(native(error));
+    }
     FILE_ATTRIBUTE_TAG_INFO attributes{};
     if (!GetFileInformationByHandleEx(file.h, FileAttributeTagInfo, &attributes, sizeof attributes))
         return std::unexpected(native(GetLastError()));
@@ -321,7 +331,9 @@ std::expected<void,std::string> write_private(const fs::path& path,std::string_v
        !SetSecurityDescriptorDacl(&sd,TRUE,p,FALSE)||!SetSecurityDescriptorControl(&sd,SE_DACL_PROTECTED,SE_DACL_PROTECTED))
         return std::unexpected(native(GetLastError()));
     SECURITY_ATTRIBUTES attrs{sizeof attrs,&sd,FALSE};
-    handle file{CreateFileW(path.c_str(),GENERIC_WRITE|READ_CONTROL|DELETE,0,&attrs,CREATE_NEW,FILE_ATTRIBUTE_NORMAL|FILE_FLAG_WRITE_THROUGH,nullptr)};
+    // Never expose an incomplete or exclusively open receipt to discovery.
+    const fs::path temporary(path.native()+L".pending");
+    handle file{CreateFileW(temporary.c_str(),GENERIC_WRITE|READ_CONTROL|DELETE,0,&attrs,CREATE_NEW,FILE_ATTRIBUTE_NORMAL|FILE_FLAG_WRITE_THROUGH,nullptr)};
     if(file.h==INVALID_HANDLE_VALUE)return std::unexpected(native(GetLastError()));
     auto failed=[&](std::string why)->std::expected<void,std::string>{
         FILE_DISPOSITION_INFO remove{TRUE};
@@ -329,10 +341,21 @@ std::expected<void,std::string> write_private(const fs::path& path,std::string_v
         return std::unexpected(std::move(why));
     };
     if(!private_receipt(file.h))return failed("filesystem did not enforce private receipt permissions");
+    auto hook=std::exchange(before_publish_for_tests,{});
+    if(hook)hook(temporary,path,false);
     DWORD written=0;
     if(!WriteFile(file.h,text.data(),DWORD(text.size()),&written,nullptr))return failed(native(GetLastError()));
     if(written!=text.size())return failed("incomplete receipt write");
     if(!FlushFileBuffers(file.h))return failed(native(GetLastError()));
+    if(hook)hook(temporary,path,true);
+    if(!CloseHandle(file.h))return failed(native(GetLastError()));
+    file.h=INVALID_HANDLE_VALUE;
+    if(!MoveFileExW(temporary.c_str(),path.c_str(),MOVEFILE_WRITE_THROUGH))
+    {
+        const DWORD error=GetLastError();
+        DeleteFileW(temporary.c_str());
+        return std::unexpected(native(error));
+    }
     return {};
 }
 std::string remove_receipt(const fs::path& path,const std::string& transaction)
@@ -378,13 +401,16 @@ std::string remove_owned(const fs::path& p,const settings_recovery_snapshot& exp
 void settings_recovery_fail_restore_for_tests(bool on){fail_restore=on;}
 
 
-static settings_recovery_view inspect_settings_recovery_once(const fs::path& configured)
+static settings_recovery_view inspect_settings_recovery_once(const fs::path& configured,
+                                                             const fs::path& locked_target)
 {
     settings_recovery_view out;out.target=configured;out.readable=configured;
 #ifdef _WIN32
     auto requested=alias_name(configured);
-    if(!requested)return out; // ordinary open handles a path with no existing parent
-    std::vector<fs::path> names{*requested};
+    if(!requested&&locked_target.empty())return out; // ordinary open handles a missing parent
+    std::vector<fs::path> names;
+    if(requested)names.push_back(*requested);
+    if(!locked_target.empty())names.push_back(locked_target);
     std::set<std::wstring> scanned;
     std::map<std::string,settings_recovery_record> records;
     for(size_t index=0;index<names.size();++index)
@@ -394,8 +420,12 @@ static settings_recovery_view inspect_settings_recovery_once(const fs::path& con
         if(!paths){out.phase=settings_recovery_phase::blocked;out.message=pending(names[index],paths.error());return out;}
         for(const auto& path:*paths)
         {
+            auto hook=std::exchange(after_enumerate_for_tests,{});
+            if(hook)hook(path);
             auto record=parse_receipt(path,names[index]);
             if(!record){out.phase=settings_recovery_phase::blocked;out.message=pending(path,record.error());return out;}
+            if(!locked_target.empty()&&!same_path(record->target,locked_target))
+            {out.phase=settings_recovery_phase::blocked;out.message=pending(path,"receipt target differs from the locked settings target");return out;}
             if(records.size()>=record_limit&&!records.contains(record->transaction))
             {out.phase=settings_recovery_phase::blocked;out.message=pending(path,"too many transactions");return out;}
             auto [it,inserted]=records.emplace(record->transaction,*record);
@@ -510,36 +540,49 @@ static settings_recovery_view inspect_settings_recovery_once(const fs::path& con
     return out;
 }
 
-settings_recovery_view inspect_settings_recovery(const fs::path& configured)
+settings_recovery_view inspect_settings_recovery(const fs::path& configured, const fs::path& locked_target,
+                                                std::chrono::steady_clock::time_point deadline)
 {
-    auto view=inspect_settings_recovery_once(configured);
+    settings_recovery_view view;
+    for(;;)
+    {
+        transient_discovery=false;
+        view=inspect_settings_recovery_once(configured,locked_target);
+        if(view.phase!=settings_recovery_phase::blocked||!transient_discovery||
+           std::chrono::steady_clock::now()>=deadline)break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
     auto hook=std::exchange(after_inspect_for_tests,{});
     if(hook)hook();
     return view;
 }
 void settings_recovery_after_inspect_for_tests(std::function<void()> hook)
 {after_inspect_for_tests=std::move(hook);}
+void settings_recovery_before_publish_for_tests(std::function<void(const fs::path&,const fs::path&,bool)> hook)
+{before_publish_for_tests=std::move(hook);}
+void settings_recovery_after_enumerate_for_tests(std::function<void(const fs::path&)> hook)
+{after_enumerate_for_tests=std::move(hook);}
 
-std::expected<std::string,std::string> read_settings_document(const fs::path& file)
+std::expected<std::string,std::string> read_settings_document(const fs::path& file,
+    std::chrono::steady_clock::time_point deadline)
 {
     std::error_code ec;
     bool observed=fs::exists(file,ec);
     std::string why;
-    for(int attempt=0;attempt<3;++attempt)
+    for(;;)
     {
-        auto view=inspect_settings_recovery(file);
+        auto view=inspect_settings_recovery(file,{},deadline);
         observed=observed||!view.records.empty();
         if(view.phase==settings_recovery_phase::blocked)
         {
-            observed=true;why=view.message;
-            if(attempt<2)std::this_thread::sleep_for(std::chrono::milliseconds(1));
-            continue;
+            return std::unexpected(view.message);
         }
         if(view.verified_bytes)return std::move(*view.verified_bytes);
 #ifdef _WIN32
         auto bytes=read_bytes(view.readable,document_limit,false);
         if(bytes)return bytes;
         why=bytes.error();
+        if(!transient_discovery)return std::unexpected(why);
 #else
         std::FILE* input=std::fopen(view.readable.c_str(),"rb");
         if(input)
@@ -561,18 +604,20 @@ std::expected<std::string,std::string> read_settings_document(const fs::path& fi
         }
         const int error=errno;
         why=std::generic_category().message(error);
+        if(error!=ENOENT)return std::unexpected(why);
 #endif
         // A cooperating recovery may have moved the selected namespace after
         // inspection. Reinspect on the next attempt, never parse an unverified
         // replacement at the old backup path or cache a false empty document.
         ec.clear();
         observed=observed||fs::exists(file,ec);
-        if(attempt<2)std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        if(!observed||std::chrono::steady_clock::now()>=deadline)break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     ec.clear();
     if(!observed&&!fs::exists(file,ec)&&!ec)
     {
-        const auto final=inspect_settings_recovery(file);
+        const auto final=inspect_settings_recovery(file,{},deadline);
         if(final.verified_bytes)return *final.verified_bytes;
         if(final.phase==settings_recovery_phase::clear&&final.records.empty())return std::string{};
         if(!final.message.empty())why=final.message;
@@ -581,10 +626,11 @@ std::expected<std::string,std::string> read_settings_document(const fs::path& fi
 }
 
 settings_recovery_step recover_settings_before_save(const fs::path& configured,
+                                                    const fs::path& locked_target,
                                                     std::chrono::steady_clock::time_point deadline)
 {
     settings_recovery_step result;
-    auto view=inspect_settings_recovery(configured);
+    auto view=inspect_settings_recovery(configured,locked_target,deadline);
     if(view.phase==settings_recovery_phase::blocked){result.error=view.message;return result;}
 #ifdef _WIN32
     if(view.records.empty())return result;
@@ -613,7 +659,7 @@ settings_recovery_step recover_settings_before_save(const fs::path& configured,
             {result.error=pending(winner->backup,native(e));return result;}
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
-        view=inspect_settings_recovery(configured);
+        view=inspect_settings_recovery(configured,locked_target,deadline);
         if(view.phase==settings_recovery_phase::blocked||view.phase==settings_recovery_phase::recoverable)
         {result.error=view.message.empty()?pending(view.target,"recovery is still pending"):view.message;return result;}
     }

@@ -433,11 +433,12 @@ bool parse(std::string_view text, values& out)
 // The file as it is now: empty if there is none; nullopt if it is there but
 // can't be read, so an update doesn't replace what it couldn't see.
 std::optional<values> read_file(const fs::path& file, std::string* error = nullptr,
-                                bool* version_two = nullptr, uint64_t* generation = nullptr)
+                                bool* version_two = nullptr, uint64_t* generation = nullptr,
+                                steady::time_point deadline = steady::now() + std::chrono::seconds(5))
 {
     if (generation) *generation = 0;
     if (version_two) *version_two = false;
-    auto document = read_settings_document(file);
+    auto document = read_settings_document(file, deadline);
     if (!document)
     { if (error) *error = document.error(); return std::nullopt; }
     const std::string& text = *document;
@@ -765,7 +766,7 @@ settings::saved replace(const fs::path& from, const fs::path& to, const fs::path
         if (e == ERROR_UNABLE_TO_MOVE_REPLACEMENT || e == ERROR_UNABLE_TO_MOVE_REPLACEMENT_2)
         {
             retain_temp = true;
-            const auto recovered = recover_settings_before_save(configured, deadline);
+            const auto recovered = recover_settings_before_save(configured, to, deadline);
             if (!recovered.error.empty())
                 return rap::i18n::format(_("Couldn't save settings to {0}: {1}. {2}; attempted data retained at {3}."),
                     shown(to), native_error(e), recovered.error, shown(from));
@@ -1142,7 +1143,7 @@ settings::saved settings::apply_for(const settings_changes& changes, std::chrono
             return {rap::i18n::format(_("The settings file kept changing until the save deadline ({0})."), shown(file))};
         std::string error;
         bool changed = false;
-        const auto initial_recovery = inspect_settings_recovery(file);
+        const auto initial_recovery = inspect_settings_recovery(file, {}, deadline);
         if (initial_recovery.phase == settings_recovery_phase::blocked) return {initial_recovery.message};
         const auto target_name = initial_recovery.target;
         const std::optional<settings_target> target = resolve(target_name, error, &changed);
@@ -1170,9 +1171,6 @@ settings::saved settings::apply_for(const settings_changes& changes, std::chrono
         }
         writer_lock across_processes(with_suffix(target->path, ".lock"), deadline);
         if (!across_processes.error().empty()) return {across_processes.error()};
-        const auto recovered = recover_settings_before_save(file, deadline);
-        if (!recovered.error.empty()) return {recovered.error};
-        if (recovered.restored) { retried = true; continue; }
 #ifdef _WIN32
         // A cooperating writer may have replaced the file after the first native
         // open. Reopen/revalidate under the acquired lock, then retry the WHOLE
@@ -1184,11 +1182,21 @@ settings::saved settings::apply_for(const settings_changes& changes, std::chrono
             std::memcmp(current->identity.FileId.Identifier, target->identity.FileId.Identifier,
                         sizeof target->identity.FileId.Identifier) != 0)
         { retried = true; continue; }
+        // A live configured alias must still lead to the target whose lock we
+        // hold. A dangling alias may recover only through its verified receipt.
+        const auto alias_current = resolve(file, error, &changed);
+        if (alias_current && alias_current->path != target->path)
+        { retried = true; continue; }
+        if (!alias_current && initial_recovery.records.empty())
+        { if (changed) { retried = true; continue; } return {error}; }
 #endif
+        const auto recovered = recover_settings_before_save(file, target->path, deadline);
+        if (!recovered.error.empty()) return {recovered.error};
+        if (recovered.restored) { retried = true; continue; }
         std::string read_error;
         bool version_two = false;
         uint64_t generation = 0;
-        std::optional<values> now = read_file(target->path, &read_error, &version_two, &generation);
+        std::optional<values> now = read_file(target->path, &read_error, &version_two, &generation, deadline);
         if (!now)
             return {rap::i18n::format(_("Couldn't read the settings in {0}: {1}"), shown(target->path),
                                       read_error)};
@@ -1206,7 +1214,7 @@ settings::saved settings::apply_for(const settings_changes& changes, std::chrono
         // A native replacement can publish successfully but fail backup cleanup.
         // On any error, mirror the actual target, falling back to the last read
         // snapshot only when it cannot be reread (e.g. unrecoverable disk failure).
-        values_ = result.committed() ? std::move(next) : read_file(target->path).value_or(std::move(*now));
+        values_ = result.committed() ? std::move(next) : read_file(target->path,nullptr,nullptr,nullptr,deadline).value_or(std::move(*now));
         return result;
     }
 }
