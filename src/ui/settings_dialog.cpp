@@ -38,10 +38,19 @@ struct save_warning_state
 {
     size_t shown = 0;
     bool quit_requested = false;
+    bool alive = true, tracked = false;
+    std::vector<std::weak_ptr<rap::subscription>> pending;
 };
 // UI-thread only. Explicit warnings count too, even after their error was
 // taken from settings' deferred queue or came straight from apply().
-std::map<rap::ui*, save_warning_state> save_warnings;
+std::map<rap::ui*, std::shared_ptr<save_warning_state>> save_warnings;
+
+std::shared_ptr<save_warning_state> warning_state(rap::ui& ui)
+{
+    auto& state = save_warnings[&ui];
+    if (!state) state = std::make_shared<save_warning_state>();
+    return state;
+}
 
 // The Appearance choices, in the drop-down's order.
 constexpr rap::color_scheme k_appearance_choices[] = {
@@ -947,29 +956,60 @@ void show_settings(rap::ui& ui, rap::window* parent, const std::string& repo_dir
 void report_unsaved_settings(rap::ui& ui, rap::window* parent, const std::string& error,
                               std::function<void()> dismissed)
 {
-    ++save_warnings[&ui].shown;
+    const auto state = warning_state(ui);
+    ++state->shown;
+    // The backend owns this token through its done closure. Response resets it;
+    // disposal without response drops the last reference and resets it too.
+    // subscription::reset exchanges its callback first, so both happen once.
+    auto completion = std::make_shared<rap::subscription>(
+        [&ui, state, dismissed = std::move(dismissed)]
+        {
+            --state->shown;
+            if (!state->alive) return;
+            if (dismissed) dismissed();
+            if (state->alive && !state->shown && state->quit_requested) quit_after_settings(ui);
+        });
+    std::erase_if(state->pending, [](const auto& token) { return token.expired(); });
+    state->pending.push_back(completion);
     show_message(ui, parent, {.icon = rap::message_spec::icon::warning,
                         .title = _("Tortilla"),
                         .text = _("Your choices couldn't be saved. The settings are as they were."),
                         .detail = error},
-                 [&ui, dismissed = std::move(dismissed)](rap::dialog_role)
+                 [completion](rap::dialog_role)
                  {
-                     auto& state = save_warnings[&ui];
-                     --state.shown;
-                     if (dismissed) dismissed();
-                     if (!state.shown && state.quit_requested) quit_after_settings(ui);
+                     auto keep = completion;  // a continuation may destroy its owner/closure
+                     keep->reset();
                  });
 }
 
 void quit_after_settings(rap::ui& ui)
 {
-    auto& state = save_warnings[&ui];
-    state.quit_requested = true;
-    if (state.shown) return;
+    const auto state = warning_state(ui);
+    if (!state->alive) return;
+    state->quit_requested = true;
+    if (state->shown) return;
     const std::string error = settings::get().take_save_error();
     if (!error.empty()) return report_unsaved_settings(ui, nullptr, error);
-    state.quit_requested = false;
+    state->quit_requested = false;
     ui.quit();
+}
+
+rap::subscription track_settings_warnings(rap::ui& ui)
+{
+    const auto state = warning_state(ui);
+    if (state->tracked) return {};
+    state->tracked = true;
+    return rap::subscription([at = &ui, state]
+    {
+        state->alive = false;
+        // Release retained dialog state while the UI is still alive, before
+        // backend destruction disposes the remaining done closures.
+        const auto pending = state->pending;
+        for (const auto& weak : pending)
+            if (auto completion = weak.lock()) completion->reset();
+        if (auto it = save_warnings.find(at); it != save_warnings.end() && it->second == state)
+            save_warnings.erase(it);
+    });
 }
 
 }  // namespace tortilla

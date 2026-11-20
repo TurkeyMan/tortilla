@@ -2,6 +2,7 @@
 
 #include "i18n.h"
 #include "util/replaced_file.h"
+#include "util/settings_format.h"
 
 #include <rapport/sys.h>
 
@@ -298,7 +299,7 @@ void parse(std::string_view text, values& out)
         while (!s.empty() && (s.back() == '\r' || s.back() == '\n')) s.remove_suffix(1);
         const size_t eq = s.find('=');
         if (eq == std::string_view::npos || s.starts_with('#')) continue;
-        out[std::string(s.substr(0, eq))] = std::string(s.substr(eq + 1));
+        out[decode_settings_key(s.substr(0, eq))] = std::string(s.substr(eq + 1));
     }
 }
 
@@ -458,10 +459,13 @@ std::string write_file(const fs::path& target, const values& v)
     };
     bool ok = true;
     for (auto& [k, val] : v)
-        ok = ok && checked(std::fwrite(k.data(), 1, k.size(), f) == k.size()) &&
+    {
+        const std::string encoded = encode_settings_key(k);
+        ok = ok && checked(std::fwrite(encoded.data(), 1, encoded.size(), f) == encoded.size()) &&
              checked(std::fputc('=', f) != EOF) &&
              checked(std::fwrite(val.data(), 1, val.size(), f) == val.size()) &&
              checked(std::fputc('\n', f) != EOF);
+    }
     ok = ok && checked(!fail(settings_test_failure::flush) && std::fflush(f) == 0) &&
          checked(!std::ferror(f));
     // On disk before the rename, so a crash leaves the old file or the new

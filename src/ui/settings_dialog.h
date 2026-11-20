@@ -36,5 +36,8 @@ void report_unsaved_settings(rap::ui&, rap::window* parent, const std::string& e
 // Called instead of quit(): report pending save errors while the event loop
 // still runs, and quit only after the warning is dismissed. Never restarts it.
 void quit_after_settings(rap::ui&);
+// Keep for the loaded UI's lifetime, and reset before destroying the backend.
+// Cancels pending completion continuations without calling a dying UI.
+rap::subscription track_settings_warnings(rap::ui&);
 
 }  // namespace tortilla

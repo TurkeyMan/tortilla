@@ -3947,7 +3947,7 @@ void settings_close_failure_tests(rap::ui& ui, const std::string& first,
 }
 
 void settings_preference_failure_tests(rap::ui& ui, const std::string& repo,
-                                        const std::string& root)
+                                        const std::string& root, rap::subscription& warning_lifetime)
 {
     auto& st = settings::get();
     for (bool parented : {false, true})
@@ -3986,7 +3986,10 @@ void settings_preference_failure_tests(rap::ui& ui, const std::string& repo,
                   g_backend->quit_requests == quits,
               "settings preferences: one failed geometry/preferences save retains its window and continuation until dismissal");
         if (parented)
+        {
             parent.reset();  // retained dismissal must not invoke a destroyed owner's callback
+            quit_after_settings(ui);  // waiting for disposal, not a response callback
+        }
         else
         {
             quit_after_settings(ui);  // queue is empty, but the explicit warning is still held
@@ -3998,14 +4001,30 @@ void settings_preference_failure_tests(rap::ui& ui, const std::string& repo,
                              : std::move(g_backend->held_messages.front());
         g_backend->held_messages.clear();
         g_backend->hold_dialogs = false;
-        if (dismissed) dismissed(rap::dialog_role::ok);
+        if (!parented && dismissed) dismissed(rap::dialog_role::ok);
+        // Qt drops its callback when the parent destroys the QMessageBox,
+        // without emitting finished. Drop the LAST copy without invoking it.
+        dismissed = {};
         settle(ui);
         check(!saved && closed == !parented && !built.window &&
-                  g_backend->quit_requests == quits + (parented ? 0 : 1),
-              parented ? "settings preferences: dismissed action is inert after its owner is destroyed"
-                       : "settings preferences: only dismissal permits standalone Settings close, destruction and quit");
+                  g_backend->quit_requests == quits + 1,
+              parented ? "settings preferences: no-response disposal clears warning and quits without a dead-owner continuation"
+                       : "settings preferences: response followed by disposal completes and quits exactly once");
         g_backend->suppress_quit = false;
     }
+    const int quits = g_backend->quit_requests;
+    bool continued = false;
+    g_backend->hold_dialogs = true;
+    g_backend->suppress_quit = true;
+    report_unsaved_settings(ui, nullptr, "UI teardown", [&] { continued = true; });
+    quit_after_settings(ui);
+    warning_lifetime.reset();  // the production UI scope ends before its backend
+    g_backend->held_messages.clear();
+    check(!continued && g_backend->quit_requests == quits,
+          "settings preferences: UI teardown cancels retained callbacks without calling a dying UI");
+    warning_lifetime = track_settings_warnings(ui);
+    g_backend->hold_dialogs = false;
+    g_backend->suppress_quit = false;
     st.use_file(rap::sys::path_from_utf8(root) / "tortilla-settings");
 }
 
@@ -4070,6 +4089,7 @@ void run_log_page_tests(const std::string& root)
     check(loaded && g_backend, "log page: the test's backend starts");
     if (!loaded || !g_backend) return;
     rap::ui& ui = **loaded;
+    auto warning_lifetime = track_settings_warnings(ui);
 
     // The remotes' poll would arm itself again at once, forever, on the
     // null backend, whose timers don't wait: held here instead.
@@ -4115,7 +4135,7 @@ void run_log_page_tests(const std::string& root)
     tab_tests(ui, repo, others[0], others[1]);
     toolbar_tests(ui, repo, others[0]);
     settings_close_failure_tests(ui, repo, others[0], root);
-    settings_preference_failure_tests(ui, repo, root);
+    settings_preference_failure_tests(ui, repo, root, warning_lifetime);
     recent_tests(root, repo, others[0]);
     identity_tests(ui, repo, others[0]);
     teardown_tests(ui, repo, others[0]);
@@ -4135,6 +4155,7 @@ void run_log_page_tests(const std::string& root)
     check(g_stale_calls == 0, "log forward: nothing reached a page's widgets after they went");
 
     log_tab::poll_hooks_for_tests = nullptr;
+    warning_lifetime.reset();
     loaded->reset();
     g_backend = nullptr;
 }

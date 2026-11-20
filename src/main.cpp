@@ -447,6 +447,7 @@ int main(int argc, char** argv)
 #ifndef _WIN32
     show_toolkit_hint(**ui, opts);
 #endif
+    auto settings_warnings = tortilla::track_settings_warnings(**ui);
 
     // Without git Tortilla is a viewer: said once a session; a command that
     // needs git says so rather than failing as it runs.

@@ -61,6 +61,7 @@
 #include "util/json.h"
 #include "util/programs.h"
 #include "util/replaced_file.h"
+#include "util/settings_format.h"
 #include "util/repo_path.h"
 #include "util/search_query.h"
 #include "util/sha256.h"
@@ -1625,7 +1626,7 @@ std::map<std::string, std::string> settings_on_disk(const std::filesystem::path&
     std::ifstream in(file, std::ios::binary);
     for (std::string line; std::getline(in, line);)
         if (size_t eq = line.find('='); eq != std::string::npos)
-            out[line.substr(0, eq)] = line.substr(eq + 1);
+            out[tortilla::decode_settings_key(std::string_view(line).substr(0, eq))] = line.substr(eq + 1);
     return out;
 }
 
@@ -1668,6 +1669,53 @@ int settings_child(char** argv)
         st.add_to_history("shared.history", tag + "-" + std::to_string(i), 1000);
     }
     return 0;
+}
+
+void settings_key_cases(const std::string& scratch)
+{
+    namespace fs = std::filesystem;
+    using tortilla::decode_settings_key;
+    using tortilla::encode_settings_key;
+    const auto dir = rap::sys::path_from_utf8(scratch) / "settings-keys";
+    fs::create_directories(dir);
+    const auto file = dir / "prefs";
+    write_text(file, "legacy.key=raw%3D=value\nlegacy%3Dkey=accepted\n");
+    auto& st = tortilla::settings::get();
+    st.use_file(file);
+    check(st.value("legacy.key") == "raw%3D=value" && st.value("legacy=key") == "accepted",
+          "settings keys: legacy plain keys load and old literal %XX ambiguity is accepted");
+
+    const std::vector<std::string> keys = {
+        "log.refHistory./repo=a", "log.refHistory./repo=b", "literal%3D", "literal%253D",
+        "equals=percent%", "line\nfeed", "carriage\rreturn", "both\r\n=%"};
+    const std::string value = "value%3D=a%25\tplain";
+    for (const auto& key : keys) st.set(key, value);  // each save rereads the previous one
+    st.set("unrelated", "kept");
+    st.use_file(file);
+    const auto disk = settings_on_disk(file);
+    const std::string raw = slurp(file);
+    bool exact = st.value("legacy.key") == "raw%3D=value" && disk.contains("legacy.key") &&
+                 disk.at("legacy.key") == "raw%3D=value";
+    for (const auto& key : keys)
+        exact = exact && st.value(key) == value && disk.contains(key) && disk.at(key) == value &&
+                raw.find(encode_settings_key(key) + "=" + value + "\n") != std::string::npos;
+    check(exact && !st.contains("log.refHistory./repo") &&
+              st.value("log.refHistory./repo=a") == value &&
+              st.value("log.refHistory./repo=b") == value,
+          "settings keys: consecutive disjoint repo= writes and percent/newline keys survive reread exactly, values unchanged");
+    check(raw.find("repo%3Da=") != std::string::npos && raw.find("repo%3Db=") != std::string::npos &&
+              raw.find("literal%253D=") != std::string::npos &&
+              std::count(raw.begin(), raw.end(), '\n') == int(keys.size() + 3),
+          "settings keys: delimiters and key line breaks are escaped without adding records");
+    for (const auto& [encoded, decoded] : std::vector<std::pair<std::string, std::string>>{
+             {"%253D", "%3D"}, {"%25253D", "%253D"}, {"%3d%0a%0D%25", "=\n\r%"},
+             {"bad%", "bad%"}, {"bad%2", "bad%2"}, {"bad%Q1", "bad%Q1"},
+             {"legacy", "legacy"}, {"legacy%41", "legacyA"}})
+        check(decode_settings_key(encoded) == decoded,
+              "settings keys: decode once, accept hex case, leave malformed escapes literal");
+    check(encode_settings_key("shell.top") == "shell.top" &&
+              decode_settings_key("shell%2Etop") == "shell.top",
+          "settings keys: file-manager menu reader shares the decoder and ordinary menu keys stay unchanged");
 }
 
 // One adversarial table: pure volume-boundary cases use the real platform
@@ -1800,6 +1848,7 @@ void settings_path_cases(const std::string& scratch)
 // and saves that fail.
 void settings_across_processes(const std::string& scratch)
 {
+    settings_key_cases(scratch);
     settings_path_cases(scratch);
     namespace fs = std::filesystem;
     const fs::path dir = rap::sys::path_from_utf8(scratch) / "settings-shared";
