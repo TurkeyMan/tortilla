@@ -459,8 +459,10 @@ bool log_window::close_tab(const std::string& id)
         settings_changes st;
         tab.save_view_settings(st);
         tab.save_options(st);
-        if (const auto done = settings::get().apply(st); !done)
-            report_unsaved_settings(ui_, window_.get(), done.error);
+        if (const auto done = settings::get().save_on_close(st); !done)
+        {
+            report_unsaved_settings(ui_, window_.get(), settings::get().take_save_error());
+        }
     }
     tab.drop_page();
     stack_->remove(id);
@@ -635,7 +637,7 @@ void log_window::closing()
         now->save_options(st);
     }
     // The window is going away: never hold its close on a message dialog.
-    settings::get().remember_failure(settings::get().apply(st));
+    settings::get().save_on_close(st);
     close_patch();
 }
 

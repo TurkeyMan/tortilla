@@ -171,7 +171,7 @@ void reflog_window::build()
             settings_changes st;
             st.save_window("refLog.window", *window_);
             st.set_numbers("refLog.columns", list_->column_widths());
-            settings::get().remember_failure(settings::get().apply(st));
+            settings::get().save_on_close(st);
             if (closed_) closed_();
         });
     reload();

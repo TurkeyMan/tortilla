@@ -1895,6 +1895,31 @@ void settings_across_processes(const std::string& scratch)
               "settings: convenience save failures are retained until reported once");
     }
 #ifndef _WIN32
+    for (const std::string intermediate : {"missing", "not-directory"})
+    {
+        const fs::path root = dir / ("invalid-link-" + intermediate);
+        fs::create_directories(root);
+        write_text(root / "prefs", "kept=1\n");
+        if (intermediate == "not-directory") write_text(root / intermediate, "ordinary file\n");
+        const auto file = root / "settings";
+        std::error_code ec;
+        fs::create_symlink(intermediate + "/../prefs", file, ec);
+        if (ec)
+            check(true, "settings: invalid symlink traversal is rejected (no symlinks here)");
+        else
+        {
+            st.use_file(file);
+            tortilla::settings_changes c;
+            c.set("lost", "1");
+            const auto saved = st.apply(c);
+            check(!saved && saved.error.find(intermediate) != std::string::npos &&
+                      slurp(root / "prefs") == "kept=1\n" && !st.contains("lost") &&
+                      fs::is_symlink(file) && !fs::exists(root / "prefs.lock"),
+                  intermediate == "missing"
+                      ? "settings: settings -> missing/../prefs fails without locking or changing prefs"
+                      : "settings: a non-directory before .. fails without changing prefs");
+        }
+    }
     {
         const fs::path file = dir / "no-lock-records";
         write_text(file, "kept=1\n");

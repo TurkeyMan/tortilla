@@ -291,7 +291,7 @@ void worktree_window::build()
             settings_changes st;
             st.save_window("worktrees.window", *window_);
             st.set_numbers("worktrees.columns", list_->column_widths());
-            settings::get().apply(st);
+            settings::get().save_on_close(st);
             if (closed_) closed_();
         });
     reload();

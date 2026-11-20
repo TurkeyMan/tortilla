@@ -643,7 +643,7 @@ void commit_window::close(bool committed)
     layout.save_window("commit.window", *window_);
     layout.set_numbers("commit.panes", splitter_->sizes());
     files_.save_layout(layout);
-    settings::get().apply(layout);
+    settings::get().save_on_close(layout);
     window_->close();
     if (closed_) closed_(committed);
 }

@@ -147,7 +147,7 @@ void changes_view::save_layout() const
 {
     settings_changes st;
     save_layout(st);
-    settings::get().apply(st);
+    settings::get().save_on_close(st);
 }
 
 void changes_view::save_layout(settings_changes& st) const

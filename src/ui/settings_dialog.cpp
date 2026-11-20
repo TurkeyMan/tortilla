@@ -27,6 +27,16 @@
 #include <memory>
 #include <optional>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
+
 namespace tortilla
 {
 namespace
@@ -925,6 +935,24 @@ void report_unsaved_settings(rap::ui& ui, rap::window* parent, const std::string
                         .title = _("Tortilla"),
                         .text = _("Your choices couldn't be saved. The settings are as they were."),
                         .detail = error});
+}
+
+void report_unsaved_settings_before_exit(rap::ui& ui, const std::string& error)
+{
+#ifdef _WIN32
+    const auto text = rap::sys::path_from_utf8(
+        std::string(_("Your choices couldn't be saved. The settings are as they were.")) +
+        "\n\n" + error);
+    MessageBoxW(nullptr, text.c_str(), L"Tortilla", MB_OK | MB_ICONWARNING);
+#else
+    bool answered = false;
+    ui.message(nullptr, {.icon = rap::message_spec::icon::warning,
+                         .title = _("Tortilla"),
+                         .text = _("Your choices couldn't be saved. The settings are as they were."),
+                         .detail = error},
+               [&](rap::dialog_role) { answered = true; ui.quit(); });
+    if (!answered) ui.run();
+#endif
 }
 
 }  // namespace tortilla

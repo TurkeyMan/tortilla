@@ -447,6 +447,9 @@ int main(int argc, char** argv)
 #ifndef _WIN32
     show_toolkit_hint(**ui, opts);
 #endif
+    tortilla::settings_exit_report settings_errors(
+        [&](const std::string& error)
+        { tortilla::report_unsaved_settings_before_exit(**ui, error); });
 
     // Without git Tortilla is a viewer: said once a session; a command that
     // needs git says so rather than failing as it runs.

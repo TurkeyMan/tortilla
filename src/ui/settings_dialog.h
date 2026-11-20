@@ -31,5 +31,7 @@ void show_settings(rap::ui&, rap::window* parent, const std::string& repo_dir,
 // The settings are as they were; what was chosen still applies to what the
 // user asked for now.
 void report_unsaved_settings(rap::ui&, rap::window* parent, const std::string& error);
+// Synchronous final warning, before process exit. No future window is needed.
+void report_unsaved_settings_before_exit(rap::ui&, const std::string& error);
 
 }  // namespace tortilla

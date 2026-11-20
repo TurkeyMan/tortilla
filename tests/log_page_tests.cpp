@@ -35,6 +35,7 @@
 #include <rapport/sys.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -3833,9 +3834,11 @@ void forward_tests(rap::ui& ui, const std::string& first, const std::string& sec
 }
 
 void settings_close_failure_tests(rap::ui& ui, const std::string& first,
-                                   const std::string& second)
+                                   const std::string& second, const std::string& root)
 {
     auto& st = settings::get();
+    const auto file = rap::sys::path_from_utf8(root) / "close-report-settings";
+    st.use_file(file);
     (void)st.take_save_error();
     auto opened = log_window::open(ui, first);
     if (!opened) return check(false, "settings reporting: window opens");
@@ -3849,18 +3852,59 @@ void settings_close_failure_tests(rap::ui& ui, const std::string& first,
     check(w->close_tab(id) && g_backend->messages == before_tab + 1,
           "settings reporting: tab close reports a failed save on the surviving window");
 
+    auto next = log_window::open(ui, first);
+    if (!next) return check(false, "settings reporting: another window opens");
     st.remove("log.window.size");
     const int before_window = g_backend->messages;
     settings_fail_next(settings_test_failure::close);
     const bool closed = frame->close_request && frame->close_request();
     check(closed && g_backend->messages == before_window,
-          "settings reporting: window close proceeds without a blocking error dialog");
+          "settings reporting: with another window open, close defers the error");
     w.reset();
-    auto next = log_window::open(ui, first);
-    if (!next) return check(false, "settings reporting: next window opens");
     (*next)->show();
     check(g_backend->messages == before_window + 1 && st.take_save_error().empty(),
           "settings reporting: next shown window reports the retained close failure once");
+    next->reset();
+
+    int exit_messages = 0;
+    std::string exit_error;
+    // The same exit guard as main; its sink is injected so this never opens
+    // a native window. The final close contends with a real independent lock.
+    {
+        settings_exit_report before_exit([&](const std::string& error)
+                                        { ++exit_messages; exit_error = error; });
+        auto last = log_window::open(ui, first);
+        if (!last) return check(false, "settings reporting: final window opens");
+        kept_window* final_frame = g_backend->built.back().window;
+        st.remove("log.window.size");
+        std::atomic<bool> ready{false}, held{false}, release{false};
+        std::thread other([&]
+                          {
+                              settings_lock_holder lock(file);
+                              held = lock.held();
+                              ready = true;
+                              while (!release) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                          });
+        while (!ready) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        const int said = g_backend->messages;
+        const auto start = std::chrono::steady_clock::now();
+        const bool final_closed = final_frame->close_request && final_frame->close_request();
+        const auto elapsed = std::chrono::steady_clock::now() - start;
+        release = true;
+        other.join();
+        check(final_closed && g_backend->messages == said &&
+                  (!held || (elapsed >= std::chrono::milliseconds(700) &&
+                             elapsed < std::chrono::milliseconds(2500))),
+              "settings reporting: contended final close waits about one second, not five");
+        last->reset();
+        if (!held)
+            st.remember_failure({"test close failure (filesystem has no locks)"});
+        check(exit_messages == 0,
+              "settings reporting: the final warning is deferred until before exit");
+    }
+    check(exit_messages == 1 && !exit_error.empty() && st.take_save_error().empty(),
+          "settings reporting: final process exit reports its close error once through the sink");
+    st.use_file(rap::sys::path_from_utf8(root) / "tortilla-settings");
 }
 
 // Folders shown and remembered without trailing separators, a root's own
@@ -3968,7 +4012,7 @@ void run_log_page_tests(const std::string& root)
     g_stale_calls = 0;
     tab_tests(ui, repo, others[0], others[1]);
     toolbar_tests(ui, repo, others[0]);
-    settings_close_failure_tests(ui, repo, others[0]);
+    settings_close_failure_tests(ui, repo, others[0], root);
     recent_tests(root, repo, others[0]);
     identity_tests(ui, repo, others[0]);
     teardown_tests(ui, repo, others[0]);

@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <deque>
 #include <optional>
 #include <system_error>
 #include <thread>
@@ -87,31 +88,64 @@ struct settings_target
 
 std::optional<settings_target> resolve(const fs::path& file, std::string& error)
 {
-    settings_target t{file};
-    for (int hops = 0;; ++hops)
+    auto failed = [&](const fs::path& at, const std::string& why)
     {
-        std::error_code ec;
-        // Resolve the parent through the filesystem *before* reducing '..'.
-        // In link/../prefs, '..' belongs to the directory link points into.
-        const fs::path parent = fs::weakly_canonical(t.path.parent_path(), ec);
-        if (ec)
+        error = rap::i18n::format(_("Couldn't resolve the settings path {0} at {1}: {2}"),
+                                  shown(file), shown(at), why);
+        return std::optional<settings_target>{};
+    };
+    std::error_code ec;
+    const fs::path absolute = fs::absolute(file, ec);
+    if (ec) return failed(file, ec.message());
+    settings_target t{absolute.root_path()};
+    std::deque<fs::path> todo;
+    for (const auto& part : absolute.relative_path()) todo.push_back(part);
+    int links = 0;
+    while (!todo.empty())
+    {
+        const fs::path part = todo.front();
+        todo.pop_front();
+        if (part.empty() || part == ".") continue;
+        if (part == "..")
         {
-            error = rap::i18n::format(_("Couldn't read the settings in {0}: {1}"),
-                                      shown(file), ec.message());
-            return std::nullopt;
+            t.path = t.path.parent_path();
+            continue;
         }
-        t.path = parent / t.path.filename();
-        const fs::file_status st = fs::symlink_status(t.path, ec);
-        if (st.type() != fs::file_type::symlink) return t;
-        const fs::path to = fs::read_symlink(t.path, ec);
-        if (ec || hops == 40)
+        const fs::path next = t.path / part;
+        // symlink_status/read_symlink use lstat/readlink on POSIX. Never
+        // normalize a suffix before traversing it: missing/.. is an error.
+        const auto status = fs::symlink_status(next, ec);
+        if (status.type() == fs::file_type::symlink)
         {
-            error = rap::i18n::format(_("{0} is a link that doesn't lead to a file."), shown(file));
-            return std::nullopt;
+            const auto target = fs::read_symlink(next, ec);
+            if (ec) return failed(next, ec.message());
+            if (++links > 40)
+                return failed(next, std::make_error_code(std::errc::too_many_symbolic_link_levels).message());
+            if (target.is_absolute()) t.path = target.root_path();
+            std::vector<fs::path> parts;
+            for (const auto& p : target.relative_path()) parts.push_back(p);
+            todo.insert(todo.begin(), parts.begin(), parts.end());
+            t.linked = true;
+            continue;
         }
-        t.path = to.is_absolute() ? to : t.path.parent_path() / to;
-        t.linked = true;
+        if (status.type() == fs::file_type::not_found)
+        {
+            // A dangling final link is supported, but its parent must exist.
+            // A plain first-save config directory may still be created below;
+            // only a simple missing suffix is allowed, never missing/.. .
+            if (!todo.empty() &&
+                (t.linked || std::find(todo.begin(), todo.end(), fs::path("..")) != todo.end()))
+                return failed(next, std::make_error_code(std::errc::no_such_file_or_directory).message());
+            t.path = next;
+            for (const auto& p : todo) t.path /= p;
+            return t;
+        }
+        if (ec) return failed(next, ec.message());
+        if (!todo.empty() && !fs::is_directory(status))
+            return failed(next, std::make_error_code(std::errc::not_a_directory).message());
+        t.path = next;
     }
+    return t;
 }
 
 // The lock writers hold across processes while they read, change and
@@ -569,9 +603,21 @@ void settings::use_file(const fs::path& file)
 
 settings::saved settings::apply(const settings_changes& changes)
 {
+    return apply_for(changes, lock_wait_.load());
+}
+
+settings::saved settings::save_on_close(const settings_changes& changes)
+{
+    const saved done = apply_for(changes, std::min(lock_wait_.load(), std::chrono::milliseconds(1000)));
+    remember_failure(done);
+    return done;
+}
+
+settings::saved settings::apply_for(const settings_changes& changes, std::chrono::milliseconds wait)
+{
     if (changes.empty()) return {};
     // One wait for both locks: this process's other writers and others'.
-    const steady::time_point deadline = steady::now() + lock_wait_.load();
+    const steady::time_point deadline = steady::now() + wait;
     std::unique_lock write(write_mutex_, deadline);
     fs::path file;
     {
@@ -643,6 +689,11 @@ std::string settings::take_save_error()
 {
     std::scoped_lock lock(error_mutex_);
     return std::exchange(save_error_, {});
+}
+
+void settings::report_save_error_before_exit(const std::function<void(const std::string&)>& sink)
+{
+    if (auto error = take_save_error(); !error.empty()) sink(error);
 }
 
 void settings::set(const std::string& key, const std::string& value)
@@ -720,7 +771,7 @@ void settings::save_window(const std::string& prefix, const rap::window& w)
 {
     settings_changes c;
     c.save_window(prefix, w);
-    remember_failure(apply(c));
+    save_on_close(c);
 }
 
 void settings::restore_window(const std::string& prefix, rap::window& w) const

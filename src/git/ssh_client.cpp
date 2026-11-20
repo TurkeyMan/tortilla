@@ -73,7 +73,9 @@ void save_ssh_client(const ssh_client& c)
 {
     settings_changes s;
     save_ssh_client(s, c);
-    if (settings::get().apply(s)) use_ssh_client(c);
+    const auto saved = settings::get().apply(s);
+    if (saved) use_ssh_client(c);
+    else settings::get().remember_failure(saved);
 }
 
 std::vector<std::pair<std::string, std::string>> ssh_environment()

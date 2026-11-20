@@ -110,7 +110,7 @@ void changes_window::build()
         settings_changes layout;
         layout.save_window("changes.window", *window_);
         files_.save_layout(layout);
-        settings::get().apply(layout);
+        settings::get().save_on_close(layout);
         if (closed_) closed_();
     };
     window_ = create_window(

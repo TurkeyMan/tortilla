@@ -454,7 +454,7 @@ void file_action_window::close(bool done)
         settings_changes layout;
         layout.save_window(settings_key() + ".window", *window_);
         files_.save_layout(layout);
-        settings::get().apply(layout);
+        settings::get().save_on_close(layout);
     }
     window_->close();
     if (closed_ && !commit_) closed_(done);

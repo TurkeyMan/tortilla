@@ -380,7 +380,7 @@ void browse_refs::build()
             st.set_numbers("browseRefs.columns.v2", list_->column_widths());
             st.set_numbers("browseRefs.panes", splitter_->sizes());
             st.set_numbers("browseRefs.sort", {float(rows_->sort_column), rows_->descending ? 1.f : 0.f});
-            settings::get().apply(st);
+            settings::get().save_on_close(st);
             if (!done_ && picked_) std::exchange(picked_, {})(std::string());
             if (closed_) closed_();
         });

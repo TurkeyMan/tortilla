@@ -296,7 +296,7 @@ void blame_window::build()
             st.save_window("blame.window", *window_);
             st.set_numbers("blame.columns", list_->column_widths());
             st.set_numbers("blame.panes", splitter_->sizes());
-            settings::get().apply(st);
+            settings::get().save_on_close(st);
             if (closed_) closed_();
             return true;
         });

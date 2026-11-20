@@ -33,6 +33,7 @@
 #include <shared_mutex>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace tortilla
@@ -98,10 +99,16 @@ public:
     // the file is as it was, and so is this process's copy of it (as the
     // file has it, when it could be read).
     saved apply(const settings_changes& changes);
+    // Closing must not spend the normal five-second wait on a competing
+    // writer. Use at most one second and retain/report any failure.
+    saved save_on_close(const settings_changes& changes);
     // Convenience saves have no dialog owner. Log and retain their failures;
     // the next log window shown reports them without blocking a closing window.
     void remember_failure(const saved&);
     std::string take_save_error();
+    // Called before process exit, while the UI is usable. Tests supply a
+    // headless sink; production supplies a synchronous native warning.
+    void report_save_error_before_exit(const std::function<void(const std::string&)>& sink);
 
     // For the tests: the settings read from, and written to, `file` instead
     // of the user's.
@@ -112,6 +119,7 @@ public:
 
 private:
     settings();
+    saved apply_for(const settings_changes&, std::chrono::milliseconds);
 
     // values_ and file_, held only to read or swap them, so a reader never
     // waits on the disk or another process.
@@ -124,6 +132,20 @@ private:
     std::map<std::string, std::string> values_;
     std::mutex error_mutex_;
     std::string save_error_;
+};
+
+// Declared after the UI in main, so pending errors are reported before the
+// backend is destroyed even on command paths that don't use windows::keep.
+class settings_exit_report
+{
+public:
+    explicit settings_exit_report(std::function<void(const std::string&)> sink)
+        : sink_(std::move(sink)) {}
+    ~settings_exit_report() { settings::get().report_save_error_before_exit(sink_); }
+    settings_exit_report(const settings_exit_report&) = delete;
+    settings_exit_report& operator=(const settings_exit_report&) = delete;
+private:
+    std::function<void(const std::string&)> sink_;
 };
 
 // Appearance [Settings > General]: "light", "dark", or as the desktop has

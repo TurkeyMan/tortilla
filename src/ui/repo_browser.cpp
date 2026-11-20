@@ -321,7 +321,7 @@ void repo_browser::build()
             st.set_numbers("repoBrowser.panes", splitter_->sizes());
             st.set_numbers("repoBrowser.sort",
                            {float(rows_->sort_column), rows_->descending ? 1.f : 0.f});
-            settings::get().apply(st);
+            settings::get().save_on_close(st);
             if (closed_) closed_();
             return true;
         });
