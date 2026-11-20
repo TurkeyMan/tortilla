@@ -1624,9 +1624,14 @@ std::map<std::string, std::string> settings_on_disk(const std::filesystem::path&
 {
     std::map<std::string, std::string> out;
     std::ifstream in(file, std::ios::binary);
+    tortilla::settings_key_reader format;
     for (std::string line; std::getline(in, line);)
+    {
+        if (format.read_header(line)) continue;
+        while (!line.empty() && line.back() == '\r') line.pop_back();
         if (size_t eq = line.find('='); eq != std::string::npos)
-            out[tortilla::decode_settings_key(std::string_view(line).substr(0, eq))] = line.substr(eq + 1);
+            out[format.key(std::string_view(line).substr(0, eq))] = line.substr(eq + 1);
+    }
     return out;
 }
 
@@ -1674,16 +1679,30 @@ int settings_child(char** argv)
 void settings_key_cases(const std::string& scratch)
 {
     namespace fs = std::filesystem;
-    using tortilla::decode_settings_key;
     using tortilla::encode_settings_key;
+    const std::string marker(tortilla::k_settings_format_marker);
+    const std::string header = marker + "\n";
     const auto dir = rap::sys::path_from_utf8(scratch) / "settings-keys";
     fs::create_directories(dir);
     const auto file = dir / "prefs";
-    write_text(file, "legacy.key=raw%3D=value\nlegacy%3Dkey=accepted\n");
+    const std::string legacy = "legacy.key=raw%3D=value\nlegacy%3Dkey=literal\n"
+                               "log.refHistory./repo%20name=percent\nlog.refHistory./repo name=space\n";
+    write_text(file, legacy);
     auto& st = tortilla::settings::get();
     st.use_file(file);
-    check(st.value("legacy.key") == "raw%3D=value" && st.value("legacy=key") == "accepted",
-          "settings keys: legacy plain keys load and old literal %XX ambiguity is accepted");
+    check(st.value("legacy.key") == "raw%3D=value" && st.value("legacy%3Dkey") == "literal" &&
+              !st.contains("legacy=key") && st.value("log.refHistory./repo%20name") == "percent" &&
+              st.value("log.refHistory./repo name") == "space" && slurp(file) == legacy,
+          "settings keys: unmarked percent and space repo names load literally and reads do not migrate");
+    tortilla::settings_changes empty;
+    check(st.apply(empty) && slurp(file) == legacy,
+          "settings keys: an empty transaction is not a format-migration save");
+    st.set("legacy.key", "raw%3D=value");  // explicit same-value save still upgrades legacy format
+    st.use_file(file);
+    check(slurp(file).starts_with(header) && st.value("legacy%3Dkey") == "literal" &&
+              st.value("log.refHistory./repo%20name") == "percent" &&
+              st.value("log.refHistory./repo name") == "space",
+          "settings keys: same-value save migrates literal legacy keys losslessly before reload");
 
     const std::vector<std::string> keys = {
         "log.refHistory./repo=a", "log.refHistory./repo=b", "literal%3D", "literal%253D",
@@ -1705,17 +1724,60 @@ void settings_key_cases(const std::string& scratch)
           "settings keys: consecutive disjoint repo= writes and percent/newline keys survive reread exactly, values unchanged");
     check(raw.find("repo%3Da=") != std::string::npos && raw.find("repo%3Db=") != std::string::npos &&
               raw.find("literal%253D=") != std::string::npos &&
-              std::count(raw.begin(), raw.end(), '\n') == int(keys.size() + 3),
-          "settings keys: delimiters and key line breaks are escaped without adding records");
+              raw.starts_with(header) && raw.find(marker, marker.size()) == std::string::npos &&
+              std::count(raw.begin(), raw.end(), '\n') == int(keys.size() + 6) &&
+              st.value("log.refHistory./repo%20name") == "percent" &&
+              st.value("log.refHistory./repo name") == "space",
+          "settings keys: repeated saves emit one first marker and preserve literal legacy percent keys");
+    tortilla::settings_key_reader marked;
+    marked.read_header(marker);
     for (const auto& [encoded, decoded] : std::vector<std::pair<std::string, std::string>>{
              {"%253D", "%3D"}, {"%25253D", "%253D"}, {"%3d%0a%0D%25", "=\n\r%"},
              {"bad%", "bad%"}, {"bad%2", "bad%2"}, {"bad%Q1", "bad%Q1"},
              {"legacy", "legacy"}, {"legacy%41", "legacyA"}})
-        check(decode_settings_key(encoded) == decoded,
-              "settings keys: decode once, accept hex case, leave malformed escapes literal");
+        check(marked.key(encoded) == decoded,
+              "settings keys: marked files decode once, accept hex case, leave malformed escapes literal");
+    tortilla::settings_key_reader unmarked;
+    unmarked.read_header("# ordinary legacy comment");
+    unmarked.read_header(marker);  // a later marker cannot change the version
     check(encode_settings_key("shell.top") == "shell.top" &&
-              decode_settings_key("shell%2Etop") == "shell.top",
-          "settings keys: file-manager menu reader shares the decoder and ordinary menu keys stay unchanged");
+              marked.key("shell%2Etop") == "shell.top" && unmarked.key("shell%2Etop") == "shell%2Etop",
+          "settings keys: shared file-manager reader decodes only marked keys and ordinary menu keys stay unchanged");
+
+    for (const auto& [prefix, encoded] : std::vector<std::pair<std::string, bool>>{
+             {header, true}, {marker + "\r\n", true}, {header + header, true},
+             {"\n" + header, false}, {"# comment\n" + header, false},
+             {"plain=old\n" + header, false}, {marker + " \n", false},
+             {" " + header, false}, {std::string("\xEF\xBB\xBF") + header, false},
+             {marker + "\r\r\n", false}, {"#tortilla-settings 3\n", false}})
+    {
+        const std::string original = prefix + "key%20name=raw%3D=value\r\n";
+        write_text(file, original);
+        st.use_file(file);
+        const std::string key = encoded ? "key name" : "key%20name";
+        check(st.value(key) == "raw%3D=value" &&
+                  !st.contains(encoded ? "key%20name" : "key name") && slurp(file) == original,
+              "settings keys: only exact first-line marker selects decoding, with one CRLF terminator");
+        st.set("unrelated", "keep");
+        st.set("unrelated", "again");
+        st.use_file(file);
+        const auto saved = slurp(file);
+        check(saved.starts_with(header) && saved.find(marker, marker.size()) == std::string::npos &&
+                  st.value(key) == "raw%3D=value",
+              "settings keys: marked and legacy header variants save with one canonical marker and no key loss");
+    }
+    write_text(file, marker);  // exact first line is valid at EOF without LF
+    st.use_file(file);
+    tortilla::settings_key_reader eof;
+    check(eof.read_header(marker) && !st.contains("key name") && slurp(file) == marker,
+          "settings keys: marker-only EOF is a valid read without rewriting");
+    write_text(file, "");
+    st.use_file(file);
+    check(st.apply(empty) && slurp(file).empty(), "settings keys: reading/empty transaction keeps an empty legacy file");
+    tortilla::settings_changes remove_absent;
+    remove_absent.remove("absent");
+    check(st.apply(remove_absent) && slurp(file) == header,
+          "settings keys: explicit unchanged empty-document save writes one format marker");
 }
 
 // One adversarial table: pure volume-boundary cases use the real platform
@@ -1848,6 +1910,7 @@ void settings_path_cases(const std::string& scratch)
 // and saves that fail.
 void settings_across_processes(const std::string& scratch)
 {
+    const std::string settings_header = std::string(tortilla::k_settings_format_marker) + "\n";
     settings_key_cases(scratch);
     settings_path_cases(scratch);
     namespace fs = std::filesystem;
@@ -1895,7 +1958,9 @@ void settings_across_processes(const std::string& scratch)
                     {
                         const std::string text(std::istreambuf_iterator<char>(in), {});
                         ++reads;
-                        if (!text.starts_with("!first=1\n") || !text.ends_with("~last=1\n")) ++torn;
+                        std::string_view document(text);
+                        if (document.starts_with(settings_header)) document.remove_prefix(settings_header.size());
+                        if (!document.starts_with("!first=1\n") || !document.ends_with("~last=1\n")) ++torn;
                     }
                     else
                         ++unopened;
@@ -2021,7 +2086,7 @@ void settings_across_processes(const std::string& scratch)
         c.add_to_history("h", "e");
         const tortilla::settings::saved saved = st.apply(c);
         st.remove("kept");
-        check(!saved && !saved.error.empty() && before == "kept=1\n" && slurp(file) == before &&
+        check(!saved && !saved.error.empty() && before == settings_header + "kept=1\n" && slurp(file) == before &&
                   st.value("lost").empty() && st.history("h").empty() && st.value("kept") == "1",
               "settings: a failed save keeps the last good file, and the copy of it");
         for (const fs::path& t : temps) fs::remove(t);
@@ -2112,7 +2177,7 @@ void settings_across_processes(const std::string& scratch)
                     return c;
                 }()));
             check(saved && slurp(victim) == "mine\n" && fs::is_symlink(first) &&
-                      !fs::is_symlink(file) && slurp(file) == "a=1\nb=2\n",
+                      !fs::is_symlink(file) && slurp(file) == settings_header + "a=1\nb=2\n",
                   "settings: a link at a temporary file's name is left alone");
             fs::remove(first);
         }
@@ -2163,7 +2228,7 @@ void settings_across_processes(const std::string& scratch)
         const fs::path file = dir / "locked";
         st.use_file(file);
         st.set("b", "2");
-        check(slurp(file) == "a=1\nb=2\n", "settings: the lock let go, saves save");
+        check(slurp(file) == settings_header + "a=1\nb=2\n", "settings: the lock let go, saves save");
     }
     (void)st.take_save_error();  // expected convenience failures above were observed
 }

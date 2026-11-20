@@ -1,6 +1,6 @@
 // The settings file escapes keys only. Values keep their existing byte format.
-// A literal '%' is always escaped, so decoding exactly once is unambiguous for
-// new files. Legacy literal %XX keys are intentionally interpreted as escapes.
+// A literal '%' is always escaped. Only a version-marked file decodes keys;
+// unmarked legacy keys remain literal and are encoded losslessly on next save.
 #pragma once
 
 #include <string>
@@ -8,6 +8,8 @@
 
 namespace tortilla
 {
+
+inline constexpr std::string_view k_settings_format_marker = "#tortilla-settings 2";
 
 inline std::string encode_settings_key(std::string_view key)
 {
@@ -50,5 +52,25 @@ inline std::string decode_settings_key(std::string_view key)
     }
     return out;
 }
+
+// One instance per file. The first physical line alone selects the format.
+// getline has removed LF; one terminal CR is accepted for a CRLF first line.
+// No other whitespace/BOM normalization and no later-marker activation.
+class settings_key_reader
+{
+public:
+    bool read_header(std::string_view line)
+    {
+        if (!first_) return false;
+        first_ = false;
+        if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
+        return version_two_ = line == k_settings_format_marker;
+    }
+    bool version_two() const { return version_two_; }
+    std::string key(std::string_view stored) const
+    { return version_two_ ? decode_settings_key(stored) : std::string(stored); }
+private:
+    bool first_ = true, version_two_ = false;
+};
 
 }  // namespace tortilla

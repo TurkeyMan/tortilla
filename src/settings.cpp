@@ -287,8 +287,9 @@ private:
     lock_taken taken_;
 };
 
-void parse(std::string_view text, values& out)
+bool parse(std::string_view text, values& out)
 {
+    settings_key_reader format;
     // Whole lines, however long: every save writes every key back.
     for (size_t at = 0; at < text.size();)
     {
@@ -296,17 +297,21 @@ void parse(std::string_view text, values& out)
         if (end == std::string_view::npos) end = text.size();
         std::string_view s = text.substr(at, end - at);
         at = end + 1;
+        if (format.read_header(s)) continue;
         while (!s.empty() && (s.back() == '\r' || s.back() == '\n')) s.remove_suffix(1);
         const size_t eq = s.find('=');
         if (eq == std::string_view::npos || s.starts_with('#')) continue;
-        out[decode_settings_key(s.substr(0, eq))] = std::string(s.substr(eq + 1));
+        out[format.key(s.substr(0, eq))] = std::string(s.substr(eq + 1));
     }
+    return format.version_two();
 }
 
 // The file as it is now: empty if there is none; nullopt if it is there but
 // can't be read, so an update doesn't replace what it couldn't see.
-std::optional<values> read_file(const fs::path& file, std::string* error = nullptr)
+std::optional<values> read_file(const fs::path& file, std::string* error = nullptr,
+                                bool* version_two = nullptr)
 {
+    if (version_two) *version_two = false;
     std::FILE* f = open_replaced_file(
         file, [&] { return rap::sys::fopen(file, "rb"); }, 20, std::chrono::milliseconds(10));
     if (!f)
@@ -330,7 +335,8 @@ std::optional<values> read_file(const fs::path& file, std::string* error = nullp
         return std::nullopt;
     }
     values out;
-    parse(text, out);
+    const bool marked = parse(text, out);
+    if (version_two) *version_two = marked;
     return out;
 }
 
@@ -457,7 +463,9 @@ std::string write_file(const fs::path& target, const values& v)
         if (!ok && why.empty()) why = crt_error(e ? e : EIO);
         return ok;
     };
-    bool ok = true;
+    bool ok = checked(std::fwrite(k_settings_format_marker.data(), 1,
+                                  k_settings_format_marker.size(), f) == k_settings_format_marker.size()) &&
+              checked(std::fputc('\n', f) != EOF);
     for (auto& [k, val] : v)
     {
         const std::string encoded = encode_settings_key(k);
@@ -703,13 +711,16 @@ settings::saved settings::apply_for(const settings_changes& changes, std::chrono
     writer_lock across_processes(with_suffix(target->path, ".lock"), deadline);
     if (!across_processes.error().empty()) return {across_processes.error()};
     std::string read_error;
-    std::optional<values> now = read_file(target->path, &read_error);
+    bool version_two = false;
+    std::optional<values> now = read_file(target->path, &read_error, &version_two);
     if (!now)
         return {rap::i18n::format(_("Couldn't read the settings in {0}: {1}"), shown(target->path),
                                   read_error)};
     values next = *now;
     for (auto& change : changes.changes_) change(next);
-    if (next != *now) error = write_file(target->path, next);
+    // An explicit save upgrades a legacy file even if the selected value did
+    // not change. Merely loading the file never rewrites it.
+    if (next != *now || !version_two) error = write_file(target->path, next);
     std::unique_lock lock(mutex_);
     values_ = error.empty() ? std::move(next) : std::move(*now);
     return {error};

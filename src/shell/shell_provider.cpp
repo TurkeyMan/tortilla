@@ -581,12 +581,14 @@ menu_settings read_settings()
     // meets that is tried again, so the menu isn't built from no settings.
     const fs::path file = settings_file();
     std::ifstream in = tortilla::open_replaced_file(
-        file, [&] { return std::ifstream(file); }, 10, std::chrono::milliseconds(5));
+        file, [&] { return std::ifstream(file, std::ios::binary); }, 10, std::chrono::milliseconds(5));
+    tortilla::settings_key_reader format;
     for (std::string line; std::getline(in, line);)
     {
+        if (format.read_header(line)) continue;
         const size_t eq = line.find('=');
         if (eq == std::string::npos) continue;
-        const std::string key = tortilla::decode_settings_key(std::string_view(line).substr(0, eq));
+        const std::string key = format.key(std::string_view(line).substr(0, eq));
         const std::string value = trim(line.substr(eq + 1));
         if (key == k_top_setting) out.where.top = parse_ids(value);
         else if (key == k_shift_setting) out.where.shift = parse_ids(value);
