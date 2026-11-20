@@ -60,7 +60,6 @@
 #include "util/entry_path.h"
 #include "util/json.h"
 #include "util/programs.h"
-#include "util/replaced_file.h"
 #include "util/settings_format.h"
 #include "util/settings_recovery.h"
 #include "util/repo_path.h"
@@ -2553,30 +2552,20 @@ void settings_across_processes(const std::string& scratch)
         fs::create_symlink("two", link_a, ec);
         if (!ec) fs::create_symlink("two", link_b, ec);
         const bool linked = !ec;
-        // The reader opens the file as the shell extension does, trying
-        // again while an open meets a rename (Windows). One that fails even
-        // so would be a menu built from no settings.
-        std::atomic<int> reads{0}, torn{0}, retried{0}, unopened{0};
+        // Exercise the shared app/shell reader, including its verified
+        // recovery snapshot handoff while both writers replace the file.
+        std::atomic<int> reads{0}, torn{0}, unopened{0};
+        std::string reader_error;
         std::thread reader(
             [&]
             {
                 while (!stop)
                 {
-                    int tries = 0;
-                    std::ifstream in = tortilla::open_replaced_file(
-                        file,
-                        [&]
-                        {
-                            ++tries;
-                            return std::ifstream(file, std::ios::binary);
-                        },
-                        10, std::chrono::milliseconds(5));
-                    if (tries > 1) ++retried;
-                    if (in)
+                    auto text = tortilla::read_settings_document(file);
+                    if (text)
                     {
-                        const std::string text(std::istreambuf_iterator<char>(in), {});
                         ++reads;
-                        std::string_view document(text);
+                        std::string_view document(*text);
                         if (document.starts_with(settings_header)) document.remove_prefix(settings_header.size());
                         if (document.starts_with(tortilla::k_settings_generation_prefix))
                         {
@@ -2586,8 +2575,10 @@ void settings_across_processes(const std::string& scratch)
                         if (!document.starts_with("!first=1\n") || !document.ends_with("~last=1\n")) ++torn;
                     }
                     else
+                    {
                         ++unopened;
-                    in.close();
+                        reader_error = text.error();
+                    }
                     std::this_thread::sleep_for(std::chrono::milliseconds(1));
                 }
             });
@@ -2647,8 +2638,8 @@ void settings_across_processes(const std::string& scratch)
         check(entries == want, "settings: two processes adding to one history both keep theirs");
         const std::string seen = "settings: a reader meanwhile only ever sees a whole document (" +
                                  std::to_string(reads) + " read, " + std::to_string(torn) +
-                                 " in part, " + std::to_string(retried) + " opened on a retry, " +
-                                 std::to_string(unopened) + " not opened)";
+                                 " in part, " + std::to_string(unopened) + " not opened)";
+        if (!reader_error.empty()) std::printf("  shared settings reader: %s\n", reader_error.c_str());
         check(reads > 0 && torn == 0 && unopened == 0, seen.c_str());
         bool leftovers = false;
         for (const auto& e : fs::directory_iterator(dir))
