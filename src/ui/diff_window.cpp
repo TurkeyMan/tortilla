@@ -238,12 +238,13 @@ public:
     // Where the window's place is kept: View Patch's apart from the rest.
     std::string key_ = "diff.window";
 
-    void close()
+    void close(settings_changes* changes = nullptr)
     {
+        closed(changes);
         window_->close();
-        closed();
     }
     rap::window* frame() const { return window_.get(); }
+    std::function<void(settings_changes&)> closing_choices;
 
 private:
     void loaded(int code)
@@ -371,10 +372,16 @@ private:
     }
 
     // Destroyed after the callback that closed it returns.
-    void closed()
+    void closed(settings_changes* together = nullptr)
     {
+        if (closed_) return;
+        closed_ = true;
         git_.reset();  // stops a diff still loading
-        settings::get().save_window(key_, *window_);
+        settings_changes own;
+        settings_changes& choices = together ? *together : own;
+        choices.save_window(key_, *window_);
+        if (closing_choices) closing_choices(choices);
+        if (!together) settings::get().save_on_close(choices);
         if (on_closed_) on_closed_();
         auto keep = std::move(self_);
         ui_.post([keep] {});
@@ -388,6 +395,7 @@ private:
     std::function<void(rap::window*)> save_;
     std::unique_ptr<rap::window> window_;
     std::shared_ptr<diff_window> self_;
+    bool closed_ = false;
     rap::text_view* text_ = nullptr;
     rap::entry* query_ = nullptr;
     rap::check* match_case_ = nullptr;
@@ -408,9 +416,11 @@ void show_unified_diff(rap::ui& ui, const std::string& title, const std::string&
         ->open(dir, git_args);
 }
 
-patch_viewer open_patch_viewer(rap::ui& ui, const std::string& title, std::function<void()> closed)
+patch_viewer open_patch_viewer(rap::ui& ui, const std::string& title,
+                                std::function<void(settings_changes&)> closed)
 {
-    auto w = std::make_shared<diff_window>(ui, title, std::move(closed), nullptr);
+    auto w = std::make_shared<diff_window>(ui, title, nullptr, nullptr);
+    w->closing_choices = std::move(closed);
     w->key_ = "log.patch.window";
     w->open({}, {});
     std::weak_ptr<diff_window> weak = w;
@@ -423,6 +433,11 @@ patch_viewer open_patch_viewer(rap::ui& ui, const std::string& title, std::funct
                 [weak]
             {
                 if (auto s = weak.lock()) s->close();
+            },
+            .close_into =
+                [weak](settings_changes& choices)
+            {
+                if (auto s = weak.lock()) s->close(&choices);
             },
             .window =
                 [weak]() -> rap::window*

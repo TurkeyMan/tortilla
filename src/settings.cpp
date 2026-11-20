@@ -97,9 +97,11 @@ std::optional<settings_target> resolve(const fs::path& file, std::string& error)
     std::error_code ec;
     const fs::path absolute = fs::absolute(file, ec);
     if (ec) return failed(file, ec.message());
-    settings_target t{absolute.root_path()};
+    const auto initial = split_settings_path(absolute);
+    settings_target t{initial.root};
+    fs::path volume_root = initial.root;
     std::deque<fs::path> todo;
-    for (const auto& part : absolute.relative_path()) todo.push_back(part);
+    todo.insert(todo.end(), initial.components.begin(), initial.components.end());
     int links = 0;
     while (!todo.empty())
     {
@@ -108,7 +110,7 @@ std::optional<settings_target> resolve(const fs::path& file, std::string& error)
         if (part.empty() || part == ".") continue;
         if (part == "..")
         {
-            t.path = t.path.parent_path();
+            if (t.path.native() != volume_root.native()) t.path = t.path.parent_path();
             continue;
         }
         const fs::path next = t.path / part;
@@ -121,10 +123,12 @@ std::optional<settings_target> resolve(const fs::path& file, std::string& error)
             if (ec) return failed(next, ec.message());
             if (++links > 40)
                 return failed(next, std::make_error_code(std::errc::too_many_symbolic_link_levels).message());
-            if (target.is_absolute()) t.path = target.root_path();
-            std::vector<fs::path> parts;
-            for (const auto& p : target.relative_path()) parts.push_back(p);
-            todo.insert(todo.begin(), parts.begin(), parts.end());
+            const auto parts = split_settings_path(target);
+            if (target.is_absolute()) t.path = volume_root = parts.root;
+            else if (target.has_root_directory()) t.path = volume_root;
+            else if (target.has_root_name())
+                return failed(next, std::make_error_code(std::errc::invalid_argument).message());
+            todo.insert(todo.begin(), parts.components.begin(), parts.components.end());
             t.linked = true;
             continue;
         }
@@ -497,6 +501,54 @@ std::string numbers_value(const std::vector<float>& v)
 
 void settings_fail_next(settings_test_failure failure) { next_failure = failure; }
 
+settings_path_parts split_settings_path(const fs::path& file)
+{
+    settings_path_parts out;
+#ifdef _WIN32
+    // Treat the entire Windows volume root as one unit. MSVC decomposes
+    // \\?\D:\ as root \\?\ plus a D: component; appending D: would discard
+    // the extended root and turn the destination into a drive-relative path.
+    const std::wstring& s = file.native();
+    auto sep = [&](size_t at) { return at < s.size() && (s[at] == L'\\' || s[at] == L'/'); };
+    auto end_part = [&](size_t at)
+    {
+        while (at < s.size() && !sep(at)) ++at;
+        return at;
+    };
+    size_t root = 0;
+    if (s.size() >= 7 && sep(0) && sep(1) && s[2] == L'?' && sep(3) &&
+        s[5] == L':' && sep(6))
+        root = 7;  // extended drive volume, including its trailing separator
+    else
+    {
+        size_t server = 0;
+        if (s.size() >= 8 && sep(0) && sep(1) && s[2] == L'?' && sep(3) &&
+            (s[4] == L'U' || s[4] == L'u') && (s[5] == L'N' || s[5] == L'n') &&
+            (s[6] == L'C' || s[6] == L'c') && sep(7))
+            server = 8;
+        else if (sep(0) && sep(1) && s.size() > 2 && s[2] != L'?')
+            server = 2;
+        if (server)
+        {
+            const size_t server_end = end_part(server);
+            const size_t share_end = end_part(server_end + 1);
+            if (server_end > server && server_end < s.size() && share_end > server_end + 1)
+                root = share_end + (share_end < s.size() ? 1 : 0);
+        }
+        else if (s.size() >= 3 && s[1] == L':' && sep(2)) root = 3;
+    }
+    if (root)
+    {
+        out.root = fs::path(s.substr(0, root));
+        for (const auto& part : fs::path(s.substr(root))) out.components.push_back(part);
+        return out;
+    }
+#endif
+    out.root = file.root_path();
+    for (const auto& part : file.relative_path()) out.components.push_back(part);
+    return out;
+}
+
 std::vector<fs::path> settings_temp_files(const fs::path& file)
 {
 #ifdef _WIN32
@@ -616,6 +668,7 @@ settings::saved settings::save_on_close(const settings_changes& changes)
 settings::saved settings::apply_for(const settings_changes& changes, std::chrono::milliseconds wait)
 {
     if (changes.empty()) return {};
+    ++transactions_;
     // One wait for both locks: this process's other writers and others'.
     const steady::time_point deadline = steady::now() + wait;
     std::unique_lock write(write_mutex_, deadline);
@@ -689,11 +742,6 @@ std::string settings::take_save_error()
 {
     std::scoped_lock lock(error_mutex_);
     return std::exchange(save_error_, {});
-}
-
-void settings::report_save_error_before_exit(const std::function<void(const std::string&)>& sink)
-{
-    if (auto error = take_save_error(); !error.empty()) sink(error);
 }
 
 void settings::set(const std::string& key, const std::string& value)

@@ -28,7 +28,9 @@
 #include "test_support.h"
 #include "ui/modal_dialogs.h"
 #include "ui/repo_icon.h"
+#include "ui/settings_dialog.h"
 #include "ui/trust_repository.h"
+#include "ui/windows.h"
 #include "util/repo_path.h"
 
 #include <rapport/rapport.h>
@@ -1153,7 +1155,11 @@ public:
         return std::make_unique<kept_window>(std::move(w), std::move(mine), b);
     }
     int run() override { return null().run(); }
-    void quit(int code) override { null().quit(code); }
+    void quit(int code) override
+    {
+        ++quit_requests;
+        if (!suppress_quit) null().quit(code);
+    }
     void set_color_scheme(rap::color_scheme s) override { null().set_color_scheme(s); }
     void post(std::function<void()> f) override { null().post(std::move(f)); }
     void message(rap::window* parent, const rap::message_spec& m,
@@ -1161,6 +1167,7 @@ public:
     {
         ++messages;
         last_message = m.text;
+        last_message_detail = m.detail;
         if (hold_dialogs)
         {
             held_messages.push_back(std::move(done));
@@ -1241,6 +1248,9 @@ public:
     std::vector<std::function<void(std::vector<std::string>)>> held_choosers;
     // Messages shown (the null backend answers each with its first button).
     int messages = 0;
+    int quit_requests = 0;
+    bool suppress_quit = false;
+    std::string last_message_detail;
     std::string last_message;
     // The next messages' answer, while set (else the null backend's).
     std::optional<rap::dialog_role> answer;
@@ -3690,8 +3700,12 @@ void patch_identity_tests(rap::ui& ui, const std::string& first, const std::stri
 
     b->tabs->close_box((*one)->id());
     settle(ui);
+    const auto closing_transactions = settings::get().transactions_for_tests();
     b->tabs->close_box(two->id());
     settle(ui);
+    check(settings::get().transactions_for_tests() == closing_transactions + 1 &&
+              settings::get().contains("log.patch.window.size"),
+          "settings: closing Log with View Patch saves both geometries in exactly one transaction");
     w.reset();
     settle(ui);
     settings::get().set("log.viewPatch", "0");
@@ -3866,16 +3880,23 @@ void settings_close_failure_tests(rap::ui& ui, const std::string& first,
           "settings reporting: next shown window reports the retained close failure once");
     next->reset();
 
-    int exit_messages = 0;
-    std::string exit_error;
-    // The same exit guard as main; its sink is injected so this never opens
-    // a native window. The final close contends with a real independent lock.
+    // Exercise the actual window lifecycle and production before-quit helper.
+    // Only the backend dialog and quit are held, so no GUI opens and the null
+    // event loop remains usable for the following tests.
     {
-        settings_exit_report before_exit([&](const std::string& error)
-                                        { ++exit_messages; exit_error = error; });
+        st.set("log.viewPatch", "1");
+        const size_t before_build = g_backend->built.size();
         auto last = log_window::open(ui, first);
         if (!last) return check(false, "settings reporting: final window opens");
-        kept_window* final_frame = g_backend->built.back().window;
+        windows::init(ui);
+        log_window* last_window = windows::keep(std::move(*last));
+        built_window* log_frame = built_for(last_window->frame());
+        if (!log_frame) return check(false, "settings reporting: final frame exists");
+        kept_window* final_frame = log_frame->window;
+        check(loaded(ui, page_in(*log_frame, 0, 0)), "settings reporting: final log loads");
+        settle(ui);
+        check(g_backend->built.size() >= before_build + 2,
+              "settings reporting: View Patch is open for the close contention check");
         st.remove("log.window.size");
         std::atomic<bool> ready{false}, held{false}, release{false};
         std::thread other([&]
@@ -3887,23 +3908,41 @@ void settings_close_failure_tests(rap::ui& ui, const std::string& first,
                           });
         while (!ready) std::this_thread::sleep_for(std::chrono::milliseconds(1));
         const int said = g_backend->messages;
+        const int quits = g_backend->quit_requests;
+        g_backend->hold_dialogs = true;
+        g_backend->suppress_quit = true;
+        const auto transactions = st.transactions_for_tests();
         const auto start = std::chrono::steady_clock::now();
         const bool final_closed = final_frame->close_request && final_frame->close_request();
         const auto elapsed = std::chrono::steady_clock::now() - start;
         release = true;
         other.join();
         check(final_closed && g_backend->messages == said &&
+                  st.transactions_for_tests() == transactions + 1 &&
                   (!held || (elapsed >= std::chrono::milliseconds(700) &&
                              elapsed < std::chrono::milliseconds(2500))),
-              "settings reporting: contended final close waits about one second, not five");
-        last->reset();
+              "settings reporting: Log plus View Patch close attempts one transaction within one second");
         if (!held)
             st.remember_failure({"test close failure (filesystem has no locks)"});
-        check(exit_messages == 0,
-              "settings reporting: the final warning is deferred until before exit");
+        settle(ui);  // actual windows::release invokes quit_after_settings
+        check(windows::ending() && g_backend->messages == said + 1 &&
+                  !g_backend->last_message_detail.empty() &&
+                  g_backend->held_messages.size() == 1 && g_backend->quit_requests == quits,
+              "settings reporting: final close reports while running and cannot quit before dismissal");
+        quit_after_settings(ui);  // a duplicate close cannot bypass the held warning
+        check(g_backend->quit_requests == quits && g_backend->messages == said + 1,
+              "settings reporting: repeated quit request waits for the same warning");
+        auto dismissed = g_backend->held_messages.empty()
+                             ? std::function<void(rap::dialog_role)>{}
+                             : std::move(g_backend->held_messages.front());
+        g_backend->held_messages.clear();
+        g_backend->hold_dialogs = false;
+        if (dismissed) dismissed(rap::dialog_role::ok);
+        check(g_backend->quit_requests == quits + 1 && st.take_save_error().empty(),
+              "settings reporting: only dismissing the close warning permits quit");
+        g_backend->suppress_quit = false;
+        windows::init(ui);
     }
-    check(exit_messages == 1 && !exit_error.empty() && st.take_save_error().empty(),
-          "settings reporting: final process exit reports its close error once through the sink");
     st.use_file(rap::sys::path_from_utf8(root) / "tortilla-settings");
 }
 

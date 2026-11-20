@@ -1,4 +1,5 @@
 #include "windows.h"
+#include "settings_dialog.h"
 
 #include <map>
 
@@ -17,6 +18,7 @@ bool g_ending = false;
 void init(rap::ui& ui)
 {
     g_ui = &ui;
+    if (g_kept.empty()) g_ending = false;
 }
 
 size_t hold(std::shared_ptr<void> owner)
@@ -34,7 +36,7 @@ void release(size_t id)
             g_kept.erase(id);
             if (!g_kept.empty()) return;
             g_ending = true;
-            g_ui->quit();
+            quit_after_settings(*g_ui);
         });
 }
 

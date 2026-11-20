@@ -31,7 +31,8 @@ void show_settings(rap::ui&, rap::window* parent, const std::string& repo_dir,
 // The settings are as they were; what was chosen still applies to what the
 // user asked for now.
 void report_unsaved_settings(rap::ui&, rap::window* parent, const std::string& error);
-// Synchronous final warning, before process exit. No future window is needed.
-void report_unsaved_settings_before_exit(rap::ui&, const std::string& error);
+// Called instead of quit(): report pending save errors while the event loop
+// still runs, and quit only after the warning is dismissed. Never restarts it.
+void quit_after_settings(rap::ui&);
 
 }  // namespace tortilla

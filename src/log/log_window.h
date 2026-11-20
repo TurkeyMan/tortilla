@@ -197,7 +197,7 @@ private:
     unsigned patch_generation_ = 0;  // drops a patch the selection has left
     rap::subscription patch_timer_;
     void update_patch();
-    void close_patch();
+    void close_patch(settings_changes* together = nullptr);
     void follow_patch(const log_tab&);
 
     rap::ui& ui_;

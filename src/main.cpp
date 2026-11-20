@@ -447,9 +447,6 @@ int main(int argc, char** argv)
 #ifndef _WIN32
     show_toolkit_hint(**ui, opts);
 #endif
-    tortilla::settings_exit_report settings_errors(
-        [&](const std::string& error)
-        { tortilla::report_unsaved_settings_before_exit(**ui, error); });
 
     // Without git Tortilla is a viewer: said once a session; a command that
     // needs git says so rather than failing as it runs.
@@ -460,7 +457,7 @@ int main(int argc, char** argv)
             "stashlist", "repobrowser", "worktrees",  "about",     "help"};
         if (!reads.contains(command))
         {
-            tortilla::show_git_missing(**ui, nullptr, [&] { (*ui)->quit(); });
+            tortilla::show_git_missing(**ui, nullptr, [&] { tortilla::quit_after_settings(**ui); });
             (*ui)->run();
             return 1;
         }
@@ -481,7 +478,7 @@ int main(int argc, char** argv)
                                  {
                                      go_on = ok;
                                      decided = true;
-                                     if (asking) (*ui)->quit();
+                                     if (asking) tortilla::quit_after_settings(**ui);
                                  });
         if (!decided)
         {
@@ -503,7 +500,7 @@ int main(int argc, char** argv)
                            [&](rap::dialog_role)
                            {
                                seen = true;
-                               (*ui)->quit();
+                               tortilla::quit_after_settings(**ui);
                            });
             if (!seen) (*ui)->run();
         }
@@ -524,7 +521,7 @@ int main(int argc, char** argv)
                                 : page == "remotes"  ? tortilla::settings_page::remotes
                                 : page == "accounts" ? tortilla::settings_page::accounts
                                                      : tortilla::settings_page::general,
-                                {}, [&] { (*ui)->quit(); });
+                                {}, [&] { tortilla::quit_after_settings(**ui); });
         return (*ui)->run();
     }
 
@@ -542,7 +539,7 @@ int main(int argc, char** argv)
             [&](bool committed)
             {
                 code = committed ? 0 : 1;
-                (*ui)->quit();
+                tortilla::quit_after_settings(**ui);
             });
         (*w)->show();
         (*ui)->run();
@@ -557,7 +554,7 @@ int main(int argc, char** argv)
                               [&](bool renamed)
                               {
                                   code = renamed ? 0 : 1;
-                                  (*ui)->quit();
+                                  tortilla::quit_after_settings(**ui);
                               });
         (*ui)->run();
         return code;
@@ -571,7 +568,7 @@ int main(int argc, char** argv)
                                     [&](bool made)
                                     {
                                         code = made ? 0 : 1;
-                                        (*ui)->quit();
+                                        tortilla::quit_after_settings(**ui);
                                     });
         (*ui)->run();
         return code;
@@ -588,12 +585,12 @@ int main(int argc, char** argv)
             (*ui)->message(
                 nullptr,
                 {.icon = rap::message_spec::icon::error, .title = "Tortilla", .text = repo.error()},
-                [&](rap::dialog_role) { (*ui)->quit(); });
+                [&](rap::dialog_role) { tortilla::quit_after_settings(**ui); });
             (*ui)->run();
             return 1;
         }
         tortilla::export_revision(**ui, nullptr, repo->workdir(), args.size() > 1 ? args[1] : "",
-                                  [&] { (*ui)->quit(); });
+                                  [&] { tortilla::quit_after_settings(**ui); });
         return (*ui)->run();
     }
 
@@ -607,7 +604,7 @@ int main(int argc, char** argv)
             const std::string error = repo ? std::string(_("This needs a working tree.")) : repo.error();
             std::fprintf(stderr, "tortilla: %s\n", error.c_str());
             (*ui)->message(nullptr, {.icon = rap::message_spec::icon::error, .title = "Tortilla", .text = error},
-                           [&](rap::dialog_role) { (*ui)->quit(); });
+                           [&](rap::dialog_role) { tortilla::quit_after_settings(**ui); });
             (*ui)->run();
             return 1;
         }
@@ -642,7 +639,7 @@ int main(int argc, char** argv)
             (*ui)->message(
                 nullptr,
                 {.icon = rap::message_spec::icon::error, .title = "Tortilla", .text = error},
-                [&ui](rap::dialog_role) { (*ui)->quit(); });
+                [&ui](rap::dialog_role) { tortilla::quit_after_settings(**ui); });
             (*ui)->run();
             return 1;
         };
@@ -678,7 +675,7 @@ int main(int argc, char** argv)
             (*ui)->message(
                 nullptr,
                 {.icon = rap::message_spec::icon::error, .title = "Tortilla", .text = error},
-                [&](rap::dialog_role) { (*ui)->quit(); });
+                [&](rap::dialog_role) { tortilla::quit_after_settings(**ui); });
             (*ui)->run();
             return 1;
         }
@@ -856,7 +853,7 @@ int main(int argc, char** argv)
             (*ui)->message(
                 nullptr,
                 {.icon = rap::message_spec::icon::error, .title = "Tortilla", .text = error},
-                [&](rap::dialog_role) { (*ui)->quit(); });
+                [&](rap::dialog_role) { tortilla::quit_after_settings(**ui); });
             (*ui)->run();
             return 1;
         }
@@ -910,7 +907,7 @@ int main(int argc, char** argv)
                 std::fprintf(stderr, "tortilla: %s\n", d.error().c_str());
                 (*ui)->message(nullptr,
                                {.icon = rap::message_spec::icon::error, .title = "Tortilla", .text = d.error()},
-                               [&ui](rap::dialog_role) { (*ui)->quit(); });
+                               [&ui](rap::dialog_role) { tortilla::quit_after_settings(**ui); });
                 (*ui)->run();
                 return false;
             }
@@ -1036,7 +1033,7 @@ int main(int argc, char** argv)
                                      [&](bool done)
                                      {
                                          code = done ? 0 : 1;
-                                         (*ui)->quit();
+                                         tortilla::quit_after_settings(**ui);
                                      });
         (*ui)->run();
         return code;
@@ -1059,7 +1056,7 @@ int main(int argc, char** argv)
                                [&](bool done)
                                {
                                    code = done ? 0 : 1;
-                                   (*ui)->quit();
+                                   tortilla::quit_after_settings(**ui);
                                });
         (*ui)->run();
         return code;
@@ -1082,7 +1079,7 @@ int main(int argc, char** argv)
             [&](bool done)
             {
                 code = done ? 0 : 1;
-                (*ui)->quit();
+                tortilla::quit_after_settings(**ui);
             });
         (*w)->show();
         (*ui)->run();
@@ -1102,7 +1099,7 @@ int main(int argc, char** argv)
             std::fprintf(stderr, "tortilla: %s\n", w.error().c_str());
             return 1;
         }
-        (*w)->on_closed([&] { (*ui)->quit(); });
+        (*w)->on_closed([&] { tortilla::quit_after_settings(**ui); });
         (*w)->show();
         return (*ui)->run();
     }
@@ -1115,7 +1112,7 @@ int main(int argc, char** argv)
             std::fprintf(stderr, "tortilla: compare needs two files\n");
             return 2;
         }
-        auto quit = [&] { (*ui)->quit(); };
+        auto quit = [&] { tortilla::quit_after_settings(**ui); };
         auto tool = tortilla::compare_files(
             **ui, nullptr, args[0], args[1],
             [&]
@@ -1142,7 +1139,7 @@ int main(int argc, char** argv)
         std::vector<std::string> paths;
         if (auto rel = tortilla::repo_relative(repo->workdir(), path); rel && !rel->empty())
             paths.push_back(std::move(*rel));
-        auto quit = [&] { (*ui)->quit(); };
+        auto quit = [&] { tortilla::quit_after_settings(**ui); };
         std::string against = "HEAD";
         if (command == "prevdiff")
         {
@@ -1190,7 +1187,7 @@ int main(int argc, char** argv)
             git_args = {"diff", rev, args[2]};
             title = rev + ".." + args[2];
         }
-        tortilla::show_unified_diff(**ui, title, path, git_args, [&] { (*ui)->quit(); });
+        tortilla::show_unified_diff(**ui, title, path, git_args, [&] { tortilla::quit_after_settings(**ui); });
         return (*ui)->run();
     }
 
@@ -1202,7 +1199,7 @@ int main(int argc, char** argv)
             std::fprintf(stderr, "tortilla: %s\n", rebase.error().c_str());
             return 1;
         }
-        (*rebase)->on_closed([&] { (*ui)->quit(); });
+        (*rebase)->on_closed([&] { tortilla::quit_after_settings(**ui); });
         (*rebase)->show();
         return (*ui)->run();
     }
@@ -1249,7 +1246,7 @@ int main(int argc, char** argv)
         (*ui)->message(nullptr,
                        {.icon = rap::message_spec::icon::error, .title = "Tortilla",
                         .text = log.error()},
-                       [&](rap::dialog_role) { (*ui)->quit(); });
+                       [&](rap::dialog_role) { tortilla::quit_after_settings(**ui); });
         (*ui)->run();
         return 1;
     }

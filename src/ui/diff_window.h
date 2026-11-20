@@ -10,6 +10,7 @@
 
 namespace tortilla
 {
+class settings_changes;
 
 // Owns itself; closes on Close or the window's close box, then calls
 // `closed`. `save`, if given, replaces Save As's file dialog (Format Patch
@@ -26,10 +27,13 @@ struct patch_viewer
 {
     std::function<void(const std::string& title, std::string text)> show;
     std::function<void()> close;
+    // Close as part of its owner's settings transaction, without saving twice.
+    std::function<void(settings_changes&)> close_into;
     // Its window, while it's open; null after.
     std::function<rap::window*()> window;
 };
-patch_viewer open_patch_viewer(rap::ui&, const std::string& title, std::function<void()> closed);
+patch_viewer open_patch_viewer(rap::ui&, const std::string& title,
+                                std::function<void(settings_changes&)> closed);
 
 // Colour spans for unified diff text: headers bold, hunks in the accent
 // colour, additions and removals in the theme's positive/negative colours.

@@ -102,13 +102,11 @@ public:
     // Closing must not spend the normal five-second wait on a competing
     // writer. Use at most one second and retain/report any failure.
     saved save_on_close(const settings_changes& changes);
+    uint64_t transactions_for_tests() const { return transactions_.load(); }
     // Convenience saves have no dialog owner. Log and retain their failures;
     // the next log window shown reports them without blocking a closing window.
     void remember_failure(const saved&);
     std::string take_save_error();
-    // Called before process exit, while the UI is usable. Tests supply a
-    // headless sink; production supplies a synchronous native warning.
-    void report_save_error_before_exit(const std::function<void(const std::string&)>& sink);
 
     // For the tests: the settings read from, and written to, `file` instead
     // of the user's.
@@ -128,25 +126,21 @@ private:
     // may be per process, not per thread. Waited for as long as that one.
     std::timed_mutex write_mutex_;
     std::atomic<std::chrono::milliseconds> lock_wait_{std::chrono::milliseconds(5000)};
+    std::atomic<uint64_t> transactions_{0};
     std::filesystem::path file_;
     std::map<std::string, std::string> values_;
     std::mutex error_mutex_;
     std::string save_error_;
 };
 
-// Declared after the UI in main, so pending errors are reported before the
-// backend is destroyed even on command paths that don't use windows::keep.
-class settings_exit_report
+// Pure path decomposition used by the filesystem walker and Windows tests.
+// MSVC's root_path() does not include the full volume in extended paths.
+struct settings_path_parts
 {
-public:
-    explicit settings_exit_report(std::function<void(const std::string&)> sink)
-        : sink_(std::move(sink)) {}
-    ~settings_exit_report() { settings::get().report_save_error_before_exit(sink_); }
-    settings_exit_report(const settings_exit_report&) = delete;
-    settings_exit_report& operator=(const settings_exit_report&) = delete;
-private:
-    std::function<void(const std::string&)> sink_;
+    std::filesystem::path root;
+    std::vector<std::filesystem::path> components;
 };
+settings_path_parts split_settings_path(const std::filesystem::path&);
 
 // Appearance [Settings > General]: "light", "dark", or as the desktop has
 // it (no value). Applied when the toolkit loads, and live from Settings.

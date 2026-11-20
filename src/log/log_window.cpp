@@ -637,8 +637,8 @@ void log_window::closing()
         now->save_options(st);
     }
     // The window is going away: never hold its close on a message dialog.
+    close_patch(&st);  // View Patch's geometry belongs to this one close save too
     settings::get().save_on_close(st);
-    close_patch();
 }
 
 void log_window::close_window()
@@ -666,6 +666,14 @@ void log_window::finish(log_tab& tab, bool)
 
 void log_window::show_patch(bool on)
 {
+    if (!on && patch_)
+    {
+        settings_changes choices;
+        choices.set("log.viewPatch", "0");
+        close_patch(&choices);
+        settings::get().save_on_close(choices);
+        return;
+    }
     settings::get().set("log.viewPatch", on ? "1" : "0");
     if (on == patch_.has_value()) return;
     if (!on) return close_patch();
@@ -676,11 +684,11 @@ void log_window::show_patch(bool on)
     // Closed by the user: off, and so next time. (Closed with the window, or
     // from the menu, patch_ has gone already.)
     patch_ = open_patch_viewer(ui_, _("View Patch"),
-                               [this, alive = std::weak_ptr<bool>(alive_)]
+                               [this, alive = std::weak_ptr<bool>(alive_)](settings_changes& choices)
                                {
                                    if (!alive.lock() || !patch_) return;
                                    patch_.reset();
-                                   settings::get().set("log.viewPatch", "0");
+                                   choices.set("log.viewPatch", "0");
                                });
     update_patch();
 }
@@ -695,12 +703,13 @@ void log_window::follow_patch(const log_tab& tab)
     if (tab.identity().icon) viewer->set_icon(tab.identity().icon);
 }
 
-void log_window::close_patch()
+void log_window::close_patch(settings_changes* together)
 {
     if (!patch_) return;
     patch_viewer p = std::move(*patch_);
     patch_.reset();  // first, so its closing leaves the setting as it is
-    p.close();
+    if (together) p.close_into(*together);
+    else p.close();
 }
 
 void log_window::selection_moved(log_tab& tab)

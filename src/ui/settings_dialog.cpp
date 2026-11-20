@@ -26,16 +26,7 @@
 #include <cstdlib>
 #include <memory>
 #include <optional>
-
-#ifdef _WIN32
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#include <windows.h>
-#endif
+#include <set>
 
 namespace tortilla
 {
@@ -937,22 +928,23 @@ void report_unsaved_settings(rap::ui& ui, rap::window* parent, const std::string
                         .detail = error});
 }
 
-void report_unsaved_settings_before_exit(rap::ui& ui, const std::string& error)
+void quit_after_settings(rap::ui& ui)
 {
-#ifdef _WIN32
-    const auto text = rap::sys::path_from_utf8(
-        std::string(_("Your choices couldn't be saved. The settings are as they were.")) +
-        "\n\n" + error);
-    MessageBoxW(nullptr, text.c_str(), L"Tortilla", MB_OK | MB_ICONWARNING);
-#else
-    bool answered = false;
+    static std::set<rap::ui*> reporting;
+    if (reporting.contains(&ui)) return;  // another close is already asking
+    const std::string error = settings::get().take_save_error();
+    if (error.empty()) return ui.quit();
+    reporting.insert(&ui);
     ui.message(nullptr, {.icon = rap::message_spec::icon::warning,
                          .title = _("Tortilla"),
                          .text = _("Your choices couldn't be saved. The settings are as they were."),
                          .detail = error},
-               [&](rap::dialog_role) { answered = true; ui.quit(); });
-    if (!answered) ui.run();
-#endif
+               [&ui](rap::dialog_role)
+               {
+                   reporting.erase(&ui);
+                   // A further close may have failed while this was visible.
+                   quit_after_settings(ui);
+               });
 }
 
 }  // namespace tortilla

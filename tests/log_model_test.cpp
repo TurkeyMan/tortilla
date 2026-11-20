@@ -1649,6 +1649,8 @@ int settings_child(char** argv)
     const std::string tag = argv[3];
     const int count = std::atoi(argv[4]);
     auto& st = tortilla::settings::get();
+
+
     st.use_file(file);
     fs::path ready = file;
     ready += rap::sys::path_from_utf8(".ready-" + tag);
@@ -1676,6 +1678,23 @@ void settings_across_processes(const std::string& scratch)
     const fs::path dir = rap::sys::path_from_utf8(scratch) / "settings-shared";
     fs::create_directories(dir);
     auto& st = tortilla::settings::get();
+
+#ifdef _WIN32
+    // Pure MSVC path parsing: no drive or network share needs to exist.
+    for (const auto& [path, root] : std::vector<std::pair<fs::path, fs::path>>{
+             {LR"(\\?\D:\cfg\settings)", LR"(\\?\D:\)"},
+             {LR"(\\?\UNC\srv\share\cfg\settings)", LR"(\\?\UNC\srv\share\)"},
+             {LR"(\\srv\share\cfg\settings)", LR"(\\srv\share\)"},
+             {LR"(D:\cfg\settings)", LR"(D:\)"}})
+    {
+        const auto parts = tortilla::split_settings_path(path);
+        fs::path assembled = parts.root;
+        for (const auto& part : parts.components) assembled /= part;
+        check(parts.root.native() == root.native() && assembled.native() == path.native() &&
+                  parts.components == std::vector<fs::path>{L"cfg", L"settings"},
+              "settings: full Windows drive/UNC/extended volume root survives component walking");
+    }
+#endif
 
     // Two processes, each with a snapshot from before the other's saves:
     // neither's keys or history entries are lost, and a reader (as the
