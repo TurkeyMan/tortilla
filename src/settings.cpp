@@ -37,6 +37,9 @@
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#ifdef __linux__
+#include <sys/xattr.h>
+#endif
 #endif
 
 namespace tortilla
@@ -809,6 +812,32 @@ settings::saved replace(const fs::path& from, const fs::path& to, const fs::path
 // A temporary file beside `target`, made anew (never one already there,
 // whatever it is: a leftover, a link, a folder), open for writing, private
 // until it takes the mode of the file it replaces.
+#ifdef __linux__
+struct settings_access_acl
+{
+    int absent = 0; // ENODATA: no access ACL; ENOTSUP: filesystem has no ACLs.
+    std::vector<char> bytes;
+    bool operator==(const settings_access_acl&) const = default;
+};
+std::expected<settings_access_acl,std::string> access_acl(int fd)
+{
+    constexpr const char* name="system.posix_acl_access";
+    const ssize_t size=::fgetxattr(fd,name,nullptr,0);
+    if(size<0)
+    {
+        const int e=errno;
+        if(e==ENODATA||e==ENOTSUP)return settings_access_acl{e,{}};
+        return std::unexpected(crt_error(e));
+    }
+    if(size>65536)return std::unexpected("settings access ACL exceeds bounded size");
+    settings_access_acl acl;acl.bytes.resize(size);
+    const ssize_t read=::fgetxattr(fd,name,acl.bytes.data(),acl.bytes.size());
+    if(read<0){const int e=errno;return std::unexpected(crt_error(e));}
+    if(read!=size)return std::unexpected("settings access ACL changed while reading");
+    return acl;
+}
+#endif
+
 std::FILE* create_temp(const fs::path& target, fs::path& made, std::string& error,
                        settings_replacement& replacement)
 {
@@ -879,9 +908,11 @@ std::FILE* create_temp(const fs::path& target, fs::path& made, std::string& erro
         // directory may have supplied a different group to the new file.
         struct stat original{}, created{};
         bool secure = true;
-        if (::stat(target.c_str(), &original) == 0)
+        const int original_fd=::open(target.c_str(),O_RDONLY|O_CLOEXEC|O_NOFOLLOW);
+        if (original_fd>=0)
         {
-            if (::fstat(fd, &created) != 0) { error = crt_error(errno); secure = false; }
+            if (::fstat(original_fd,&original)!=0 || ::fstat(fd, &created) != 0)
+            { error = crt_error(errno); secure = false; }
             else if (created.st_uid != original.st_uid)
             { error = _("The settings owner cannot be preserved."); secure = false; }
             else
@@ -896,9 +927,44 @@ std::FILE* create_temp(const fs::path& target, fs::path& made, std::string& erro
                     else if (created.st_gid != original.st_gid)
                     { error = _("The settings group cannot be preserved."); secure = false; }
                 }
+#ifdef __linux__
+                std::optional<settings_access_acl> expected_acl;
+                if(secure)
+                {
+                    auto source=access_acl(original_fd),temporary=access_acl(fd);
+                    if(!source||!temporary){error=!source?source.error():temporary.error();secure=false;}
+                    else if(fail(settings_test_failure::acl)) {error=crt_error(errno);secure=false;}
+                    else if((source->absent==ENOTSUP)!=(temporary->absent==ENOTSUP))
+                    {error="settings access ACL support differs";secure=false;}
+                    else
+                    {
+                        expected_acl=*source;
+                        if(source->absent==ENODATA)
+                        {
+                            if(::fremovexattr(fd,"system.posix_acl_access")!=0)
+                            {const int e=errno;if(e!=ENODATA){error=crt_error(e);secure=false;}}
+                        }
+                        else if(source->absent!=ENOTSUP&&::fsetxattr(fd,"system.posix_acl_access",
+                                    source->bytes.data(),source->bytes.size(),0)!=0)
+                        {const int e=errno;error=crt_error(e);secure=false;}
+                    }
+                }
+#endif
+                // Linux reproduces the access ACL before widening mode bits.
+                // Other POSIX systems retain mode/group behavior only; their
+                // extended ACLs are not reproduced by this implementation.
                 if (secure && ::fchmod(fd, original.st_mode & 07777) != 0)
                 { error = crt_error(errno); secure = false; }
+#ifdef __linux__
+                if(secure&&expected_acl)
+                {
+                    auto verified=access_acl(fd);
+                    if(!verified){error=verified.error();secure=false;}
+                    else if(*verified!=*expected_acl){error="settings access ACL could not be preserved";secure=false;}
+                }
+#endif
             }
+            if(::close(original_fd)!=0&&secure){const int e=errno;error=crt_error(e);secure=false;}
         }
         else
         {

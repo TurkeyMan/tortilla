@@ -99,8 +99,12 @@
 #include <windows.h>
 #include <aclapi.h>
 #else
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#ifdef __linux__
+#include <sys/xattr.h>
+#endif
 #endif
 
 namespace
@@ -2459,10 +2463,79 @@ void settings_pending_recovery_cases(const std::filesystem::path& root)
 #endif
 
 #ifndef _WIN32
+#ifdef __linux__
+void settings_linux_acl_cases(const std::filesystem::path& root)
+{
+    namespace fs=std::filesystem;fs::create_directories(root);
+    auto& st=tortilla::settings::get();const auto failure=root/"acl-failure";
+    write_text(failure,"secret=unchanged\n");st.use_file(failure);bool empty=false;
+    tortilla::settings_temp_created_for_tests([&](std::intptr_t fd){struct stat temp{};empty=::fstat(int(fd),&temp)==0&&temp.st_size==0;});
+    tortilla::settings_changes change;change.set("delta","unpublished");
+    tortilla::settings_fail_next(tortilla::settings_test_failure::acl);const auto refused=st.apply(change);
+    tortilla::settings_temp_created_for_tests({});bool clean=true;
+    for(const auto& temp:tortilla::settings_temp_files(failure))clean=clean&&!fs::exists(temp);
+    check(refused.failed()&&refused.message.find(rap::sys::path_to_utf8(failure))!=std::string::npos&&
+              empty&&clean&&slurp(failure)=="secret=unchanged\n"&&!st.contains("delta"),
+          "settings Linux ACL: failed preservation refuses publication and removes empty temp even without ACL support");
+
+    // Linux UAPI ACL xattr v2: header, then little-endian tag/permissions/id.
+    // https://github.com/torvalds/linux/blob/master/include/uapi/linux/posix_acl_xattr.h
+    auto acl_blob=[](uint32_t uid,uint16_t owner,uint16_t mask){
+        std::vector<char> bytes;auto put=[&](uint32_t n,int size){for(int i=0;i<size;++i)bytes.push_back(char(n>>(8*i)));};
+        put(2,4);auto entry=[&](uint16_t tag,uint16_t perm,uint32_t id){put(tag,2);put(perm,2);put(id,4);};
+        entry(1,owner,UINT32_MAX);entry(2,4,uid);entry(4,0,UINT32_MAX);entry(16,mask,UINT32_MAX);entry(32,0,UINT32_MAX);return bytes;};
+    auto read_fd=[](int fd)->std::pair<int,std::vector<char>>{
+        const auto size=::fgetxattr(fd,"system.posix_acl_access",nullptr,0);
+        if(size<0)return {errno,{}};if(size>65536)return {E2BIG,{}};
+        std::vector<char> bytes(size);const auto count=::fgetxattr(fd,"system.posix_acl_access",bytes.data(),bytes.size());
+        if(count<0)return {errno,{}};if(count!=size)return {ERANGE,{}};return {0,std::move(bytes)};};
+    auto read_path=[&](const fs::path& path){int fd=::open(path.c_str(),O_RDONLY|O_CLOEXEC);
+        if(fd<0)return std::pair<int,std::vector<char>>{errno,{}};auto result=read_fd(fd);::close(fd);return result;};
+    auto mask=[](const std::pair<int,std::vector<char>>& acl)->int{
+        if(acl.first)return -1;for(size_t at=4;at+8<=acl.second.size();at+=8)
+            if(static_cast<unsigned char>(acl.second[at])==16)return static_cast<unsigned char>(acl.second[at+2]);return -1;};
+    const auto directory=root/"inherit";fs::create_directory(directory);
+    const auto plain=directory/"plain",extended=directory/"extended";
+    for(const auto& file:{plain,extended}){write_text(file,"secret=keep\n");::chmod(file.c_str(),0640);}
+    const uint32_t named=::getuid()==65534?65532:65534;
+    const auto inherited=acl_blob(named,7,7),original=acl_blob(named-1,6,4);
+    if(::setxattr(directory.c_str(),"system.posix_acl_default",inherited.data(),inherited.size(),0)!=0)
+    {
+        const int e=errno;
+        if(e==ENOTSUP)std::printf("settings Linux ACL: named-user/default-ACL fixture skipped (filesystem ACLs unsupported)\n");
+        else check(false,"settings Linux ACL: supported default ACL fixture can be installed");
+        return;
+    }
+    bool prepared=::removexattr(plain.c_str(),"system.posix_acl_access")==0||errno==ENODATA;
+    prepared=prepared&&::setxattr(extended.c_str(),"system.posix_acl_access",original.data(),original.size(),0)==0;
+    check(prepared,"settings Linux ACL: originals with absent and distinct named-user ACLs prepared");
+    if(!prepared)return;
+    const auto probe=directory/"probe";int fd=::open(probe.c_str(),O_WRONLY|O_CREAT|O_EXCL|O_CLOEXEC,0600);
+    const auto disabled=fd<0?std::pair<int,std::vector<char>>{errno,{}}:read_fd(fd);
+    const bool widened=fd>=0&&::fchmod(fd,0640)==0;
+    const auto activated=fd<0?std::pair<int,std::vector<char>>{errno,{}}:read_fd(fd);
+    if(fd>=0)::close(fd);fs::remove(probe);
+    check(mask(disabled)==0&&widened&&mask(activated)==4,
+          "settings Linux ACL: real default named-user grant is masked at0600 and activated by naive0640 chmod");
+    for(const auto& file:{plain,extended})
+    {
+        const auto expected=read_path(file);st.use_file(file);bool masked=false;
+        tortilla::settings_temp_created_for_tests([&](std::intptr_t created){struct stat temp{};
+            masked=::fstat(int(created),&temp)==0&&temp.st_size==0&&mask(read_fd(int(created)))==0;});
+        tortilla::settings_changes delta;delta.set("added","saved");const auto saved=st.apply(delta);
+        tortilla::settings_temp_created_for_tests({});
+        check(saved.committed()&&masked&&read_path(file)==expected&&st.value("secret")=="keep"&&st.value("added")=="saved",
+              "settings Linux ACL: published ACL exactly matches original absent/present ACL without inherited grants");
+    }
+}
+#endif
 void settings_posix_identity_cases(const std::filesystem::path& root)
 {
     namespace fs=std::filesystem;
     fs::create_directories(root);
+#ifdef __linux__
+    settings_linux_acl_cases(root/"access-acl");
+#endif
     auto& st=tortilla::settings::get();
     const auto file=root/"group-failure";
     write_text(file,"secret=unchanged\n");::chmod(file.c_str(),0640);
