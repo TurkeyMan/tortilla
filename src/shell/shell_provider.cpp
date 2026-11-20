@@ -35,6 +35,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <sstream>
 #include <mutex>
 #include <optional>
 #include <set>
@@ -580,11 +581,9 @@ menu_settings read_settings()
     menu_settings out;
     // Settings replaces the file by renaming a new one over it: an open that
     // meets that is tried again, so the menu isn't built from no settings.
-    const auto recovery = tortilla::inspect_settings_recovery(settings_file());
-    if (recovery.phase == tortilla::settings_recovery_phase::blocked) return out;
-    const fs::path file = recovery.readable;
-    std::ifstream in = tortilla::open_replaced_file(
-        file, [&] { return std::ifstream(file, std::ios::binary); }, 10, std::chrono::milliseconds(5));
+    const auto document = tortilla::read_settings_document(settings_file());
+    if (!document) return out;
+    std::istringstream in(*document);
     tortilla::settings_key_reader format;
     for (std::string line; std::getline(in, line);)
     {

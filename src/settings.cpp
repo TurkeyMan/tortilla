@@ -436,36 +436,11 @@ std::optional<values> read_file(const fs::path& file, std::string* error = nullp
                                 bool* version_two = nullptr, uint64_t* generation = nullptr)
 {
     if (generation) *generation = 0;
-    const auto recovery = inspect_settings_recovery(file);
-    if (!recovery.message.empty())
-    {
-        if (error) *error = recovery.message;
-        if (recovery.phase == settings_recovery_phase::blocked) return std::nullopt;
-    }
-    const auto& source = recovery.readable;
     if (version_two) *version_two = false;
-    std::FILE* f = open_replaced_file(
-        source, [&] { return rap::sys::fopen(source, "rb"); }, 20, std::chrono::milliseconds(10));
-    if (!f)
-    {
-        const int e = errno;
-        std::error_code ec;
-        if (!fs::exists(source, ec) && !ec) return values{};
-        if (error) *error = crt_error(e);
-        return std::nullopt;
-    }
-    std::string text;
-    char buf[8192];
-    while (size_t n = std::fread(buf, 1, sizeof buf, f)) text.append(buf, n);
-    const int read_error = errno;
-    const bool ok = !std::ferror(f);
-    const int closed = std::fclose(f);
-    const int close_error = errno;
-    if (!ok || closed != 0)
-    {
-        if (error) *error = crt_error(ok ? close_error : read_error);
-        return std::nullopt;
-    }
+    auto document = read_settings_document(file);
+    if (!document)
+    { if (error) *error = document.error(); return std::nullopt; }
+    const std::string& text = *document;
     const auto parsed_generation = settings_document_generation(text);
     if (!parsed_generation)
     { if (error) *error = _("The settings generation is invalid."); return std::nullopt; }

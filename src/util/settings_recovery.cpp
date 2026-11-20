@@ -5,6 +5,8 @@
 #include <atomic>
 #include <charconv>
 #include <cstring>
+#include <cerrno>
+#include <cstdio>
 #include <fstream>
 #include <map>
 #include <set>
@@ -29,6 +31,7 @@ namespace fs = std::filesystem;
 constexpr std::string_view magic = "#tortilla-settings-recovery 1\n";
 constexpr size_t receipt_limit = 16384, document_limit = 64 * 1024 * 1024, record_limit = 128;
 thread_local bool fail_restore = false;
+thread_local std::function<void()> after_inspect_for_tests;
 std::string utf8(const fs::path& p) { auto s = p.u8string(); return {s.begin(), s.end()}; }
 std::string pending(const fs::path& p, const std::string& why)
 { return "Settings recovery pending at " + utf8(p) + ": " + why; }
@@ -123,12 +126,13 @@ std::expected<std::string, std::string> read_bytes(const fs::path& p, size_t lim
 {
     handle file{CreateFileW(p.c_str(), GENERIC_READ | READ_CONTROL,
         FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
-        FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, nullptr)};
+        FILE_FLAG_BACKUP_SEMANTICS | ((receipt || snapshot) ? FILE_FLAG_OPEN_REPARSE_POINT : 0), nullptr)};
     if (file.h == INVALID_HANDLE_VALUE) return std::unexpected(native(GetLastError()));
     FILE_ATTRIBUTE_TAG_INFO attributes{};
     if (!GetFileInformationByHandleEx(file.h, FileAttributeTagInfo, &attributes, sizeof attributes))
         return std::unexpected(native(GetLastError()));
-    if (attributes.FileAttributes & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DIRECTORY))
+    if ((attributes.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) ||
+        ((receipt || snapshot) && (attributes.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)))
         return std::unexpected("reparse/directory recovery artifact refused");
     if (receipt && !private_receipt(file.h)) return std::unexpected("receipt owner/ACL is not private to this user");
     FILE_ID_INFO before{};
@@ -166,11 +170,12 @@ std::expected<std::string, std::string> read_bytes(const fs::path& p, size_t lim
     }
     return bytes;
 }
-std::expected<settings_recovery_snapshot, std::string> snapshot(const fs::path& p)
+std::expected<settings_recovery_snapshot, std::string> snapshot(const fs::path& p, std::string* contents = nullptr)
 {
     settings_recovery_snapshot out;
     auto bytes = read_bytes(p, document_limit, false, &out);
     if (!bytes) return std::unexpected(bytes.error());
+    if (contents) *contents = std::move(*bytes);
     return out;
 }
 // Canonicalize the NAME, not the final reparse target. This also works for a
@@ -373,7 +378,7 @@ std::string remove_owned(const fs::path& p,const settings_recovery_snapshot& exp
 void settings_recovery_fail_restore_for_tests(bool on){fail_restore=on;}
 
 
-settings_recovery_view inspect_settings_recovery(const fs::path& configured)
+static settings_recovery_view inspect_settings_recovery_once(const fs::path& configured)
 {
     settings_recovery_view out;out.target=configured;out.readable=configured;
 #ifdef _WIN32
@@ -412,13 +417,16 @@ settings_recovery_view inspect_settings_recovery(const fs::path& configured)
     }
     if(records.empty())return out;
     const bool absent=missing(out.target);
-    auto target=snapshot(out.target);
+    std::string target_bytes;
+    auto target=snapshot(out.target,&target_bytes);
+    std::optional<std::string> selected_backup_bytes;
     const settings_recovery_record* winner=nullptr;
     bool pending_restore=false;
     std::map<uint64_t,std::string> verified_generations;
     for(auto& [transaction,r]:records)
     {
-        auto backup=snapshot(r.backup);
+        std::string backup_bytes;
+        auto backup=snapshot(r.backup,absent?&backup_bytes:nullptr);
         const bool old_backup=backup&&same_document(*backup,r.old_file);
         if(old_backup)
         {
@@ -445,7 +453,11 @@ settings_recovery_view inspect_settings_recovery(const fs::path& configured)
         {
             if(winner&&winner->old_file.generation==r.old_file.generation&&winner->old_file.hash!=r.old_file.hash)
             {out.phase=settings_recovery_phase::blocked;out.message=pending(r.receipts.front(),"same-generation last-good backups disagree");return out;}
-            if(!winner||r.old_file.generation>winner->old_file.generation)winner=&r;
+            if(!winner||r.old_file.generation>winner->old_file.generation)
+            {
+                winner=&r;
+                if(absent)selected_backup_bytes=std::move(backup_bytes);
+            }
             pending_restore=true;
         }
         else
@@ -458,9 +470,18 @@ settings_recovery_view inspect_settings_recovery(const fs::path& configured)
     if(pending_restore)
     {
         out.phase=settings_recovery_phase::recoverable;
-        if(absent)out.readable=winner->backup;
+        if(absent)
+        {
+            out.readable=winner->backup;
+            out.verified_bytes=std::move(selected_backup_bytes);
+        }
+        else if(target)out.verified_bytes=std::move(target_bytes);
     }
-    else out.readable=out.target;
+    else
+    {
+        out.readable=out.target;
+        if(target)out.verified_bytes=std::move(target_bytes);
+    }
     for(auto& [transaction,r]:records)out.records.push_back(std::move(r));
 #else
     // Native Windows IDs cannot be verified on another platform. Never let a
@@ -487,6 +508,76 @@ settings_recovery_view inspect_settings_recovery(const fs::path& configured)
     {out.phase=settings_recovery_phase::blocked;out.message=pending(configured,ec.message());return out;}
 #endif
     return out;
+}
+
+settings_recovery_view inspect_settings_recovery(const fs::path& configured)
+{
+    auto view=inspect_settings_recovery_once(configured);
+    auto hook=std::exchange(after_inspect_for_tests,{});
+    if(hook)hook();
+    return view;
+}
+void settings_recovery_after_inspect_for_tests(std::function<void()> hook)
+{after_inspect_for_tests=std::move(hook);}
+
+std::expected<std::string,std::string> read_settings_document(const fs::path& file)
+{
+    std::error_code ec;
+    bool observed=fs::exists(file,ec);
+    std::string why;
+    for(int attempt=0;attempt<3;++attempt)
+    {
+        auto view=inspect_settings_recovery(file);
+        observed=observed||!view.records.empty();
+        if(view.phase==settings_recovery_phase::blocked)
+        {
+            observed=true;why=view.message;
+            if(attempt<2)std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            continue;
+        }
+        if(view.verified_bytes)return std::move(*view.verified_bytes);
+#ifdef _WIN32
+        auto bytes=read_bytes(view.readable,document_limit,false);
+        if(bytes)return bytes;
+        why=bytes.error();
+#else
+        std::FILE* input=std::fopen(view.readable.c_str(),"rb");
+        if(input)
+        {
+            std::string bytes;
+            char buffer[16384];
+            while(size_t count=std::fread(buffer,1,sizeof buffer,input))
+            {
+                if(bytes.size()+count>document_limit)
+                {std::fclose(input);return std::unexpected("settings document exceeds bounded size");}
+                bytes.append(buffer,count);
+            }
+            const int read_error=errno;
+            const bool valid=!std::ferror(input);
+            const int closed=std::fclose(input);
+            const int close_error=errno;
+            if(valid&&closed==0)return bytes;
+            return std::unexpected(std::generic_category().message(valid?close_error:read_error));
+        }
+        const int error=errno;
+        why=std::generic_category().message(error);
+#endif
+        // A cooperating recovery may have moved the selected namespace after
+        // inspection. Reinspect on the next attempt, never parse an unverified
+        // replacement at the old backup path or cache a false empty document.
+        ec.clear();
+        observed=observed||fs::exists(file,ec);
+        if(attempt<2)std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    ec.clear();
+    if(!observed&&!fs::exists(file,ec)&&!ec)
+    {
+        const auto final=inspect_settings_recovery(file);
+        if(final.verified_bytes)return *final.verified_bytes;
+        if(final.phase==settings_recovery_phase::clear&&final.records.empty())return std::string{};
+        if(!final.message.empty())why=final.message;
+    }
+    return std::unexpected(why.empty()?"settings changed while reading":why);
 }
 
 settings_recovery_step recover_settings_before_save(const fs::path& configured,

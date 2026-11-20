@@ -2235,13 +2235,80 @@ void settings_pending_recovery_cases(const std::filesystem::path& root)
         for(const auto& path:{backup_a,backup_b,temp_a,temp_b})fs::remove(path);
         st.use_file(file);
     }
+    // Capture document bytes before either namespace transition. Both actual
+    // app parsing and the shared shell-reader entry point must consume exactly
+    // those bytes even when an unverified file reuses the old selected name.
+    for(int mode=0;mode<3;++mode)
+        for(bool app_reader:{false,true})
+        {
+            const auto raced=root/"recovery"/("reader-handoff-"+std::to_string(mode)+(app_reader?"-app":"-shared"));
+            initialize(raced);const auto expected=slurp(raced);
+            const auto temp=fs::path(raced.native()+L".reader.tmp"), backup=fs::path(raced.native()+L".reader.bak");
+            const auto generation=*tortilla::settings_document_generation(expected);
+            write_text(temp,std::string(tortilla::k_settings_format_marker)+"\n"+
+                       tortilla::settings_generation_line(generation+1)+"different=attempted\n");
+            write_text(backup,"");
+            std::optional<tortilla::settings_recovery_record> record;
+            bool prepared=true,moved=false;
+            if(mode!=2)
+            {
+                auto intent=tortilla::begin_settings_recovery(raced,raced,backup,temp);
+                prepared=bool(intent);if(intent)record=std::move(*intent);
+            }
+            if(mode==0)
+                prepared=prepared&&MoveFileExW(raced.c_str(),backup.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH);
+            tortilla::settings_recovery_after_inspect_for_tests([&] {
+                if(mode==2)
+                {
+                    auto intent=tortilla::begin_settings_recovery(raced,raced,backup,temp);
+                    prepared=prepared&&bool(intent);if(intent)record=std::move(*intent);
+                }
+                if(mode==0)
+                {
+                    moved=MoveFileExW(backup.c_str(),raced.c_str(),MOVEFILE_WRITE_THROUGH)!=0;
+                    write_text(backup,"unverified=reused backup pathname\n");
+                }
+                else
+                {
+                    moved=MoveFileExW(raced.c_str(),backup.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)!=0;
+                    if(mode==1)write_text(raced,"unverified=reused target pathname\n");
+                }
+            });
+            bool exact=false;
+            if(app_reader)
+            {
+                st.use_file(raced);
+                exact=st.value("unrelated.one")=="preserve all"&&st.value("unrelated.two")=="line\npercent%3D"&&
+                      st.value("shell.noMenu")=="blocked\tother"&&st.value("unverified").empty();
+            }
+            else
+            {
+                auto bytes=tortilla::read_settings_document(raced);
+                exact=bytes&&*bytes==expected;
+            }
+            tortilla::settings_recovery_after_inspect_for_tests({});
+            check(prepared&&moved&&exact,
+                  "settings reader: app/shared parser keeps captured whole bytes across backup/target moves and ordinary ENOENT");
+            if(mode==0)fs::remove(backup);
+            else
+            {
+                if(fs::exists(raced))fs::remove(raced);
+                MoveFileExW(backup.c_str(),raced.c_str(),MOVEFILE_WRITE_THROUGH);
+            }
+            if(record)tortilla::finish_settings_recovery(*record);
+            fs::remove(temp);
+        }
+    st.use_file(file);
     // Native aliases need a second receipt so a now-dangling alias can locate
     // the canonical backup without a Windows symlink target handwalker.
     const auto alias=root/"recovery-alias";std::error_code ec;
     fs::create_symlink(file,alias,ec);
     if(!ec)
     {
-        st.use_file(alias);const auto alias_failed=fail_rollback();
+        st.use_file(alias);
+        check(st.value("unrelated.one")=="preserve all"&&st.value("unrelated.two")=="line\npercent%3D",
+              "settings reader: configured final symlink with no pending receipt follows native target");
+        const auto alias_failed=fail_rollback();
         auto alias_view=tortilla::inspect_settings_recovery(alias);
         check(alias_failed.failed()&&!fs::exists(file)&&alias_view.records.size()==1&&
                   alias_view.records.front().receipts.size()==2&&slurp(alias_view.readable)==slurp(alias_view.records.front().backup),
