@@ -76,19 +76,56 @@ std::string shown(const fs::path& p)
     return rap::sys::path_to_utf8(p);
 }
 
-// Where the settings are really kept: `file`, or where the link it is
-// leads (a settings file kept with someone's dotfiles stays a link). The
-// lock, the read and the replace all use this one path, so two links to
-// one file share one lock. A link to a file not there yet is kept, and the
-// file made where it leads, if that folder is there.
+// The settings read, lock and replacement must address the same file as native
+// readers. Windows delegates reparse substitution to the OS; POSIX traverses
+// links before parent components. Missing Windows link targets fail closed.
 struct settings_target
 {
     fs::path path;
     bool linked = false;
 };
 
-std::optional<settings_target> resolve(const fs::path& file, std::string& error,
-                                       const settings_path_lookup* lookup = nullptr)
+#ifdef _WIN32
+struct settings_native_handle
+{
+    HANDLE value = INVALID_HANDLE_VALUE;
+    ~settings_native_handle() { if (value != INVALID_HANDLE_VALUE) CloseHandle(value); }
+};
+
+std::optional<fs::path> final_settings_path(HANDLE handle, DWORD& error)
+{
+    // https://learn.microsoft.com/windows/win32/api/fileapi/nf-fileapi-getfinalpathnamebyhandlew
+    // DOS may be unavailable for an unmounted volume, GUID for a network share.
+    // Keep normalized names: FILE_NAME_OPENED could retain link substitution.
+    constexpr DWORD limit = 32768;
+    for (DWORD volume : {DWORD(VOLUME_NAME_DOS), DWORD(VOLUME_NAME_GUID), DWORD(VOLUME_NAME_NT)})
+    {
+        std::vector<wchar_t> buffer(512);
+        for (int attempt = 0; attempt < 4; ++attempt)
+        {
+            error = ERROR_INSUFFICIENT_BUFFER;
+            const DWORD length = GetFinalPathNameByHandleW(handle, buffer.data(), DWORD(buffer.size()),
+                                                           FILE_NAME_NORMALIZED | volume);
+            const DWORD native = length ? ERROR_SUCCESS : GetLastError();
+            if (!length) { error = native; break; }
+            if (length >= buffer.size())
+            {
+                if (length > limit) { error = ERROR_FILENAME_EXCED_RANGE; break; }
+                buffer.resize(length);
+                continue;
+            }
+            std::wstring path(buffer.data(), length);
+            // NT returns \Device\..., not a Win32 pathname. GLOBALROOT selects
+            // that namespace while remaining usable by CreateFile/_wfopen.
+            if (volume == VOLUME_NAME_NT) path = L"\\\\?\\GLOBALROOT" + path;
+            return fs::path(std::move(path));
+        }
+    }
+    return {};
+}
+#endif
+
+std::optional<settings_target> resolve(const fs::path& file, std::string& error)
 {
     auto failed = [&](const fs::path& at, const std::string& why)
     {
@@ -96,41 +133,72 @@ std::optional<settings_target> resolve(const fs::path& file, std::string& error,
                                   shown(file), shown(at), why);
         return std::optional<settings_target>{};
     };
+#ifdef _WIN32
+    // https://learn.microsoft.com/windows/win32/api/fileapi/nf-fileapi-createfilew
+    // Zero desired access queries metadata without requiring read/write rights.
+    constexpr DWORD share = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
+    // Open the original spelling, exactly as native readers do; qualifying
+    // with GetFullPathName/fs::absolute could normalize before opening.
+    fs::path candidate = file;
+    std::vector<fs::path> missing;
+    for (;;)
+    {
+        settings_native_handle handle{CreateFileW(candidate.c_str(), 0, share, nullptr, OPEN_EXISTING,
+                                                   FILE_FLAG_BACKUP_SEMANTICS, nullptr)};
+        const DWORD opened = handle.value == INVALID_HANDLE_VALUE ? GetLastError() : ERROR_SUCCESS;
+        if (handle.value != INVALID_HANDLE_VALUE)
+        {
+            DWORD native = ERROR_SUCCESS;
+            auto real = final_settings_path(handle.value, native);
+            if (!real) return failed(candidate, native_error(native));
+            for (auto it = missing.rbegin(); it != missing.rend(); ++it) *real /= *it;
+            return settings_target{std::move(*real)};
+        }
+        if (opened != ERROR_FILE_NOT_FOUND && opened != ERROR_PATH_NOT_FOUND)
+            return failed(candidate, native_error(opened));
+        // OPEN_REPARSE_POINT can open a dangling link itself. Never mistake
+        // that for a missing plain filename and replace it or create its target.
+        settings_native_handle link{CreateFileW(candidate.c_str(), 0, share, nullptr, OPEN_EXISTING,
+                                                 FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+                                                 nullptr)};
+        const DWORD probed = link.value == INVALID_HANDLE_VALUE ? GetLastError() : ERROR_SUCCESS;
+        if (link.value != INVALID_HANDLE_VALUE)
+            return failed(candidate, _("The settings path exists, but its target could not be opened."));
+        if (probed != ERROR_FILE_NOT_FOUND && probed != ERROR_PATH_NOT_FOUND)
+            return failed(candidate, native_error(probed));
+        auto parent = candidate.parent_path();
+        if (parent.empty() && candidate.has_filename()) parent = ".";
+        if (parent == candidate || candidate.filename().empty())
+            return failed(candidate, native_error(opened));
+        missing.push_back(candidate.filename());
+        candidate = parent;
+    }
+#else
     std::error_code ec;
     const fs::path absolute = fs::absolute(file, ec);
     if (ec) return failed(file, ec.message());
     const auto initial = split_settings_path(absolute);
     settings_target t{initial.root};
     settings_path_cursor cursor(initial.root);
-    struct component { fs::path part; bool relative_link = false; };
-    std::deque<component> todo;
-    for (const auto& part : initial.components) todo.push_back({part});
+    std::deque<fs::path> todo(initial.components.begin(), initial.components.end());
     int links = 0;
     while (!todo.empty())
     {
-        const auto item = todo.front();
-        const fs::path& part = item.part;
+        const fs::path part = todo.front();
         todo.pop_front();
         if (part.empty() || part == ".") continue;
         if (part == "..")
         {
-#ifdef _WIN32
-            // Windows rejects above-volume traversal inside relative link targets.
-            // Keep provenance per component: nested links may reset the cursor.
-            if (item.relative_link && cursor.at_root())
-                return failed(cursor.path() / part,
-                              std::make_error_code(std::errc::invalid_argument).message());
-#endif
             cursor.step(part);
             continue;
         }
         const fs::path next = cursor.path() / part;
         // symlink_status/read_symlink use lstat/readlink on POSIX. Never
         // normalize a suffix before traversing it: missing/.. is an error.
-        const auto status = lookup ? lookup->status(next, ec) : fs::symlink_status(next, ec);
+        const auto status = fs::symlink_status(next, ec);
         if (status.type() == fs::file_type::symlink)
         {
-            const auto target = lookup ? lookup->read_link(next, ec) : fs::read_symlink(next, ec);
+            const auto target = fs::read_symlink(next, ec);
             if (ec) return failed(next, ec.message());
             if (++links > 40)
                 return failed(next, std::make_error_code(std::errc::too_many_symbolic_link_levels).message());
@@ -139,9 +207,7 @@ std::optional<settings_target> resolve(const fs::path& file, std::string& error,
             else if (target.has_root_directory()) cursor = settings_path_cursor(cursor.root());
             else if (target.has_root_name())
                 return failed(next, std::make_error_code(std::errc::invalid_argument).message());
-            const bool relative = !target.is_absolute();
-            for (auto it = parts.components.rbegin(); it != parts.components.rend(); ++it)
-                todo.push_front({*it, relative});
+            todo.insert(todo.begin(), parts.components.begin(), parts.components.end());
             t.linked = true;
             continue;
         }
@@ -151,10 +217,10 @@ std::optional<settings_target> resolve(const fs::path& file, std::string& error,
             // A plain first-save config directory may still be created below;
             // only a simple missing suffix is allowed, never missing/.. .
             if (!todo.empty() &&
-                (t.linked || std::any_of(todo.begin(), todo.end(), [](const component& p) { return p.part == ".."; })))
+                (t.linked || std::find(todo.begin(), todo.end(), fs::path("..")) != todo.end()))
                 return failed(next, std::make_error_code(std::errc::no_such_file_or_directory).message());
             cursor.step(part);
-            for (const auto& p : todo) cursor.step(p.part);
+            for (const auto& p : todo) cursor.step(p);
             t.path = cursor.path();
             return t;
         }
@@ -165,6 +231,7 @@ std::optional<settings_target> resolve(const fs::path& file, std::string& error,
     }
     t.path = cursor.path();
     return t;
+#endif
 }
 
 // The lock writers hold across processes while they read, change and
@@ -526,63 +593,17 @@ std::string numbers_value(const std::vector<float>& v)
 
 }  // namespace
 
-std::filesystem::path resolve_settings_path_for_tests(const fs::path& file,
-                                                     std::string& error,
-                                                     const settings_path_lookup& lookup)
-{
-    auto target = resolve(file, error, &lookup);
-    return target ? target->path : fs::path{};
-}
-
 void settings_fail_next(settings_test_failure failure) { next_failure = failure; }
 
+#ifndef _WIN32
 settings_path_parts split_settings_path(const fs::path& file)
 {
     settings_path_parts out;
-#ifdef _WIN32
-    // Treat the entire Windows volume root as one unit. MSVC decomposes
-    // \\?\D:\ as root \\?\ plus a D: component; appending D: would discard
-    // the extended root and turn the destination into a drive-relative path.
-    const std::wstring& s = file.native();
-    auto sep = [&](size_t at) { return at < s.size() && (s[at] == L'\\' || s[at] == L'/'); };
-    auto end_part = [&](size_t at)
-    {
-        while (at < s.size() && !sep(at)) ++at;
-        return at;
-    };
-    size_t root = 0;
-    if (s.size() >= 7 && sep(0) && sep(1) && s[2] == L'?' && sep(3) &&
-        s[5] == L':' && sep(6))
-        root = 7;  // extended drive volume, including its trailing separator
-    else
-    {
-        size_t server = 0;
-        if (s.size() >= 8 && sep(0) && sep(1) && s[2] == L'?' && sep(3) &&
-            (s[4] == L'U' || s[4] == L'u') && (s[5] == L'N' || s[5] == L'n') &&
-            (s[6] == L'C' || s[6] == L'c') && sep(7))
-            server = 8;
-        else if (sep(0) && sep(1) && s.size() > 2 && s[2] != L'?')
-            server = 2;
-        if (server)
-        {
-            const size_t server_end = end_part(server);
-            const size_t share_end = end_part(server_end + 1);
-            if (server_end > server && server_end < s.size() && share_end > server_end + 1)
-                root = share_end + (share_end < s.size() ? 1 : 0);
-        }
-        else if (s.size() >= 3 && s[1] == L':' && sep(2)) root = 3;
-    }
-    if (root)
-    {
-        out.root = fs::path(s.substr(0, root));
-        for (const auto& part : fs::path(s.substr(root))) out.components.push_back(part);
-        return out;
-    }
-#endif
     out.root = file.root_path();
     for (const auto& part : file.relative_path()) out.components.push_back(part);
     return out;
 }
+#endif
 
 std::vector<fs::path> settings_temp_files(const fs::path& file)
 {

@@ -133,8 +133,8 @@ private:
     std::string save_error_;
 };
 
-// Pure path decomposition used by the filesystem walker and Windows tests.
-// MSVC's root_path() does not include the full volume in extended paths.
+#ifndef _WIN32
+// POSIX component walker shared with its pure path tests.
 struct settings_path_parts
 {
     std::filesystem::path root;
@@ -144,7 +144,7 @@ settings_path_parts split_settings_path(const std::filesystem::path&);
 
 // The already-traversed part of a path. Only verified normal components are
 // pushed by the filesystem walker. A parent step pops a component, never the
-// fixed volume prefix (whose spelling may change under MSVC parent_path()).
+// filesystem root.
 class settings_path_cursor
 {
 public:
@@ -155,7 +155,6 @@ public:
         if (part == "..") { if (!components_.empty()) components_.pop_back(); }
         else components_.push_back(part);
     }
-    bool at_root() const { return components_.empty(); }
     const std::filesystem::path& root() const { return root_; }
     std::filesystem::path path() const
     {
@@ -168,15 +167,7 @@ private:
     std::vector<std::filesystem::path> components_;
 };
 
-// Injectable lstat/readlink for resolver tests without Windows symlink privileges.
-struct settings_path_lookup
-{
-    std::function<std::filesystem::file_status(const std::filesystem::path&, std::error_code&)> status;
-    std::function<std::filesystem::path(const std::filesystem::path&, std::error_code&)> read_link;
-};
-std::filesystem::path resolve_settings_path_for_tests(const std::filesystem::path&,
-                                                     std::string& error,
-                                                     const settings_path_lookup&);
+#endif
 
 // Appearance [Settings > General]: "light", "dark", or as the desktop has
 // it (no value). Applied when the toolkit loads, and live from Settings.
