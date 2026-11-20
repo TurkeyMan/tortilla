@@ -579,18 +579,51 @@ void run_azure_tests()
         check(azure::scope_organization("https://dev.azure.com/fabrikam/") == "fabrikam" &&
                   azure::scope_organization("dev.azure.com/Fabrikam") == "fabrikam",
               "azure redirect: an account scope's organization");
+        using rap::sys::redirect_action;
+        const auto decide = [&](std::string_view to)
+        { return azure::redirect_decision("fabrikam", from, to); };
+        check(decide("https://dev.azure.com/fabrikam/x") == redirect_action::follow &&
+                  decide("https://fabrikam.visualstudio.com/x") == redirect_action::follow &&
+                  decide("#a") == redirect_action::follow,
+              "azure redirect decision: within the organization, followed");
+        check(decide("https://dev.azure.com/contoso/x") == redirect_action::stop &&
+                  decide("https://dev.azure.com/fabrikam/../contoso/x") == redirect_action::stop &&
+                  decide("https://dev.azure.com/fabrikam%2fcontoso") == redirect_action::stop &&
+                  decide("https://dev.azure.com/") == redirect_action::stop &&
+                  decide("https://dev.azure.com:8443/fabrikam/x") == redirect_action::stop &&
+                  decide("https://contoso.visualstudio.com/x") == redirect_action::stop,
+              "azure redirect decision: the shared host's other organizations, or another's "
+              "legacy host, stop");
+        check(decide("http://example.blob.core.windows.net/c?sig=x") == redirect_action::stop &&
+                  decide("http://dev.azure.com/fabrikam/x") == redirect_action::stop &&
+                  decide("ftp://example.com/x") == redirect_action::stop &&
+                  decide("not a url") == redirect_action::stop,
+              "azure redirect decision: a downgrade to http, or no URL, stops");
+        check(decide("https://example.blob.core.windows.net/c/a.zip?sig=x") ==
+                      redirect_action::follow_without_credentials &&
+                  decide("https://abc.vsblob.visualstudio.com/x?sig=y") ==
+                      redirect_action::follow_without_credentials &&
+                  decide("https://artprodcus3.artifacts.visualstudio.com/x") ==
+                      redirect_action::follow_without_credentials &&
+                  decide("https://cdn.example/x") == redirect_action::follow_without_credentials,
+              "azure redirect decision: another https host goes on without credentials");
     }
     {
         // The decision is applied to each hop: this transport plays a chain of
-        // redirects, asking on_redirect before each, as rapport's does.
+        // redirects, asking on_redirect before each, as rapport's does, and
+        // dropping Authorization from a follow_without_credentials hop on.
         std::vector<std::string> chain;
         std::vector<std::string> sent;
+        std::vector<bool> authorized;  // per hop sent: did Authorization go?
         bool hooked = true;
         forge_detail::set_transport(
             [&](std::string_view, const std::string& url, std::string_view,
                 const rap::sys::http_options& options)
             {
+                bool credentials = std::ranges::any_of(
+                    options.headers, [](const auto& h) { return h.first == "Authorization"; });
                 sent.push_back(url);
+                authorized.push_back(credentials);
                 rap::sys::http_response r{.status = 200, .body = R"({"value":[]})", .url = url};
                 std::string at = url;
                 for (const std::string& to : chain)
@@ -604,7 +637,10 @@ void run_azure_tests()
                     if (action == rap::sys::redirect_action::stop)
                         return rap::sys::http_response{
                             .status = 302, .headers = {{"Location", to}}, .url = at};
+                    if (action == rap::sys::redirect_action::follow_without_credentials)
+                        credentials = false;
                     sent.push_back(to);
+                    authorized.push_back(credentials);
                     at = to;
                 }
                 r.url = at;
@@ -625,6 +661,38 @@ void run_azure_tests()
         check(r.status == 0 && sent.size() == 2 &&
                   r.error.find("redirected outside organization fabrikam") != std::string::npos,
               "azure redirect: the first hop out of the organization stops, unsent, as an error");
+        // A signed download elsewhere: on without credentials, on that hop
+        // and every later one, back at dev.azure.com/fabrikam too.
+        chain = {"https://dev.azure.com/fabrikam/a",
+                 "https://example.blob.core.windows.net/c/a.zip?sig=x",
+                 "https://abc.vsblob.visualstudio.com/d?sig=y",
+                 "https://dev.azure.com/fabrikam/b"};
+        sent.clear();
+        authorized.clear();
+        r = forge_detail::http_get(start, signed_in);
+        check(r.status == 200 && r.error.empty() && sent.size() == 5 && authorized.size() == 5 &&
+                  authorized[0] && authorized[1] && !authorized[2] && !authorized[3] &&
+                  !authorized[4],
+              "azure redirect: another host is followed without credentials, then and after");
+        chain = {"https://example.blob.core.windows.net/c/a.zip?sig=x",
+                 "https://dev.azure.com/contoso/b"};
+        sent.clear();
+        r = forge_detail::http_get(start, signed_in);
+        check(r.status == 0 && sent.size() == 2 &&
+                  r.error.find("redirected outside organization fabrikam") != std::string::npos,
+              "azure redirect: after another host, the shared host's other organization still "
+              "stops");
+        chain = {"https://example.blob.core.windows.net/c/a.zip?sig=x",
+                 "http://example.blob.core.windows.net/c/a.zip?sig=x"};
+        sent.clear();
+        r = forge_detail::http_get(start, signed_in);
+        check(r.status == 0 && sent.size() == 2 && !r.error.empty(),
+              "azure redirect: a downgrade to http stops");
+        chain = {"https://dev.azure.com/contoso/x"};
+        sent.clear();
+        r = forge_detail::http_get(start, signed_in);
+        check(r.status == 0 && sent.size() == 1,
+              "azure redirect: same host, other organization stops");
         chain = {"https://dev.azure.com/contoso/a"};
         sent.clear();
         r = forge_detail::http_request("GET", start, {}, signed_in);

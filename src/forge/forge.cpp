@@ -2228,28 +2228,42 @@ std::string azure_organization(std::string_view token, std::string_view url)
 }
 
 // Every request goes through here: refused unsent when its token isn't for
-// `url`; an Azure credential's request follows only the redirects that stay
-// in its organization and stops at any other, unsent (every organization
-// shares https://dev.azure.com, where the transport keeps Authorization on).
+// `url`. An Azure credential's request decides each redirect with
+// azure::redirect_decision: on within its organization; stopped, unsent, at
+// another organization (every organization shares https://dev.azure.com,
+// where the transport keeps Authorization on) or a downgrade to http; on to
+// another host (a signed download) without credentials, then and after.
 rap::sys::http_response guarded(
     const std::string& url, const rap::sys::http_options& options,
     const std::function<rap::sys::http_response(const rap::sys::http_options&)>& send)
 {
+    using rap::sys::redirect_action;
     const std::string token = token_in(options.headers);
     if (!token_allowed(token, url)) return refused(url);
     auto clean = clean_options(options);
     const std::string org = azure_organization(token, url);
     if (org.empty()) return send(clean);
     auto outside = std::make_shared<bool>(false);
-    clean.on_redirect = [org, outside, inner = std::move(clean.on_redirect)](
+    auto stripped = std::make_shared<bool>(false);
+    clean.on_redirect = [org, outside, stripped, inner = std::move(clean.on_redirect)](
                             std::string_view from, std::string_view to, int status)
     {
-        if (!azure::redirect_in_scope(org, from, to))
+        redirect_action action = azure::redirect_decision(org, from, to);
+        if (action == redirect_action::stop)
         {
             *outside = true;
-            return rap::sys::redirect_action::stop;
+            return action;
         }
-        return inner ? inner(from, to, status) : rap::sys::redirect_action::follow;
+        if (inner)
+        {
+            const redirect_action asked = inner(from, to, status);
+            if (asked != redirect_action::follow) action = asked;
+            if (action == redirect_action::stop) return action;
+        }
+        // Once dropped, the credential stays dropped (as rapport keeps it),
+        // even on a hop back into the organization.
+        if (action == redirect_action::follow_without_credentials) *stripped = true;
+        return *stripped ? redirect_action::follow_without_credentials : action;
     };
     auto reply = send(clean);
     if (*outside) return azure::redirected_outside(org, url);

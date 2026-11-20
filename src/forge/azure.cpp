@@ -465,6 +465,26 @@ bool redirect_in_scope(std::string_view org, std::string_view from_url, std::str
     return in && !org.empty() && *in == lowered(std::string(org));
 }
 
+rap::sys::redirect_action redirect_decision(std::string_view org, std::string_view from_url,
+                                            std::string_view to_url)
+{
+    using rap::sys::redirect_action;
+    if (redirect_in_scope(org, from_url, to_url)) return redirect_action::follow;
+    const auto o = rap::sys::url_origin(to_url);
+    // A downgrade to http, or what isn't a URL, goes nowhere.
+    if (!o || o->scheme != "https") return redirect_action::stop;
+    // The shared origin (any port), or another organization's own legacy
+    // host: another organization, or a path that can't be read as this one.
+    constexpr std::string_view legacy = ".visualstudio.com";
+    if (o->host == "dev.azure.com" ||
+        (o->host.ends_with(legacy) &&
+         o->host.substr(0, o->host.size() - legacy.size()).find('.') == std::string::npos))
+        return redirect_action::stop;
+    // Elsewhere (a signed download on blob storage or a CDN, the URL its
+    // own key): on, with no credential from here.
+    return redirect_action::follow_without_credentials;
+}
+
 std::string scope_organization(std::string_view scope)
 {
     constexpr std::string_view prefix = "https://dev.azure.com/";

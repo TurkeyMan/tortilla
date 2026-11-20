@@ -15,14 +15,23 @@ and legacy visualstudio.com remotes normalize to the same organization.
 Each path component is decoded once and independently encoded for API URLs.
 Encoded separators and dot segments are rejected. Basic authentication uses
 an empty username and PAT password, restricted to that organization's path.
-Every authenticated request checks each redirect before it is sent: a hop is
-followed only to https://dev.azure.com/{organization}/... (its first path
-segment after percent-decoding and resolving dot segments, in any case) or
-the legacy https://{organization}.visualstudio.com. Anything else (another
-organization on the shared dev.azure.com origin, an encoded slash or
-backslash, a path that climbs out, another host, port or scheme) stops
-before the hop, with the error `Azure DevOps redirected outside organization
-X`. Requests without credentials are not checked.
+Every authenticated read checks each redirect before it is sent:
+
+- Followed, with the credential: https://dev.azure.com/{organization}/... (its
+  first path segment after percent-decoding and resolving dot segments, in
+  any case) or the legacy https://{organization}.visualstudio.com.
+- Stopped before the hop, with the error `Azure DevOps redirected outside
+  organization X`: another organization on the shared dev.azure.com origin
+  (any port) or another organization's legacy host, an encoded slash or
+  backslash, a path that climbs out of the organization, and any downgrade
+  to http.
+- Followed without credentials: any other https host, such as
+  `*.blob.core.windows.net`, `*.vsblob.visualstudio.com` or an artifacts CDN,
+  where Azure Pipelines artifact and log downloads go with a signed URL.
+  Authorization, Cookie and Proxy-Authorization stay off that hop and every
+  later one, even one back at dev.azure.com/{organization}.
+
+Requests without credentials are not checked.
 
 Identity uses only the documented `connectionData.authenticatedUser.id` as
 its stable login and `providerDisplayName` (or `customDisplayName`) as the
@@ -218,9 +227,9 @@ responses. D-series cases deliberately inject unsuccessful HTTP responses.
   existing log-tail helper keeps 80. Each failure retrieval is bounded;
   missing log references leave issues available without fabricating a log.
 - Artifact URLs outside the organization receive no PAT (refused before
-  sending), and redirects out of the organization stop at Rapport's per-hop
-  `on_redirect` (`azure::redirect_in_scope`, applied by `forge_detail`'s
-  guard to every authenticated request). There are no authenticated identity-image
+  sending). Rapport's per-hop `on_redirect` applies `azure::redirect_decision`,
+  through `forge_detail`'s guard, to every authenticated request: signed
+  downloads on other hosts go on without credentials. There are no authenticated identity-image
   requests. No development/test credential-store probing or live Azure requests are used.
 
 Existing per-row completed/error results remain cached by the forge panel.
