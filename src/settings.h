@@ -12,8 +12,10 @@
 // and the result written beside it and renamed over it, so a reader sees
 // the old document or the new one, whole. This process's copy becomes what
 // was written; ordinary write failures preserve the last good document. A
-// partial Windows ReplaceFile failure retains a recovery copy and reports its
-// path; this process keeps its previously read snapshot on failure.
+// partial Windows ReplaceFile failure rolls back a last-good backup under the
+// lock, or retains recovery files if the OS cannot restore them. After an
+// error this process rereads the actual target, keeping its old snapshot if
+// rereading fails.
 //
 // A save that can't take the lock (its file can't be opened, or another
 // writer holds it past the wait) saves nothing and says why. Where the
@@ -87,8 +89,8 @@ public:
     void save_window(const std::string& prefix, const rap::window&);
     void restore_window(const std::string& prefix, rap::window&) const;
 
-    // Whether a save was made, and if not why (for the user: the file and
-    // what went wrong).
+    // A save diagnostic (empty on complete success). A backup-cleanup error
+    // explicitly says when publication succeeded despite retained backup data.
     struct saved
     {
         std::string error;
@@ -96,9 +98,10 @@ public:
     };
 
     // Saves `changes` as one update. Fails when the lock can't be taken in
-    // time or the file can't be read or replaced: then nothing is written,
-    // the file is as it was, and so is this process's copy of it (as the
-    // file has it, when it could be read).
+    // time or the file can't be read or replaced. Ordinary failures preserve
+    // the old document; partial Windows replacement rolls back its backup.
+    // Cleanup-only errors can follow successful publication; the diagnostic
+    // names that state and the cache follows the actual on-disk document.
     saved apply(const settings_changes& changes);
     // Closing must not spend the normal five-second wait on a competing
     // writer. Use at most one second and retain/report any failure.
@@ -192,13 +195,15 @@ std::filesystem::path settings_lock_file(const std::filesystem::path& file);
 
 // One failure on this test thread: an I/O stage after a real temporary is
 // created, or ENOLCK while taking the writer lock. Normal operation is unchanged.
-enum class settings_test_failure { none, flush, close, replace, no_locks, partial_replace, encrypted_target, unprotected_temp };
+enum class settings_test_failure { none, flush, close, replace, no_locks, partial_replace, encrypted_target, unprotected_temp, partial_replace_retained, partial_replace_2, backup_cleanup, backup_retry };
 void settings_fail_next(settings_test_failure);
 #ifdef _WIN32
 // Test-only final-name substitution/normalization denial and a borrowed temp
 // handle observed immediately after protected CREATE_NEW, before any contents.
 void settings_final_path_for_tests(const std::filesystem::path& candidate = {}, bool opened_only = false);
 void settings_temp_created_for_tests(std::function<void(std::intptr_t)>);
+void settings_before_lock_for_tests(std::function<void()>);
+std::vector<std::filesystem::path> settings_backup_files(const std::filesystem::path&);
 #endif
 
 // For the tests: holds the writers' lock on `file`, as another process's

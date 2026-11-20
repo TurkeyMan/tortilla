@@ -1952,9 +1952,11 @@ void settings_windows_security_cases(const std::filesystem::path& root)
     const auto other_bytes = slurp(other);
     observed = 0;
     tortilla::settings_temp_created_for_tests([&](std::intptr_t) { ++observed; });
+    st.set_lock_wait(std::chrono::milliseconds(50));
     tortilla::settings_final_path_for_tests(other);
     const auto mismatch = st.apply(changes);
     tortilla::settings_final_path_for_tests();
+    st.set_lock_wait(std::chrono::milliseconds(5000));
     tortilla::settings_temp_created_for_tests({});
     check(!mismatch && !mismatch.error.empty() && observed == 0 &&
               slurp(file) == untouched && slurp(other) == other_bytes,
@@ -2001,21 +2003,109 @@ void settings_windows_security_cases(const std::filesystem::path& root)
     check(!encrypted && encrypted.error.find("encrypted") != std::string::npos && observed == 0 &&
               slurp(file) == before_encrypted,
           "settings security: encrypted attribute policy fails before any plaintext temp is created");
-    changes.set("recovery", "retained");
-    tortilla::settings_fail_next(tortilla::settings_test_failure::partial_replace);
-    const auto partial = st.apply(changes);
+    // Another completed writer replaces the actual object after our resolution
+    // but before lock acquisition; retry must reread its unrelated values.
+    for (bool existed : {false, true})
+    {
+        const auto race = root / (existed ? "identity-race-existing" : "identity-race-first");
+        if (existed) write_text(race, "unrelated=old\n");
+        st.use_file(race);
+        int attempts = 0;
+        bool changed = false;
+        tortilla::settings_before_lock_for_tests([&] {
+            ++attempts;
+            const auto next = fs::path(race.native() + L".other-writer");
+            write_text(next, "unrelated=other-writer\n");
+            changed = MoveFileExW(next.c_str(), race.c_str(),
+                                  MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
+            tortilla::settings_before_lock_for_tests([&] { ++attempts; });
+        });
+        tortilla::settings_changes mine;
+        mine.set("mine", "serialized");
+        const auto raced = st.apply(mine);
+        tortilla::settings_before_lock_for_tests({});
+        st.use_file(race);
+        check(raced && changed && attempts == 2 && st.value("unrelated") == "other-writer" &&
+                  st.value("mine") == "serialized",
+              "settings identity: pre-lock native replacement retries once and merges unrelated writer keys");
+    }
+    {
+        const auto race = root / "identity-race-deadline";
+        write_text(race, "unrelated=keep\n");
+        st.use_file(race);
+        int attempts = 0;
+        std::function<void()> churn;
+        churn = [&] {
+            ++attempts;
+            const auto next = fs::path(race.native() + L".other-writer");
+            write_text(next, "unrelated=keep\n");
+            MoveFileExW(next.c_str(), race.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+            std::this_thread::sleep_for(std::chrono::milliseconds(25));
+            if (attempts < 10) tortilla::settings_before_lock_for_tests(churn);
+        };
+        tortilla::settings_before_lock_for_tests(churn);
+        st.set_lock_wait(std::chrono::milliseconds(100));
+        const auto started = std::chrono::steady_clock::now();
+        const auto raced = st.save_on_close(changes);
+        const auto elapsed = std::chrono::steady_clock::now() - started;
+        tortilla::settings_before_lock_for_tests({});
+        st.set_lock_wait(std::chrono::milliseconds(5000));
+        (void)st.take_save_error();
+        check(!raced && attempts < 10 && elapsed < std::chrono::milliseconds(400) &&
+                  slurp(race) == "unrelated=keep\n",
+              "settings identity: repeated replacement shares one close deadline rather than resetting it");
+    }
+    st.use_file(file);
+    st.set("unrelated-recovery", "keep across rollback");
     const auto canonical = tortilla::settings_lock_file(file).native();
     const fs::path target(canonical.substr(0, canonical.size() - 5));
-    bool retained = false;
-    for (const auto& name : tortilla::settings_temp_files(target))
-        if (fs::exists(name))
-        {
-            retained = slurp(name).find("recovery=retained\n") != std::string::npos &&
-                       partial.error.find(rap::sys::path_to_utf8(name)) != std::string::npos;
-            fs::remove(name);
-        }
-    check(!partial && retained && st.value("recovery").empty(),
-          "settings replacement: partial failure retains recovery bytes and reports their path");
+    const auto backup_names = tortilla::settings_backup_files(target);
+    write_text(backup_names.front(), "preexisting recovery sentinel\n");
+    int recovery_case = 0;
+    for (auto failure : {tortilla::settings_test_failure::partial_replace_retained,
+                         tortilla::settings_test_failure::partial_replace_2,
+                         tortilla::settings_test_failure::partial_replace})
+    {
+        const auto old = slurp(file);
+        tortilla::settings_changes attempted;
+        attempted.set("recovery-attempt", "must not commit");
+        tortilla::settings_fail_next(failure);
+        const auto partial = st.apply(attempted);
+        bool retained = false;
+        for (const auto& name : tortilla::settings_temp_files(target))
+            if (fs::exists(name))
+            {
+                retained = slurp(name).find("recovery-attempt=must not commit\n") != std::string::npos &&
+                           partial.error.find(rap::sys::path_to_utf8(name)) != std::string::npos;
+                fs::remove(name);
+            }
+        check(!partial && retained && fs::exists(file) && slurp(file) == old &&
+                  st.value("recovery-attempt").empty() &&
+                  st.value("unrelated-recovery") == "keep across rollback",
+              "settings recovery: documented1176/1177 or defensive1176 namespace transition keeps/restores last-good target");
+        tortilla::settings_changes next;
+        next.set("after-recovery", std::to_string(++recovery_case));
+        check(st.apply(next) && st.value("unrelated-recovery") == "keep across rollback" &&
+                  st.value("recovery-attempt").empty() &&
+                  slurp(backup_names.front()) == "preexisting recovery sentinel\n",
+              "settings recovery: subsequent save keeps unrelated keys and never overwrites a preexisting backup");
+    }
+    tortilla::settings_changes backup_retry;
+    backup_retry.set("backup-retry", "reserved again");
+    tortilla::settings_fail_next(tortilla::settings_test_failure::backup_retry);
+    check(st.apply(backup_retry) && st.value("backup-retry") == "reserved again" &&
+              slurp(backup_names.front()) == "preexisting recovery sentinel\n",
+          "settings recovery: sharing retry recreates a lost protected reservation without overwriting foreign backups");
+    tortilla::settings_changes published;
+    published.set("published-before-cleanup-error", "yes");
+    tortilla::settings_fail_next(tortilla::settings_test_failure::backup_cleanup);
+    const auto cleanup = st.apply(published);
+    check(!cleanup && cleanup.error.find("Settings saved") != std::string::npos &&
+              st.value("published-before-cleanup-error") == "yes" &&
+              slurp(file).find("published-before-cleanup-error=yes\n") != std::string::npos,
+          "settings recovery: successful publish plus cleanup error reports truth and caches committed bytes");
+    for (const auto& name : backup_names) if (fs::exists(name)) fs::remove(name);
+
 }
 #endif
 

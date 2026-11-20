@@ -85,12 +85,17 @@ struct settings_target
 {
     fs::path path;
     bool linked = false;
+#ifdef _WIN32
+    FILE_ID_INFO identity{};
+    bool existing = false;
+#endif
 };
 
 #ifdef _WIN32
 thread_local fs::path final_candidate_for_tests;
 thread_local bool opened_path_only_for_tests = false;
 thread_local std::function<void(std::intptr_t)> temp_created_for_tests;
+thread_local std::function<void()> before_lock_for_tests;
 
 struct settings_native_handle
 {
@@ -98,12 +103,12 @@ struct settings_native_handle
     ~settings_native_handle() { if (value != INVALID_HANDLE_VALUE) CloseHandle(value); }
 };
 
-std::optional<fs::path> final_settings_path(HANDLE handle, DWORD& error)
+std::optional<fs::path> final_settings_path(HANDLE handle, DWORD& error,
+                                            FILE_ID_INFO& original, bool& unstable)
 {
     // https://learn.microsoft.com/windows/win32/api/fileapi/nf-fileapi-getfinalpathnamebyhandlew
     // Normalization can need ancestor permissions on SMB. Opened-name fallbacks
     // are safe only after reopening and matching the original volume/file ID.
-    FILE_ID_INFO original{};
     if (!GetFileInformationByHandleEx(handle, FileIdInfo, &original, sizeof original))
     { error = GetLastError(); return {}; }
     constexpr DWORD limit = 32768;
@@ -135,14 +140,19 @@ std::optional<fs::path> final_settings_path(HANDLE handle, DWORD& error)
             settings_native_handle checked{CreateFileW(candidate.c_str(), 0,
                 FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
                 OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr)};
-            if (checked.value == INVALID_HANDLE_VALUE) { error = GetLastError(); break; }
+            if (checked.value == INVALID_HANDLE_VALUE)
+            {
+                error = GetLastError();
+                if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND) unstable = true;
+                break;
+            }
             FILE_ID_INFO reopened{};
             if (!GetFileInformationByHandleEx(checked.value, FileIdInfo, &reopened, sizeof reopened))
             { error = GetLastError(); break; }
             if (original.VolumeSerialNumber != reopened.VolumeSerialNumber ||
                 std::memcmp(original.FileId.Identifier, reopened.FileId.Identifier,
                             sizeof original.FileId.Identifier) != 0)
-            { error = ERROR_FILE_INVALID; break; }
+            { error = ERROR_FILE_INVALID; unstable = true; break; }
             return candidate;
         }
     }
@@ -150,7 +160,7 @@ std::optional<fs::path> final_settings_path(HANDLE handle, DWORD& error)
 }
 #endif
 
-std::optional<settings_target> resolve(const fs::path& file, std::string& error)
+std::optional<settings_target> resolve(const fs::path& file, std::string& error, bool* changed = nullptr)
 {
     auto failed = [&](const fs::path& at, const std::string& why)
     {
@@ -174,10 +184,19 @@ std::optional<settings_target> resolve(const fs::path& file, std::string& error)
         if (handle.value != INVALID_HANDLE_VALUE)
         {
             DWORD native = ERROR_SUCCESS;
-            auto real = final_settings_path(handle.value, native);
-            if (!real) return failed(candidate, native_error(native));
+            FILE_ID_INFO identity{};
+            bool unstable = false;
+            auto real = final_settings_path(handle.value, native, identity, unstable);
+            if (!real)
+            {
+                if (changed) *changed = unstable;
+                return failed(candidate, native_error(native));
+            }
             for (auto it = missing.rbegin(); it != missing.rend(); ++it) *real /= *it;
-            return settings_target{std::move(*real)};
+            settings_target target{std::move(*real)};
+            target.identity = identity;
+            target.existing = missing.empty();
+            return target;
         }
         if (opened != ERROR_FILE_NOT_FOUND && opened != ERROR_PATH_NOT_FOUND)
             return failed(candidate, native_error(opened));
@@ -448,6 +467,9 @@ struct settings_replacement
 {
     bool existing = false;
     std::uint32_t attributes = 0;
+#ifdef _WIN32
+    FILE_ID_INFO identity{};
+#endif
 };
 
 #ifdef _WIN32
@@ -523,7 +545,11 @@ struct settings_file_security
                 failure = _("Atomic settings saves are not supported for encrypted files.");
                 return false;
             }
-            replacement = {true, information.dwFileAttributes};
+            replacement.existing = true;
+            replacement.attributes = information.dwFileAttributes;
+            if (!GetFileInformationByHandleEx(existing.value, FileIdInfo,
+                                               &replacement.identity, sizeof replacement.identity))
+            { error = GetLastError(); return false; }
             if (information.dwFileAttributes & FILE_ATTRIBUTE_READONLY)
             { error = ERROR_ACCESS_DENIED; return false; }
             // An explicitly NULL DACL on the source grants everyone access. Do
@@ -579,49 +605,190 @@ bool sharing_error(DWORD e)
 }
 #endif
 
-// Renames `from` over `to`, in one step.
+#ifdef _WIN32
+bool same_file(const FILE_ID_INFO& a, const FILE_ID_INFO& b)
+{
+    return a.VolumeSerialNumber == b.VolumeSerialNumber &&
+           std::memcmp(a.FileId.Identifier, b.FileId.Identifier, sizeof a.FileId.Identifier) == 0;
+}
+
+DWORD path_identity(const fs::path& path, FILE_ID_INFO& identity)
+{
+    settings_native_handle handle{CreateFileW(path.c_str(), 0,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+        FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr)};
+    if (handle.value == INVALID_HANDLE_VALUE) return GetLastError();
+    if (!GetFileInformationByHandleEx(handle.value, FileIdInfo, &identity, sizeof identity))
+        return GetLastError();
+    return ERROR_SUCCESS;
+}
+
+// Delete only the opened, identity-checked object, never an unrelated name that
+// appeared at the same path. Both a reserved empty placeholder and old source
+// are ours; every other identity is retained and reported.
+DWORD remove_backup(const fs::path& backup, const FILE_ID_INFO& placeholder,
+                    const FILE_ID_INFO& original)
+{
+    if (fail(settings_test_failure::backup_cleanup)) return ERROR_ACCESS_DENIED;
+    settings_native_handle handle{CreateFileW(backup.c_str(), DELETE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+        FILE_FLAG_OPEN_REPARSE_POINT, nullptr)};
+    if (handle.value == INVALID_HANDLE_VALUE)
+    {
+        const DWORD e = GetLastError();
+        return e == ERROR_FILE_NOT_FOUND || e == ERROR_PATH_NOT_FOUND ? ERROR_SUCCESS : e;
+    }
+    FILE_ID_INFO identity{};
+    if (!GetFileInformationByHandleEx(handle.value, FileIdInfo, &identity, sizeof identity)) return GetLastError();
+    if (!same_file(identity, placeholder) && !same_file(identity, original)) return ERROR_FILE_INVALID;
+    FILE_DISPOSITION_INFO disposition{TRUE};
+    if (!SetFileInformationByHandle(handle.value, FileDispositionInfo, &disposition, sizeof disposition))
+        return GetLastError();
+    return ERROR_SUCCESS;
+}
+
+// This boundary performs real namespace changes in fault tests, rather than
+// returning an error before the operation under test has changed any names.
+DWORD native_replace(const fs::path& to, const fs::path& from, const fs::path& backup)
+{
+    if (fail(settings_test_failure::backup_retry))
+    {
+        if (!DeleteFileW(backup.c_str())) return GetLastError();
+        return ERROR_SHARING_VIOLATION;
+    }
+    if (fail(settings_test_failure::partial_replace_retained))
+        return ERROR_UNABLE_TO_MOVE_REPLACEMENT; // documented 1176 with backup: target retained
+    const bool defensive1176 = fail(settings_test_failure::partial_replace);
+    const bool documented1177 = fail(settings_test_failure::partial_replace_2);
+    if (defensive1176 || documented1177)
+    {
+        if (!MoveFileExW(to.c_str(), backup.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+            return GetLastError();
+        return defensive1176 ? ERROR_UNABLE_TO_MOVE_REPLACEMENT : ERROR_UNABLE_TO_MOVE_REPLACEMENT_2;
+    }
+    if (ReplaceFileW(to.c_str(), from.c_str(), backup.c_str(), 0, nullptr, nullptr)) return ERROR_SUCCESS;
+    return GetLastError();
+}
+#endif
+
 std::string replace(const fs::path& from, const fs::path& to, bool& retain_temp,
-                    const settings_replacement& replacement)
+                    const settings_replacement& replacement, steady::time_point deadline)
 {
     if (fail(settings_test_failure::replace)) return crt_error(errno);
 #ifdef _WIN32
-    if (fail(settings_test_failure::partial_replace))
+    fs::path backup;
+    FILE_ID_INFO placeholder{};
+    settings_file_security security;
+    SECURITY_ATTRIBUTES attributes{sizeof(SECURITY_ATTRIBUTES), &security.descriptor, FALSE};
+    auto reserve = [&](const fs::path& name) -> DWORD
     {
-        retain_temp = true;
-        return rap::i18n::format(_("Windows could not finish replacing {0}; recovery copy retained at {1}."),
-                                 shown(to), shown(from));
+        settings_native_handle reserved{CreateFileW(name.c_str(), GENERIC_WRITE | READ_CONTROL, 0,
+            &attributes, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr)};
+        if (reserved.value == INVALID_HANDLE_VALUE) return GetLastError();
+        DWORD e = ERROR_SUCCESS;
+        if (!security.verify(reserved.value, e) ||
+            !GetFileInformationByHandleEx(reserved.value, FileIdInfo, &placeholder, sizeof placeholder))
+        {
+            if (e == ERROR_SUCCESS) e = GetLastError();
+            CloseHandle(reserved.value);
+            reserved.value = INVALID_HANDLE_VALUE;
+            DeleteFileW(name.c_str()); // an unverifiable EMPTY owned placeholder
+            return e;
+        }
+        return ERROR_SUCCESS;
+    };
+    if (replacement.existing)
+    {
+        DWORD e = ERROR_SUCCESS;
+        if (!security.prepare(to, e)) return security.failure.empty() ? native_error(e) : security.failure;
+        if (!security.replacement.existing || !same_file(security.replacement.identity, replacement.identity))
+            return native_error(ERROR_FILE_INVALID);
+        for (const auto& name : settings_backup_files(to))
+        {
+            e = reserve(name);
+            if (e == ERROR_FILE_EXISTS || e == ERROR_ALREADY_EXISTS) continue;
+            if (e != ERROR_SUCCESS) return native_error(e);
+            backup = name;
+            break;
+        }
+        if (backup.empty()) return _("Every settings backup name is already taken.");
     }
-    // A reader that opened the file without FILE_SHARE_DELETE (the C
-    // runtime and std::ifstream, as the shell extension uses) holds off the
-    // rename until it closes it, which is a moment: wait a little for it.
     for (int attempt = 0;; ++attempt)
     {
-        BOOL done = FALSE;
+        DWORD e = ERROR_SUCCESS;
         if (replacement.existing)
         {
-            const DWORD attributes = replacement.attributes;
+            // A failed native attempt may remove the placeholder. Re-reserve
+            // exclusively, or refuse a foreign identity before the next API call.
+            FILE_ID_INFO reserved{};
+            DWORD state = path_identity(backup, reserved);
+            if (state == ERROR_FILE_NOT_FOUND || state == ERROR_PATH_NOT_FOUND) state = reserve(backup);
+            else if (state == ERROR_SUCCESS && !same_file(reserved, placeholder) &&
+                     !same_file(reserved, replacement.identity)) state = ERROR_FILE_INVALID;
+            if (state != ERROR_SUCCESS)
+                return rap::i18n::format(_("Couldn't reserve the settings backup {0}: {1}"),
+                                         shown(backup), native_error(state));
             constexpr DWORD carried = FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM |
                 FILE_ATTRIBUTE_ARCHIVE | FILE_ATTRIBUTE_NOT_CONTENT_INDEXED | FILE_ATTRIBUTE_TEMPORARY;
-            const DWORD flags = attributes & carried;
-            if (!SetFileAttributesW(from.c_str(), flags ? flags : FILE_ATTRIBUTE_NORMAL))
-            { const DWORD e = GetLastError(); return native_error(e); }
-            // https://learn.microsoft.com/windows/win32/api/winbase/nf-winbase-replacefilew
-            // Do NOT ignore merge/ACL errors. ReplaceFile preserves the DACL
-            // and absent named streams; owner was explicitly set at creation.
-            done = ReplaceFileW(to.c_str(), from.c_str(), nullptr, 0, nullptr, nullptr);
+            const DWORD flags = replacement.attributes & carried;
+            if (!SetFileAttributesW(from.c_str(), flags ? flags : FILE_ATTRIBUTE_NORMAL)) e = GetLastError();
+            else e = native_replace(to, from, backup); // no ignore-ACL/merge flags
         }
-        else // Frozen first-save mode: a newly appeared file must not be overwritten.
-            done = MoveFileExW(from.c_str(), to.c_str(), MOVEFILE_WRITE_THROUGH);
-        const DWORD e = done ? ERROR_SUCCESS : GetLastError();
-        if (done) return {};
+        else if (!MoveFileExW(from.c_str(), to.c_str(), MOVEFILE_WRITE_THROUGH)) e = GetLastError();
+        if (e == ERROR_SUCCESS)
+        {
+            if (!backup.empty())
+            {
+                const DWORD cleanup = remove_backup(backup, placeholder, replacement.identity);
+                if (cleanup != ERROR_SUCCESS)
+                    return rap::i18n::format(_("Settings saved to {0}, but backup retained at {1}: {2}"),
+                                             shown(to), shown(backup), native_error(cleanup));
+            }
+            return {};
+        }
         if (e == ERROR_UNABLE_TO_MOVE_REPLACEMENT || e == ERROR_UNABLE_TO_MOVE_REPLACEMENT_2)
         {
             retain_temp = true;
+            FILE_ID_INFO current{}, saved{};
+            DWORD state = path_identity(to, current);
+            const DWORD backup_state = path_identity(backup, saved);
+            bool restored = state == ERROR_SUCCESS && same_file(current, replacement.identity);
+            if (!restored && (state == ERROR_FILE_NOT_FOUND || state == ERROR_PATH_NOT_FOUND) &&
+                backup_state == ERROR_SUCCESS && same_file(saved, replacement.identity))
+            {
+                for (;;)
+                {
+                    // Never replace an external file that appeared while recovering.
+                    if (MoveFileExW(backup.c_str(), to.c_str(), MOVEFILE_WRITE_THROUGH))
+                    { restored = true; break; }
+                    state = GetLastError();
+                    if (!sharing_error(state) || steady::now() >= deadline) break;
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                }
+            }
+            if (restored)
+            {
+                const DWORD cleanup = remove_backup(backup, placeholder, replacement.identity);
+                return rap::i18n::format(
+                    _("Couldn't save settings to {0}: {1}. Last-good settings restored or retained; attempted data retained at {2}. Backup: {3}{4}"),
+                    shown(to), native_error(e), shown(from), shown(backup),
+                    cleanup == ERROR_SUCCESS ? std::string() : ": " + native_error(cleanup));
+            }
             return rap::i18n::format(
-                _("Windows could not finish replacing {0}: {1}. The original may have moved; recovery copy retained at {2}."),
-                shown(to), native_error(e), shown(from));
+                _("Couldn't restore settings at {0}: {1}. Last-good backup retained at {2}; attempted data at {3}. No external target was overwritten."),
+                shown(to), native_error(state == ERROR_SUCCESS ? ERROR_FILE_INVALID : state), shown(backup), shown(from));
         }
-        if (attempt == 200 || !sharing_error(e)) return native_error(e);
+        if (attempt == 200 || !sharing_error(e) || steady::now() >= deadline)
+        {
+            std::string why = native_error(e);
+            if (!backup.empty())
+            {
+                const DWORD cleanup = remove_backup(backup, placeholder, replacement.identity);
+                if (cleanup != ERROR_SUCCESS)
+                    why += rap::i18n::format(_("; backup retained at {0}: {1}"), shown(backup), native_error(cleanup));
+            }
+            return why;
+        }
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
 #else
@@ -727,10 +894,10 @@ std::FILE* create_temp(const fs::path& target, fs::path& made, std::string& erro
 }
 
 // Writes `v` to a file beside `target` and renames it over `target`. On any
-// ordinary failure `target` is untouched and the temporary is removed. The
-// documented partial Windows replacement failures retain a recovery copy and
-// report its path instead of deleting potentially the last remaining data.
-std::string write_file(const fs::path& target, const values& v)
+// ordinary failure preserves `target`; Windows partial replacements roll back
+// their last-good backup under the writer lock. A failed rollback retains all
+// recovery data. A successful publish can still report backup-cleanup trouble.
+std::string write_file(const fs::path& target, const values& v, steady::time_point deadline)
 {
     fs::path temp;
     std::string why;
@@ -777,7 +944,7 @@ std::string write_file(const fs::path& target, const values& v)
         ok = false;
     }
     bool retain_temp = false;
-    if (ok) why = replace(temp, target, retain_temp, replacement);
+    if (ok) why = replace(temp, target, retain_temp, replacement, deadline);
     ok = ok && why.empty();
     if (!ok)
     {
@@ -803,6 +970,8 @@ void settings_final_path_for_tests(const fs::path& candidate, bool opened_only)
 { final_candidate_for_tests = candidate; opened_path_only_for_tests = opened_only; }
 void settings_temp_created_for_tests(std::function<void(std::intptr_t)> observer)
 { temp_created_for_tests = std::move(observer); }
+void settings_before_lock_for_tests(std::function<void()> action)
+{ before_lock_for_tests = std::move(action); }
 #endif
 
 #ifndef _WIN32
@@ -828,6 +997,15 @@ std::vector<fs::path> settings_temp_files(const fs::path& file)
             with_suffix(file, "." + std::to_string(pid) + "." + std::to_string(n) + ".tmp"));
     return out;
 }
+
+#ifdef _WIN32
+std::vector<fs::path> settings_backup_files(const fs::path& file)
+{
+    auto out = settings_temp_files(file);
+    for (auto& name : out) name.replace_extension(".bak");
+    return out;
+}
+#endif
 
 fs::path settings_lock_file(const fs::path& file)
 {
@@ -947,35 +1125,68 @@ settings::saved settings::apply_for(const settings_changes& changes, std::chrono
         return {rap::i18n::format(
             _("Another save of the settings in this Tortilla hasn't finished ({0})."),
             shown(file))};
-    std::string error;
-    const std::optional<settings_target> target = resolve(file, error);
-    if (!target) return {error};
-    std::error_code ec;
-    const fs::path folder = target->path.parent_path();
-    if (!folder.empty() && !fs::is_directory(folder, ec))
+    bool retried = false;
+    for (;;)
     {
-        // The config folder on a first save; never a folder a link leads to.
-        if (target->linked)
-            return {rap::i18n::format(_("{0} is a link to {1}, in a folder that isn't there."),
-                                      shown(file), shown(target->path))};
-        fs::create_directories(folder, ec);
+        if (retried && steady::now() >= deadline)
+            return {rap::i18n::format(_("The settings file kept changing until the save deadline ({0})."), shown(file))};
+        std::string error;
+        bool changed = false;
+        const std::optional<settings_target> target = resolve(file, error, &changed);
+        if (!target)
+        {
+#ifdef _WIN32
+            if (changed) { retried = true; std::this_thread::yield(); continue; }
+#endif
+            return {error};
+        }
+#ifdef _WIN32
+        auto before_lock = std::move(before_lock_for_tests);
+        before_lock_for_tests = {};
+        if (before_lock) before_lock();
+#endif
+        std::error_code ec;
+        const fs::path folder = target->path.parent_path();
+        if (!folder.empty() && !fs::is_directory(folder, ec))
+        {
+            // The config folder on a first save; never a folder a link leads to.
+            if (target->linked)
+                return {rap::i18n::format(_("{0} is a link to {1}, in a folder that isn't there."),
+                                          shown(file), shown(target->path))};
+            fs::create_directories(folder, ec);
+        }
+        writer_lock across_processes(with_suffix(target->path, ".lock"), deadline);
+        if (!across_processes.error().empty()) return {across_processes.error()};
+#ifdef _WIN32
+        // A cooperating writer may have replaced the file after the first native
+        // open. Reopen/revalidate under the acquired lock, then retry the WHOLE
+        // resolution with that lock released and the original deadline unchanged.
+        const auto current = resolve(file, error, &changed);
+        if (!current && !changed) return {error};
+        if (!current || current->path != target->path || current->existing != target->existing ||
+            current->identity.VolumeSerialNumber != target->identity.VolumeSerialNumber ||
+            std::memcmp(current->identity.FileId.Identifier, target->identity.FileId.Identifier,
+                        sizeof target->identity.FileId.Identifier) != 0)
+        { retried = true; continue; }
+#endif
+        std::string read_error;
+        bool version_two = false;
+        std::optional<values> now = read_file(target->path, &read_error, &version_two);
+        if (!now)
+            return {rap::i18n::format(_("Couldn't read the settings in {0}: {1}"), shown(target->path),
+                                      read_error)};
+        values next = *now;
+        for (auto& change : changes.changes_) change(next);
+        // An explicit save upgrades a legacy file even if the selected value did
+        // not change. Merely loading the file never rewrites it.
+        if (next != *now || !version_two) error = write_file(target->path, next, deadline);
+        std::unique_lock lock(mutex_);
+        // A native replacement can publish successfully but fail backup cleanup.
+        // On any error, mirror the actual target, falling back to the last read
+        // snapshot only when it cannot be reread (e.g. unrecoverable disk failure).
+        values_ = error.empty() ? std::move(next) : read_file(target->path).value_or(std::move(*now));
+        return {error};
     }
-    writer_lock across_processes(with_suffix(target->path, ".lock"), deadline);
-    if (!across_processes.error().empty()) return {across_processes.error()};
-    std::string read_error;
-    bool version_two = false;
-    std::optional<values> now = read_file(target->path, &read_error, &version_two);
-    if (!now)
-        return {rap::i18n::format(_("Couldn't read the settings in {0}: {1}"), shown(target->path),
-                                  read_error)};
-    values next = *now;
-    for (auto& change : changes.changes_) change(next);
-    // An explicit save upgrades a legacy file even if the selected value did
-    // not change. Merely loading the file never rewrites it.
-    if (next != *now || !version_two) error = write_file(target->path, next);
-    std::unique_lock lock(mutex_);
-    values_ = error.empty() ? std::move(next) : std::move(*now);
-    return {error};
 }
 
 std::string settings::value(const std::string& key, const std::string& fallback) const
