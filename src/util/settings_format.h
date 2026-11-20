@@ -1,6 +1,6 @@
-// The settings file escapes keys only. Values keep their existing byte format.
-// A literal '%' is always escaped. Only a version-marked file decodes keys;
-// unmarked legacy keys remain literal and are encoded losslessly on next save.
+// Version 2 escapes record delimiters in keys and values, plus key equals signs.
+// Literal percent bytes are escaped; decoding happens exactly once, only in
+// marked files. Unmarked legacy keys and values migrate losslessly on save.
 #pragma once
 
 #include <string>
@@ -11,12 +11,12 @@ namespace tortilla
 
 inline constexpr std::string_view k_settings_format_marker = "#tortilla-settings 2";
 
-inline std::string encode_settings_key(std::string_view key)
+inline std::string encode_settings_field(std::string_view key, bool is_key)
 {
     constexpr char hex[] = "0123456789ABCDEF";
     std::string out;
     for (unsigned char c : key)
-        if (c == '%' || c == '=' || c == '\r' || c == '\n')
+        if (c == '%' || (is_key && c == '=') || c == '\r' || c == '\n')
         {
             out += '%';
             out += hex[c >> 4];
@@ -25,6 +25,11 @@ inline std::string encode_settings_key(std::string_view key)
         else out += char(c);
     return out;
 }
+
+inline std::string encode_settings_key(std::string_view key)
+{ return encode_settings_field(key, true); }
+inline std::string encode_settings_value(std::string_view value)
+{ return encode_settings_field(value, false); }
 
 inline std::string decode_settings_key(std::string_view key)
 {
@@ -68,6 +73,8 @@ public:
     }
     bool version_two() const { return version_two_; }
     std::string key(std::string_view stored) const
+    { return version_two_ ? decode_settings_key(stored) : std::string(stored); }
+    std::string value(std::string_view stored) const
     { return version_two_ ? decode_settings_key(stored) : std::string(stored); }
 private:
     bool first_ = true, version_two_ = false;

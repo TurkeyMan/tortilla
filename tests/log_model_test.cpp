@@ -1630,7 +1630,7 @@ std::map<std::string, std::string> settings_on_disk(const std::filesystem::path&
         if (format.read_header(line)) continue;
         while (!line.empty() && line.back() == '\r') line.pop_back();
         if (size_t eq = line.find('='); eq != std::string::npos)
-            out[format.key(std::string_view(line).substr(0, eq))] = line.substr(eq + 1);
+            out[format.key(std::string_view(line).substr(0, eq))] = format.value(line.substr(eq + 1));
     }
     return out;
 }
@@ -1707,7 +1707,7 @@ void settings_key_cases(const std::string& scratch)
     const std::vector<std::string> keys = {
         "log.refHistory./repo=a", "log.refHistory./repo=b", "literal%3D", "literal%253D",
         "equals=percent%", "line\nfeed", "carriage\rreturn", "both\r\n=%"};
-    const std::string value = "value%3D=a%25\tplain";
+    const std::string value = "\r\nvalue%3D=a%25\tplain\n\r";
     for (const auto& key : keys) st.set(key, value);  // each save rereads the previous one
     st.set("unrelated", "kept");
     st.use_file(file);
@@ -1717,11 +1717,11 @@ void settings_key_cases(const std::string& scratch)
                  disk.at("legacy.key") == "raw%3D=value";
     for (const auto& key : keys)
         exact = exact && st.value(key) == value && disk.contains(key) && disk.at(key) == value &&
-                raw.find(encode_settings_key(key) + "=" + value + "\n") != std::string::npos;
+                raw.find(encode_settings_key(key) + "=" + tortilla::encode_settings_value(value) + "\n") != std::string::npos;
     check(exact && !st.contains("log.refHistory./repo") &&
               st.value("log.refHistory./repo=a") == value &&
               st.value("log.refHistory./repo=b") == value,
-          "settings keys: consecutive disjoint repo= writes and percent/newline keys survive reread exactly, values unchanged");
+          "settings keys: consecutive disjoint repo= writes and percent/newline keys survive reread exactly, multiline values preserved");
     check(raw.find("repo%3Da=") != std::string::npos && raw.find("repo%3Db=") != std::string::npos &&
               raw.find("literal%253D=") != std::string::npos &&
               raw.starts_with(header) && raw.find(marker, marker.size()) == std::string::npos &&
@@ -1737,11 +1737,15 @@ void settings_key_cases(const std::string& scratch)
              {"legacy", "legacy"}, {"legacy%41", "legacyA"}})
         check(marked.key(encoded) == decoded,
               "settings keys: marked files decode once, accept hex case, leave malformed escapes literal");
+    check(marked.value("%253D=%0D%0A") == "%3D=\r\n" &&
+              tortilla::encode_settings_value("%=\r\n") == "%25=%0D%0A",
+          "settings values: decode once, preserve equals, encode record delimiters");
     tortilla::settings_key_reader unmarked;
     unmarked.read_header("# ordinary legacy comment");
     unmarked.read_header(marker);  // a later marker cannot change the version
     check(encode_settings_key("shell.top") == "shell.top" &&
-              marked.key("shell%2Etop") == "shell.top" && unmarked.key("shell%2Etop") == "shell%2Etop",
+              marked.key("shell%2Etop") == "shell.top" && unmarked.key("shell%2Etop") == "shell%2Etop" &&
+              unmarked.value("%3D=%0A") == "%3D=%0A",
           "settings keys: shared file-manager reader decodes only marked keys and ordinary menu keys stay unchanged");
 
     for (const auto& [prefix, encoded] : std::vector<std::pair<std::string, bool>>{
@@ -1755,7 +1759,8 @@ void settings_key_cases(const std::string& scratch)
         write_text(file, original);
         st.use_file(file);
         const std::string key = encoded ? "key name" : "key%20name";
-        check(st.value(key) == "raw%3D=value" &&
+        const std::string expected_value = encoded ? "raw==value" : "raw%3D=value";
+        check(st.value(key) == expected_value &&
                   !st.contains(encoded ? "key%20name" : "key name") && slurp(file) == original,
               "settings keys: only exact first-line marker selects decoding, with one CRLF terminator");
         st.set("unrelated", "keep");
@@ -1763,7 +1768,7 @@ void settings_key_cases(const std::string& scratch)
         st.use_file(file);
         const auto saved = slurp(file);
         check(saved.starts_with(header) && saved.find(marker, marker.size()) == std::string::npos &&
-                  st.value(key) == "raw%3D=value",
+                  st.value(key) == expected_value,
               "settings keys: marked and legacy header variants save with one canonical marker and no key loss");
     }
     write_text(file, marker);  // exact first line is valid at EOF without LF
@@ -1786,6 +1791,62 @@ void settings_key_cases(const std::string& scratch)
 void settings_path_cases(const std::string& scratch)
 {
     namespace fs = std::filesystem;
+#ifdef _WIN32
+    // Exercise the actual resolver queue without requiring symlink privileges.
+    // Absolute/nested links must not erase a pending relative-target '..' origin.
+    for (const auto& [target, expected] : std::vector<std::pair<fs::path, fs::path>>{
+             {LR"(..\..\prefs)", {}}, {LR"(jump\..\prefs)", {}},
+             {LR"(chain\..\prefs)", {}}, {LR"(..\prefs)", LR"(D:\prefs)"},
+             {LR"(D:\..\prefs)", LR"(D:\prefs)"},
+             {LR"(\..\prefs)", {}}, {LR"(\prefs)", LR"(D:\prefs)"}})
+    {
+        std::map<fs::path, fs::path> links = {
+            {LR"(D:\cfg\settings)", target}, {LR"(D:\cfg\jump)", LR"(D:\)"},
+            {LR"(D:\cfg\chain)", "jump"}};
+        tortilla::settings_path_lookup lookup{
+            [&](const fs::path& path, std::error_code& ec) {
+                ec.clear();
+                return fs::file_status(links.contains(path) ? fs::file_type::symlink : fs::file_type::directory);
+            },
+            [&](const fs::path& path, std::error_code& ec) { ec.clear(); return links.at(path); }};
+        std::string error;
+        const auto resolved = tortilla::resolve_settings_path_for_tests(LR"(D:\cfg\settings)", error, lookup);
+        check(resolved == expected && error.empty() == !expected.empty(),
+              "settings links: relative-target parent beyond volume fails, nested absolute resets retain origin");
+    }
+    {
+        const auto dir = rap::sys::path_from_utf8(scratch) / "settings-relative-overflow";
+        fs::create_directories(dir);
+        std::string target;
+        for (int n = 0; n < 64; ++n) target += "../";
+        std::error_code ec;
+        const auto leaf = "tortilla-relative-overflow-" + std::to_string(
+            std::chrono::steady_clock::now().time_since_epoch().count());
+        fs::create_symlink(target + leaf, dir / "settings", ec);
+        if (!ec)
+        {
+            const auto wrong_target = fs::absolute(dir).root_path() / leaf;
+            auto entries = [&] {
+                std::vector<fs::path> out;
+                for (const auto& entry : fs::directory_iterator(dir)) out.push_back(entry.path());
+                std::sort(out.begin(), out.end());
+                return out;
+            };
+            const auto before = entries();
+            auto& st = tortilla::settings::get();
+            st.use_file(dir / "settings");
+            tortilla::settings_changes changes;
+            changes.set("must-not-write", "1");
+            const auto saved = st.apply(changes);
+            check(!saved && !saved.error.empty() && before == entries() && !fs::exists(wrong_target) &&
+                      !fs::exists(tortilla::settings_lock_file(wrong_target)) &&
+                      std::ranges::none_of(tortilla::settings_temp_files(wrong_target),
+                          [](const fs::path& p) { return fs::exists(p); }),
+                  "settings links: real relative target above volume fails save before lock/temp/target writes");
+        }
+        else std::printf("settings links: real Windows overflow case skipped (symlink privilege unavailable)\n");
+    }
+#endif
     struct path_case
     {
         const char* name;

@@ -589,7 +589,7 @@ menu_settings read_settings()
         const size_t eq = line.find('=');
         if (eq == std::string::npos) continue;
         const std::string key = format.key(std::string_view(line).substr(0, eq));
-        const std::string value = trim(line.substr(eq + 1));
+        const std::string value = format.value(trim(line.substr(eq + 1)));
         if (key == k_top_setting) out.where.top = parse_ids(value);
         else if (key == k_shift_setting) out.where.shift = parse_ids(value);
         else if (key == k_hidden_setting) out.where.hidden = parse_ids(value);

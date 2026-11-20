@@ -3167,6 +3167,19 @@ void recent_tests(const std::string& root, const std::string& one, const std::st
           "log tabs: the recent repositories, newest first, without a folder that's gone");
     check(settings::get().history("log.recentRepositories").size() == 3,
           "log tabs: one gone is left in the history, only not offered");
+#ifndef _WIN32
+    // A newline is a legal POSIX folder byte; histories use tabs, not newlines.
+    const auto multiline = rap::sys::path_from_utf8(root) / "repo\nwith-percent%3D=bytes";
+    fs::create_directories(multiline, ec);
+    const auto path = rap::sys::path_to_utf8(multiline);
+    remember_repository(path);
+    settings::get().set("recent.unrelated", "saved after the repository history");
+    settings::get().use_file(rap::sys::path_from_utf8(root) / "tortilla-settings");
+    const auto reloaded = recent_repositories();
+    check(!ec && !reloaded.empty() && reloaded.front() == path &&
+              settings::get().history("log.recentRepositories").front() == path,
+          "log tabs: newline repository history survives an unrelated save and disk reread exactly");
+#endif
 }
 
 // An environment variable set, or unset with "" (Windows has no setenv).

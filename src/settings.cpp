@@ -87,7 +87,8 @@ struct settings_target
     bool linked = false;
 };
 
-std::optional<settings_target> resolve(const fs::path& file, std::string& error)
+std::optional<settings_target> resolve(const fs::path& file, std::string& error,
+                                       const settings_path_lookup* lookup = nullptr)
 {
     auto failed = [&](const fs::path& at, const std::string& why)
     {
@@ -101,26 +102,35 @@ std::optional<settings_target> resolve(const fs::path& file, std::string& error)
     const auto initial = split_settings_path(absolute);
     settings_target t{initial.root};
     settings_path_cursor cursor(initial.root);
-    std::deque<fs::path> todo;
-    todo.insert(todo.end(), initial.components.begin(), initial.components.end());
+    struct component { fs::path part; bool relative_link = false; };
+    std::deque<component> todo;
+    for (const auto& part : initial.components) todo.push_back({part});
     int links = 0;
     while (!todo.empty())
     {
-        const fs::path part = todo.front();
+        const auto item = todo.front();
+        const fs::path& part = item.part;
         todo.pop_front();
         if (part.empty() || part == ".") continue;
         if (part == "..")
         {
+#ifdef _WIN32
+            // Windows rejects above-volume traversal inside relative link targets.
+            // Keep provenance per component: nested links may reset the cursor.
+            if (item.relative_link && cursor.at_root())
+                return failed(cursor.path() / part,
+                              std::make_error_code(std::errc::invalid_argument).message());
+#endif
             cursor.step(part);
             continue;
         }
         const fs::path next = cursor.path() / part;
         // symlink_status/read_symlink use lstat/readlink on POSIX. Never
         // normalize a suffix before traversing it: missing/.. is an error.
-        const auto status = fs::symlink_status(next, ec);
+        const auto status = lookup ? lookup->status(next, ec) : fs::symlink_status(next, ec);
         if (status.type() == fs::file_type::symlink)
         {
-            const auto target = fs::read_symlink(next, ec);
+            const auto target = lookup ? lookup->read_link(next, ec) : fs::read_symlink(next, ec);
             if (ec) return failed(next, ec.message());
             if (++links > 40)
                 return failed(next, std::make_error_code(std::errc::too_many_symbolic_link_levels).message());
@@ -129,7 +139,9 @@ std::optional<settings_target> resolve(const fs::path& file, std::string& error)
             else if (target.has_root_directory()) cursor = settings_path_cursor(cursor.root());
             else if (target.has_root_name())
                 return failed(next, std::make_error_code(std::errc::invalid_argument).message());
-            todo.insert(todo.begin(), parts.components.begin(), parts.components.end());
+            const bool relative = !target.is_absolute();
+            for (auto it = parts.components.rbegin(); it != parts.components.rend(); ++it)
+                todo.push_front({*it, relative});
             t.linked = true;
             continue;
         }
@@ -139,10 +151,10 @@ std::optional<settings_target> resolve(const fs::path& file, std::string& error)
             // A plain first-save config directory may still be created below;
             // only a simple missing suffix is allowed, never missing/.. .
             if (!todo.empty() &&
-                (t.linked || std::find(todo.begin(), todo.end(), fs::path("..")) != todo.end()))
+                (t.linked || std::any_of(todo.begin(), todo.end(), [](const component& p) { return p.part == ".."; })))
                 return failed(next, std::make_error_code(std::errc::no_such_file_or_directory).message());
             cursor.step(part);
-            for (const auto& p : todo) cursor.step(p);
+            for (const auto& p : todo) cursor.step(p.part);
             t.path = cursor.path();
             return t;
         }
@@ -301,7 +313,7 @@ bool parse(std::string_view text, values& out)
         while (!s.empty() && (s.back() == '\r' || s.back() == '\n')) s.remove_suffix(1);
         const size_t eq = s.find('=');
         if (eq == std::string_view::npos || s.starts_with('#')) continue;
-        out[format.key(s.substr(0, eq))] = std::string(s.substr(eq + 1));
+        out[format.key(s.substr(0, eq))] = format.value(s.substr(eq + 1));
     }
     return format.version_two();
 }
@@ -469,9 +481,10 @@ std::string write_file(const fs::path& target, const values& v)
     for (auto& [k, val] : v)
     {
         const std::string encoded = encode_settings_key(k);
+        const std::string value = encode_settings_value(val);
         ok = ok && checked(std::fwrite(encoded.data(), 1, encoded.size(), f) == encoded.size()) &&
              checked(std::fputc('=', f) != EOF) &&
-             checked(std::fwrite(val.data(), 1, val.size(), f) == val.size()) &&
+             checked(std::fwrite(value.data(), 1, value.size(), f) == value.size()) &&
              checked(std::fputc('\n', f) != EOF);
     }
     ok = ok && checked(!fail(settings_test_failure::flush) && std::fflush(f) == 0) &&
@@ -512,6 +525,14 @@ std::string numbers_value(const std::vector<float>& v)
 }
 
 }  // namespace
+
+std::filesystem::path resolve_settings_path_for_tests(const fs::path& file,
+                                                     std::string& error,
+                                                     const settings_path_lookup& lookup)
+{
+    auto target = resolve(file, error, &lookup);
+    return target ? target->path : fs::path{};
+}
 
 void settings_fail_next(settings_test_failure failure) { next_failure = failure; }
 

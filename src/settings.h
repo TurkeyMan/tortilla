@@ -155,6 +155,7 @@ public:
         if (part == "..") { if (!components_.empty()) components_.pop_back(); }
         else components_.push_back(part);
     }
+    bool at_root() const { return components_.empty(); }
     const std::filesystem::path& root() const { return root_; }
     std::filesystem::path path() const
     {
@@ -166,6 +167,16 @@ private:
     std::filesystem::path root_;
     std::vector<std::filesystem::path> components_;
 };
+
+// Injectable lstat/readlink for resolver tests without Windows symlink privileges.
+struct settings_path_lookup
+{
+    std::function<std::filesystem::file_status(const std::filesystem::path&, std::error_code&)> status;
+    std::function<std::filesystem::path(const std::filesystem::path&, std::error_code&)> read_link;
+};
+std::filesystem::path resolve_settings_path_for_tests(const std::filesystem::path&,
+                                                     std::string& error,
+                                                     const settings_path_lookup&);
 
 // Appearance [Settings > General]: "light", "dark", or as the desktop has
 // it (no value). Applied when the toolkit loads, and live from Settings.
