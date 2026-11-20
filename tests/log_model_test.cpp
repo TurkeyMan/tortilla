@@ -1670,33 +1670,143 @@ int settings_child(char** argv)
     return 0;
 }
 
+// One adversarial table: pure volume-boundary cases use the real platform
+// parser/cursor without touching drives/shares; filesystem cases use the same
+// resolver through apply(), including link expansion and invalid traversal.
+void settings_path_cases(const std::string& scratch)
+{
+    namespace fs = std::filesystem;
+    struct path_case
+    {
+        const char* name;
+        fs::path input, expected;
+        bool pure = false, accepted = true, links = false;
+    };
+#ifdef _WIN32
+    // Win32 resolves an ordinary input's '..' text before opening it (also
+    // covered by log_host path_tests); POSIX traverses each directory first.
+    constexpr bool native_plain_parent = true;
+    const fs::path native_directory_parent = "base/prefs";
+#else
+    constexpr bool native_plain_parent = false;
+    const fs::path native_directory_parent = "elsewhere/prefs";
+#endif
+    const std::vector<path_case> cases = {
+#ifdef _WIN32
+        {"extended drive root", LR"(\\?\D:\cfg\settings)", LR"(\\?\D:\cfg\settings)", true},
+        {"extended UNC root parent", LR"(\\?\UNC\srv\share\..)", LR"(\\?\UNC\srv\share\)", true},
+        {"UNC root parent", LR"(\\srv\share\..\x)", LR"(\\srv\share\x)", true},
+        {"extended drive parent", LR"(\\?\D:\..\x)", LR"(\\?\D:\x)", true},
+        {"drive parent", LR"(D:\..\x)", LR"(D:\x)", true},
+        {"extended UNC repeated parent", LR"(\\?\UNC\srv\share\dir\..\..\..\x)", LR"(\\?\UNC\srv\share\x)", true},
+        {"UNC repeated parent", LR"(\\srv\share\dir\..\..\x)", LR"(\\srv\share\x)", true},
+        {"extended drive repeated parent", LR"(\\?\D:\dir\..\..\x)", LR"(\\?\D:\x)", true},
+        {"drive repeated parent", LR"(D:\dir\..\..\x)", LR"(D:\x)", true},
+#else
+        {"POSIX root parent", "/../x", "/x", true},
+        {"POSIX repeated parent", "/dir/../../x", "/x", true},
+#endif
+        {"existing directory parent", "base/existing/../prefs", "base/prefs"},
+        {"directory link parent", "base/link/../prefs", native_directory_parent, false, true, true},
+        {"relative link parent", "base/settings", "elsewhere/prefs", false, true, true},
+        {"absolute link", "base/absolute", "elsewhere/prefs", false, true, true},
+        {"absolute directory link resets depth", "base/absolute-dir/../../prefs", "prefs", false, true, true},
+        {"absolute link target resets depth before parent", "base/absolute-parent", "prefs", false, true, true},
+        {"dangling final link", "base/dangling", "elsewhere/future", false, true, true},
+        {"missing link target before parent", "base/bad-missing", "base/prefs", false, false, true},
+        {"missing plain component before parent", "base/missing/../prefs", "base/prefs", false, native_plain_parent},
+        {"non-directory link target before parent", "base/bad-file", "base/prefs", false, false, true},
+        {"non-directory plain component before parent", "base/not-directory/../prefs", "base/prefs", false, native_plain_parent},
+        {"missing link target parent", "base/missing-parent", "base/missing/prefs", false, false, true},
+        {"self link", "base/self", "base/prefs", false, false, true},
+        {"mutual links", "base/one", "base/prefs", false, false, true},
+        {"plain first-save suffix", "base/new/sub/prefs", "base/new/sub/prefs"},
+    };
+    auto& st = tortilla::settings::get();
+    for (size_t index = 0; index < cases.size(); ++index)
+    {
+        const auto& c = cases[index];
+        const std::string label = std::string("settings path table: ") + c.name;
+        if (c.pure)
+        {
+            const auto parts = tortilla::split_settings_path(c.input);
+            tortilla::settings_path_cursor cursor(parts.root);
+            for (const auto& part : parts.components) cursor.step(part);
+            check(cursor.path().native() == c.expected.native(), label.c_str());
+            continue;
+        }
+        const auto root = rap::sys::path_from_utf8(scratch) / "settings-path-cases" /
+                          std::to_string(index);
+        fs::create_directories(root / "base/existing");
+        fs::create_directories(root / "elsewhere/child");
+        for (const auto& p : {root / "prefs", root / "base/prefs", root / "elsewhere/prefs"})
+            write_text(p, "kept=1\n");
+        write_text(root / "base/not-directory", "ordinary file\n");
+        bool links = true;
+        auto link = [&](const fs::path& to, const fs::path& name, bool directory = false)
+        {
+            std::error_code ec;
+            if (directory) fs::create_directory_symlink(to, root / name, ec);
+            else fs::create_symlink(to, root / name, ec);
+            links = links && !ec;
+        };
+        link("../elsewhere/child", "base/link", true);
+        link("link/../prefs", "base/settings");
+        link(root / "elsewhere/prefs", "base/absolute");
+        link(root / "elsewhere/child", "base/absolute-dir", true);
+        link(root / "elsewhere/child/../../prefs", "base/absolute-parent");
+        link("../elsewhere/future", "base/dangling");
+        link("missing/../prefs", "base/bad-missing");
+        link("not-directory/../prefs", "base/bad-file");
+        link("missing/prefs", "base/missing-parent");
+        link("self", "base/self");
+        link("two", "base/one");
+        link("one", "base/two");
+        if (c.links && !links)
+        {
+            check(true, (label + " (symlinks unavailable)").c_str());
+            continue;
+        }
+        auto entries = [&]
+        {
+            std::vector<fs::path> out;
+            for (const auto& e : fs::recursive_directory_iterator(root)) out.push_back(e.path());
+            std::sort(out.begin(), out.end());
+            return out;
+        };
+        const auto before = entries();
+        const auto expected = root / c.expected;
+        const bool read_existing = fs::exists(expected);
+        st.use_file(root / c.input);
+        const bool read_right = !read_existing || st.value("kept") == "1";
+        tortilla::settings_changes changes;
+        changes.set("case", std::to_string(index));
+        const auto saved = st.apply(changes);
+        if (c.accepted)
+            check(saved && read_right && st.value("case") == std::to_string(index) &&
+                      slurp(expected).find("case=" + std::to_string(index) + "\n") != std::string::npos &&
+                      tortilla::settings_lock_file(root / c.input) == tortilla::settings_lock_file(expected),
+                  label.c_str());
+        else
+            check(!saved && !saved.error.empty() && !st.contains("case") && before == entries() &&
+                      slurp(root / "prefs") == "kept=1\n" &&
+                      slurp(root / "base/prefs") == "kept=1\n" &&
+                      slurp(root / "elsewhere/prefs") == "kept=1\n",
+                  label.c_str());
+    }
+}
+
 // Settings saved by several processes at once, read by another meanwhile,
 // and saves that fail.
 void settings_across_processes(const std::string& scratch)
 {
+    settings_path_cases(scratch);
     namespace fs = std::filesystem;
     const fs::path dir = rap::sys::path_from_utf8(scratch) / "settings-shared";
     fs::create_directories(dir);
     auto& st = tortilla::settings::get();
 
-#ifdef _WIN32
-    // Pure MSVC path parsing: no drive or network share needs to exist.
-    for (const auto& [path, root] : std::vector<std::pair<fs::path, fs::path>>{
-             {LR"(\\?\D:\cfg\settings)", LR"(\\?\D:\)"},
-             {LR"(\\?\UNC\srv\share\cfg\settings)", LR"(\\?\UNC\srv\share\)"},
-             {LR"(\\srv\share\cfg\settings)", LR"(\\srv\share\)"},
-             {LR"(D:\cfg\settings)", LR"(D:\)"}})
-    {
-        const auto parts = tortilla::split_settings_path(path);
-        fs::path assembled = parts.root;
-        for (const auto& part : parts.components) assembled /= part;
-        check(parts.root.native() == root.native() && assembled.native() == path.native() &&
-                  parts.components == std::vector<fs::path>{L"cfg", L"settings"},
-              "settings: full Windows drive/UNC/extended volume root survives component walking");
-    }
-#endif
-
-    // Two processes, each with a snapshot from before the other's saves:
+// Two processes, each with a snapshot from before the other's saves:
     // neither's keys or history entries are lost, and a reader (as the
     // shell extension reads) only ever sees a whole document. The first
     // and last keys mark one.
@@ -1914,31 +2024,6 @@ void settings_across_processes(const std::string& scratch)
               "settings: convenience save failures are retained until reported once");
     }
 #ifndef _WIN32
-    for (const std::string intermediate : {"missing", "not-directory"})
-    {
-        const fs::path root = dir / ("invalid-link-" + intermediate);
-        fs::create_directories(root);
-        write_text(root / "prefs", "kept=1\n");
-        if (intermediate == "not-directory") write_text(root / intermediate, "ordinary file\n");
-        const auto file = root / "settings";
-        std::error_code ec;
-        fs::create_symlink(intermediate + "/../prefs", file, ec);
-        if (ec)
-            check(true, "settings: invalid symlink traversal is rejected (no symlinks here)");
-        else
-        {
-            st.use_file(file);
-            tortilla::settings_changes c;
-            c.set("lost", "1");
-            const auto saved = st.apply(c);
-            check(!saved && saved.error.find(intermediate) != std::string::npos &&
-                      slurp(root / "prefs") == "kept=1\n" && !st.contains("lost") &&
-                      fs::is_symlink(file) && !fs::exists(root / "prefs.lock"),
-                  intermediate == "missing"
-                      ? "settings: settings -> missing/../prefs fails without locking or changing prefs"
-                      : "settings: a non-directory before .. fails without changing prefs");
-        }
-    }
     {
         const fs::path file = dir / "no-lock-records";
         write_text(file, "kept=1\n");
@@ -1950,30 +2035,6 @@ void settings_across_processes(const std::string& scratch)
         check(!saved && !saved.error.empty() && slurp(file) == "kept=1\n" &&
                   !st.contains("lost"),
               "settings: ENOLCK fails the save rather than proceeding unlocked");
-    }
-    {
-        const fs::path root = dir / "link-parent";
-        fs::create_directories(root / "elsewhere" / "child");
-        write_text(root / "prefs", "wrong=1\n");
-        write_text(root / "elsewhere" / "prefs", "kept=1\n");
-        std::error_code ec;
-        fs::create_directory_symlink("elsewhere/child", root / "link", ec);
-        if (!ec) fs::create_symlink("link/../prefs", root / "settings", ec);
-        if (ec)
-            check(true, "settings: link/../prefs filesystem semantics (no symlinks here)");
-        else
-        {
-            const auto file = root / "settings";
-            st.use_file(file);
-            const bool read_right = st.value("kept") == "1";
-            st.set("new", "2");
-            check(read_right && slurp(root / "prefs") == "wrong=1\n" &&
-                      slurp(root / "elsewhere" / "prefs") == "kept=1\nnew=2\n" &&
-                      fs::is_symlink(file) &&
-                      tortilla::settings_lock_file(file) ==
-                          tortilla::settings_lock_file(root / "elsewhere" / "prefs"),
-                  "settings: link/../prefs resolves links before .. for reads, locks and saves");
-        }
     }
 #endif
 

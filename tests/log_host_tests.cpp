@@ -646,6 +646,22 @@ void identity_tests()
     check(released_c == 0, "identity: a repository's colour held by its other window");
     ids.destroyed(&w2);
     check(released_c == 1, "identity: and let go with the last");
+
+    // Deterministic address reuse: a retained dismissal belongs to one window
+    // instance, even if the next owner has the same address and repository.
+    ids.created(&w1, nullptr);
+    const auto lifetime = ids.lifetime(&w1);
+    int dismissed = 0;
+    auto retained_dismissal = [lifetime, &dismissed]
+    { if (!lifetime.expired()) ++dismissed; };
+    ids.reidentify(&w1, nullptr);
+    check(!lifetime.expired(), "identity: selecting another repository preserves a live window token");
+    ids.destroyed(&w1);
+    ids.created(&w1, nullptr);
+    retained_dismissal();
+    check(lifetime.expired() && !ids.lifetime(&w1).expired() && dismissed == 0,
+          "identity: retained dismissal stays inert after destruction and same-address recreation");
+    ids.destroyed(&w1);
 }
 
 // A log's own actions open windows without a parent (Commit, Rebase, a log

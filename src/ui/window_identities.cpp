@@ -18,11 +18,13 @@ std::shared_ptr<const repo_identity> window_identities::created(const void* w, c
     // A window at an address that went without word (made elsewhere than
     // create_window) is a new one: replaced.
     by_window_[w] = id;
+    lifetimes_[w] = std::make_shared<const bool>(true);
     return id;
 }
 
 void window_identities::destroyed(const void* w)
 {
+    lifetimes_.erase(w);
     // Erased first, released after: a lease let go mustn't find the map
     // midway through a change.
     std::shared_ptr<const repo_identity> id;
@@ -31,6 +33,18 @@ void window_identities::destroyed(const void* w)
         id = std::move(it->second);
         by_window_.erase(it);
     }
+}
+
+std::weak_ptr<const void> window_identities::lifetime(const void* w) const
+{
+    const auto it = lifetimes_.find(w);
+    return it == lifetimes_.end() ? std::weak_ptr<const void>{} : it->second;
+}
+
+void window_identities::reidentify(const void* w, std::shared_ptr<const repo_identity> id)
+{
+    if (!by_window_.contains(w)) lifetimes_[w] = std::make_shared<const bool>(true);
+    by_window_[w] = std::move(id);
 }
 
 std::shared_ptr<const repo_identity> track_window(window_identities& ids, rap::window& w,

@@ -99,7 +99,7 @@ std::optional<settings_target> resolve(const fs::path& file, std::string& error)
     if (ec) return failed(file, ec.message());
     const auto initial = split_settings_path(absolute);
     settings_target t{initial.root};
-    fs::path volume_root = initial.root;
+    settings_path_cursor cursor(initial.root);
     std::deque<fs::path> todo;
     todo.insert(todo.end(), initial.components.begin(), initial.components.end());
     int links = 0;
@@ -110,10 +110,10 @@ std::optional<settings_target> resolve(const fs::path& file, std::string& error)
         if (part.empty() || part == ".") continue;
         if (part == "..")
         {
-            if (t.path.native() != volume_root.native()) t.path = t.path.parent_path();
+            cursor.step(part);
             continue;
         }
-        const fs::path next = t.path / part;
+        const fs::path next = cursor.path() / part;
         // symlink_status/read_symlink use lstat/readlink on POSIX. Never
         // normalize a suffix before traversing it: missing/.. is an error.
         const auto status = fs::symlink_status(next, ec);
@@ -124,8 +124,8 @@ std::optional<settings_target> resolve(const fs::path& file, std::string& error)
             if (++links > 40)
                 return failed(next, std::make_error_code(std::errc::too_many_symbolic_link_levels).message());
             const auto parts = split_settings_path(target);
-            if (target.is_absolute()) t.path = volume_root = parts.root;
-            else if (target.has_root_directory()) t.path = volume_root;
+            if (target.is_absolute()) cursor = settings_path_cursor(parts.root);
+            else if (target.has_root_directory()) cursor = settings_path_cursor(cursor.root());
             else if (target.has_root_name())
                 return failed(next, std::make_error_code(std::errc::invalid_argument).message());
             todo.insert(todo.begin(), parts.components.begin(), parts.components.end());
@@ -140,15 +140,17 @@ std::optional<settings_target> resolve(const fs::path& file, std::string& error)
             if (!todo.empty() &&
                 (t.linked || std::find(todo.begin(), todo.end(), fs::path("..")) != todo.end()))
                 return failed(next, std::make_error_code(std::errc::no_such_file_or_directory).message());
-            t.path = next;
-            for (const auto& p : todo) t.path /= p;
+            cursor.step(part);
+            for (const auto& p : todo) cursor.step(p);
+            t.path = cursor.path();
             return t;
         }
         if (ec) return failed(next, ec.message());
         if (!todo.empty() && !fs::is_directory(status))
             return failed(next, std::make_error_code(std::errc::not_a_directory).message());
-        t.path = next;
+        cursor.step(part);
     }
+    t.path = cursor.path();
     return t;
 }
 

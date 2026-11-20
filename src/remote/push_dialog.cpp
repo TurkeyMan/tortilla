@@ -219,7 +219,7 @@ void push_dialog::ok()
 }
 
 // git push, once per remote [spec 7.3.4].
-void push_dialog::push()
+void push_dialog::push(bool save_choices)
 {
     const bool all = all_branches_->checked(), url = by_url();
     std::vector<std::string> targets;
@@ -234,8 +234,10 @@ void push_dialog::push()
     settings_changes s;
     if (!url) s.set(key + ".remote", all_remotes() ? all_remotes_label : targets.front());
     s.set(key + ".all", all ? "1" : "0");
-    if (const settings::saved done = settings::get().apply(s); !done)
-        report_unsaved_settings(ui_, nullptr, done.error);
+    if (save_choices)
+        if (const settings::saved done = settings::get().apply(s); !done)
+            return report_unsaved_settings(ui_, window_.get(), done.error,
+                [this, alive = std::weak_ptr<bool>(alive_)] { if (alive.lock()) push(false); });
 
     std::vector<std::string> options;
     if (tags_->checked() && !all) options.push_back("--tags");
@@ -303,7 +305,7 @@ void push_dialog::push()
 void push_dialog::manage_remotes()
 {
     show_settings(ui_, window_.get(), workdir_, settings_page::remotes, {},
-                  [this] { refresh_remotes(); });
+                  [this, alive = std::weak_ptr<bool>(alive_)] { if (alive.lock()) refresh_remotes(); });
 }
 
 void push_dialog::refresh_remotes()

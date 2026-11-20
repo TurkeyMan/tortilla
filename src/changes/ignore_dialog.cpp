@@ -208,25 +208,29 @@ void show_ignore_dialog(rap::ui& ui, std::vector<std::string> paths, bool by_ext
             choices.set(by_extension ? "ignore.maskScope" : "ignore.nameScope",
                         std::to_string(s->scope->current()));
             choices.set("ignore.where", std::to_string(s->target->current()));
-            if (const settings::saved saved = settings::get().apply(choices); !saved)
-                report_unsaved_settings(s->ui, nullptr, saved.error);
-            if (const std::string error = s->write(); !error.empty())
-                return s->fail(_("Couldn't add to the ignore list."), error);
-            if (s->stop_tracking && s->stop_tracking->checked())
+            const auto saved = settings::get().apply(choices);
+            auto proceed = [s]
             {
-                // The paths through a file: no command-line limit.
-                const auto list = pathspec_file::write(s->relative);
-                if (!list)
-                    return s->fail(_("git couldn't stop tracking them."),
-                                   _("Could not write the list of files to the temporary folder."));
-                std::vector<std::string> args{"rm", "-r", "-q", "--cached", "--ignore-unmatch"};
-                for (std::string& a : list->arguments()) args.push_back(std::move(a));
-                if (const git_result rm = run_git(s->workdir, literal_paths(args)); !rm.ok())
-                    return s->fail(N_("git couldn't stop tracking it.", "git couldn't stop tracking them.",
-                                      s->relative.size()),
-                                   rm.output);
-            }
-            s->finish(true);
+                if (const std::string error = s->write(); !error.empty())
+                    return s->fail(_("Couldn't add to the ignore list."), error);
+                if (s->stop_tracking && s->stop_tracking->checked())
+                {
+                    // The paths through a file: no command-line limit.
+                    const auto list = pathspec_file::write(s->relative);
+                    if (!list)
+                        return s->fail(_("git couldn't stop tracking them."),
+                                       _("Could not write the list of files to the temporary folder."));
+                    std::vector<std::string> args{"rm", "-r", "-q", "--cached", "--ignore-unmatch"};
+                    for (std::string& a : list->arguments()) args.push_back(std::move(a));
+                    if (const git_result rm = run_git(s->workdir, literal_paths(args)); !rm.ok())
+                        return s->fail(N_("git couldn't stop tracking it.", "git couldn't stop tracking them.",
+                                          s->relative.size()),
+                                       rm.output);
+                }
+                s->finish(true);
+            };
+            if (!saved) return report_unsaved_settings(s->ui, nullptr, saved.error, std::move(proceed));
+            proceed();
         });
     st->window->show();
 }

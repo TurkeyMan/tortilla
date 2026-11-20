@@ -35,7 +35,7 @@ private:
     void build();
     void fill_into();
     void base_changed();
-    void create();
+    void create(bool save_choices = true);
     void send();
     // What Into names: a remote and its branch ("upstream/main"; a bare
     // "main" is the preferred remote's).

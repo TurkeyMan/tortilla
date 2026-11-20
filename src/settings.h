@@ -142,6 +142,31 @@ struct settings_path_parts
 };
 settings_path_parts split_settings_path(const std::filesystem::path&);
 
+// The already-traversed part of a path. Only verified normal components are
+// pushed by the filesystem walker. A parent step pops a component, never the
+// fixed volume prefix (whose spelling may change under MSVC parent_path()).
+class settings_path_cursor
+{
+public:
+    explicit settings_path_cursor(std::filesystem::path root) : root_(std::move(root)) {}
+    void step(const std::filesystem::path& part)
+    {
+        if (part.empty() || part == ".") return;
+        if (part == "..") { if (!components_.empty()) components_.pop_back(); }
+        else components_.push_back(part);
+    }
+    const std::filesystem::path& root() const { return root_; }
+    std::filesystem::path path() const
+    {
+        auto out = root_;
+        for (const auto& part : components_) out /= part;
+        return out;
+    }
+private:
+    std::filesystem::path root_;
+    std::vector<std::filesystem::path> components_;
+};
+
 // Appearance [Settings > General]: "light", "dark", or as the desktop has
 // it (no value). Applied when the toolkit loads, and live from Settings.
 inline constexpr const char* k_appearance_setting = "appearance";

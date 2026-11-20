@@ -351,16 +351,18 @@ std::optional<std::shared_ptr<const repo_identity>> repo_identity_of(rap::window
     return identities().recorded(window);
 }
 
+std::weak_ptr<const void> window_lifetime(rap::window* window)
+{
+    return identities().lifetime(window);
+}
+
 namespace
 {
 
-// `window` recorded as `id`'s, as if made in a scope of it with no parent:
-// created() replaces the record, and the window's on_destroyed
-// (track_window's) still lets it go.
+// Its repository changes when a tab is selected; its window lifetime does not.
 void record_as(rap::window* window, std::shared_ptr<const repo_identity> id)
 {
-    const identity_scope scope(identities(), std::move(id));
-    identities().created(window, nullptr);
+    identities().reidentify(window, std::move(id));
 }
 
 // How many times set_repo_identity has said what each window is: a scope

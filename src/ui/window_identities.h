@@ -42,6 +42,9 @@ public:
     // parent's if that's recorded, else the scope's (identity_scope) if one
     // is open, else current(). Recorded until destroyed(w).
     std::shared_ptr<const repo_identity> created(const void* w, const void* parent);
+    // A still-live shared window now shows another repository. Its lifetime
+    // generation stays the same; created() is for a new window instance.
+    void reidentify(const void* w, std::shared_ptr<const repo_identity>);
     void destroyed(const void* w);
 
     // What `w` was given; nullopt if it isn't recorded (nullptr: it was
@@ -49,6 +52,9 @@ public:
     std::optional<std::shared_ptr<const repo_identity>> recorded(const void* w) const;
     std::shared_ptr<const repo_identity> of(const void* w) const { return recorded(w).value_or(nullptr); }
     size_t size() const { return by_window_.size(); }
+    // A generation token for this window instance, not for its address or
+    // repository. Expired on destruction/replacement even if the address is reused.
+    std::weak_ptr<const void> lifetime(const void* w) const;
 
 private:
     friend class identity_scope;
@@ -56,6 +62,7 @@ private:
     // While an identity_scope is open: what windows without a parent take.
     std::optional<std::shared_ptr<const repo_identity>> scope_;
     std::map<const void*, std::shared_ptr<const repo_identity>> by_window_;
+    std::map<const void*, std::shared_ptr<const void>> lifetimes_;
 };
 
 // `w`, just made with `parent` (or none), recorded as created() does, and

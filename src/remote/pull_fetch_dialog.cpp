@@ -210,7 +210,7 @@ void pull_fetch_dialog::show()
     if (by_url()) url_->focus();
 }
 
-void pull_fetch_dialog::ok()
+void pull_fetch_dialog::ok(bool save_choices)
 {
     const bool url = by_url(), all = all_remotes();
     const std::string where = remote();
@@ -240,8 +240,10 @@ void pull_fetch_dialog::ok()
     if (url) s.add_to_history("pull.urls", where);
     s.set(key + ".rebase", rebase_->checked() && !rebase_from_config_ ? "1" : "0");
     if (pull_) s.set(key + ".ffonly", ff_only_->checked() ? "1" : "0");
-    if (const settings::saved done = settings::get().apply(s); !done)
-        report_unsaved_settings(ui_, nullptr, done.error);
+    if (save_choices)
+        if (const settings::saved done = settings::get().apply(s); !done)
+            return report_unsaved_settings(ui_, window_.get(), done.error,
+                [this, alive = std::weak_ptr<bool>(alive_)] { if (alive.lock()) ok(false); });
 
     std::vector<std::string> options;
     if (depth_->checked())
@@ -401,7 +403,7 @@ void pull_fetch_dialog::finished()
 void pull_fetch_dialog::manage_remotes()
 {
     show_settings(ui_, window_.get(), workdir_, settings_page::remotes, {},
-                  [this] { refresh_remotes(); });
+                  [this, alive = std::weak_ptr<bool>(alive_)] { if (alive.lock()) refresh_remotes(); });
 }
 
 void pull_fetch_dialog::refresh_remotes()

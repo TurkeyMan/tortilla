@@ -35,7 +35,7 @@ private:
     void refresh_remotes();
     bool by_url() const;
     bool all_remotes() const;
-    void ok();
+    void ok(bool save_choices = true);
     void finished();
 
     rap::ui& ui_;
@@ -47,6 +47,7 @@ private:
     std::vector<std::string> remotes_;
     std::unique_ptr<rap::window> window_;
     std::function<void()> closed_;
+    std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
 
     rap::drop_down* remote_ = nullptr;
     rap::combo* url_ = nullptr;

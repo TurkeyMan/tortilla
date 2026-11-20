@@ -55,6 +55,7 @@ std::shared_ptr<const repo_identity> repo_identity_for(rap::ui&, const std::stri
 // recorded. For something that opens later, after the scope it was asked
 // in has closed: a follow-up's window, a dialog's done.
 std::optional<std::shared_ptr<const repo_identity>> repo_identity_of(rap::window*);
+std::weak_ptr<const void> window_lifetime(rap::window*);
 
 // A window several repositories share, one shown at a time (a log window's
 // tabs): what it's recorded as from now on, which dialogs made on it take,

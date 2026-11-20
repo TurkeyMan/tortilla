@@ -168,7 +168,7 @@ void clone_dialog::update_state()
     origin_name_->set_enabled(origin_->checked() && !bare);
 }
 
-void clone_dialog::ok()
+void clone_dialog::ok(bool save_choices)
 {
     const std::string url = url_->text(), dir = directory_->text();
     auto refuse = [this](const std::string& text)
@@ -184,8 +184,10 @@ void clone_dialog::ok()
     settings_changes choices;
     choices.add_to_history("clone.urls", url);
     choices.set("clone.recursive", recursive_->checked() ? "1" : "0");
-    if (const settings::saved done = settings::get().apply(choices); !done)
-        report_unsaved_settings(ui_, nullptr, done.error);
+    if (save_choices)
+        if (const settings::saved done = settings::get().apply(choices); !done)
+            return report_unsaved_settings(ui_, window_.get(), done.error,
+                [this, alive = std::weak_ptr<bool>(alive_)] { if (alive.lock()) ok(false); });
 
     git_command c{"clone", "--progress"};
     if (recursive_->checked() && !bare_->checked()) c.push_back("--recursive");

@@ -3946,6 +3946,69 @@ void settings_close_failure_tests(rap::ui& ui, const std::string& first,
     st.use_file(rap::sys::path_from_utf8(root) / "tortilla-settings");
 }
 
+void settings_preference_failure_tests(rap::ui& ui, const std::string& repo,
+                                        const std::string& root)
+{
+    auto& st = settings::get();
+    for (bool parented : {false, true})
+    {
+        st.use_file(rap::sys::path_from_utf8(root) /
+                    (parented ? "settings-parent-failure" : "settings-standalone-failure"));
+        st.set(k_appearance_setting, "light");
+        (void)st.take_save_error();
+        std::unique_ptr<rap::window> parent;
+        if (parented)
+            parent = create_window(ui, rap::layout::window{"Settings owner", {rap::layout::label{"Owner"}}});
+        bool saved = false, closed = false;
+        show_settings(ui, parent.get(), repo, settings_page::general,
+                      [&] { saved = true; },
+                      [&] { closed = true; quit_after_settings(ui); });
+        built_window& built = g_backend->built.back();
+        kept_window* frame = built.window;
+        kept_drop_down* appearance_choice = nullptr;
+        for (auto* choice : built.choices)
+            if (choice->items == std::vector<std::string>{"Follow system", "Light", "Dark"})
+                appearance_choice = choice;
+        check(appearance_choice && frame && frame->finished,
+              "settings preferences: actual General page and finish handler are built");
+        if (!appearance_choice || !frame || !frame->finished) return;
+        appearance_choice->choose(2);
+        const int messages = g_backend->messages, quits = g_backend->quit_requests;
+        g_backend->hold_dialogs = true;
+        g_backend->suppress_quit = true;
+        const auto transactions = st.transactions_for_tests();
+        settings_fail_next(settings_test_failure::replace);
+        frame->finished(rap::dialog_role::ok);
+        settle(ui);
+        check(st.transactions_for_tests() == transactions + 1 && !saved && !closed &&
+                  st.value(k_appearance_setting) == "light" && built.window == frame &&
+                  g_backend->messages == messages + 1 && g_backend->held_messages.size() == 1 &&
+                  g_backend->quit_requests == quits,
+              "settings preferences: one failed geometry/preferences save retains its window and continuation until dismissal");
+        if (parented)
+            parent.reset();  // retained dismissal must not invoke a destroyed owner's callback
+        else
+        {
+            quit_after_settings(ui);  // queue is empty, but the explicit warning is still held
+            check(g_backend->quit_requests == quits,
+                  "settings preferences: a direct warning blocks quit even with no deferred error");
+        }
+        auto dismissed = g_backend->held_messages.empty()
+                             ? std::function<void(rap::dialog_role)>{}
+                             : std::move(g_backend->held_messages.front());
+        g_backend->held_messages.clear();
+        g_backend->hold_dialogs = false;
+        if (dismissed) dismissed(rap::dialog_role::ok);
+        settle(ui);
+        check(!saved && closed == !parented && !built.window &&
+                  g_backend->quit_requests == quits + (parented ? 0 : 1),
+              parented ? "settings preferences: dismissed action is inert after its owner is destroyed"
+                       : "settings preferences: only dismissal permits standalone Settings close, destruction and quit");
+        g_backend->suppress_quit = false;
+    }
+    st.use_file(rap::sys::path_from_utf8(root) / "tortilla-settings");
+}
+
 // Folders shown and remembered without trailing separators, a root's own
 // kept: "C:" alone is a folder on that drive, not its top.
 void folder_text_tests()
@@ -4052,6 +4115,7 @@ void run_log_page_tests(const std::string& root)
     tab_tests(ui, repo, others[0], others[1]);
     toolbar_tests(ui, repo, others[0]);
     settings_close_failure_tests(ui, repo, others[0], root);
+    settings_preference_failure_tests(ui, repo, root);
     recent_tests(root, repo, others[0]);
     identity_tests(ui, repo, others[0]);
     teardown_tests(ui, repo, others[0]);

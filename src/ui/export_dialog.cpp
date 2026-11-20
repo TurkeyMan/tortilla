@@ -127,6 +127,7 @@ void start(rap::ui& ui, rap::window* parent, const std::string& workdir, const s
 void export_revision(rap::ui& ui, rap::window* parent, const std::string& workdir,
                      const std::string& rev, std::function<void()> done)
 {
+    const auto parent_lifetime = window_lifetime(parent);
     auto st = std::make_shared<state>();
 
     // The folder last exported into, else the one around the repository.
@@ -189,12 +190,12 @@ void export_revision(rap::ui& ui, rap::window* parent, const std::string& workdi
             .resizable(false),
         parent);
     st->window->on_finished(
-        [st, &ui, parent, workdir, dir, done](rap::dialog_role role) mutable
+        [st, &ui, parent, parent_lifetime, workdir, dir, done](rap::dialog_role role) mutable
         {
             auto keep = std::move(st);
-            ui.post([keep] {});  // destroy after this callback returns
             if (role != rap::dialog_role::ok)
             {
+                ui.post([keep] {});
                 if (done) done();
                 return;
             }
@@ -216,32 +217,39 @@ void export_revision(rap::ui& ui, rap::window* parent, const std::string& workdi
             settings_changes choices;
             choices.set("export.dir", rap::sys::path_to_utf8(out.parent_path()));
             choices.set("export.folder", zip ? "0" : "1");
-            if (const settings::saved saved = settings::get().apply(choices); !saved)
-                report_unsaved_settings(ui, nullptr, saved.error);
+            const auto saved = settings::get().apply(choices);
+            auto proceed = [keep, &ui, parent, parent_lifetime, workdir, rev, zip, out, typed, done]
+            {
+                if (parent && parent_lifetime.expired()) return;
+                ui.post([keep] {});  // retained through warning dismissal
 
-            // Writing over what's there asks first, unless the file chooser
-            // just did.
-            std::error_code ec;
-            const bool replaces = zip ? typed != keep->browsed && fs::exists(out, ec)
-                                      : fs::is_directory(out, ec) && !fs::is_empty(out, ec);
-            if (!replaces) return start(ui, parent, workdir, rev, zip, out, done);
-            const std::string shown = rap::sys::path_to_utf8(out);
-            show_message(
-                ui, parent,
-                {.icon = rap::message_spec::icon::question,
-                 .title = _("Export"),
-                 .text = zip ? rap::i18n::format(_("{0} already exists. Replace it?"), shown)
-                             : rap::i18n::format(_("{0} is not empty. Export into it, "
-                                                   "replacing files of the same name?"),
-                                                 shown),
-                 .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
-                [&ui, parent, workdir, rev, zip, out, done](rap::dialog_role r)
-                {
-                    if (r == rap::dialog_role::yes)
-                        start(ui, parent, workdir, rev, zip, out, done);
-                    else if (done)
-                        done();
-                });
+                // Writing over what's there asks first, unless the file chooser
+                // just did.
+                std::error_code ec;
+                const bool replaces = zip ? typed != keep->browsed && fs::exists(out, ec)
+                                          : fs::is_directory(out, ec) && !fs::is_empty(out, ec);
+                if (!replaces) return start(ui, parent, workdir, rev, zip, out, done);
+                const std::string shown = rap::sys::path_to_utf8(out);
+                show_message(
+                    ui, parent,
+                    {.icon = rap::message_spec::icon::question,
+                     .title = _("Export"),
+                     .text = zip ? rap::i18n::format(_("{0} already exists. Replace it?"), shown)
+                                 : rap::i18n::format(_("{0} is not empty. Export into it, "
+                                                       "replacing files of the same name?"),
+                                                     shown),
+                     .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
+                    [&ui, parent, workdir, rev, zip, out, done](rap::dialog_role r)
+                    {
+                        if (r == rap::dialog_role::yes)
+                            start(ui, parent, workdir, rev, zip, out, done);
+                        else if (done)
+                            done();
+                    });
+            };
+            if (!saved) return report_unsaved_settings(ui, parent && parent_lifetime.expired() ? nullptr : parent,
+                                                       saved.error, std::move(proceed));
+            proceed();
         });
     st->window->show();
 }

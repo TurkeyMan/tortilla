@@ -24,6 +24,7 @@ namespace fs = std::filesystem;
 void clean_up(rap::ui& ui, rap::window* parent, std::vector<std::string> paths,
               std::function<void(bool done)> done)
 {
+    const auto parent_lifetime = window_lifetime(parent);
     auto fail = [&ui, parent, done](const std::string& text)
     {
         show_message(ui, parent,
@@ -97,11 +98,14 @@ void clean_up(rap::ui& ui, rap::window* parent, std::vector<std::string> paths,
             .resizable(false),
         parent);
     st->window->on_finished(
-        [st, &ui, parent, workdir, folders, files, done](rap::dialog_role role) mutable
+        [st, &ui, parent, parent_lifetime, workdir, folders, files, done](rap::dialog_role role) mutable
         {
             auto keep = std::move(st);
-            ui.post([keep] {});  // destroy after this callback returns
-            if (role != rap::dialog_role::ok) return done(false);
+            if (role != rap::dialog_role::ok)
+            {
+                ui.post([keep] {});
+                return done(false);
+            }
 
             clean_options o;
             o.files = clean_options::what(std::clamp(keep->files->current(), 0, 2));
@@ -114,84 +118,91 @@ void clean_up(rap::ui& ui, rap::window* parent, std::vector<std::string> paths,
             set.set("cleanup.directories", o.directories ? "1" : "0");
             set.set("cleanup.trash", trash ? "1" : "0");
             set.set("cleanup.submodules", o.submodules ? "1" : "0");
-            if (const settings::saved saved = settings::get().apply(set); !saved)
-                report_unsaved_settings(ui, nullptr, saved.error);
+            const auto saved = settings::get().apply(set);
+            auto proceed = [keep, &ui, parent, parent_lifetime, workdir, folders, files, done, o, trash, dry_run]
+            {
+                if (parent && parent_lifetime.expired()) return;
+                ui.post([keep] {});  // retained through warning dismissal
 
-            // A dry run, or for good: git clean in the progress dialog.
-            if (dry_run || !trash)
-            {
-                std::vector<git_command> commands;
-                for (const std::string& f : folders) commands.push_back(clean_args(o, dry_run, f));
-                if (!files.empty()) commands.push_back(clean_args(o, dry_run, {}, files));
-                if (o.submodules) commands.push_back(submodule_clean_args(o, dry_run));
-                run_progress_dialog(ui, parent, _("Clean up"), workdir, std::move(commands), done);
-                return;
-            }
+                // A dry run, or for good: git clean in the progress dialog.
+                if (dry_run || !trash)
+                {
+                    std::vector<git_command> commands;
+                    for (const std::string& f : folders) commands.push_back(clean_args(o, dry_run, f));
+                    if (!files.empty()) commands.push_back(clean_args(o, dry_run, {}, files));
+                    if (o.submodules) commands.push_back(submodule_clean_args(o, dry_run));
+                    run_progress_dialog(ui, parent, _("Clean up"), workdir, std::move(commands), done);
+                    return;
+                }
 
-            // To the Recycle Bin: what git clean would remove, moved there.
-            // Each command's listing is relative to where it ran.
-            std::vector<std::pair<std::string, git_command>> listings;
-            for (const std::string& f : folders) listings.push_back({f, clean_args(o, true, f)});
-            if (!files.empty()) listings.push_back({".", clean_args(o, true, {}, files)});
-            if (o.submodules) listings.push_back({".", submodule_clean_args(o, true)});
-            std::vector<std::string> found;
-            git_result list{.exit_code = 0};
-            for (const auto& [where, args] : listings)
-            {
-                list = run_git(workdir, args, git_output::stdout_only);
-                if (!list.ok()) break;
-                // "./" is the folder itself, when it's untracked as a whole.
-                for (const std::string& f : parse_clean_listing(list.output))
-                    found.push_back(where == "." ? f : f == "./" ? where + "/" : where + "/" + f);
-            }
-            if (!list.ok())
-            {
-                show_message(ui, parent,
-                             {.icon = rap::message_spec::icon::error,
-                              .title = _("Clean up"),
-                              .text = _("git couldn't list the untracked files."),
-                              .detail = list.output},
-                             [done](rap::dialog_role) { done(false); });
-                return;
-            }
-            if (found.empty())
-            {
-                show_message(ui, parent,
-                             {.icon = rap::message_spec::icon::info,
-                              .title = _("Clean up"),
-                              .text = _("Nothing to clean up.")},
-                             [done](rap::dialog_role) { done(true); });
-                return;
-            }
-            std::vector<fs::path> absolute;
-            std::string names;
-            const fs::path root = rap::sys::path_from_utf8(workdir);
-            for (const std::string& f : found)
-            {
-                std::string trimmed = f;
-                while (trimmed.size() > 1 && trimmed.back() == '/')
-                    trimmed.pop_back();  // folders end in /
-                absolute.push_back((root / rap::sys::path_from_utf8(trimmed)).lexically_normal());
-                names += f + "\n";
-            }
-            const auto trashed = rap::sys::move_to_trash(absolute);
-            const size_t n = found.size();
-            show_message(
-                ui, parent,
-                {.icon = trashed ? rap::message_spec::icon::info : rap::message_spec::icon::error,
-                 .title = _("Clean up"),
-#ifdef _WIN32
-                 .text = trashed ? rap::i18n::format(N_("{0} item moved to the Recycle Bin.",
-                                                        "{0} items moved to the Recycle Bin.", n),
-                                                     std::to_string(n))
-#else
-                 .text = trashed ? rap::i18n::format(N_("{0} item moved to the Trash.",
-                                                        "{0} items moved to the Trash.", n),
-                                                     std::to_string(n))
-#endif
-                                 : std::string(_("Some of them couldn't be removed.")),
-                 .detail = trashed ? names : trashed.error() + "\n\n" + names},
-                [done](rap::dialog_role) { done(true); });
+                // To the Recycle Bin: what git clean would remove, moved there.
+                // Each command's listing is relative to where it ran.
+                std::vector<std::pair<std::string, git_command>> listings;
+                for (const std::string& f : folders) listings.push_back({f, clean_args(o, true, f)});
+                if (!files.empty()) listings.push_back({".", clean_args(o, true, {}, files)});
+                if (o.submodules) listings.push_back({".", submodule_clean_args(o, true)});
+                std::vector<std::string> found;
+                git_result list{.exit_code = 0};
+                for (const auto& [where, args] : listings)
+                {
+                    list = run_git(workdir, args, git_output::stdout_only);
+                    if (!list.ok()) break;
+                    // "./" is the folder itself, when it's untracked as a whole.
+                    for (const std::string& f : parse_clean_listing(list.output))
+                        found.push_back(where == "." ? f : f == "./" ? where + "/" : where + "/" + f);
+                }
+                if (!list.ok())
+                {
+                    show_message(ui, parent,
+                                 {.icon = rap::message_spec::icon::error,
+                                  .title = _("Clean up"),
+                                  .text = _("git couldn't list the untracked files."),
+                                  .detail = list.output},
+                                 [done](rap::dialog_role) { done(false); });
+                    return;
+                }
+                if (found.empty())
+                {
+                    show_message(ui, parent,
+                                 {.icon = rap::message_spec::icon::info,
+                                  .title = _("Clean up"),
+                                  .text = _("Nothing to clean up.")},
+                                 [done](rap::dialog_role) { done(true); });
+                    return;
+                }
+                std::vector<fs::path> absolute;
+                std::string names;
+                const fs::path root = rap::sys::path_from_utf8(workdir);
+                for (const std::string& f : found)
+                {
+                    std::string trimmed = f;
+                    while (trimmed.size() > 1 && trimmed.back() == '/')
+                        trimmed.pop_back();  // folders end in /
+                    absolute.push_back((root / rap::sys::path_from_utf8(trimmed)).lexically_normal());
+                    names += f + "\n";
+                }
+                const auto trashed = rap::sys::move_to_trash(absolute);
+                const size_t n = found.size();
+                show_message(
+                    ui, parent,
+                    {.icon = trashed ? rap::message_spec::icon::info : rap::message_spec::icon::error,
+                     .title = _("Clean up"),
+    #ifdef _WIN32
+                     .text = trashed ? rap::i18n::format(N_("{0} item moved to the Recycle Bin.",
+                                                            "{0} items moved to the Recycle Bin.", n),
+                                                         std::to_string(n))
+    #else
+                     .text = trashed ? rap::i18n::format(N_("{0} item moved to the Trash.",
+                                                            "{0} items moved to the Trash.", n),
+                                                         std::to_string(n))
+    #endif
+                                     : std::string(_("Some of them couldn't be removed.")),
+                     .detail = trashed ? names : trashed.error() + "\n\n" + names},
+                    [done](rap::dialog_role) { done(true); });
+            };
+            if (!saved) return report_unsaved_settings(ui, parent && parent_lifetime.expired() ? nullptr : parent,
+                                                       saved.error, std::move(proceed));
+            proceed();
         });
     st->window->show();
 }

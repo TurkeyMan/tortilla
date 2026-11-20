@@ -30,7 +30,9 @@ void show_settings(rap::ui&, rap::window* parent, const std::string& repo_dir,
 // Says that choices weren't saved, and why (`error`, from settings::apply).
 // The settings are as they were; what was chosen still applies to what the
 // user asked for now.
-void report_unsaved_settings(rap::ui&, rap::window* parent, const std::string& error);
+// Closing/destruction and operation continuations belong in `dismissed`.
+void report_unsaved_settings(rap::ui&, rap::window* parent, const std::string& error,
+                              std::function<void()> dismissed = {});
 // Called instead of quit(): report pending save errors while the event loop
 // still runs, and quit only after the warning is dismissed. Never restarts it.
 void quit_after_settings(rap::ui&);

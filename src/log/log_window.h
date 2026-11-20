@@ -151,6 +151,7 @@ private:
     void closing();
     // Closed from here (OK, the last tab's closing): as its close box does.
     void close_window();
+    bool close_saved_tab(const std::string& id);
 
     rap::window* window() override { return window_.get(); }
     void tab_changed(log_tab&) override;

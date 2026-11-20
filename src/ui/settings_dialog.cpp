@@ -14,6 +14,7 @@
 #include "shell/menu_table.h"
 #include "ui/accounts_page.h"
 #include "ui/git_missing.h"
+#include "ui/modal_dialogs.h"
 #include "ui/remotes_page.h"
 #include "ui/repo_icon.h"
 #include "util/programs.h"
@@ -26,12 +27,21 @@
 #include <cstdlib>
 #include <memory>
 #include <optional>
-#include <set>
+#include <map>
 
 namespace tortilla
 {
 namespace
 {
+
+struct save_warning_state
+{
+    size_t shown = 0;
+    bool quit_requested = false;
+};
+// UI-thread only. Explicit warnings count too, even after their error was
+// taken from settings' deferred queue or came straight from apply().
+std::map<rap::ui*, save_warning_state> save_warnings;
 
 // The Appearance choices, in the drop-down's order.
 constexpr rap::color_scheme k_appearance_choices[] = {
@@ -690,6 +700,7 @@ void sign_in_on_accounts(rap::ui& ui, const std::weak_ptr<state>& weak, forge_ki
 void show_settings(rap::ui& ui, rap::window* parent, const std::string& repo_dir,
                    settings_page first, std::function<void()> saved, std::function<void()> closed)
 {
+    const auto parent_lifetime = window_lifetime(parent);
     auto st = std::make_shared<state>();
     st->ui = &ui;
     st->repo_dir = repo_dir;
@@ -763,16 +774,22 @@ void show_settings(rap::ui& ui, rap::window* parent, const std::string& repo_dir
         parent);
 
     st->window->on_finished(
-        [st, saved, closed, &ui](rap::dialog_role role) mutable
+        [st, saved, closed, parent, parent_lifetime, &ui](rap::dialog_role role) mutable
         {
             auto keep = std::move(st);
-            settings::get().save_window("settings.window", *keep->window);  // however it closed
+            auto finish = [keep, closed, parent, parent_lifetime, &ui]
+            {
+                // A programmatic parent teardown can outlive its modal warning.
+                if (closed && (!parent || !parent_lifetime.expired())) closed();
+                ui.post([keep] {});  // destroy only after any warning was dismissed
+            };
+            settings_changes changes;
+            changes.save_window("settings.window", *keep->window);
             // Appearance was shown live: kept on OK, back as saved otherwise.
             if (keep->appearance && role != rap::dialog_role::ok) ui.set_color_scheme(appearance());
             if (role == rap::dialog_role::ok)
             {
                 // All of it saved as one update, or none of it.
-                settings_changes changes;
                 std::optional<ssh_client> ssh;
                 if (keep->appearance)
                 {
@@ -895,11 +912,13 @@ void show_settings(rap::ui& ui, rap::window* parent, const std::string& repo_dir
                     set_fast_forward_current_setting(changes, keep->sync_current->checked());
                 }
                 if (ssh) save_ssh_client(changes, *ssh);
-                if (const settings::saved done = settings::get().apply(changes); !done)
+                if (const settings::saved done = settings::get().save_on_close(changes); !done)
                 {
                     // Nothing saved: what was shown live goes back to what is.
                     if (keep->appearance) ui.set_color_scheme(appearance());
-                    report_unsaved_settings(ui, nullptr, done.error);
+                    report_unsaved_settings(ui, parent && parent_lifetime.expired() ? nullptr : parent,
+                                              settings::get().take_save_error(), finish);
+                    return;
                 }
                 else
                 {
@@ -912,39 +931,45 @@ void show_settings(rap::ui& ui, rap::window* parent, const std::string& repo_dir
                     if (saved) saved();
                 }
             }
-            if (closed) closed();
-            ui.post([keep] {});  // destroy after this callback returns
+            else if (const auto done = settings::get().save_on_close(changes); !done)
+            {
+                report_unsaved_settings(ui, parent && parent_lifetime.expired() ? nullptr : parent,
+                                          settings::get().take_save_error(), finish);
+                return;
+            }
+            finish();
         });
     st->page_tabs->set_current(int(first));
     settings::get().restore_window("settings.window", *st->window);
     st->window->show();
 }
 
-void report_unsaved_settings(rap::ui& ui, rap::window* parent, const std::string& error)
+void report_unsaved_settings(rap::ui& ui, rap::window* parent, const std::string& error,
+                              std::function<void()> dismissed)
 {
-    ui.message(parent, {.icon = rap::message_spec::icon::warning,
+    ++save_warnings[&ui].shown;
+    show_message(ui, parent, {.icon = rap::message_spec::icon::warning,
                         .title = _("Tortilla"),
                         .text = _("Your choices couldn't be saved. The settings are as they were."),
-                        .detail = error});
+                        .detail = error},
+                 [&ui, dismissed = std::move(dismissed)](rap::dialog_role)
+                 {
+                     auto& state = save_warnings[&ui];
+                     --state.shown;
+                     if (dismissed) dismissed();
+                     if (!state.shown && state.quit_requested) quit_after_settings(ui);
+                 });
 }
 
 void quit_after_settings(rap::ui& ui)
 {
-    static std::set<rap::ui*> reporting;
-    if (reporting.contains(&ui)) return;  // another close is already asking
+    auto& state = save_warnings[&ui];
+    state.quit_requested = true;
+    if (state.shown) return;
     const std::string error = settings::get().take_save_error();
-    if (error.empty()) return ui.quit();
-    reporting.insert(&ui);
-    ui.message(nullptr, {.icon = rap::message_spec::icon::warning,
-                         .title = _("Tortilla"),
-                         .text = _("Your choices couldn't be saved. The settings are as they were."),
-                         .detail = error},
-               [&ui](rap::dialog_role)
-               {
-                   reporting.erase(&ui);
-                   // A further close may have failed while this was visible.
-                   quit_after_settings(ui);
-               });
+    if (!error.empty()) return report_unsaved_settings(ui, nullptr, error);
+    state.quit_requested = false;
+    ui.quit();
 }
 
 }  // namespace tortilla

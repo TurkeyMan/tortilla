@@ -37,13 +37,14 @@ private:
     bool by_url() const;
     bool all_remotes() const;
     void ok();
-    void push();
+    void push(bool save_choices = true);
 
     rap::ui& ui_;
     std::string workdir_;
     std::vector<std::string> remotes_;
     std::unique_ptr<rap::window> window_;
     std::function<void()> closed_, done_;
+    std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
 
     rap::check* all_branches_ = nullptr;
     rap::combo* local_ = nullptr;

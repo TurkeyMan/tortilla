@@ -26,7 +26,7 @@ private:
     void build(const std::string& folder, const std::string& url);
     void url_changed(const std::string& url);
     void update_state();
-    void ok();
+    void ok(bool save_choices = true);
 
     rap::ui& ui_;
     std::unique_ptr<rap::window> window_;
