@@ -2235,7 +2235,6 @@ void forge_tabs_tests(rap::ui& ui, const std::string& repo)
     local.unbind();
     local_window.reset();
 
-<<<<<<< HEAD
     // One source: what pr_watch said, not a fresh read, decides each build.
     {
         const std::vector<forge_remote> eligible{
@@ -2329,7 +2328,6 @@ void forge_tabs_tests(rap::ui& ui, const std::string& repo)
         pr_watch::no_worker_for_tests = false;
         save_accounts(saved);
     }
-=======
     // Azure must reach the actual forge_remotes eligibility path without a helper/store lookup.
     // https://learn.microsoft.com/en-us/azure/devops/repos/git/clone?view=azure-devops
     const std::string azure_repo = forge_repo + "-azure";
@@ -2360,7 +2358,6 @@ void forge_tabs_tests(rap::ui& ui, const std::string& repo)
           "azure forge tabs: absent PR Build artifacts preserve strict visibility and stable strip");
     azure_panel.unbind();
     azure_window.reset();
->>>>>>> 65b4ed9 (Keep Azure lower tabs eligible after forge tab integration)
 
     forge_panel panel({.ui = ui, .workdir = forge_repo});
     panel.set_forge_possible(true);

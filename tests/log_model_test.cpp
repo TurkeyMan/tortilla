@@ -3191,11 +3191,8 @@ public:
 
 int main(int argc, char** argv)
 {
-<<<<<<< HEAD
     if (argc == 5 && std::string_view(argv[1]) == "--settings-child") return settings_child(argv);
-=======
     if (const int child = tortilla::test::azure_credential_child(argc, argv); child >= 0) return child;
->>>>>>> 2139aee (Reuse scoped Git credentials for Azure read-only requests)
     if (argc < 2)
     {
         std::fprintf(stderr, "usage: %s <empty scratch dir>\n", argv[0]);
