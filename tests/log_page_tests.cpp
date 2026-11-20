@@ -790,6 +790,20 @@ public:
         touch();
         return !dead && inner_.page_visible(page);
     }
+    void set_page_icon(int page, const rap::icon& icon) override
+    {
+        touch();
+        ++g_forge_writes;
+        if (!dead) inner_.set_page_icon(page, icon);
+    }
+    void set_page_title(int page, const std::string& title) override
+    {
+        touch();
+        ++g_forge_writes;
+        if (dead) return;
+        if (page >= 0 && size_t(page) < titles.size()) titles[page] = title;
+        inner_.set_page_title(page, title);
+    }
     void click(int page)
     {
         const int before = current();
