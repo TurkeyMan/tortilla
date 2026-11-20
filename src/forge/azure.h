@@ -19,6 +19,13 @@ bool scope_allows(std::string_view scope, std::string_view url);
 // organization, another host, port or scheme: not. An empty or
 // fragment-only `to_url` stays at `from_url`.
 bool redirect_in_scope(std::string_view org, std::string_view from_url, std::string_view to_url);
+// What a read (GET, HEAD) made with organization `org`'s credential does at
+// a redirect: follow one in scope (above); stop at the shared dev.azure.com
+// origin or another organization's legacy host out of scope, and at a
+// downgrade to http; go on to any other https host (blob storage, a CDN:
+// a signed URL) without credentials, from that hop on.
+rap::sys::redirect_action redirect_decision(std::string_view org, std::string_view from_url,
+                                            std::string_view to_url);
 // The organization a dev.azure.com/{org} account scope names, in lower case.
 std::string scope_organization(std::string_view scope);
 // What a request stopped at such a redirect answers: no response, and why.
