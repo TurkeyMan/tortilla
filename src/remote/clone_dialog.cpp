@@ -185,8 +185,9 @@ void clone_dialog::ok(bool save_choices)
     choices.add_to_history("clone.urls", url);
     choices.set("clone.recursive", recursive_->checked() ? "1" : "0");
     if (save_choices)
-        if (const settings::saved done = settings::get().apply(choices); !done)
-            return report_unsaved_settings(ui_, window_.get(), done.error,
+        if (const settings::saved done = settings::get().apply(choices);
+            done.failed() || done.has_cleanup_warning())
+            return report_settings_save(ui_, window_.get(), done,
                 [this, alive = std::weak_ptr<bool>(alive_)] { if (alive.lock()) ok(false); });
 
     git_command c{"clone", "--progress"};

@@ -229,7 +229,8 @@ void show_ignore_dialog(rap::ui& ui, std::vector<std::string> paths, bool by_ext
                 }
                 s->finish(true);
             };
-            if (!saved) return report_unsaved_settings(s->ui, nullptr, saved.error, std::move(proceed));
+            if (saved.failed() || saved.has_cleanup_warning())
+                return report_settings_save(s->ui, nullptr, saved, std::move(proceed));
             proceed();
         });
     st->window->show();

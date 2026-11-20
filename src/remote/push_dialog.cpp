@@ -235,8 +235,9 @@ void push_dialog::push(bool save_choices)
     if (!url) s.set(key + ".remote", all_remotes() ? all_remotes_label : targets.front());
     s.set(key + ".all", all ? "1" : "0");
     if (save_choices)
-        if (const settings::saved done = settings::get().apply(s); !done)
-            return report_unsaved_settings(ui_, window_.get(), done.error,
+        if (const settings::saved done = settings::get().apply(s);
+            done.failed() || done.has_cleanup_warning())
+            return report_settings_save(ui_, window_.get(), done,
                 [this, alive = std::weak_ptr<bool>(alive_)] { if (alive.lock()) push(false); });
 
     std::vector<std::string> options;

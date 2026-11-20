@@ -57,7 +57,7 @@ void save_diff_settings(diff_mode mode, const std::string& command, bool folders
 {
     settings_changes st;
     save_diff_settings(st, mode, command, folders);
-    settings::get().remember_failure(settings::get().apply(st));
+    settings::get().remember_save_report(settings::get().apply(st));
 }
 
 void save_diff_settings(settings_changes& st, diff_mode mode, const std::string& command,
@@ -88,7 +88,7 @@ void save_image_settings(image_mode mode, const std::string& command)
 {
     settings_changes st;
     save_image_settings(st, mode, command);
-    settings::get().remember_failure(settings::get().apply(st));
+    settings::get().remember_save_report(settings::get().apply(st));
 }
 
 void save_image_settings(settings_changes& st, image_mode mode, const std::string& command)

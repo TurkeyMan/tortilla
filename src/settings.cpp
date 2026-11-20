@@ -3,6 +3,7 @@
 #include "i18n.h"
 #include "util/replaced_file.h"
 #include "util/settings_format.h"
+#include "util/settings_recovery.h"
 
 #include <rapport/sys.h>
 
@@ -432,16 +433,24 @@ bool parse(std::string_view text, values& out)
 // The file as it is now: empty if there is none; nullopt if it is there but
 // can't be read, so an update doesn't replace what it couldn't see.
 std::optional<values> read_file(const fs::path& file, std::string* error = nullptr,
-                                bool* version_two = nullptr)
+                                bool* version_two = nullptr, uint64_t* generation = nullptr)
 {
+    if (generation) *generation = 0;
+    const auto recovery = inspect_settings_recovery(file);
+    if (!recovery.message.empty())
+    {
+        if (error) *error = recovery.message;
+        if (recovery.phase == settings_recovery_phase::blocked) return std::nullopt;
+    }
+    const auto& source = recovery.readable;
     if (version_two) *version_two = false;
     std::FILE* f = open_replaced_file(
-        file, [&] { return rap::sys::fopen(file, "rb"); }, 20, std::chrono::milliseconds(10));
+        source, [&] { return rap::sys::fopen(source, "rb"); }, 20, std::chrono::milliseconds(10));
     if (!f)
     {
         const int e = errno;
         std::error_code ec;
-        if (!fs::exists(file, ec) && !ec) return values{};
+        if (!fs::exists(source, ec) && !ec) return values{};
         if (error) *error = crt_error(e);
         return std::nullopt;
     }
@@ -457,6 +466,10 @@ std::optional<values> read_file(const fs::path& file, std::string* error = nullp
         if (error) *error = crt_error(ok ? close_error : read_error);
         return std::nullopt;
     }
+    const auto parsed_generation = settings_document_generation(text);
+    if (!parsed_generation)
+    { if (error) *error = _("The settings generation is invalid."); return std::nullopt; }
+    if (generation) *generation = *parsed_generation;
     values out;
     const bool marked = parse(text, out);
     if (version_two) *version_two = marked;
@@ -671,8 +684,8 @@ DWORD native_replace(const fs::path& to, const fs::path& from, const fs::path& b
 }
 #endif
 
-std::string replace(const fs::path& from, const fs::path& to, bool& retain_temp,
-                    const settings_replacement& replacement, steady::time_point deadline)
+settings::saved replace(const fs::path& from, const fs::path& to, const fs::path& configured,
+                        bool& retain_temp, const settings_replacement& replacement, steady::time_point deadline)
 {
     if (fail(settings_test_failure::replace)) return crt_error(errno);
 #ifdef _WIN32
@@ -711,8 +724,24 @@ std::string replace(const fs::path& from, const fs::path& to, bool& retain_temp,
             backup = name;
             break;
         }
-        if (backup.empty()) return _("Every settings backup name is already taken.");
+        if (backup.empty()) return {_("Every settings backup name is already taken.")};
     }
+    std::optional<settings_recovery_record> receipt;
+    auto publish_intent = [&]() -> std::string {
+        auto made = begin_settings_recovery(to, configured, backup, from);
+        if (!made) return made.error();
+        if (made->old_file.volume != replacement.identity.VolumeSerialNumber ||
+            std::memcmp(made->old_file.id.data(), replacement.identity.FileId.Identifier, made->old_file.id.size()))
+        { finish_settings_recovery(*made); return "settings identity changed before recovery publication"; }
+        receipt = std::move(*made);
+        return {};
+    };
+    if (replacement.existing)
+        if (auto error = publish_intent(); !error.empty())
+        {
+            remove_backup(backup, placeholder, replacement.identity);
+            return error;
+        }
     for (int attempt = 0;; ++attempt)
     {
         DWORD e = ERROR_SUCCESS;
@@ -722,7 +751,15 @@ std::string replace(const fs::path& from, const fs::path& to, bool& retain_temp,
             // exclusively, or refuse a foreign identity before the next API call.
             FILE_ID_INFO reserved{};
             DWORD state = path_identity(backup, reserved);
-            if (state == ERROR_FILE_NOT_FOUND || state == ERROR_PATH_NOT_FOUND) state = reserve(backup);
+            if (state == ERROR_FILE_NOT_FOUND || state == ERROR_PATH_NOT_FOUND)
+            {
+                if (receipt)
+                    if (auto error = finish_settings_recovery(*receipt); !error.empty()) return error;
+                receipt.reset();
+                state = reserve(backup);
+                if (state == ERROR_SUCCESS)
+                    if (auto error = publish_intent(); !error.empty()) return error;
+            }
             else if (state == ERROR_SUCCESS && !same_file(reserved, placeholder) &&
                      !same_file(reserved, replacement.identity)) state = ERROR_FILE_INVALID;
             if (state != ERROR_SUCCESS)
@@ -741,42 +778,25 @@ std::string replace(const fs::path& from, const fs::path& to, bool& retain_temp,
             {
                 const DWORD cleanup = remove_backup(backup, placeholder, replacement.identity);
                 if (cleanup != ERROR_SUCCESS)
-                    return rap::i18n::format(_("Settings saved to {0}, but backup retained at {1}: {2}"),
-                                             shown(to), shown(backup), native_error(cleanup));
+                    return settings::saved::cleanup_warning(rap::i18n::format(
+                        _("Settings saved to {0}, but backup retained at {1}: {2}"),
+                        shown(to), shown(backup), native_error(cleanup)));
             }
+            if (receipt)
+                if (auto error = finish_settings_recovery(*receipt); !error.empty())
+                    return settings::saved::cleanup_warning("Settings saved; " + error);
             return {};
         }
         if (e == ERROR_UNABLE_TO_MOVE_REPLACEMENT || e == ERROR_UNABLE_TO_MOVE_REPLACEMENT_2)
         {
             retain_temp = true;
-            FILE_ID_INFO current{}, saved{};
-            DWORD state = path_identity(to, current);
-            const DWORD backup_state = path_identity(backup, saved);
-            bool restored = state == ERROR_SUCCESS && same_file(current, replacement.identity);
-            if (!restored && (state == ERROR_FILE_NOT_FOUND || state == ERROR_PATH_NOT_FOUND) &&
-                backup_state == ERROR_SUCCESS && same_file(saved, replacement.identity))
-            {
-                for (;;)
-                {
-                    // Never replace an external file that appeared while recovering.
-                    if (MoveFileExW(backup.c_str(), to.c_str(), MOVEFILE_WRITE_THROUGH))
-                    { restored = true; break; }
-                    state = GetLastError();
-                    if (!sharing_error(state) || steady::now() >= deadline) break;
-                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
-                }
-            }
-            if (restored)
-            {
-                const DWORD cleanup = remove_backup(backup, placeholder, replacement.identity);
-                return rap::i18n::format(
-                    _("Couldn't save settings to {0}: {1}. Last-good settings restored or retained; attempted data retained at {2}. Backup: {3}{4}"),
-                    shown(to), native_error(e), shown(from), shown(backup),
-                    cleanup == ERROR_SUCCESS ? std::string() : ": " + native_error(cleanup));
-            }
+            const auto recovered = recover_settings_before_save(configured, deadline);
+            if (!recovered.error.empty())
+                return rap::i18n::format(_("Couldn't save settings to {0}: {1}. {2}; attempted data retained at {3}."),
+                    shown(to), native_error(e), recovered.error, shown(from));
             return rap::i18n::format(
-                _("Couldn't restore settings at {0}: {1}. Last-good backup retained at {2}; attempted data at {3}. No external target was overwritten."),
-                shown(to), native_error(state == ERROR_SUCCESS ? ERROR_FILE_INVALID : state), shown(backup), shown(from));
+                _("Couldn't save settings to {0}: {1}. Last-good settings restored or retained; attempted data retained at {2}."),
+                shown(to), native_error(e), shown(from));
         }
         if (attempt == 200 || !sharing_error(e) || steady::now() >= deadline)
         {
@@ -786,6 +806,8 @@ std::string replace(const fs::path& from, const fs::path& to, bool& retain_temp,
                 const DWORD cleanup = remove_backup(backup, placeholder, replacement.identity);
                 if (cleanup != ERROR_SUCCESS)
                     why += rap::i18n::format(_("; backup retained at {0}: {1}"), shown(backup), native_error(cleanup));
+                else if (receipt)
+                    if (auto error = finish_settings_recovery(*receipt); !error.empty()) why += "; " + error;
             }
             return why;
         }
@@ -897,7 +919,8 @@ std::FILE* create_temp(const fs::path& target, fs::path& made, std::string& erro
 // ordinary failure preserves `target`; Windows partial replacements roll back
 // their last-good backup under the writer lock. A failed rollback retains all
 // recovery data. A successful publish can still report backup-cleanup trouble.
-std::string write_file(const fs::path& target, const values& v, steady::time_point deadline)
+settings::saved write_file(const fs::path& target, const fs::path& configured, const values& v,
+                           uint64_t generation, steady::time_point deadline)
 {
     fs::path temp;
     std::string why;
@@ -915,6 +938,8 @@ std::string write_file(const fs::path& target, const values& v, steady::time_poi
     bool ok = checked(std::fwrite(k_settings_format_marker.data(), 1,
                                   k_settings_format_marker.size(), f) == k_settings_format_marker.size()) &&
               checked(std::fputc('\n', f) != EOF);
+    const std::string generation_line = settings_generation_line(generation);
+    ok = ok && checked(std::fwrite(generation_line.data(), 1, generation_line.size(), f) == generation_line.size());
     for (auto& [k, val] : v)
     {
         const std::string encoded = encode_settings_key(k);
@@ -944,15 +969,19 @@ std::string write_file(const fs::path& target, const values& v, steady::time_poi
         ok = false;
     }
     bool retain_temp = false;
-    if (ok) why = replace(temp, target, retain_temp, replacement, deadline);
-    ok = ok && why.empty();
+    settings::saved result;
+    if (ok) result = replace(temp, target, configured, retain_temp, replacement, deadline);
+    ok = ok && !result.failed();
+    if (result.failed()) why = result.message;
     if (!ok)
     {
         std::error_code ec;
         if (!retain_temp) fs::remove(temp, ec);  // never delete the last recoverable replacement
         return rap::i18n::format(_("Couldn't save the settings to {0}: {1}"), shown(target), why);
     }
-    return {};
+    if (fail(settings_test_failure::cleanup_warning))
+        return settings::saved::cleanup_warning(_("Settings saved; injected cleanup warning."));
+    return result;
 }
 
 std::string numbers_value(const std::vector<float>& v)
@@ -1085,16 +1114,22 @@ settings& settings::get()
 settings::settings()
     : file_(settings_file())
 {
-    values_ = read_file(file_).value_or(values{});
+    std::string error;
+    values_ = read_file(file_, &error).value_or(values{});
+    if (!error.empty()) remember_save_report({error});
 }
 
 void settings::use_file(const fs::path& file)
 {
     std::scoped_lock write(write_mutex_);
-    values v = read_file(file).value_or(values{});
-    std::unique_lock lock(mutex_);
-    file_ = file;
-    values_ = std::move(v);
+    std::string error;
+    values v = read_file(file, &error).value_or(values{});
+    {
+        std::unique_lock lock(mutex_);
+        file_ = file;
+        values_ = std::move(v);
+    }
+    if (!error.empty()) remember_save_report({error});
 }
 
 settings::saved settings::apply(const settings_changes& changes)
@@ -1105,7 +1140,7 @@ settings::saved settings::apply(const settings_changes& changes)
 settings::saved settings::save_on_close(const settings_changes& changes)
 {
     const saved done = apply_for(changes, std::min(lock_wait_.load(), std::chrono::milliseconds(1000)));
-    remember_failure(done);
+    remember_save_report(done);
     return done;
 }
 
@@ -1132,7 +1167,10 @@ settings::saved settings::apply_for(const settings_changes& changes, std::chrono
             return {rap::i18n::format(_("The settings file kept changing until the save deadline ({0})."), shown(file))};
         std::string error;
         bool changed = false;
-        const std::optional<settings_target> target = resolve(file, error, &changed);
+        const auto initial_recovery = inspect_settings_recovery(file);
+        if (initial_recovery.phase == settings_recovery_phase::blocked) return {initial_recovery.message};
+        const auto target_name = initial_recovery.target;
+        const std::optional<settings_target> target = resolve(target_name, error, &changed);
         if (!target)
         {
 #ifdef _WIN32
@@ -1157,11 +1195,14 @@ settings::saved settings::apply_for(const settings_changes& changes, std::chrono
         }
         writer_lock across_processes(with_suffix(target->path, ".lock"), deadline);
         if (!across_processes.error().empty()) return {across_processes.error()};
+        const auto recovered = recover_settings_before_save(file, deadline);
+        if (!recovered.error.empty()) return {recovered.error};
+        if (recovered.restored) { retried = true; continue; }
 #ifdef _WIN32
         // A cooperating writer may have replaced the file after the first native
         // open. Reopen/revalidate under the acquired lock, then retry the WHOLE
         // resolution with that lock released and the original deadline unchanged.
-        const auto current = resolve(file, error, &changed);
+        const auto current = resolve(target_name, error, &changed);
         if (!current && !changed) return {error};
         if (!current || current->path != target->path || current->existing != target->existing ||
             current->identity.VolumeSerialNumber != target->identity.VolumeSerialNumber ||
@@ -1171,7 +1212,8 @@ settings::saved settings::apply_for(const settings_changes& changes, std::chrono
 #endif
         std::string read_error;
         bool version_two = false;
-        std::optional<values> now = read_file(target->path, &read_error, &version_two);
+        uint64_t generation = 0;
+        std::optional<values> now = read_file(target->path, &read_error, &version_two, &generation);
         if (!now)
             return {rap::i18n::format(_("Couldn't read the settings in {0}: {1}"), shown(target->path),
                                       read_error)};
@@ -1179,13 +1221,18 @@ settings::saved settings::apply_for(const settings_changes& changes, std::chrono
         for (auto& change : changes.changes_) change(next);
         // An explicit save upgrades a legacy file even if the selected value did
         // not change. Merely loading the file never rewrites it.
-        if (next != *now || !version_two) error = write_file(target->path, next, deadline);
+        saved result;
+        if (next != *now || !version_two)
+        {
+            if (generation == UINT64_MAX) return {_("The settings generation cannot be incremented.")};
+            result = write_file(target->path, file, next, generation + 1, deadline);
+        }
         std::unique_lock lock(mutex_);
         // A native replacement can publish successfully but fail backup cleanup.
         // On any error, mirror the actual target, falling back to the last read
         // snapshot only when it cannot be reread (e.g. unrecoverable disk failure).
-        values_ = error.empty() ? std::move(next) : read_file(target->path).value_or(std::move(*now));
-        return {error};
+        values_ = result.committed() ? std::move(next) : read_file(target->path).value_or(std::move(*now));
+        return result;
     }
 }
 
@@ -1202,40 +1249,53 @@ bool settings::contains(const std::string& key) const
     return values_.contains(key);
 }
 
-void settings::remember_failure(const saved& done)
+void settings::remember_save_report(const saved& done)
 {
-    if (done) return;
+    if (done.message.empty()) return;
     {
         std::scoped_lock lock(error_mutex_);
-        // Retain distinct failures until a window can display them.
-        if (save_error_.find(done.error) == std::string::npos)
-            save_error_ += (save_error_.empty() ? "" : "\n") + done.error;
+        const bool known = std::any_of(save_reports_.begin(), save_reports_.end(), [&](const saved& old) {
+            return old.outcome == done.outcome && old.message == done.message;
+        });
+        if (!known) save_reports_.push_back(done);
     }
-    std::fprintf(stderr, "tortilla: settings were not saved: %s\n", done.error.c_str());
+    const std::string prefix = done.failed() ? "settings were not saved: " : "settings saved with cleanup warning: ";
+    std::fprintf(stderr, "tortilla: %s%s\n", prefix.c_str(), done.message.c_str());
 #ifdef _WIN32
-    const std::string diagnostic = "Tortilla: settings were not saved: " + done.error + "\n";
+    const std::string diagnostic = "Tortilla: " + prefix + done.message + "\n";
     OutputDebugStringA(diagnostic.c_str());
 #endif
 }
 
-std::string settings::take_save_error()
+settings::saved settings::take_save_report()
 {
     std::scoped_lock lock(error_mutex_);
-    return std::exchange(save_error_, {});
+    auto reports = std::exchange(save_reports_, {});
+    if (reports.empty()) return {};
+    if (reports.size() == 1) return std::move(reports.front());
+    saved out = saved::cleanup_warning({});
+    for (const auto& report : reports)
+    {
+        if (report.failed()) out.outcome = save_outcome::failed;
+        if (!out.message.empty()) out.message += "\n";
+        out.message += report.failed() ? _("Not saved: ") : _("Saved; cleanup warning: ");
+        out.message += report.message;
+    }
+    return out;
 }
 
 void settings::set(const std::string& key, const std::string& value)
 {
     settings_changes c;
     c.set(key, value);
-    remember_failure(apply(c));
+    remember_save_report(apply(c));
 }
 
 void settings::remove(const std::string& key)
 {
     settings_changes c;
     c.remove(key);
-    remember_failure(apply(c));
+    remember_save_report(apply(c));
 }
 
 std::vector<std::string> history_entries(std::string_view stored)
@@ -1271,7 +1331,7 @@ void settings::add_to_history(const std::string& key, const std::string& entry, 
 {
     settings_changes c;
     c.add_to_history(key, entry, keep);
-    remember_failure(apply(c));
+    remember_save_report(apply(c));
 }
 
 std::vector<float> settings::numbers(const std::string& key) const
@@ -1292,7 +1352,7 @@ void settings::set_numbers(const std::string& key, const std::vector<float>& v)
 {
     settings_changes c;
     c.set_numbers(key, v);
-    remember_failure(apply(c));
+    remember_save_report(apply(c));
 }
 
 void settings::save_window(const std::string& prefix, const rap::window& w)

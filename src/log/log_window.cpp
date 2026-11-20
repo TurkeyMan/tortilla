@@ -104,16 +104,16 @@ void log_window::show()
 {
     used();
     window_->show();
-    if (auto error = settings::get().take_save_error(); !error.empty())
-        report_unsaved_settings(ui_, window_.get(), error);
+    if (auto report = settings::get().take_save_report(); report.failed() || report.has_cleanup_warning())
+        report_settings_save(ui_, window_.get(), report);
 }
 
 void log_window::present()
 {
     used();
     window_->present();
-    if (auto error = settings::get().take_save_error(); !error.empty())
-        report_unsaved_settings(ui_, window_.get(), error);
+    if (auto report = settings::get().take_save_report(); report.failed() || report.has_cleanup_warning())
+        report_settings_save(ui_, window_.get(), report);
 }
 
 std::expected<std::unique_ptr<log_window>, std::string>
@@ -459,9 +459,10 @@ bool log_window::close_tab(const std::string& id)
         settings_changes st;
         tab.save_view_settings(st);
         tab.save_options(st);
-        if (const auto done = settings::get().save_on_close(st); !done)
+        if (const auto done = settings::get().save_on_close(st);
+            done.failed() || done.has_cleanup_warning())
         {
-            report_unsaved_settings(ui_, window_.get(), settings::get().take_save_error(),
+            report_settings_save(ui_, window_.get(), settings::get().take_save_report(),
                 [this, alive = std::weak_ptr<bool>(alive_), id]
                 { if (alive.lock()) close_saved_tab(id); });
             return true;

@@ -390,8 +390,9 @@ void pull_request_dialog::create(bool save_choices)
     choices.set("pr.browse", browse_->checked() ? "1" : "0");
     choices.set("pr.draft", draft_->checked() ? "1" : "0");
     if (save_choices)
-        if (const settings::saved saved = settings::get().apply(choices); !saved)
-            return report_unsaved_settings(ui_, window_.get(), saved.error,
+        if (const settings::saved saved = settings::get().apply(choices);
+            saved.failed() || saved.has_cleanup_warning())
+            return report_settings_save(ui_, window_.get(), saved,
                 [this, alive = std::weak_ptr<bool>(alive_)] { if (alive.lock()) create(false); });
     if (local_.empty() || !needs_push_ || (on_forge_ && !push_->checked())) return send();
     // The branch first, then (if that worked) the pull request.

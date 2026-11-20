@@ -93,7 +93,7 @@ void set_log_open_in_setting(log_open_in where)
 {
     settings_changes changes;
     set_log_open_in_setting(changes, where);
-    settings::get().remember_failure(settings::get().apply(changes));
+    settings::get().remember_save_report(settings::get().apply(changes));
 }
 
 void set_log_open_in_setting(settings_changes& changes, log_open_in where)

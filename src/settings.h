@@ -62,6 +62,8 @@ private:
     std::vector<std::function<void(std::map<std::string, std::string>&)>> changes_;
 };
 
+enum class save_outcome { failed, saved, saved_with_cleanup_warning };
+
 class settings
 {
 public:
@@ -93,8 +95,17 @@ public:
     // explicitly says when publication succeeded despite retained backup data.
     struct saved
     {
-        std::string error;
-        explicit operator bool() const { return error.empty(); }
+        save_outcome outcome = save_outcome::saved;
+        std::string message;
+        saved() = default;
+        saved(std::string failure) : outcome(failure.empty() ? save_outcome::saved : save_outcome::failed),
+                                     message(std::move(failure)) {}
+        saved(save_outcome state, std::string text) : outcome(state), message(std::move(text)) {}
+        static saved cleanup_warning(std::string text)
+        { return {save_outcome::saved_with_cleanup_warning, std::move(text)}; }
+        bool failed() const { return outcome == save_outcome::failed; }
+        bool committed() const { return !failed(); }
+        bool has_cleanup_warning() const { return outcome == save_outcome::saved_with_cleanup_warning; }
     };
 
     // Saves `changes` as one update. Fails when the lock can't be taken in
@@ -109,8 +120,8 @@ public:
     uint64_t transactions_for_tests() const { return transactions_.load(); }
     // Convenience saves have no dialog owner. Log and retain their failures;
     // the next log window shown reports them without blocking a closing window.
-    void remember_failure(const saved&);
-    std::string take_save_error();
+    void remember_save_report(const saved&);
+    saved take_save_report();
 
     // For the tests: the settings read from, and written to, `file` instead
     // of the user's.
@@ -134,7 +145,7 @@ private:
     std::filesystem::path file_;
     std::map<std::string, std::string> values_;
     std::mutex error_mutex_;
-    std::string save_error_;
+    std::vector<saved> save_reports_;
 };
 
 #ifndef _WIN32
@@ -195,7 +206,7 @@ std::filesystem::path settings_lock_file(const std::filesystem::path& file);
 
 // One failure on this test thread: an I/O stage after a real temporary is
 // created, or ENOLCK while taking the writer lock. Normal operation is unchanged.
-enum class settings_test_failure { none, flush, close, replace, no_locks, partial_replace, encrypted_target, unprotected_temp, partial_replace_retained, partial_replace_2, backup_cleanup, backup_retry };
+enum class settings_test_failure { none, flush, close, replace, no_locks, partial_replace, encrypted_target, unprotected_temp, partial_replace_retained, partial_replace_2, backup_cleanup, backup_retry, cleanup_warning };
 void settings_fail_next(settings_test_failure);
 #ifdef _WIN32
 // Test-only final-name substitution/normalization denial and a borrowed temp

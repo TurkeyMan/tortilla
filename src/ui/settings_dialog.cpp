@@ -921,29 +921,34 @@ void show_settings(rap::ui& ui, rap::window* parent, const std::string& repo_dir
                     set_fast_forward_current_setting(changes, keep->sync_current->checked());
                 }
                 if (ssh) save_ssh_client(changes, *ssh);
-                if (const settings::saved done = settings::get().save_on_close(changes); !done)
+                const settings::saved done = settings::get().save_on_close(changes);
+                if (done.failed())
                 {
                     // Nothing saved: what was shown live goes back to what is.
                     if (keep->appearance) ui.set_color_scheme(appearance());
-                    report_unsaved_settings(ui, parent && parent_lifetime.expired() ? nullptr : parent,
-                                              settings::get().take_save_error(), finish);
+                    report_settings_save(ui, parent && parent_lifetime.expired() ? nullptr : parent,
+                                         settings::get().take_save_report(), finish);
                     return;
                 }
-                else
-                {
                 // What reads the settings, once they are saved.
 #ifdef TORTILLA_FM_PROGRAM
-                    // PCManFM's menu is files, not an extension reading these.
-                    if (keep->menu_entries) fm_actions::update_user_set(saved_placements());
+                // PCManFM's menu is files, not an extension reading these.
+                if (keep->menu_entries) fm_actions::update_user_set(saved_placements());
 #endif
-                    if (ssh) use_ssh_client(*ssh);
-                    if (saved) saved();
+                if (ssh) use_ssh_client(*ssh);
+                if (saved) saved();
+                if (done.has_cleanup_warning())
+                {
+                    report_settings_save(ui, parent && parent_lifetime.expired() ? nullptr : parent,
+                                         settings::get().take_save_report(), finish);
+                    return;
                 }
             }
-            else if (const auto done = settings::get().save_on_close(changes); !done)
+            else if (const auto done = settings::get().save_on_close(changes);
+                     done.failed() || done.has_cleanup_warning())
             {
-                report_unsaved_settings(ui, parent && parent_lifetime.expired() ? nullptr : parent,
-                                          settings::get().take_save_error(), finish);
+                report_settings_save(ui, parent && parent_lifetime.expired() ? nullptr : parent,
+                                     settings::get().take_save_report(), finish);
                 return;
             }
             finish();
@@ -956,6 +961,17 @@ void show_settings(rap::ui& ui, rap::window* parent, const std::string& repo_dir
 void report_unsaved_settings(rap::ui& ui, rap::window* parent, const std::string& error,
                               std::function<void()> dismissed)
 {
+    report_settings_save(ui, parent, settings::saved{error}, std::move(dismissed));
+}
+
+void report_settings_save(rap::ui& ui, rap::window* parent, const settings::saved& report,
+                          std::function<void()> dismissed)
+{
+    if (!report.failed() && !report.has_cleanup_warning())
+    {
+        if (dismissed) dismissed();
+        return;
+    }
     const auto state = warning_state(ui);
     ++state->shown;
     // The backend owns this token through its done closure. Response resets it;
@@ -973,8 +989,10 @@ void report_unsaved_settings(rap::ui& ui, rap::window* parent, const std::string
     state->pending.push_back(completion);
     show_message(ui, parent, {.icon = rap::message_spec::icon::warning,
                         .title = _("Tortilla"),
-                        .text = _("Your choices couldn't be saved. The settings are as they were."),
-                        .detail = error},
+                        .text = report.failed()
+                                    ? _("Some settings couldn't be saved. See the details below.")
+                                    : _("Your choices were saved, but cleanup couldn't be completed."),
+                        .detail = report.message},
                  [completion](rap::dialog_role)
                  {
                      auto keep = completion;  // a continuation may destroy its owner/closure
@@ -988,8 +1006,9 @@ void quit_after_settings(rap::ui& ui)
     if (!state->alive) return;
     state->quit_requested = true;
     if (state->shown) return;
-    const std::string error = settings::get().take_save_error();
-    if (!error.empty()) return report_unsaved_settings(ui, nullptr, error);
+    const auto report = settings::get().take_save_report();
+    if (report.failed() || report.has_cleanup_warning())
+        return report_settings_save(ui, nullptr, report);
     state->quit_requested = false;
     ui.quit();
 }

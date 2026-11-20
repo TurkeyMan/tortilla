@@ -385,7 +385,7 @@ void log_tab::apply_view_settings()
     settings_changes obsolete;
     for (const char* key : {"log.panes.forge", "log.panes.forge.parts"})
         if (st.contains(key)) obsolete.remove(key);
-    st.remember_failure(st.apply(obsolete));
+    st.remember_save_report(st.apply(obsolete));
     if (auto v = st.numbers("log.columns"); !v.empty()) page_->commit_list->set_column_widths(v);
     // The lists ignore an order that doesn't fit their columns.
     auto order = [](const std::vector<float>& v)
@@ -1073,8 +1073,8 @@ void log_tab::save_branches()
 {
     settings_changes st;
     save_branches(st);
-    if (const auto done = settings::get().apply(st); !done)
-        report_unsaved_settings(ui_, parent(), done.error);
+    if (const auto done = settings::get().apply(st); done.failed() || done.has_cleanup_warning())
+        report_settings_save(ui_, parent(), done);
 }
 
 void log_tab::save_branches(settings_changes& st)

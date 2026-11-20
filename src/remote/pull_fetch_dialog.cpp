@@ -241,8 +241,9 @@ void pull_fetch_dialog::ok(bool save_choices)
     s.set(key + ".rebase", rebase_->checked() && !rebase_from_config_ ? "1" : "0");
     if (pull_) s.set(key + ".ffonly", ff_only_->checked() ? "1" : "0");
     if (save_choices)
-        if (const settings::saved done = settings::get().apply(s); !done)
-            return report_unsaved_settings(ui_, window_.get(), done.error,
+        if (const settings::saved done = settings::get().apply(s);
+            done.failed() || done.has_cleanup_warning())
+            return report_settings_save(ui_, window_.get(), done,
                 [this, alive = std::weak_ptr<bool>(alive_)] { if (alive.lock()) ok(false); });
 
     std::vector<std::string> options;

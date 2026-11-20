@@ -3,6 +3,9 @@
 // marked files. Unmarked legacy keys and values migrate losslessly on save.
 #pragma once
 
+#include <charconv>
+#include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -57,6 +60,44 @@ inline std::string decode_settings_key(std::string_view key)
     }
     return out;
 }
+
+inline constexpr std::string_view k_settings_generation_prefix = "#tortilla-settings-generation ";
+
+// Generation is metadata only in the second physical line of a v2 document.
+// Legacy documents have generation zero; malformed claimed metadata is unsafe.
+inline std::optional<uint64_t> settings_document_generation(std::string_view bytes)
+{
+    auto line = [&]() {
+        const auto end = bytes.find('\n');
+        auto out = bytes.substr(0, end);
+        bytes = end == bytes.npos ? std::string_view{} : bytes.substr(end + 1);
+        if (!out.empty() && out.back() == '\r') out.remove_suffix(1);
+        return out;
+    };
+    if (line() != k_settings_format_marker) return 0;
+    auto generation = line();
+    if (!generation.starts_with(k_settings_generation_prefix)) return 0;
+    generation.remove_prefix(k_settings_generation_prefix.size());
+    uint64_t value = 0;
+    const auto parsed = std::from_chars(generation.data(), generation.data() + generation.size(), value);
+    if (generation.empty() || parsed.ec != std::errc{} || parsed.ptr != generation.data() + generation.size())
+        return {};
+    return value;
+}
+
+inline bool settings_document_has_generation(std::string_view bytes)
+{
+    const auto first_end = bytes.find('\n');
+    auto first = bytes.substr(0, first_end);
+    if (!first.empty() && first.back() == '\r') first.remove_suffix(1);
+    if (first != k_settings_format_marker || first_end == bytes.npos) return false;
+    bytes.remove_prefix(first_end + 1);
+    auto second = bytes.substr(0, bytes.find('\n'));
+    if (!second.empty() && second.back() == '\r') second.remove_suffix(1);
+    return second.starts_with(k_settings_generation_prefix);
+}
+inline std::string settings_generation_line(uint64_t generation)
+{ return std::string(k_settings_generation_prefix) + std::to_string(generation) + "\n"; }
 
 // One instance per file. The first physical line alone selects the format.
 // getline has removed LF; one terminal CR is accepted for a CRLF first line.

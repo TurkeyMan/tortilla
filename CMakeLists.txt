@@ -69,6 +69,7 @@ add_library(tortilla_git STATIC
     src/log/ref_labels.cpp
     src/log/branch_filter.cpp
     src/settings.cpp
+    src/util/settings_recovery.cpp
     src/rebase/rebase_model.cpp
     src/rebase/rebase_engine.cpp
     src/git/command.cpp
@@ -236,6 +237,10 @@ rapport_add_shell_extension(tortilla-shell
     WINDOWS_CLSID {D73E7C0C-F88B-4DD5-AC56-9AABAB52E4EB}
     SOURCES src/shell/shell_provider.cpp src/cache/channel.cpp src/cache/badge_changes.cpp)
 target_include_directories(tortilla-shell_provider PRIVATE src)
+target_sources(tortilla-shell_provider PRIVATE src/util/settings_recovery.cpp src/util/sha256.cpp)
+if(WIN32)
+    target_link_libraries(tortilla-shell_provider PRIVATE advapi32)
+endif()
 if(UNIX AND NOT APPLE)
     include(GNUInstallDirs)
     target_compile_definitions(tortilla-shell_provider PRIVATE

@@ -18,6 +18,7 @@
 
 #include "changes/file_model.h"
 #include "git/command.h"
+#include "git/ssh_client.h"
 #include "git/sync.h"
 #include "log/forge_panel.h"
 #include "log/log_model.h"
@@ -3866,7 +3867,7 @@ void settings_close_failure_tests(rap::ui& ui, const std::string& first,
     auto& st = settings::get();
     const auto file = rap::sys::path_from_utf8(root) / "close-report-settings";
     st.use_file(file);
-    (void)st.take_save_error();
+    (void)st.take_save_report();
     auto opened = log_window::open(ui, first);
     if (!opened) return check(false, "settings reporting: window opens");
     auto w = std::move(*opened);
@@ -3889,7 +3890,7 @@ void settings_close_failure_tests(rap::ui& ui, const std::string& first,
           "settings reporting: with another window open, close defers the error");
     w.reset();
     (*next)->show();
-    check(g_backend->messages == before_window + 1 && st.take_save_error().empty(),
+    check(g_backend->messages == before_window + 1 && st.take_save_report().message.empty(),
           "settings reporting: next shown window reports the retained close failure once");
     next->reset();
 
@@ -3936,7 +3937,7 @@ void settings_close_failure_tests(rap::ui& ui, const std::string& first,
                              elapsed < std::chrono::milliseconds(2500))),
               "settings reporting: Log plus View Patch close attempts one transaction within one second");
         if (!held)
-            st.remember_failure({"test close failure (filesystem has no locks)"});
+            st.remember_save_report({"test close failure (filesystem has no locks)"});
         settle(ui);  // actual windows::release invokes quit_after_settings
         check(windows::ending() && g_backend->messages == said + 1 &&
                   !g_backend->last_message_detail.empty() &&
@@ -3951,7 +3952,7 @@ void settings_close_failure_tests(rap::ui& ui, const std::string& first,
         g_backend->held_messages.clear();
         g_backend->hold_dialogs = false;
         if (dismissed) dismissed(rap::dialog_role::ok);
-        check(g_backend->quit_requests == quits + 1 && st.take_save_error().empty(),
+        check(g_backend->quit_requests == quits + 1 && st.take_save_report().message.empty(),
               "settings reporting: only dismissing the close warning permits quit");
         g_backend->suppress_quit = false;
         windows::init(ui);
@@ -3968,7 +3969,7 @@ void settings_preference_failure_tests(rap::ui& ui, const std::string& repo,
         st.use_file(rap::sys::path_from_utf8(root) /
                     (parented ? "settings-parent-failure" : "settings-standalone-failure"));
         st.set(k_appearance_setting, "light");
-        (void)st.take_save_error();
+        (void)st.take_save_report();
         std::unique_ptr<rap::window> parent;
         if (parented)
             parent = create_window(ui, rap::layout::window{"Settings owner", {rap::layout::label{"Owner"}}});
@@ -4039,6 +4040,149 @@ void settings_preference_failure_tests(rap::ui& ui, const std::string& repo,
     g_backend->hold_dialogs = false;
     g_backend->suppress_quit = false;
     st.use_file(rap::sys::path_from_utf8(root) / "tortilla-settings");
+}
+
+void settings_save_outcome_tests(rap::ui& ui, const std::string& repo, const std::string& root)
+{
+    namespace fs = std::filesystem;
+    auto& st = settings::get();
+#ifdef TORTILLA_FM_PROGRAM
+    // Exercise the real PCManFM file effect without touching the user's set.
+    struct isolated_fm_data
+    {
+        std::optional<std::string> home = rap::sys::env("XDG_DATA_HOME");
+        std::optional<std::string> dirs = rap::sys::env("XDG_DATA_DIRS");
+        ~isolated_fm_data()
+        {
+            if (home) ::setenv("XDG_DATA_HOME", home->c_str(), 1);
+            else ::unsetenv("XDG_DATA_HOME");
+            if (dirs) ::setenv("XDG_DATA_DIRS", dirs->c_str(), 1);
+            else ::unsetenv("XDG_DATA_DIRS");
+        }
+    } isolated;
+    const fs::path fm_package = rap::sys::path_from_utf8(root) / "settings-fm-package";
+    std::error_code ec;
+    fs::create_directories(fm_package / "file-manager/actions", ec);
+    std::ofstream(fm_package / "file-manager/actions/tortilla.desktop") << "[Desktop Entry]\n";
+    ::setenv("XDG_DATA_DIRS", fm_package.c_str(), 1);
+#endif
+    for (const auto outcome : {save_outcome::saved, save_outcome::saved_with_cleanup_warning,
+                               save_outcome::failed})
+    {
+        const bool committed = outcome != save_outcome::failed;
+        const bool warning = outcome != save_outcome::saved;
+        const std::string tag = std::to_string(int(outcome));
+        st.use_file(rap::sys::path_from_utf8(root) / ("settings-outcome-" + tag));
+        st.set(k_appearance_setting, "light");
+        st.set("shell.top", "log");  // a non-default set PCManFM must regenerate
+        save_ssh_client({.command = "ssh-before-test", .variant = "ssh"});
+        (void)st.take_save_report();
+#ifdef TORTILLA_FM_PROGRAM
+        const fs::path fm_home = rap::sys::path_from_utf8(root) / ("settings-fm-user-" + tag);
+        const fs::path fm_dir = fm_home / "file-manager/actions";
+        fs::create_directories(fm_dir, ec);
+        const fs::path obsolete = fm_dir / "tortilla-user-obsolete.desktop";
+        std::ofstream(obsolete) << "must survive a failed save\n";
+        ::setenv("XDG_DATA_HOME", fm_home.c_str(), 1);
+#endif
+        int saved_calls = 0, closed_calls = 0;
+        const int messages = g_backend->messages, quits = g_backend->quit_requests;
+        g_backend->hold_dialogs = true;
+        g_backend->suppress_quit = true;
+        show_settings(ui, nullptr, repo, settings_page::general,
+                      [&] { ++saved_calls; },
+                      [&] { ++closed_calls; quit_after_settings(ui); });
+        built_window& built = g_backend->built.back();
+        kept_window* frame = built.window;
+        kept_drop_down* appearance_choice = nullptr;
+        for (auto* choice : built.choices)
+            if (choice->items == std::vector<std::string>{"Follow system", "Light", "Dark"})
+                appearance_choice = choice;
+        check(appearance_choice && frame && frame->finished && !built.page_tabs.empty(),
+              "settings outcomes: actual Settings General page is built");
+        if (!appearance_choice || !frame || !frame->finished || built.page_tabs.empty()) return;
+        appearance_choice->choose(2);
+        built.page_tabs.front()->set_current(int(settings_page::context_menu));
+        built.page_tabs.front()->set_current(int(settings_page::network));
+        kept_drop_down* ssh_choice = nullptr;
+        kept_entry* ssh_command = nullptr;
+        for (auto* choice : built.choices)
+            if (!choice->items.empty() && choice->items.back() == "Custom...") ssh_choice = choice;
+        for (auto* entry : built.entries)
+            if (entry->placeholder == "ssh -i ~/.ssh/key") ssh_command = entry;
+        check(ssh_choice && ssh_command, "settings outcomes: actual Network SSH controls are built");
+        if (!ssh_choice || !ssh_command) return;
+        ssh_choice->choose(int(ssh_choice->items.size()) - 1);
+        const std::string chosen = "ssh-committed-test-" + tag;
+        ssh_command->type(chosen);
+        const auto transactions = st.transactions_for_tests();
+        if (outcome == save_outcome::failed) settings_fail_next(settings_test_failure::replace);
+        if (outcome == save_outcome::saved_with_cleanup_warning)
+            settings_fail_next(settings_test_failure::cleanup_warning);
+        frame->finished(rap::dialog_role::ok);
+        settle(ui);
+        const auto env = ssh_environment();
+        const std::string expected = committed ? chosen : "ssh-before-test";
+        check(st.transactions_for_tests() == transactions + 1 &&
+                  st.value(k_appearance_setting) == (committed ? "dark" : "light") &&
+                  st.value("ssh.command") == expected &&
+                  std::ranges::find(env, std::pair<std::string, std::string>{"GIT_SSH_COMMAND", expected}) != env.end() &&
+                  saved_calls == (committed ? 1 : 0),
+              "settings outcomes: both committed results apply cached preferences, SSH and saved callback once; failures apply none");
+#ifdef TORTILLA_FM_PROGRAM
+        check(fs::exists(fm_dir / "tortilla-user.desktop") == committed &&
+                  fs::exists(obsolete) == !committed,
+              "settings outcomes: actual isolated PCManFM files update for both committed results, never failure");
+#endif
+        check(g_backend->messages == messages + (warning ? 1 : 0) &&
+                  closed_calls == (warning ? 0 : 1) &&
+                  g_backend->quit_requests == quits + (warning ? 0 : 1),
+              "settings outcomes: report dismissal gates close and quit for failures and cleanup warnings");
+        if (warning)
+        {
+            check(g_backend->last_message.find(committed ? "were saved" : "couldn't be saved") != std::string::npos &&
+                      (!committed || g_backend->last_message.find("couldn't be saved") == std::string::npos),
+                  "settings outcomes: committed cleanup copy is softer and never says choices were unsaved");
+            quit_after_settings(ui);
+            check(g_backend->quit_requests == quits,
+                  "settings outcomes: an already shown cleanup/failure warning blocks an empty-queue quit");
+            auto dismissed = g_backend->held_messages.empty()
+                                 ? std::function<void(rap::dialog_role)>{}
+                                 : std::move(g_backend->held_messages.front());
+            g_backend->held_messages.clear();
+            if (dismissed) dismissed(rap::dialog_role::ok);
+            dismissed = {};
+            settle(ui);
+        }
+        check(closed_calls == 1 && saved_calls == (committed ? 1 : 0) &&
+                  g_backend->quit_requests == quits + 1 && st.take_save_report().message.empty(),
+              "settings outcomes: dismissal closes once without repeating committed effects or queued diagnostics");
+        g_backend->hold_dialogs = false;
+        g_backend->suppress_quit = false;
+    }
+    // Convenience SSH saves have no dialog. Publication still updates the
+    // process environment while its cleanup diagnostic remains reportable.
+    st.use_file(rap::sys::path_from_utf8(root) / "settings-ssh-outcomes");
+    save_ssh_client({.command = "ssh-initial", .variant = "ssh"});
+    settings_fail_next(settings_test_failure::cleanup_warning);
+    save_ssh_client({.command = "ssh-with-cleanup", .variant = "plink"});
+    const auto committed_env = ssh_environment();
+    const auto cleanup = st.take_save_report();
+    check(cleanup.has_cleanup_warning() && cleanup.committed() &&
+              std::ranges::find(committed_env, std::pair<std::string, std::string>{"GIT_SSH_COMMAND", "ssh-with-cleanup"}) != committed_env.end(),
+          "settings outcomes: convenience SSH save applies a committed cleanup result and retains its warning");
+    settings_fail_next(settings_test_failure::replace);
+    save_ssh_client({.command = "ssh-not-saved", .variant = "ssh"});
+    check(st.take_save_report().failed() && ssh_environment() == committed_env,
+          "settings outcomes: failed convenience SSH save retains the previous environment and reports failure");
+    st.remember_save_report(settings::saved::cleanup_warning("committed cleanup detail"));
+    st.remember_save_report({"uncommitted failure detail"});
+    const auto mixed = st.take_save_report();
+    check(mixed.failed() && mixed.message.find("committed cleanup detail") != std::string::npos &&
+              mixed.message.find("uncommitted failure detail") != std::string::npos,
+          "settings outcomes: queued mixed diagnostics retain failure severity and committed cleanup details");
+    st.use_file(rap::sys::path_from_utf8(root) / "tortilla-settings");
+    use_ssh_client(saved_ssh_client());
 }
 
 // Folders shown and remembered without trailing separators, a root's own
@@ -4149,6 +4293,7 @@ void run_log_page_tests(const std::string& root)
     toolbar_tests(ui, repo, others[0]);
     settings_close_failure_tests(ui, repo, others[0], root);
     settings_preference_failure_tests(ui, repo, root, warning_lifetime);
+    settings_save_outcome_tests(ui, repo, root);
     recent_tests(root, repo, others[0]);
     identity_tests(ui, repo, others[0]);
     teardown_tests(ui, repo, others[0]);

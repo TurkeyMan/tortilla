@@ -247,8 +247,9 @@ void export_revision(rap::ui& ui, rap::window* parent, const std::string& workdi
                             done();
                     });
             };
-            if (!saved) return report_unsaved_settings(ui, parent && parent_lifetime.expired() ? nullptr : parent,
-                                                       saved.error, std::move(proceed));
+            if (saved.failed() || saved.has_cleanup_warning())
+                return report_settings_save(ui, parent && parent_lifetime.expired() ? nullptr : parent,
+                                            saved, std::move(proceed));
             proceed();
         });
     st->window->show();

@@ -17,6 +17,7 @@
 #include "menu_table.h"
 #include "util/replaced_file.h"
 #include "util/settings_format.h"
+#include "util/settings_recovery.h"
 
 #include <rapport/shell.h>
 
@@ -579,7 +580,9 @@ menu_settings read_settings()
     menu_settings out;
     // Settings replaces the file by renaming a new one over it: an open that
     // meets that is tried again, so the menu isn't built from no settings.
-    const fs::path file = settings_file();
+    const auto recovery = tortilla::inspect_settings_recovery(settings_file());
+    if (recovery.phase == tortilla::settings_recovery_phase::blocked) return out;
+    const fs::path file = recovery.readable;
     std::ifstream in = tortilla::open_replaced_file(
         file, [&] { return std::ifstream(file, std::ios::binary); }, 10, std::chrono::milliseconds(5));
     tortilla::settings_key_reader format;

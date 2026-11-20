@@ -2,6 +2,8 @@
 // left, each built the first time it's shown.
 #pragma once
 
+#include "settings.h"
+
 #include <rapport/rapport.h>
 
 #include <functional>
@@ -33,6 +35,11 @@ void show_settings(rap::ui&, rap::window* parent, const std::string& repo_dir,
 // Closing/destruction and operation continuations belong in `dismissed`.
 void report_unsaved_settings(rap::ui&, rap::window* parent, const std::string& error,
                               std::function<void()> dismissed = {});
+// Reports either an uncommitted save failure or a committed cleanup warning.
+// Both use the same dismissal/disposal lifetime handling; only a failure says
+// that choices weren't saved. A complete save invokes `dismissed` directly.
+void report_settings_save(rap::ui&, rap::window* parent, const settings::saved&,
+                          std::function<void()> dismissed = {});
 // Called instead of quit(): report pending save errors while the event loop
 // still runs, and quit only after the warning is dismissed. Never restarts it.
 void quit_after_settings(rap::ui&);

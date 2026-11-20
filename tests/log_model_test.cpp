@@ -62,6 +62,7 @@
 #include "util/programs.h"
 #include "util/replaced_file.h"
 #include "util/settings_format.h"
+#include "util/settings_recovery.h"
 #include "util/repo_path.h"
 #include "util/search_query.h"
 #include "util/sha256.h"
@@ -1705,7 +1706,7 @@ void settings_key_cases(const std::string& scratch)
               st.value("log.refHistory./repo name") == "space" && slurp(file) == legacy,
           "settings keys: unmarked percent and space repo names load literally and reads do not migrate");
     tortilla::settings_changes empty;
-    check(st.apply(empty) && slurp(file) == legacy,
+    check(st.apply(empty).committed() && slurp(file) == legacy,
           "settings keys: an empty transaction is not a format-migration save");
     st.set("legacy.key", "raw%3D=value");  // explicit same-value save still upgrades legacy format
     st.use_file(file);
@@ -1735,7 +1736,7 @@ void settings_key_cases(const std::string& scratch)
     check(raw.find("repo%3Da=") != std::string::npos && raw.find("repo%3Db=") != std::string::npos &&
               raw.find("literal%253D=") != std::string::npos &&
               raw.starts_with(header) && raw.find(marker, marker.size()) == std::string::npos &&
-              std::count(raw.begin(), raw.end(), '\n') == int(keys.size() + 6) &&
+              std::count(raw.begin(), raw.end(), '\n') == int(keys.size() + 7) &&
               st.value("log.refHistory./repo%20name") == "percent" &&
               st.value("log.refHistory./repo name") == "space",
           "settings keys: repeated saves emit one first marker and preserve literal legacy percent keys");
@@ -1788,10 +1789,10 @@ void settings_key_cases(const std::string& scratch)
           "settings keys: marker-only EOF is a valid read without rewriting");
     write_text(file, "");
     st.use_file(file);
-    check(st.apply(empty) && slurp(file).empty(), "settings keys: reading/empty transaction keeps an empty legacy file");
+    check(st.apply(empty).committed() && slurp(file).empty(), "settings keys: reading/empty transaction keeps an empty legacy file");
     tortilla::settings_changes remove_absent;
     remove_absent.remove("absent");
-    check(st.apply(remove_absent) && slurp(file) == header,
+    check(st.apply(remove_absent).committed() && slurp(file) == header + tortilla::settings_generation_line(1),
           "settings keys: explicit unchanged empty-document save writes one format marker");
 }
 
@@ -1819,12 +1820,12 @@ void settings_windows_security_cases(const std::filesystem::path& root)
     if (!(flags & FILE_PERSISTENT_ACLS))
     {
         const auto refused = st.apply(changes);
-        check(!refused && !fs::exists(file),
+        check(refused.failed() && !fs::exists(file),
               "settings security: filesystem without ACLs cannot create secret settings");
         std::printf("settings security: exact ACL assertions skipped (filesystem has no persistent ACLs)\n");
         return;
     }
-    check(bool(st.apply(changes)), "settings security: initial owner-only file saved");
+    check(bool(st.apply(changes).committed()), "settings security: initial owner-only file saved");
     auto security = [&](HANDLE handle) -> std::optional<security_snapshot>
     {
         PACL acl = nullptr;
@@ -1919,7 +1920,7 @@ void settings_windows_security_cases(const std::filesystem::path& root)
     const auto saved = st.apply(changes);
     tortilla::settings_temp_created_for_tests({});
     const auto after = file_security();
-    check(saved && hidden && observed == 1 && temp_private && before && after &&
+    check(saved.committed() && hidden && observed == 1 && temp_private && before && after &&
               after->acl == before->acl && after->owner == before->owner &&
               (GetFileAttributesW(file.c_str()) & FILE_ATTRIBUTE_HIDDEN),
           "settings security: temp is restrictive at creation, replacement preserves DACL/owner/hidden");
@@ -1932,7 +1933,7 @@ void settings_windows_security_cases(const std::filesystem::path& root)
     changes.set("secure", "must fail");
     const auto refused = st.apply(changes);
     tortilla::settings_temp_created_for_tests({});
-    check(readonly && !refused && !refused.error.empty() && observed == 0 && slurp(file) == old_bytes &&
+    check(readonly && refused.failed() && !refused.message.empty() && observed == 0 && slurp(file) == old_bytes &&
               (GetFileAttributesW(file.c_str()) & FILE_ATTRIBUTE_READONLY),
           "settings security: read-only fails before temp creation without clearing attributes");
     SetFileAttributesW(file.c_str(), FILE_ATTRIBUTE_HIDDEN);
@@ -1943,7 +1944,7 @@ void settings_windows_security_cases(const std::filesystem::path& root)
         fs::create_hard_link(file, alias, ec);
         check(!ec, "settings security: hardlink fixture created");
         changes.set("secure", "new object");
-        check(st.apply(changes) && slurp(alias) == old_bytes && slurp(file) != slurp(alias),
+        check(st.apply(changes).committed() && slurp(alias) == old_bytes && slurp(file) != slurp(alias),
               "settings security: atomic replacement leaves other hardlink aliases on old object");
     }
     const auto other = root / "different-file";
@@ -1958,14 +1959,14 @@ void settings_windows_security_cases(const std::filesystem::path& root)
     tortilla::settings_final_path_for_tests();
     st.set_lock_wait(std::chrono::milliseconds(5000));
     tortilla::settings_temp_created_for_tests({});
-    check(!mismatch && !mismatch.error.empty() && observed == 0 &&
+    check(mismatch.failed() && !mismatch.message.empty() && observed == 0 &&
               slurp(file) == untouched && slurp(other) == other_bytes,
           "settings identity: mismatching candidate refuses save before any temp writes");
     tortilla::settings_final_path_for_tests({}, true);
     changes.set("opened-fallback", "identity checked");
     const auto fallback = st.apply(changes);
     tortilla::settings_final_path_for_tests();
-    check(fallback && st.value("opened-fallback") == "identity checked",
+    check(fallback.committed() && st.value("opened-fallback") == "identity checked",
           "settings identity: opened-name fallback succeeds only after reopening same volume/file ID");
     for (bool existed : {false, true})
     {
@@ -1978,7 +1979,7 @@ void settings_windows_security_cases(const std::filesystem::path& root)
         });
         const auto refused_mode_change = st.apply(changes);
         tortilla::settings_temp_created_for_tests({});
-        check(!refused_mode_change && (existed ? !fs::exists(mode_file) :
+        check(refused_mode_change.failed() && (existed ? !fs::exists(mode_file) :
                   slurp(mode_file) == "external=unread\n"),
               "settings replacement: frozen mode never recreates removed file or overwrites newly appeared file");
     }
@@ -1990,7 +1991,7 @@ void settings_windows_security_cases(const std::filesystem::path& root)
     tortilla::settings_fail_next(tortilla::settings_test_failure::unprotected_temp);
     const auto unprotected = st.apply(changes);
     tortilla::settings_temp_created_for_tests({});
-    check(!unprotected && unprotected.error.find("permissions") != std::string::npos && observed == 0 &&
+    check(unprotected.failed() && unprotected.message.find("permissions") != std::string::npos && observed == 0 &&
               slurp(file) == before_unprotected,
           "settings security: unverifiable temp protection fails before writing secret bytes");
     changes.set("encrypted-probe", "must not publish");
@@ -2000,7 +2001,7 @@ void settings_windows_security_cases(const std::filesystem::path& root)
     tortilla::settings_fail_next(tortilla::settings_test_failure::encrypted_target);
     const auto encrypted = st.apply(changes);
     tortilla::settings_temp_created_for_tests({});
-    check(!encrypted && encrypted.error.find("encrypted") != std::string::npos && observed == 0 &&
+    check(encrypted.failed() && encrypted.message.find("encrypted") != std::string::npos && observed == 0 &&
               slurp(file) == before_encrypted,
           "settings security: encrypted attribute policy fails before any plaintext temp is created");
     // Another completed writer replaces the actual object after our resolution
@@ -2025,7 +2026,7 @@ void settings_windows_security_cases(const std::filesystem::path& root)
         const auto raced = st.apply(mine);
         tortilla::settings_before_lock_for_tests({});
         st.use_file(race);
-        check(raced && changed && attempts == 2 && st.value("unrelated") == "other-writer" &&
+        check(raced.committed() && changed && attempts == 2 && st.value("unrelated") == "other-writer" &&
                   st.value("mine") == "serialized",
               "settings identity: pre-lock native replacement retries once and merges unrelated writer keys");
     }
@@ -2050,8 +2051,8 @@ void settings_windows_security_cases(const std::filesystem::path& root)
         const auto elapsed = std::chrono::steady_clock::now() - started;
         tortilla::settings_before_lock_for_tests({});
         st.set_lock_wait(std::chrono::milliseconds(5000));
-        (void)st.take_save_error();
-        check(!raced && attempts < 10 && elapsed < std::chrono::milliseconds(400) &&
+        (void)st.take_save_report();
+        check(raced.failed() && attempts < 10 && elapsed < std::chrono::milliseconds(400) &&
                   slurp(race) == "unrelated=keep\n",
               "settings identity: repeated replacement shares one close deadline rather than resetting it");
     }
@@ -2076,16 +2077,16 @@ void settings_windows_security_cases(const std::filesystem::path& root)
             if (fs::exists(name))
             {
                 retained = slurp(name).find("recovery-attempt=must not commit\n") != std::string::npos &&
-                           partial.error.find(rap::sys::path_to_utf8(name)) != std::string::npos;
+                           partial.message.find(rap::sys::path_to_utf8(name)) != std::string::npos;
                 fs::remove(name);
             }
-        check(!partial && retained && fs::exists(file) && slurp(file) == old &&
+        check(partial.failed() && retained && fs::exists(file) && slurp(file) == old &&
                   st.value("recovery-attempt").empty() &&
                   st.value("unrelated-recovery") == "keep across rollback",
               "settings recovery: documented1176/1177 or defensive1176 namespace transition keeps/restores last-good target");
         tortilla::settings_changes next;
         next.set("after-recovery", std::to_string(++recovery_case));
-        check(st.apply(next) && st.value("unrelated-recovery") == "keep across rollback" &&
+        check(st.apply(next).committed() && st.value("unrelated-recovery") == "keep across rollback" &&
                   st.value("recovery-attempt").empty() &&
                   slurp(backup_names.front()) == "preexisting recovery sentinel\n",
               "settings recovery: subsequent save keeps unrelated keys and never overwrites a preexisting backup");
@@ -2093,19 +2094,172 @@ void settings_windows_security_cases(const std::filesystem::path& root)
     tortilla::settings_changes backup_retry;
     backup_retry.set("backup-retry", "reserved again");
     tortilla::settings_fail_next(tortilla::settings_test_failure::backup_retry);
-    check(st.apply(backup_retry) && st.value("backup-retry") == "reserved again" &&
+    check(st.apply(backup_retry).committed() && st.value("backup-retry") == "reserved again" &&
               slurp(backup_names.front()) == "preexisting recovery sentinel\n",
           "settings recovery: sharing retry recreates a lost protected reservation without overwriting foreign backups");
     tortilla::settings_changes published;
     published.set("published-before-cleanup-error", "yes");
     tortilla::settings_fail_next(tortilla::settings_test_failure::backup_cleanup);
     const auto cleanup = st.apply(published);
-    check(!cleanup && cleanup.error.find("Settings saved") != std::string::npos &&
+    check(cleanup.committed() && cleanup.has_cleanup_warning() && cleanup.message.find("Settings saved") != std::string::npos &&
               st.value("published-before-cleanup-error") == "yes" &&
               slurp(file).find("published-before-cleanup-error=yes\n") != std::string::npos,
           "settings recovery: successful publish plus cleanup error reports truth and caches committed bytes");
     for (const auto& name : backup_names) if (fs::exists(name)) fs::remove(name);
 
+}
+#endif
+
+void settings_generation_cases(const std::string& scratch)
+{
+    namespace fs=std::filesystem;
+    auto file=rap::sys::path_from_utf8(scratch)/"settings-generation";
+    write_text(file,"legacy=value\n");
+    auto& st=tortilla::settings::get();st.use_file(file);
+    tortilla::settings_changes change;change.set("legacy","value");
+    check(st.apply(change).committed()&&tortilla::settings_document_generation(slurp(file))==1,
+          "settings generation: legacy same-value format migration publishes generation one");
+    const auto first=slurp(file);
+    check(st.apply(change).committed()&&slurp(file)==first,
+          "settings generation: no-op does not increment or rewrite");
+    change.set("next","published");
+    check(st.apply(change).committed()&&tortilla::settings_document_generation(slurp(file))==2,
+          "settings generation: actual publication increments metadata under lock");
+    write_text(file,std::string(tortilla::k_settings_format_marker)+"\n"+
+                    tortilla::settings_generation_line(UINT64_MAX)+"legacy=value\n");
+    st.use_file(file);const auto overflow=st.apply(change);
+    check(overflow.failed()&&tortilla::settings_document_generation(slurp(file))==UINT64_MAX,
+          "settings generation: overflow refuses publication without changing old bytes");
+#ifndef _WIN32
+    const auto receipt=fs::path(file.string()+".recovery.424242.0123456789abcdef0123456789abcdef.receipt");
+    write_text(receipt,"#tortilla-settings-recovery 1\n");
+    const auto before=slurp(file);const auto pending=st.apply(change);
+    check(pending.failed()&&pending.message.find("recovery pending")!=std::string::npos&&slurp(file)==before,
+          "settings recovery: POSIX refuses unverifiable native pending receipts instead of publishing a delta");
+    fs::remove(receipt);
+#endif
+}
+
+#ifdef _WIN32
+void settings_pending_recovery_cases(const std::filesystem::path& root)
+{
+    namespace fs=std::filesystem;
+    auto& st=tortilla::settings::get();
+    fs::create_directories(root/"recovery");
+    auto initialize=[&](const fs::path& file) {
+        st.use_file(file);tortilla::settings_changes values;
+        values.set("unrelated.one","preserve all");values.set("unrelated.two","line\npercent%3D");
+        values.set("shell.noMenu","blocked\tother");
+        check(st.apply(values).committed(),"settings recovery: complete original document initialized");
+        st.set("second-generation","known");
+    };
+    auto fail_rollback=[&] {
+        tortilla::settings_changes attempted;attempted.set("uncommitted","must not appear");
+        tortilla::settings_recovery_fail_restore_for_tests(true);
+        tortilla::settings_fail_next(tortilla::settings_test_failure::partial_replace_2);
+        return st.apply(attempted);
+    };
+    const auto file=root/"recovery/settings";
+    initialize(file);const auto original=slurp(file);
+    const auto failed=fail_rollback();
+    auto view=tortilla::inspect_settings_recovery(file);
+    check(failed.failed()&&!fs::exists(file)&&view.phase==tortilla::settings_recovery_phase::recoverable&&
+              !view.readable.empty()&&slurp(view.readable)==original,
+          "settings recovery: failed native rollback leaves durable verified last-good fallback");
+    // The app startup/use_file path and shared shell verifier must see the
+    // complete old document without mutating/deleting recovery files.
+    const auto receipt_count=view.records.size();
+    st.use_file(file);
+    check(st.value("unrelated.one")=="preserve all"&&st.value("unrelated.two")=="line\npercent%3D"&&
+              st.value("shell.noMenu")=="blocked\tother"&&!fs::exists(file)&&
+              tortilla::inspect_settings_recovery(file).records.size()==receipt_count,
+          "settings recovery: read-only app/shared-shell fallback reads all verified backup values");
+    tortilla::settings_changes delta;delta.set("next-delta","merged after recovery");
+    tortilla::settings_recovery_fail_restore_for_tests(true);
+    const auto blocked=st.apply(delta);
+    check(blocked.failed()&&blocked.message.find("recovery pending")!=std::string::npos&&!fs::exists(file)&&
+              slurp(view.readable)==original,
+          "settings recovery: another failed restore refuses a delta against an empty document");
+    // Receipts from any PID are found; PID is not a freshness ranking.
+    for(const auto& record:view.records)
+        for(const auto& receipt:record.receipts)
+            if(fs::exists(receipt))
+            {
+                auto name=receipt.filename().native();const auto at=name.find(L".recovery.");
+                const auto end=name.find(L'.',at+10);
+                name.replace(at+10,end-(at+10),L"424242");
+                fs::rename(receipt,receipt.parent_path()/name);
+            }
+    const auto restored=st.apply(delta);st.use_file(file);
+    check(restored.committed()&&st.value("unrelated.one")=="preserve all"&&
+              st.value("unrelated.two")=="line\npercent%3D"&&st.value("shell.noMenu")=="blocked\tother"&&
+              st.value("next-delta")=="merged after recovery"&&st.value("uncommitted").empty()&&
+              tortilla::inspect_settings_recovery(file).records.empty(),
+          "settings recovery: next save recovers any-PID last-good state before merging every unrelated key");
+    // Unknown legacy data is not proven older just because its generation is 0.
+    fail_rollback();write_text(file,"external=unknown legacy\n");
+    const auto unknown=st.apply(delta);
+    check(unknown.failed()&&unknown.message.find("recovery pending")!=std::string::npos&&
+              slurp(file)=="external=unknown legacy\n",
+          "settings recovery: unknown unmarked external target is never rolled back or overwritten");
+    fs::remove(file);check(st.apply(delta).committed(),"settings recovery: known backup remains recoverable after external target removed");
+    // A strictly older explicit generation can be replaced by proved last-good.
+    fail_rollback();
+    write_text(file,std::string(tortilla::k_settings_format_marker)+"\n"+tortilla::settings_generation_line(0)+"older=value\n");
+    tortilla::settings_changes newer;newer.set("after-older","yes");
+    check(st.apply(newer).committed()&&st.value("unrelated.one")=="preserve all"&&st.value("older").empty(),
+          "settings recovery: explicit older generation is restored first, then the requested delta merges");
+    // Two privately verified complete backups at the same generation must
+    // never be selected by PID or directory enumeration order.
+    {
+        const auto conflict=root/"recovery/conflict";
+        const auto temp_a=fs::path(conflict.native()+L".A.tmp"), temp_b=fs::path(conflict.native()+L".B.tmp");
+        const auto backup_a=fs::path(conflict.native()+L".A.bak"), backup_b=fs::path(conflict.native()+L".B.bak");
+        const auto header=std::string(tortilla::k_settings_format_marker)+"\n";
+        const auto old_a=header+tortilla::settings_generation_line(5)+"unrelated=A\n";
+        const auto old_b=header+tortilla::settings_generation_line(5)+"unrelated=B\n";
+        write_text(conflict,old_a);write_text(temp_a,header+tortilla::settings_generation_line(6)+"next=A\n");
+        write_text(backup_a,"");
+        auto receipt_a=tortilla::begin_settings_recovery(conflict,conflict,backup_a,temp_a);
+        bool made=bool(receipt_a)&&MoveFileExW(conflict.c_str(),backup_a.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH);
+        write_text(conflict,old_b);write_text(temp_b,header+tortilla::settings_generation_line(6)+"next=B\n");
+        write_text(backup_b,"");
+        auto receipt_b=tortilla::begin_settings_recovery(conflict,conflict,backup_b,temp_b);
+        made=made&&bool(receipt_b)&&MoveFileExW(conflict.c_str(),backup_b.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH);
+        st.use_file(conflict);const auto refused=st.apply(delta);
+        check(made&&refused.failed()&&!fs::exists(conflict)&&slurp(backup_a)==old_a&&slurp(backup_b)==old_b&&
+                  refused.message.find("disagree")!=std::string::npos,
+              "settings recovery: equal-generation conflicting verified backups refuse a write without choosing a PID");
+        if(receipt_a)tortilla::finish_settings_recovery(*receipt_a);
+        if(receipt_b)tortilla::finish_settings_recovery(*receipt_b);
+        for(const auto& path:{backup_a,backup_b,temp_a,temp_b})fs::remove(path);
+        st.use_file(file);
+    }
+    // Native aliases need a second receipt so a now-dangling alias can locate
+    // the canonical backup without a Windows symlink target handwalker.
+    const auto alias=root/"recovery-alias";std::error_code ec;
+    fs::create_symlink(file,alias,ec);
+    if(!ec)
+    {
+        st.use_file(alias);const auto alias_failed=fail_rollback();
+        auto alias_view=tortilla::inspect_settings_recovery(alias);
+        check(alias_failed.failed()&&!fs::exists(file)&&alias_view.records.size()==1&&
+                  alias_view.records.front().receipts.size()==2&&slurp(alias_view.readable)==slurp(alias_view.records.front().backup),
+              "settings recovery: dangling configured alias finds dual complete canonical-bound receipts");
+        st.use_file(alias);
+        tortilla::settings_changes alias_delta;alias_delta.set("alias-delta","saved");
+        check(st.value("unrelated.one")=="preserve all"&&st.apply(alias_delta).committed()&&
+                  st.value("unrelated.two")=="line\npercent%3D"&&
+                  tortilla::inspect_settings_recovery(alias).records.empty()&&
+                  tortilla::inspect_settings_recovery(file).records.empty(),
+              "settings recovery: alias save restores canonical target and cleans both receipt copies");
+    }
+    else
+    {
+        check(ec.value()==ERROR_PRIVILEGE_NOT_HELD,"settings recovery: alias fixture skips only missing symlink privileges");
+        std::printf("settings recovery: alias receipt case skipped (symlink privileges unavailable)\n");
+    }
+    (void)st.take_save_report();
 }
 #endif
 
@@ -2118,18 +2272,19 @@ void settings_path_cases(const std::string& scratch)
     fs::create_directories(root / "base");
     fs::create_directories(root / "elsewhere/child");
     settings_windows_security_cases(root);
+    settings_pending_recovery_cases(root);
     auto& st = tortilla::settings::get();
     tortilla::settings_changes changes;
     changes.set("saved", "yes");
     const auto plain = root / "first-save/sub/prefs";
     st.use_file(plain);
-    check(st.apply(changes) && fs::is_regular_file(plain),
+    check(st.apply(changes).committed() && fs::is_regular_file(plain),
           "settings native: missing plain first-save suffix is created");
     // An existing file resolves without requesting read or write permissions;
     // its final extended path remains usable by all later file operations.
     st.use_file(plain);
     changes.set("saved", "again");
-    check(st.apply(changes) && st.value("saved") == "again",
+    check(st.apply(changes).committed() && st.value("saved") == "again",
           "settings native: existing file uses native final path for replacement");
 
     std::error_code ec;
@@ -2172,7 +2327,7 @@ void settings_path_cases(const std::string& scratch)
         st.use_file(input);
         const bool reader_matches = st.value("kept") == (base ? "base" : "elsewhere");
         const auto saved = st.apply(changes);
-        check(saved && reader_matches && slurp(other) == untouched &&
+        check(saved.committed() && reader_matches && slurp(other) == untouched &&
                   slurp(selected).find("saved=again\n") != std::string::npos &&
                   tortilla::settings_lock_file(input) == tortilla::settings_lock_file(selected),
               "settings native: link/parent save changes only native-opened target, sharing its lock");
@@ -2194,7 +2349,7 @@ void settings_path_cases(const std::string& scratch)
         const auto before = entries();
         st.use_file(input);
         const auto saved = st.apply(changes);
-        check(!saved && !saved.error.empty() && before == entries() &&
+        check(saved.failed() && !saved.message.empty() && before == entries() &&
                   !fs::exists(root / "base/future") && !fs::exists(root / "missing-dir"),
               "settings native: dangling reparse path fails before lock/temp/target writes");
     }
@@ -2287,12 +2442,12 @@ void settings_path_cases(const std::string& scratch)
         changes.set("case", std::to_string(index));
         const auto saved = st.apply(changes);
         if (c.accepted)
-            check(saved && read_right && st.value("case") == std::to_string(index) &&
+            check(saved.committed() && read_right && st.value("case") == std::to_string(index) &&
                       slurp(expected).find("case=" + std::to_string(index) + "\n") != std::string::npos &&
                       tortilla::settings_lock_file(root / c.input) == tortilla::settings_lock_file(expected),
                   label.c_str());
         else
-            check(!saved && !saved.error.empty() && !st.contains("case") && before == entries() &&
+            check(saved.failed() && !saved.message.empty() && !st.contains("case") && before == entries() &&
                       slurp(root / "prefs") == "kept=1\n" &&
                       slurp(root / "base/prefs") == "kept=1\n" &&
                       slurp(root / "elsewhere/prefs") == "kept=1\n",
@@ -2307,6 +2462,7 @@ void settings_across_processes(const std::string& scratch)
 {
     const std::string settings_header = std::string(tortilla::k_settings_format_marker) + "\n";
     settings_key_cases(scratch);
+    settings_generation_cases(scratch);
     settings_path_cases(scratch);
     namespace fs = std::filesystem;
     const fs::path dir = rap::sys::path_from_utf8(scratch) / "settings-shared";
@@ -2355,6 +2511,11 @@ void settings_across_processes(const std::string& scratch)
                         ++reads;
                         std::string_view document(text);
                         if (document.starts_with(settings_header)) document.remove_prefix(settings_header.size());
+                        if (document.starts_with(tortilla::k_settings_generation_prefix))
+                        {
+                            const auto end = document.find('\n');
+                            if (end != document.npos) document.remove_prefix(end + 1);
+                        }
                         if (!document.starts_with("!first=1\n") || !document.ends_with("~last=1\n")) ++torn;
                     }
                     else
@@ -2458,7 +2619,7 @@ void settings_across_processes(const std::string& scratch)
         c.add_to_history("h", "y");
         c.set("later", "a");
         c.set("later", "b");
-        check(st.apply(c) &&
+        check(st.apply(c).committed() &&
                   settings_on_disk(file) ==
                       std::map<std::string, std::string>{
                           {"h", "y\tx"}, {"later", "b"}, {"w.position", "3,6"}, {"w.size", "1,2"}},
@@ -2481,7 +2642,7 @@ void settings_across_processes(const std::string& scratch)
         c.add_to_history("h", "e");
         const tortilla::settings::saved saved = st.apply(c);
         st.remove("kept");
-        check(!saved && !saved.error.empty() && before == settings_header + "kept=1\n" && slurp(file) == before &&
+        check(saved.failed() && !saved.message.empty() && before == settings_header + tortilla::settings_generation_line(1) + "kept=1\n" && slurp(file) == before &&
                   st.value("lost").empty() && st.history("h").empty() && st.value("kept") == "1",
               "settings: a failed save keeps the last good file, and the copy of it");
         for (const fs::path& t : temps) fs::remove(t);
@@ -2507,7 +2668,7 @@ void settings_across_processes(const std::string& scratch)
         bool clean = true;
         for (const auto& temp : tortilla::settings_temp_files(file))
             clean = clean && !fs::exists(temp);
-        check(!saved && saved.error.find(std::generic_category().message(EIO)) != std::string::npos &&
+        check(saved.failed() && saved.message.find(std::generic_category().message(EIO)) != std::string::npos &&
                   slurp(file) == "kept=1\n" &&
                   st.value("kept") == "1" && !st.contains("lost") && clean,
               fault == tortilla::settings_test_failure::flush
@@ -2515,7 +2676,7 @@ void settings_across_processes(const std::string& scratch)
               : fault == tortilla::settings_test_failure::close
                   ? "settings: close failure preserves file/copy, reports reason and removes temp"
                   : "settings: replace failure preserves file/copy, reports reason and removes temp");
-        check(st.apply(c) && st.value("lost") == "1",
+        check(st.apply(c).committed() && st.value("lost") == "1",
               "settings: a save succeeds after an I/O failure");
     }
 
@@ -2525,10 +2686,10 @@ void settings_across_processes(const std::string& scratch)
         const fs::path file = dir / "reported";
         write_text(file, "kept=1\n");
         st.use_file(file);
-        (void)st.take_save_error();
+        (void)st.take_save_report();
         tortilla::settings_fail_next(tortilla::settings_test_failure::close);
         st.set("lost", "1");
-        check(!st.take_save_error().empty() && st.take_save_error().empty() &&
+        check(!st.take_save_report().message.empty() && st.take_save_report().message.empty() &&
                   slurp(file) == "kept=1\n" && !st.contains("lost"),
               "settings: convenience save failures are retained until reported once");
     }
@@ -2541,7 +2702,7 @@ void settings_across_processes(const std::string& scratch)
         c.set("lost", "1");
         tortilla::settings_fail_next(tortilla::settings_test_failure::no_locks);
         const auto saved = st.apply(c);
-        check(!saved && !saved.error.empty() && slurp(file) == "kept=1\n" &&
+        check(saved.failed() && !saved.message.empty() && slurp(file) == "kept=1\n" &&
                   !st.contains("lost"),
               "settings: ENOLCK fails the save rather than proceeding unlocked");
     }
@@ -2564,15 +2725,15 @@ void settings_across_processes(const std::string& scratch)
                   "settings: a link at a temporary file's name is left alone (no links here)");
         else
         {
-            const bool saved = bool(st.apply(
+            const bool saved_ok = bool(st.apply(
                 []
                 {
                     tortilla::settings_changes c;
                     c.set("b", "2");
                     return c;
-                }()));
-            check(saved && slurp(victim) == "mine\n" && fs::is_symlink(first) &&
-                      !fs::is_symlink(file) && slurp(file) == settings_header + "a=1\nb=2\n",
+                }()).committed());
+            check(saved_ok && slurp(victim) == "mine\n" && fs::is_symlink(first) &&
+                      !fs::is_symlink(file) && slurp(file) == settings_header + tortilla::settings_generation_line(1) + "a=1\nb=2\n",
                   "settings: a link at a temporary file's name is left alone");
             fs::remove(first);
         }
@@ -2590,7 +2751,7 @@ void settings_across_processes(const std::string& scratch)
         tortilla::settings_changes c;
         c.set("b", "2");
         const tortilla::settings::saved saved = st.apply(c);
-        check(!saved && !saved.error.empty() && slurp(file) == "a=1\n" && st.value("b").empty(),
+        check(saved.failed() && !saved.message.empty() && slurp(file) == "a=1\n" && st.value("b").empty(),
               "settings: a save whose lock can't be opened saves nothing");
         fs::remove(lock);
 
@@ -2609,7 +2770,7 @@ void settings_across_processes(const std::string& scratch)
                     {
                         tortilla::settings_changes w;
                         w.set("w" + std::to_string(i), "1");
-                        if (!st.apply(w)) ++failed;
+                        if (!st.apply(w).committed()) ++failed;
                     });
             for (std::thread& t : writers) t.join();
             const auto waited = std::chrono::steady_clock::now() - start;
@@ -2623,9 +2784,9 @@ void settings_across_processes(const std::string& scratch)
         const fs::path file = dir / "locked";
         st.use_file(file);
         st.set("b", "2");
-        check(slurp(file) == settings_header + "a=1\nb=2\n", "settings: the lock let go, saves save");
+        check(slurp(file) == settings_header + tortilla::settings_generation_line(1) + "a=1\nb=2\n", "settings: the lock let go, saves save");
     }
-    (void)st.take_save_error();  // expected convenience failures above were observed
+    (void)st.take_save_report();  // expected convenience failures above were observed
 }
 
 }  // namespace
