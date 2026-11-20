@@ -1203,6 +1203,13 @@ settings::saved settings::apply_for(const settings_changes& changes, std::chrono
         const auto recovered = recover_settings_before_save(file, target->path, deadline);
         if (!recovered.error.empty()) return {recovered.error};
         if (recovered.restored) { retried = true; continue; }
+#ifdef _WIN32
+        // Receipts can locate a former target after an alias is repointed.
+        // Only fresh native resolution AFTER cleanup authorizes this delta.
+        const auto configured_after_recovery = resolve(file, error, &changed);
+        if (!configured_after_recovery || configured_after_recovery->path != target->path)
+        { retried = true; continue; }
+#endif
         std::string read_error;
         bool version_two = false;
         uint64_t generation = 0;

@@ -2427,6 +2427,23 @@ void settings_pending_recovery_cases(const std::filesystem::path& root)
                       tortilla::inspect_settings_recovery(alias).records.empty()&&
                       tortilla::inspect_settings_recovery(second_alias).records.empty(),
                   "settings recovery: second alias reconciles canonical any-PID cleanup receipts before next generation");
+            tortilla::settings_changes before_repoint;
+            before_repoint.set("published-before-repoint","keep");
+            tortilla::settings_fail_next(tortilla::settings_test_failure::backup_cleanup);
+            const auto pending_warning=st.apply(before_repoint);
+            const auto unchanged=slurp(file);
+            const auto new_target=root/"repointed-missing-target";
+            fs::remove(second_alias);
+            fs::create_symlink(new_target,second_alias,ec);
+            tortilla::settings_changes after_repoint;
+            after_repoint.set("wrong-old-target-delta","must never appear");
+            const auto repointed=st.apply(after_repoint);
+            check(pending_warning.has_cleanup_warning()&&!ec&&repointed.failed()&&
+                      !repointed.message.empty()&&slurp(file)==unchanged&&!fs::exists(new_target)&&
+                      fs::is_symlink(second_alias)&&
+                      settings_on_disk(file).at("published-before-repoint")=="keep"&&
+                      !settings_on_disk(file).contains("wrong-old-target-delta"),
+                  "settings recovery: repointed dangling alias after cleanup warning never publishes a delta to its former target");
         }
     }
     else
@@ -2627,6 +2644,26 @@ void settings_path_cases(const std::string& scratch)
                       slurp(root / "base/prefs") == "kept=1\n" &&
                       slurp(root / "elsewhere/prefs") == "kept=1\n",
                   label.c_str());
+    }
+    // POSIX retains its established policy of creating a dangling final link's
+    // target. Repointing still must not publish through the former target.
+    const auto repoint_root=fs::absolute(rap::sys::path_from_utf8(scratch)/"settings-repoint");
+    fs::create_directories(repoint_root);
+    const auto old_target=repoint_root/"old",new_target=repoint_root/"new",alias=repoint_root/"alias";
+    write_text(old_target,"unrelated=keep\n");
+    std::error_code link_error;fs::create_symlink(old_target,alias,link_error);
+    if(link_error)check(true,"settings POSIX: repoint fixture skipped (symlinks unavailable)");
+    else
+    {
+        st.use_file(alias);tortilla::settings_changes first;first.set("before-repoint","published");
+        tortilla::settings_fail_next(tortilla::settings_test_failure::cleanup_warning);
+        const auto warning=st.apply(first);const auto unchanged=slurp(old_target);
+        fs::remove(alias);fs::create_symlink(new_target,alias);
+        tortilla::settings_changes second;second.set("after-repoint","new target only");
+        const auto saved=st.apply(second);
+        check(warning.has_cleanup_warning()&&saved.committed()&&slurp(old_target)==unchanged&&
+                  settings_on_disk(new_target)==std::map<std::string,std::string>{{"after-repoint","new target only"}},
+              "settings POSIX: repointed dangling alias follows existing first-save policy without changing the former target");
     }
 #endif
 }
