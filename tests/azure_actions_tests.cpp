@@ -128,6 +128,14 @@ void run_azure_actions_tests()
     const auto before = requests.size();
     check(!create_pull_request(forge_kind::azure, repo, fork, token) && before == requests.size(),
           "azure writes: fork creation refused before transport");
+    auto identified = repo;
+    identified.azure_id = "a7573007-bbb3-4341-b726-0c4148a07853";
+    auto distinct_fork = n;
+    distinct_fork.head = identified;
+    distinct_fork.head.azure_id = "d6245f20-2af8-44f4-9451-8107cb2767db";
+    check(!create_pull_request(forge_kind::azure, identified, distinct_fork, token) &&
+              before == requests.size(),
+          "azure writes: distinct verified repository GUIDs refuse a fork despite matching clone paths");
     for (const auto invalid : {"", "../main", "a//b", "a.lock", "a b", "a\\b", "a@{b", ".hidden"})
     {
         auto bad = n;

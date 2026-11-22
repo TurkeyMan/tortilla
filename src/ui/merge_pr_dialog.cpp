@@ -31,7 +31,7 @@ std::string method_label(merge_method m)
 // (a fork's branch is its owner's).
 bool own_branch(const open_pr& p)
 {
-    return p.pr.head == p.into.repo;
+    return same_repository(p.pr.head, p.into.repo);
 }
 
 // On a worker: the account's token, then `work` with it; `done` on the UI

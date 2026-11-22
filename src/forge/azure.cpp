@@ -445,7 +445,7 @@ std::expected<pull_request, std::string> create(const forge_repo& r, const new_p
                                                 std::string_view token)
 {
     if (auto why = action_scope_error(r); !why.empty()) return std::unexpected(std::move(why));
-    if (!(r == n.head))
+    if (!same_repository(r, n.head))
         return std::unexpected(
             std::string(_("Azure DevOps pull requests between forks are not supported; choose "
                           "branches in the same repository.")));
