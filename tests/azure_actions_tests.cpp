@@ -128,6 +128,7 @@ void run_azure_actions_tests()
           "azure writes: exact create URL, auth and documented JSON fields");
     auto fork = n;
     fork.head.name = "fork";
+    fork.head.azure_id = "d6245f20-2af8-44f4-9451-8107cb2767db";
     const auto before = requests.size();
     check(!create_pull_request(forge_kind::azure, repo, fork, token) && before == requests.size(),
           "azure writes: fork creation refused before transport");
