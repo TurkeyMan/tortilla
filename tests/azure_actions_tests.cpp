@@ -11,9 +11,12 @@ namespace tortilla::test
 void run_azure_actions_tests()
 {
     const forge_repo repo{
-        .host = "dev.azure.com", .owner = "fabrikam/My Project", .name = "My Repo"};
+        .host = "dev.azure.com", .owner = "fabrikam/My Project", .name = "My Repo",
+        .azure_id = "a7573007-bbb3-4341-b726-0c4148a07853"};
     std::string root =
         "https://dev.azure.com/fabrikam/My%20Project/_apis/git/repositories/My%20Repo";
+    const std::string refs_url = "https://dev.azure.com/fabrikam/_apis/git/repositories/" +
+                                 repo.azure_id + "/refs?api-version=7.1";
     const std::string sha(40, 'a'), token = "actions-fixture-pat";
     forge_detail::bind_token(token, "dev.azure.com/fabrikam");
     struct request
@@ -265,11 +268,24 @@ void run_azure_actions_tests()
     requests.clear();
     check(delete_branch(forge_kind::azure, repo, "topic/one", token, sha).empty() &&
               requests.size() == 1 && requests[0].method == "POST" &&
-              requests[0].url == root + "/refs?api-version=7.1" &&
+              requests[0].url == refs_url &&
               (*json::parse(requests[0].body))[size_t(0)]["oldObjectId"].str() == sha &&
               (*json::parse(requests[0].body))[size_t(0)]["newObjectId"].str() ==
                   std::string(40, '0'),
           "azure writes: one refs POST uses reviewed SHA without fetching a new branch tip");
+    {
+        auto rebound = repo;
+        rebound.name = "name-now-owned-by-another-repository";
+        requests.clear();
+        check(delete_branch(forge_kind::azure, rebound, "topic/one", token, sha).empty() &&
+                  requests.size() == 1 && requests[0].url == refs_url,
+              "azure writes: name reassignment cannot redirect cleanup away from verified target GUID");
+        rebound.azure_id.clear();
+        requests.clear();
+        check(!delete_branch(forge_kind::azure, rebound, "topic/one", token, sha).empty() &&
+                  requests.empty(),
+              "azure writes: cleanup without verified repository identity preserves the branch");
+    }
     for (const auto failure : {"forcePushRequired", "writePermissionRequired",
                                "rejectedByPolicy", "locked", "future"})
     {

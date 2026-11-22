@@ -393,17 +393,21 @@ std::string pr_url(const forge_repo& r, int number)
     return repository_api(r) + "/pullrequests/" + std::to_string(number);
 }
 
+bool repository_guid(std::string_view id)
+{
+    bool guid = id.size() == 36;
+    for (size_t i = 0; guid && i < id.size(); ++i)
+        guid = i == 8 || i == 13 || i == 18 || i == 23
+                   ? id[i] == '-'
+                   : std::isxdigit(static_cast<unsigned char>(id[i])) != 0;
+    return guid;
+}
+
 std::string action_scope_error(const forge_repo& r)
 {
-    if (r.owner.find('/') != std::string::npos) return {};
+    if (r.owner.find('/') != std::string::npos || repository_guid(r.name)) return {};
     // A repository name needs a project; only a GUID is organization-unique.
     // https://github.com/microsoft/azure-devops-mcp/blob/main/src/tools/repositories.ts
-    bool guid = r.name.size() == 36;
-    for (size_t i = 0; guid && i < r.name.size(); ++i)
-        guid = i == 8 || i == 13 || i == 18 || i == 23
-                   ? r.name[i] == '-'
-                   : std::isxdigit(static_cast<unsigned char>(r.name[i])) != 0;
-    if (guid) return {};
     return _("Azure DevOps changes require a project-qualified repository URL or a repository GUID; "
              "the repository name alone is ambiguous within the organization.");
 }
@@ -590,7 +594,12 @@ std::string close(const forge_repo& r, int number, std::string_view reason, std:
 std::string delete_branch(const forge_repo& r, std::string_view name, std::string_view token,
                           std::string_view expected_sha)
 {
-    if (auto why = action_scope_error(r); !why.empty()) return why;
+    auto target = r;
+    if (repository_guid(r.azure_id)) target.name = r.azure_id;
+    else if (!repository_guid(r.name))
+        return _("The Azure repository identity has not been verified; the branch was preserved.");
+    target.owner = org(r);
+    const auto api = repository_api(target);
     if (!valid_branch(name)) return _("Invalid Azure DevOps branch name.");
     if (!object_id(expected_sha)) return _("The reviewed source commit is missing; the branch was preserved.");
     const auto ref = "refs/heads/" + std::string(name);
@@ -598,7 +607,7 @@ std::string delete_branch(const forge_repo& r, std::string_view name, std::strin
     const auto body = "[{\"name\":" + json::quoted(ref) + ",\"oldObjectId\":" + json::quoted(expected_sha) +
                       ",\"newObjectId\":\"0000000000000000000000000000000000000000\"}]";
     // https://learn.microsoft.com/en-us/rest/api/azure/devops/git/refs/update-refs?view=azure-devops-rest-7.1
-    const auto reply = write("POST", repository_api(r) + "/refs?api-version=7.1", body, token, 200);
+    const auto reply = write("POST", api + "/refs?api-version=7.1", body, token, 200);
     if (!reply) return reply.error();
     for (const json::value& v : (*json::parse(*reply))["value"].elements())
         if (v["name"].str() == ref)
@@ -616,7 +625,7 @@ std::string delete_branch(const forge_repo& r, std::string_view name, std::strin
             failed.status = 200;
             failed.body =
                 "{\"message\":" + json::quoted(state + ": " + v["customMessage"].str()) + "}";
-            return response_error(failed, repository_api(r), token) +
+            return response_error(failed, api, token) +
                    ". Required scope: Code (Read & Write), plus branch deletion/Force push "
                    "permission.";
         }

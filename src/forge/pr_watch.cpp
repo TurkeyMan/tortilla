@@ -391,7 +391,9 @@ void pr_watch::ask(bool forced)
                 if (reply->tips)
                     for (const forge_remote& same : remotes)
                         if (same.repo == r.repo) tips[same.name] = *reply->tips;
-                for (pull_request& pr : reply->prs) found.push_back({std::move(pr), r});
+                auto target = r;
+                if (reply->repository) target.repo = *reply->repository;
+                for (pull_request& pr : reply->prs) found.push_back({std::move(pr), target});
             }
             std::map<std::string, repo_access> access;
             {

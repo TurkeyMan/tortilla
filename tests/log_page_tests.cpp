@@ -30,6 +30,7 @@
 #include "settings.h"
 #include "test_support.h"
 #include "ui/modal_dialogs.h"
+#include "ui/merge_pr_dialog.h"
 #include "ui/repo_icon.h"
 #include "ui/settings_dialog.h"
 #include "ui/trust_repository.h"
@@ -54,6 +55,20 @@
 
 namespace tortilla
 {
+
+struct close_pr_dialog_test
+{
+    static void submit(close_pr_dialog& d)
+    {
+        if (!d.completed_ && !d.busy_)
+        {
+            d.reason_->set_text("Reason");
+            d.delete_->set_checked(true);
+        }
+        d.close_it();
+    }
+    static bool completed(const close_pr_dialog& d) { return d.completed_; }
+};
 
 // The forge panel's download line, from outside (forge_panel.h befriends it).
 struct forge_panel_test
@@ -2343,6 +2358,78 @@ void forge_tabs_tests(rap::ui& ui, const std::string& repo)
               azure_remotes[0].repo.owner == "offline-azure-eligibility/My Project" &&
               azure_remotes[0].repo.name == "sdk.git",
           "azure forge tabs: real remote discovery recognizes canonical organization and literal name");
+    {
+        // Run the real first worker answer, then close its returned PR. No live helper or forge.
+        const std::string target_id = "a7573007-bbb3-4341-b726-0c4148a07853";
+        const std::string head(40, 'a');
+        std::atomic<int> reasons{0}, abandoned{0}, cleanups{0};
+        std::atomic<bool> correct_target{false};
+        credential_helper::set_runner([](const credential_helper::request&)
+            -> std::expected<credential_helper::reply, std::string>
+            { return credential_helper::reply{.exit_code = 0,
+                       .output = "username=fixture\npassword=watch-close-fixture\n\n"}; });
+        forge_detail::set_transport([&](std::string_view method, const std::string& url,
+                                       std::string_view, const rap::sys::http_options&)
+        {
+            rap::sys::http_response response{.status = 200};
+            // Documented GitRepository.id and GitPullRequest response shapes.
+            // https://learn.microsoft.com/en-us/rest/api/azure/devops/git/repositories/get-repository?view=azure-devops-rest-7.1
+            // https://learn.microsoft.com/en-us/rest/api/azure/devops/git/pull-requests/get-pull-requests?view=azure-devops-rest-7.1
+            if (url.find("/pullrequests?") != std::string::npos)
+                response.body = "{\"value\":[{\"pullRequestId\":42,\"title\":\"Fixture\","
+                    "\"sourceRefName\":\"refs/heads/topic\",\"targetRefName\":\"refs/heads/main\","
+                    "\"lastMergeSourceCommit\":{\"commitId\":\"" + head + "\"}}]}";
+            else if (method == "GET") response.body = "{\"id\":\"" + target_id + "\"}";
+            else if (url.find("/threads?") != std::string::npos)
+            {
+                ++reasons;
+                response.body = R"({"id":17})";
+            }
+            else if (method == "PATCH")
+            {
+                ++abandoned;
+                response.body = R"({"status":"abandoned"})";
+            }
+            else
+            {
+                ++cleanups;
+                correct_target = url.find("/repositories/" + target_id + "/refs?") != std::string::npos;
+                response.body = R"({"value":[{"name":"refs/heads/topic","success":false,"updateStatus":"staleOldObjectId"}]})";
+            }
+            return response;
+        });
+        {
+            pr_watch watch(ui, azure_repo, [] {});
+            const bool answered = pump(ui, [&] { return !watch.pull_requests().empty(); });
+            check(answered && watch.pull_requests()[0].into.repo.azure_id == target_id &&
+                      watch.remotes()[0].repo.azure_id == target_id,
+                  "azure watch: first real poll publishes verified target identity in open_pr");
+            if (answered)
+            {
+                auto dialog = close_pr_dialog::open(ui, watch.pull_requests()[0]);
+                int refreshed = 0;
+                dialog->on_done([&] { ++refreshed; });
+                const bool held = g_backend->hold_dialogs;
+                const auto old_messages = g_backend->held_messages.size();
+                g_backend->hold_dialogs = true;
+                close_pr_dialog_test::submit(*dialog);
+                check(pump(ui, [&] { return close_pr_dialog_test::completed(*dialog); }) &&
+                          refreshed == 1 && reasons == 1 && abandoned == 1 && cleanups == 1 &&
+                          correct_target &&
+                          g_backend->last_message.find("Closed;") != std::string::npos,
+                      "azure close: confirmed abandonment refreshes once despite cleanup warning");
+                close_pr_dialog_test::submit(*dialog);
+                settle(ui);
+                check(refreshed == 1 && reasons == 1 && abandoned == 1 && cleanups == 1,
+                      "azure close: repeating a completed close cannot repost reason or abandonment");
+                dialog.reset();  // warning is unparented and may outlive its former owner
+                g_backend->held_messages.resize(old_messages);
+                g_backend->hold_dialogs = held;
+            }
+        }
+        credential_helper::set_runner({});
+        forge_detail::set_transport({});
+    }
     forge_panel azure_panel({.ui = ui, .workdir = azure_repo});
     azure_panel.set_forge_possible(!azure_remotes.empty());
     const auto azure_layout = azure_panel.layout(label{"Commit contents"});

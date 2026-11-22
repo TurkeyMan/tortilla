@@ -333,6 +333,8 @@ void close_pr_dialog::show()
 
 void close_pr_dialog::close_it()
 {
+    if (busy_ || completed_) return;
+    busy_ = true;
     std::string reason = reason_->text();
     std::erase(reason, '\r');
     reason = trimmed(reason);
@@ -342,7 +344,7 @@ void close_pr_dialog::close_it()
     with_token(
         ui_, alive_, pr_.into.account,
         [p = pr_, reason,
-         delete_after](const std::string& token) -> std::expected<void, std::string>
+         delete_after](const std::string& token) -> std::expected<std::string, std::string>
         {
             const forge_kind k = p.into.account.kind;
             if (std::string why = close_pull_request(k, p.into.repo, p.pr.number, reason, token);
@@ -352,19 +354,25 @@ void close_pr_dialog::close_it()
                 if (std::string why = delete_branch(k, p.into.repo, p.pr.head_branch, token,
                                                     p.pr.head_sha);
                     !why.empty())
-                    return std::unexpected(
-                        rap::i18n::format(_("Closed; the branch couldn't be deleted: {0}"), why));
-            return {};
+                    return rap::i18n::format(_("Closed; the branch couldn't be deleted: {0}"), why);
+            return std::string();
         },
-        [this](std::expected<void, std::string> r)
+        [this](std::expected<std::string, std::string> r)
         {
+            busy_ = false;
             if (!r)
             {
                 status_->set_text(r.error());
                 ok_->set_enabled(true);
                 return;
             }
+            completed_ = true;
             if (done_) done_();
+            if (!r->empty())
+                show_message(ui_, nullptr,
+                             {.icon = rap::message_spec::icon::warning,
+                              .title = rap::i18n::format(_("Close Pull Request #{0}"), pr_.pr.number),
+                              .text = *r});
             window_->close();
             if (closed_) closed_();
         });

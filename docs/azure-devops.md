@@ -313,6 +313,11 @@ Azure's compare-and-swap preserves a changed or recreated branch. Per-ref HTTP20
 stale head, Force push/write permission, policy, lock and unknown statuses)
 are failures; documented succeeded/nonexistent/corrupt deletion outcomes
 require `success=true`.
+The refs update addresses the verified repository GUID carried by the first
+PR-watch answer, so a reused repository name cannot redirect cleanup. Without
+verified identity cleanup is refused. Once abandonment is confirmed, cleanup
+failure is a warning on that completed close: the log refreshes once and the
+dialog cannot repeat the reason or abandonment while the warning is pending.
 
 Mutations using a repository name require a project-qualified URL. An
 organization-only URL is accepted only with a repository GUID; otherwise

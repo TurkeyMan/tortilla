@@ -66,6 +66,7 @@ public:
     void on_done(std::function<void()> f) { done_ = std::move(f); }
 
 private:
+    friend struct close_pr_dialog_test;
     close_pr_dialog(rap::ui&, open_pr);
     void close_it();
 
@@ -74,6 +75,7 @@ private:
     std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
     std::unique_ptr<rap::window> window_;
     std::function<void()> closed_, done_;
+    bool busy_ = false, completed_ = false;
     rap::text_view* reason_ = nullptr;
     rap::check* delete_ = nullptr;
     rap::label* status_ = nullptr;
