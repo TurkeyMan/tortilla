@@ -28,9 +28,14 @@ Every authenticated read checks each redirect before it is sent:
 - Followed without credentials: any other https host, such as
   `*.blob.core.windows.net`, `*.vsblob.visualstudio.com` or an artifacts CDN,
   where Azure Pipelines artifact and log downloads go with a signed URL.
-  Authorization, Cookie and Proxy-Authorization stay off that hop and every
-  later one, even one back at dev.azure.com/{organization}.
+  Caller Authorization, Cookie, explicit Proxy-Authorization and URL userinfo
+  stay off that hop and every later one, even one back at
+  dev.azure.com/{organization}. Proxy-configuration credentials remain with
+  the proxy; they are not credentials for an origin.
 
+Rapport supplies callback URLs as sent: literal dot segments removed, fragments
+dropped and an empty path replaced by `/`; percent escapes remain as sent.
+The organization check also handles decoded dot segments conservatively.
 Requests without credentials are not checked.
 
 Identity uses only the documented `connectionData.authenticatedUser.id` as

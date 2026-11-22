@@ -574,6 +574,18 @@ void run_azure_tests()
                   !azure::redirect_in_scope("fabrikam", "https://dev.azure.com/contoso/x", "") &&
                   !azure::redirect_in_scope("fabrikam", "https://dev.azure.com/contoso/x", "#a"),
               "azure redirect: an empty or fragment-only Location stays on the current URL");
+        // Rapport #114 supplies both URLs as sent: literal dot segments and
+        // fragments removed, percent escapes unchanged (sys.h on_redirect).
+        check(azure::redirect_decision("fabrikam", "https://dev.azure.com/fabrikam/x?y=1",
+                                       "https://dev.azure.com/fabrikam/x?y=1") ==
+                  rap::sys::redirect_action::follow &&
+                  azure::redirect_decision("fabrikam", "https://dev.azure.com/contoso/x",
+                                           "https://dev.azure.com/contoso/x") ==
+                      rap::sys::redirect_action::stop &&
+                  azure::redirect_decision("fabrikam", "https://dev.azure.com/",
+                                           "https://dev.azure.com/") ==
+                      rap::sys::redirect_action::stop,
+              "azure redirect: normalized same-document callback URLs preserve organization scope");
         check(!azure::redirect_in_scope("", from, from),
               "azure redirect: no organization, nothing in it");
         check(azure::scope_organization("https://dev.azure.com/fabrikam/") == "fabrikam" &&
@@ -649,12 +661,12 @@ void run_azure_tests()
         const std::string start = "https://dev.azure.com/fabrikam/My%20Project/_apis/git?x=1";
         const rap::sys::http_options signed_in{
             .headers = api_headers(forge_kind::azure, "azure-fixture-pat")};
-        chain = {"https://dev.azure.com/fabrikam/a", "https://dev.azure.com/FabriKam/./b"};
+        chain = {"https://dev.azure.com/fabrikam/a", "https://dev.azure.com/FabriKam/b"};
         sent.clear();
         auto r = forge_detail::http_get(start, signed_in);
         check(r.status == 200 && r.error.empty() && sent.size() == 3 && hooked,
               "azure redirect: hops within the organization are each followed");
-        chain = {"https://dev.azure.com/fabrikam/a", "https://dev.azure.com/fabrikam/../contoso/b",
+        chain = {"https://dev.azure.com/fabrikam/a", "https://dev.azure.com/contoso/b",
                  "https://dev.azure.com/contoso/c"};
         sent.clear();
         r = forge_detail::http_get(start, signed_in);
