@@ -236,8 +236,8 @@ void run_azure_tests()
 
     // Build.SourceBranch/SourceVersion: PR validation builds the generated merge.
     // https://learn.microsoft.com/en-us/azure/devops/pipelines/build/variables?view=azure-devops
-    // GitPullRequest.lastMergeSourceCommit / lastMergeCommit:
-    // https://learn.microsoft.com/en-us/rest/api/azure/devops/git/pull-requests/get-pull-request?view=azure-devops-rest-7.1
+    // GitPullRequest.lastMergeSourceCommit / lastMergeCommit in the PR list:
+    // https://learn.microsoft.com/en-us/rest/api/azure/devops/git/pull-requests/get-pull-requests?view=azure-devops-rest-7.1
     int pr_commit_queries = 0;
     forge_detail::set_transport([&](std::string_view method, const std::string& url,
                                      std::string_view body, const rap::sys::http_options& options)
@@ -245,18 +245,20 @@ void run_azure_tests()
         if (url.find("/build/builds?") != std::string::npos)
             return rap::sys::http_response{.status = 200, .body =
                 R"({"value":[{"id":23,"sourceBranch":"refs/pull/42/merge","sourceVersion":"validation-merge","definition":{"id":1,"name":"Pipeline"}},{"id":24,"sourceBranch":"refs/pull/42/merge","sourceVersion":"unrelated-merge","definition":{"id":2,"name":"Unrelated"}}]})"};
-        if (url.find("/pullrequests/42?") != std::string::npos)
+        if (url.find("/pullrequests?") != std::string::npos)
         {
             ++pr_commit_queries;
+            check(url.find("searchCriteria.status=all") != std::string::npos,
+                  "azure: correlation includes completed and abandoned PR contexts");
             return rap::sys::http_response{.status = 200, .body =
-                R"({"pullRequestId":42,"lastMergeSourceCommit":{"commitId":"source-tip"},"lastMergeCommit":{"commitId":"validation-merge"}})"};
+                R"({"value":[{"pullRequestId":42,"status":"completed","lastMergeSourceCommit":{"commitId":"source-tip"},"lastMergeCommit":{"commitId":"validation-merge"}}]})"};
         }
         return documented(method, url, body, options);
     });
     const auto validation = commit_checks(forge_kind::azure, repo, "source-tip", "azure-fixture-pat");
     check(validation && validation->workflows.size() == 2 &&
               validation->workflows[0].run_id == 23 && pr_commit_queries == 1,
-          "azure: distinct PR source and validation merge SHAs select only the correlated build");
+          "azure: distinct PR source and validation merge SHAs select only the correlated closed PR build");
     if (validation && !validation->workflows.empty())
     {
         const auto failed = job_failure_details(forge_kind::azure, repo,
@@ -271,6 +273,25 @@ void run_azure_tests()
     check(unrelated && std::ranges::none_of(unrelated->workflows,
                                             [](const auto& w) { return w.run_id != 0; }),
           "azure: another source tip never inherits the PR validation build");
+
+    int unrelated_queries = 0;
+    forge_detail::set_transport([&](std::string_view method, const std::string& url,
+                                     std::string_view body, const rap::sys::http_options& options)
+    {
+        if (url.find("/build/builds?") != std::string::npos)
+            return rap::sys::http_response{.status = 200, .body =
+                R"({"value":[{"id":99,"sourceBranch":"refs/pull/999/merge","sourceVersion":"unrelated","definition":{"id":2,"name":"Other"}},{"id":23,"sourceVersion":"sha","definition":{"id":1,"name":"Pipeline"}}]})"};
+        if (url.find("/pullrequests") != std::string::npos)
+        {
+            if (url.find("/pullrequests?") == std::string::npos) ++unrelated_queries;
+            return rap::sys::http_response{.status = 403, .body = R"({"message":"PR is inaccessible"})"};
+        }
+        return documented(method, url, body, options);
+    });
+    const auto direct = commit_checks(forge_kind::azure, repo, "sha", "azure-fixture-pat");
+    check(direct && std::ranges::any_of(direct->workflows, [](const auto& w) { return w.run_id == 23; }) &&
+              unrelated_queries == 0,
+          "azure: optional PR context failure preserves direct builds and never queries unrelated PRs");
 
     // Project is optional in modern and legacy clone URLs. Never infer it
     // from the repository name; use GitRepository.project from the API.
@@ -316,7 +337,7 @@ void run_azure_tests()
                                                 projectless_ci->workflows[0].jobs[0], "azure-fixture-pat");
         const auto files = commit_artifacts(forge_kind::azure, projectless, "sha", *projectless_ci,
                                             "azure-fixture-pat");
-        check(failed && files && files->size() == 1 && hydrated_routes && project_queries == 3,
+        check(failed && files && files->size() == 1 && hydrated_routes && project_queries == 4,
               "azure: projectless timeline, logs and artifacts all use returned project, never repo name");
     }
     int missing_project_requests = 0;
@@ -331,6 +352,51 @@ void run_azure_tests()
     check(!missing_project && missing_project.error().find("repository.project") != std::string::npos &&
               no_artifacts && no_artifacts->empty() && missing_project_requests == 1,
           "azure: missing project fails clearly without guessing; empty builds need no project lookup");
+
+    // GitRepository.id and GitPullRequest.forkSource.repository identify a
+    // fork across projectless and qualified URLs, without a name-only match.
+    // https://learn.microsoft.com/en-us/rest/api/azure/devops/git/repositories/get-repository?view=azure-devops-rest-7.1
+    // https://learn.microsoft.com/en-us/rest/api/azure/devops/git/pull-requests/get-pull-requests?view=azure-devops-rest-7.1
+    const forge_repo fork_remote{.host = "dev.azure.com", .owner = "fabrikam", .name = "My Fork"};
+    forge_detail::set_transport([&](std::string_view, const std::string& url, std::string_view,
+                                     const rap::sys::http_options&)
+    {
+        if (url.find("/My%20Fork?") != std::string::npos)
+            return rap::sys::http_response{.status = 200, .body =
+                R"({"id":"79CDDF26-69EA-4246-BA72-DCBE093422BA","project":{"id":"different-project"}})"};
+        if (url.find("/My%20Repo?") != std::string::npos)
+            return rap::sys::http_response{.status = 200, .body =
+                R"({"id":"3411ebc1-d5aa-464f-9615-0b527bc66719"})"};
+        if (url.find("/My%20Repo/pullrequests?") != std::string::npos)
+            return rap::sys::http_response{.status = 200, .body =
+                R"({"value":[{"pullRequestId":42,"sourceRefName":"refs/heads/topic","lastMergeSourceCommit":{"commitId":"source-tip"},"forkSource":{"repository":{"id":"79cddf26-69ea-4246-ba72-dcbe093422ba","remoteUrl":"https://dev.azure.com/fabrikam/Other%20Project/_git/My%20Fork"}}}]})"};
+        return rap::sys::http_response{.status = 200, .body = R"({"value":[]})"};
+    });
+    const auto upstream = open_pull_requests(forge_kind::azure, repo, "azure-fixture-pat", true, false);
+    const auto fork = open_pull_requests(forge_kind::azure, fork_remote, "azure-fixture-pat", true, false);
+    check(upstream && upstream->prs.size() == 1 && fork && fork->repository,
+          "azure: PR and projectless remote expose verified repository GUID metadata");
+    if (upstream && upstream->prs.size() == 1 && fork && fork->repository)
+    {
+        std::vector<forge_remote> remotes{{.name = "fork", .repo = *fork->repository}};
+        const std::vector<open_pr> prs{{.pr = upstream->prs[0]}};
+        check(match_pull_requests(remotes, prs).contains("refs/remotes/fork/topic"),
+              "azure: verified GUID decorates projectless fork despite qualified PR clone URL");
+        check(*fork->repository == fork_remote,
+              "azure: verified identity metadata preserves existing structural repository keys");
+        remotes[0].repo = upstream->prs[0].head;
+        remotes[0].repo.azure_id = "another-repository";
+        check(match_pull_requests(remotes, prs).empty(),
+              "azure: same repository name in another project never overrides different GUIDs");
+        remotes[0].repo = *fork->repository;
+        remotes[0].repo.azure_id.clear();
+        check(match_pull_requests(remotes, prs).empty(),
+              "azure: unverified projectless repository never uses a name-only match");
+        remotes[0].repo.azure_id = upstream->prs[0].head.azure_id;
+        remotes[0].repo.owner = "another-org";
+        check(match_pull_requests(remotes, prs).empty(),
+              "azure: repository GUID identity remains scoped to the verified organization");
+    }
     forge_detail::set_transport(documented);
 
     // E1 synthetic enum fixtures use the exact documented state/result/vote values.

@@ -137,9 +137,21 @@ std::expected<forge_account, std::string> who_am_i(forge_kind, std::string_view 
 struct forge_repo
 {
     std::string host, owner, name;
+    // Azure's verified GitRepository.id, never inferred from a clone URL.
+    std::string azure_id;
     std::string path() const { return owner + "/" + name; }
-    bool operator==(const forge_repo&) const = default;
+    bool operator==(const forge_repo& other) const
+    {
+        return host == other.host && owner == other.owner && name == other.name;
+    }
 };
+inline bool same_repository(const forge_repo& a, const forge_repo& b)
+{
+    if (a.host == "dev.azure.com" && b.host == a.host && !a.azure_id.empty() && !b.azure_id.empty())
+        return a.owner.substr(0, a.owner.find('/')) == b.owner.substr(0, b.owner.find('/')) &&
+               a.azure_id == b.azure_id;
+    return a == b;
+}
 std::optional<forge_repo> repo_of_url(std::string_view url);
 
 // The checks on a pull request's head: CI's runs, combined.
@@ -272,6 +284,8 @@ struct pull_requests_reply
     // Its branches, when asked for and the forge said: for telling a fetch
     // has something to bring.
     std::optional<remote_tips> tips;
+    // Azure resolves clone aliases to a documented repository GUID on its worker.
+    std::optional<forge_repo> repository;
 };
 // `ask_access`: GitLab's and Gitea's take a request more (GitHub's comes
 // with the list), wanted once. `ask_tips`: the branches too, in the same

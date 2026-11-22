@@ -16,6 +16,9 @@ Modern and legacy projectless clone URLs are accepted too. Repository API
 routes omit the project until the documented GitRepository.project identity
 is available; Build, timeline, log and artifact routes use that returned
 project, never the repository name as a guess.
+PR branch decoration compares documented repository GUIDs within an
+organization once both sides are resolved. Until then only exact clone
+paths match; equal repository names across projects are never enough.
 Each path component is decoded once and independently encoded for API URLs.
 Encoded separators and dot segments are rejected. Basic authentication uses
 an empty username and PAT password, restricted to that organization's path.
@@ -245,10 +248,12 @@ responses. D-series cases deliberately inject unsuccessful HTTP responses.
 
 Existing per-row completed/error results remain cached by the forge panel.
 PR validation builds use a generated merge SHA. For a documented
-`refs/pull/{id}/merge` source branch, Tortilla reads that PR and associates
-the build only when lastMergeSourceCommit matches the selected source tip
-and lastMergeCommit matches the build's sourceVersion. Exact commit builds
-still match directly. Unrelated source or merge SHAs are never associated.
+`refs/pull/{id}/merge` source branch, Tortilla optionally reads one bounded
+100-item PR context list (all statuses, including closed PRs). Only contexts
+whose lastMergeSourceCommit matches the selected source tip contribute a
+lastMergeCommit/build-sourceVersion pair. It never fetches each unrelated
+historical PR. If optional context lookup fails, exact commit builds still
+survive. The same existing first-100 limit may omit an older PR context.
 PR-watch retries on its existing schedule, but an initial CI lookup failure
 without a subsequent PR-placement/source change may require reopening the
 log tab after credentials become available. No additional timers or layout

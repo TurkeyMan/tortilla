@@ -139,7 +139,7 @@ match_pull_requests(const std::vector<forge_remote>& remotes, const std::vector<
     std::unordered_map<std::string, open_pr> out;
     for (const open_pr& p : prs)
         for (const forge_remote& r : remotes)
-            if (r.repo == p.pr.head)
+            if (same_repository(r.repo, p.pr.head))
                 out.emplace("refs/remotes/" + r.name + "/" + p.pr.head_branch, p);
     return out;
 }
@@ -306,7 +306,11 @@ void pr_watch::ask(bool forced)
     }
     timer_.reset();
     const bool had_remotes = !remotes_.empty();
-    remotes_ = forge_remotes(workdir_);
+    auto fresh = forge_remotes(workdir_);
+    for (auto& remote : fresh)
+        if (const auto old = std::ranges::find_if(remotes_, [&](const auto& r) { return r.repo == remote.repo; });
+            old != remotes_.end()) remote.repo.azure_id = old->repo.azure_id;
+    remotes_ = std::move(fresh);
     if (had_remotes != !remotes_.empty() && forge_possible_) forge_possible_(!remotes_.empty());
     if (remotes_.empty())
     {
@@ -337,6 +341,7 @@ void pr_watch::ask(bool forced)
             std::map<std::string, remote_tips, std::less<>> tips;
             std::string error;
             std::vector<forge_repo> asked, kept;  // kept: not asked now, as last heard
+            std::vector<std::pair<forge_remote, forge_repo>> resolved;
             for (const forge_remote& r : remotes)
             {
                 if (std::ranges::find(asked, r.repo) != asked.end()) continue;
@@ -389,6 +394,7 @@ void pr_watch::ask(bool forced)
                 }
                 if (anonymous_github(r)) sh->anonymous_asked[seen] = now_seconds();
                 if (reply->access != repo_access::unknown) sh->access[seen] = reply->access;
+                if (reply->repository) resolved.emplace_back(r, *reply->repository);
                 // Every remote that is this repository has its branches.
                 if (reply->tips)
                     for (const forge_remote& same : remotes)
@@ -403,7 +409,7 @@ void pr_watch::ask(bool forced)
             ui.post(
                 [this, sh, found = std::move(found), error = std::move(error),
                  kept = std::move(kept), access = std::move(access),
-                 tips = std::move(tips)]() mutable
+                 tips = std::move(tips), resolved = std::move(resolved)]() mutable
                 {
                     {
                         std::lock_guard lock(sh->mutex);
@@ -411,6 +417,9 @@ void pr_watch::ask(bool forced)
                     }
                     asking_ = false;
                     error_ = std::move(error);
+                    for (auto& remote : remotes_)
+                        for (const auto& resolution : resolved)
+                            if (remote.repo == resolution.first.repo) remote.repo = resolution.second;
                     for (open_pr& p : prs_)
                         if (std::ranges::find(kept, p.into.repo) != kept.end())
                             found.push_back(std::move(p));

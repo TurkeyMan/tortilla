@@ -41,6 +41,13 @@ std::string decoded(std::string_view s)
     return out;
 }
 
+std::string repository_id(const json::value& repository)
+{
+    auto id = repository["id"].str();
+    std::ranges::transform(id, id.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+    return id;
+}
+
 std::vector<std::string> segments(std::string_view path)
 {
     std::vector<std::string> out;
@@ -124,9 +131,11 @@ pull_request parse_pr(const json::value& v, const forge_repo& r, bool complete)
     p.title = v["title"].str();
     p.url = web_repo(r) + "/pullrequest/" + std::to_string(p.number);
     p.head = r;
+    if (const auto id = repository_id(v["repository"]); !id.empty()) p.head.azure_id = id;
     if (const auto fork = v["forkSource"]["repository"]; fork)
     {
         if (const auto other = repo_of_url(fork["remoteUrl"].str())) p.head = *other;
+        p.head.azure_id = repository_id(fork);
     }
     p.head_branch = branch(v["sourceRefName"]);
     p.base_branch = branch(v["targetRefName"]);
@@ -589,12 +598,20 @@ std::expected<forge_account, std::string> identity(std::string_view host, std::s
 std::expected<pull_requests_reply, std::string> pulls(const forge_repo& r, std::string_view token,
                                                       bool tips)
 {
+    // Resolve projectless and qualified clone aliases using server identity,
+    // not repository names (which are not unique across projects).
+    // https://learn.microsoft.com/en-us/rest/api/azure/devops/git/repositories/get-repository?view=azure-devops-rest-7.1
+    const auto repository = get(repository_api(r) + "?" + std::string(version), token);
+    if (!repository) return std::unexpected(repository.error());
+    auto resolved = r;
+    resolved.azure_id = repository_id(*json::parse(*repository));
     // https://learn.microsoft.com/en-us/rest/api/azure/devops/git/pull-requests/get-pull-requests?view=azure-devops-rest-7.1
     const auto reply =
         helper_get(repository_api(r) + "/pullrequests?searchCriteria.status=active&$top=100&" +
                        std::string(version),
                    {.headers = api_headers(forge_kind::azure, token)}, token);
     pull_requests_reply out;
+    out.repository = resolved;
     const auto j = json::parse(reply.body);
     if (reply.status != 200 || !j || (*j)["value"].kind() != json::value::type::array ||
         !reply.error.empty())
@@ -602,7 +619,7 @@ std::expected<pull_requests_reply, std::string> pulls(const forge_repo& r, std::
     out.access = repo_access::read;  // PR1 deliberately exposes no mutation capabilities.
     for (const json::value& v : (*j)["value"].elements())
     {
-        auto p = parse_pr(v, r, false);
+        auto p = parse_pr(v, resolved, false);
         // Policy checks are fetched for the shown PR by details(), not N per list poll.
         out.prs.push_back(std::move(p));
     }
@@ -663,7 +680,8 @@ std::expected<commit_ci, std::string> checks(const forge_repo& remote, std::stri
     if (repo_id.empty())
         return std::unexpected(std::string(_("Azure DevOps HTTP 200: repository.id is missing.")));
     std::map<std::int64_t, std::string> builds;
-    std::map<std::int64_t, std::pair<std::string, std::string>> pr_commits;
+    std::set<std::pair<std::string, std::string>> pr_commits;
+    bool correlation_asked = false;
     std::string continuation;
     // Azure has no sourceVersion query parameter. Walk all returned pages,
     // taking the newest matching commit per definition, not the latest build
@@ -691,24 +709,28 @@ std::expected<commit_ci, std::string> checks(const forge_repo& remote, std::stri
             const auto branch = v["sourceBranch"].str();
             if (!matches && branch.starts_with("refs/pull/") && branch.ends_with("/merge"))
             {
-                const auto number = std::string_view(branch).substr(10, branch.size() - 16);
-                std::int64_t pr = 0;
-                const auto [end, error] = std::from_chars(number.data(), number.data() + number.size(), pr);
-                if (error == std::errc{} && end == number.data() + number.size() && pr > 0)
+                if (!correlation_asked)
                 {
-                    if (!pr_commits.contains(pr))
-                    {
-                        // https://learn.microsoft.com/en-us/rest/api/azure/devops/git/pull-requests/get-pull-request?view=azure-devops-rest-7.1
-                        const auto pull = get(repository_api(r) + "/pullrequests/" +
-                                                  std::to_string(pr) + "?" + std::string(version), token);
-                        if (!pull) return std::unexpected(pull.error());
-                        const auto p = *json::parse(*pull);
-                        pr_commits[pr] = {p["lastMergeSourceCommit"]["commitId"].str(),
-                                          p["lastMergeCommit"]["commitId"].str()};
-                    }
-                    const auto& [source, merge] = pr_commits[pr];
-                    matches = source == sha && !merge.empty() && v["sourceVersion"].str_is(merge);
+                    correlation_asked = true;
+                    // This PR context list is bounded like pulls(), including closed PRs: only
+                    // source tips matching this selection supply merge context.
+                    // Optional correlation never discards direct commit builds.
+                    // https://learn.microsoft.com/en-us/rest/api/azure/devops/git/pull-requests/get-pull-requests?view=azure-devops-rest-7.1
+                    auto canonical = r;
+                    canonical.name = repo_id;
+                    const auto pulls = get(repository_api(canonical) +
+                        "/pullrequests?searchCriteria.status=all&$top=100&" + std::string(version), token);
+                    if (pulls)
+                        for (const json::value& p : (*json::parse(*pulls))["value"].elements())
+                        {
+                            const auto number = p["pullRequestId"].integer().value_or(0);
+                            const auto merge = p["lastMergeCommit"]["commitId"].str();
+                            if (number > 0 && p["lastMergeSourceCommit"]["commitId"].str_is(sha) &&
+                                !merge.empty())
+                                pr_commits.emplace("refs/pull/" + std::to_string(number) + "/merge", merge);
+                        }
                 }
+                matches = pr_commits.contains({branch, v["sourceVersion"].str()});
             }
             if (matches)
                 builds.try_emplace(v["definition"]["id"].integer().value_or(0),
