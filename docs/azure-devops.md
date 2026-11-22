@@ -321,6 +321,9 @@ dialog cannot repeat the reason or abandonment while the warning is pending.
 Mutation completion is owned independently of the dialog: dismissing it during
 the worker request does not suppress the log refresh or standalone warning.
 Dialog teardown finishes before owner callbacks or modal warning dispatch.
+The existing application window accounting holds each mutation from launch
+through completion and warning dismissal/disposal, even if its dialog and the
+last log window close while requests are in flight.
 
 Mutations using a repository name require a project-qualified URL. An
 organization-only URL is accepted only with a repository GUID; otherwise

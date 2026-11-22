@@ -2200,6 +2200,8 @@ void forge_fresh_canvas_tests(rap::ui& ui, const std::string& repo)
 
 // Stable lower-page indices and silent fallback, with the real null tabs
 // implementation behind the keeping wrapper (not an emulated selection).
+built_window* built_for(const rap::window* frame);
+
 void forge_tabs_tests(rap::ui& ui, const std::string& repo)
 {
     using namespace rap::layout;
@@ -2414,6 +2416,11 @@ void forge_tabs_tests(rap::ui& ui, const std::string& repo)
                   "azure watch: first real poll publishes verified target identity in open_pr");
             if (answered)
             {
+                windows::init(ui);
+                const auto existing_window = windows::hold({});
+                bool window_released = false;
+                const bool suppressed = g_backend->suppress_quit;
+                g_backend->suppress_quit = true;
                 auto dialog = close_pr_dialog::open(ui, watch.pull_requests()[0]);
                 int refreshed = 0;
                 dialog->on_done([&] { ++refreshed; });
@@ -2465,6 +2472,54 @@ void forge_tabs_tests(rap::ui& ui, const std::string& repo)
                           reasons == 4 && abandoned == 4 && cleanups == 4,
                       "azure close: owner refresh can dispose the dialog before the standalone warning");
                 g_backend->held_messages.resize(old_messages);
+                settle(ui);  // prior warning holds release while the existing window remains
+
+                auto last = log_window::open(ui, repo);
+                check(bool(last), "azure close: a real final log window opens");
+                if (last)
+                {
+                    auto* final_log = windows::keep(std::move(*last));
+                    auto* frame = built_for(final_log->frame());
+                    check(frame != nullptr, "azure close: final log frame exists");
+                    if (frame)
+                    {
+                        const int quits = g_backend->quit_requests;
+                        messages = g_backend->messages;
+                        block_close = true;
+                        entered_close = false;
+                        release_close = false;
+                        dialog = close_pr_dialog::open(ui, watch.pull_requests()[0]);
+                        dialog->on_done([&] { ++refreshed; });
+                        close_pr_dialog_test::submit(*dialog);
+                        const bool running = pump(ui, [&] { return entered_close.load(); });
+                        dialog.reset();
+                        windows::release(existing_window);
+                        window_released = true;
+                        const bool closed = frame->window->close_request && frame->window->close_request();
+                        settle(ui);
+                        check(running && closed && !windows::ending() &&
+                                  g_backend->quit_requests == quits,
+                              "azure close: closing the final log cannot quit during held mutation");
+                        release_close = true;
+                        const bool warned = pump(ui, [&]
+                            { return refreshed == 5 && g_backend->messages == messages + 1; });
+                        check(warned && g_backend->quit_requests == quits && !windows::ending(),
+                              "azure close: application stays alive through the cleanup warning");
+                        auto dismissed = g_backend->held_messages.empty()
+                                             ? std::function<void(rap::dialog_role)>{}
+                                             : std::move(g_backend->held_messages.back());
+                        if (!g_backend->held_messages.empty()) g_backend->held_messages.pop_back();
+                        if (dismissed) dismissed(rap::dialog_role::ok);
+                        dismissed = {};
+                        check(pump(ui, [&] { return g_backend->quit_requests == quits + 1; }) &&
+                                  windows::ending(),
+                              "azure close: final quit happens once only after mutation warning dismissal");
+                    }
+                }
+                if (!window_released) windows::release(existing_window);
+                settle(ui);
+                windows::init(ui);
+                g_backend->suppress_quit = suppressed;
                 g_backend->hold_dialogs = held;
             }
         }

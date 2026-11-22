@@ -4,6 +4,7 @@
 #include "settings.h"
 #include "ui/modal_dialogs.h"
 #include "ui/repo_icon.h"
+#include "ui/windows.h"
 #include "util/strings.h"
 
 #include <rapport/sys.h>
@@ -15,6 +16,12 @@ namespace tortilla
 {
 namespace
 {
+
+struct mutation_hold
+{
+    size_t id = windows::hold({});
+    ~mutation_hold() { windows::release(id); }
+};
 
 std::string method_label(merge_method m)
 {
@@ -253,9 +260,10 @@ void merge_pr_dialog::send(bool when_ready)
     busy_ = true;
     update();
     status_->set_text(when_ready ? _("Setting it to merge when ready...") : _("Merging..."));
+    const auto app = std::make_shared<mutation_hold>();
     with_token(
         ui_, alive_, pr_.into.account,
-        [p = pr_, request,
+        [p = pr_, request, app,
          delete_after](const std::string& token) -> std::expected<std::string, std::string>
         {
             const forge_kind k = p.into.account.kind;
@@ -270,7 +278,7 @@ void merge_pr_dialog::send(bool when_ready)
                     return rap::i18n::format(_("Merged; the branch couldn't be deleted: {0}"), why);
             return std::string();
         },
-        [this, alive = std::weak_ptr<bool>(alive_), ui = &ui_, done = done_, when_ready,
+        [this, alive = std::weak_ptr<bool>(alive_), ui = &ui_, done = done_, when_ready, app,
          title = rap::i18n::format(_("Merge Pull Request #{0}"), pr_.pr.number)]
         (std::expected<std::string, std::string> r)
         {
@@ -284,7 +292,8 @@ void merge_pr_dialog::send(bool when_ready)
                 }
                 else
                     show_message(*ui, nullptr, {.icon = rap::message_spec::icon::error,
-                                                .title = title, .text = r.error()});
+                                                .title = title, .text = r.error()},
+                                 [app = app](rap::dialog_role) mutable { app.reset(); });
                 return;
             }
             if (alive.lock())
@@ -299,7 +308,8 @@ void merge_pr_dialog::send(bool when_ready)
             if (done) done(!when_ready);
             if (!r->empty())
                 show_message(*ui, nullptr, {.icon = rap::message_spec::icon::warning,
-                                            .title = title, .text = *r});
+                                            .title = title, .text = *r},
+                             [app = app](rap::dialog_role) mutable { app.reset(); });
         }, true);
 }
 
@@ -356,9 +366,10 @@ void close_pr_dialog::close_it()
     const bool delete_after = own_branch(pr_) && delete_->checked();
     ok_->set_enabled(false);
     status_->set_text(_("Closing it..."));
+    const auto app = std::make_shared<mutation_hold>();
     with_token(
         ui_, alive_, pr_.into.account,
-        [p = pr_, reason,
+        [p = pr_, reason, app,
          delete_after](const std::string& token) -> std::expected<std::string, std::string>
         {
             const forge_kind k = p.into.account.kind;
@@ -372,7 +383,7 @@ void close_pr_dialog::close_it()
                     return rap::i18n::format(_("Closed; the branch couldn't be deleted: {0}"), why);
             return std::string();
         },
-        [this, alive = std::weak_ptr<bool>(alive_), ui = &ui_, done = done_,
+        [this, alive = std::weak_ptr<bool>(alive_), ui = &ui_, done = done_, app,
          title = rap::i18n::format(_("Close Pull Request #{0}"), pr_.pr.number)]
         (std::expected<std::string, std::string> r)
         {
@@ -386,7 +397,8 @@ void close_pr_dialog::close_it()
                 }
                 else
                     show_message(*ui, nullptr, {.icon = rap::message_spec::icon::error,
-                                                .title = title, .text = r.error()});
+                                                .title = title, .text = r.error()},
+                                 [app = app](rap::dialog_role) mutable { app.reset(); });
                 return;
             }
             if (alive.lock())
@@ -400,7 +412,8 @@ void close_pr_dialog::close_it()
             if (done) done();
             if (!r->empty())
                 show_message(*ui, nullptr, {.icon = rap::message_spec::icon::warning,
-                                            .title = title, .text = *r});
+                                            .title = title, .text = *r},
+                             [app = app](rap::dialog_role) mutable { app.reset(); });
         }, true);
 }
 
