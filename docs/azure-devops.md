@@ -319,5 +319,8 @@ Rapport's per-hop `on_redirect` stops 301/302/303/307/308 before any resend,
 even within the same organization, and the write fails with `Azure DevOps
 answered the change with a redirect (HTTP N); it wasn't followed or sent
 again`. Reads follow the organization rule above (signed downloads on other
-hosts go on without credentials). The
-Rapport pin is a development pin of Rapport #114 until it lands on master.
+hosts go on without credentials). Rapport #114 is pinned to its merged master
+commit `e63642b4be20397d606ac8ac0163fc18b6b9e04f` (ABI 92). Its callback receives
+the normalized URL actually sent; refusing a mutation does not depend on that
+URL's spelling. Dropped request credentials stay off later hops; credentials
+configured for a proxy remain confined to that proxy.
