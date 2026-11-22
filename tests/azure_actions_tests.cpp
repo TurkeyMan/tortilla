@@ -12,7 +12,7 @@ void run_azure_actions_tests()
 {
     const forge_repo repo{
         .host = "dev.azure.com", .owner = "fabrikam/My Project", .name = "My Repo"};
-    const std::string root =
+    std::string root =
         "https://dev.azure.com/fabrikam/My%20Project/_apis/git/repositories/My%20Repo";
     const std::string sha(40, 'a'), token = "actions-fixture-pat";
     forge_detail::bind_token(token, "dev.azure.com/fabrikam");
@@ -231,6 +231,31 @@ void run_azure_actions_tests()
     }
     ref_status = "succeeded";
     ref_success = true;
+    {
+        // W1/W2/W4/W5 accept an omitted project; Git routes stay organization-scoped.
+        // The documented repository.project hydration is needed for Build, not these routes.
+        const auto with_project = root;
+        root = "https://dev.azure.com/fabrikam/_apis/git/repositories/My%20Repo";
+        const forge_repo projectless{
+            .host = "dev.azure.com", .owner = "fabrikam", .name = "My Repo"};
+        auto projectless_new = n;
+        projectless_new.head = projectless;
+        requests.clear();
+        const auto default_ref = default_branch(forge_kind::azure, projectless, token);
+        const auto new_pr = create_pull_request(forge_kind::azure, projectless, projectless_new, token);
+        const auto merge_error = merge_pull_request(
+            forge_kind::azure, projectless, 42, {.head_sha = sha}, token);
+        const auto close_error = close_pull_request(
+            forge_kind::azure, projectless, 42, "Reason", token);
+        const auto delete_error = delete_branch(forge_kind::azure, projectless, "topic/one", token);
+        check(default_ref && *default_ref == "main" && new_pr && merge_error.empty() &&
+                  close_error.empty() && delete_error.empty() && requests.size() == 7 &&
+                  std::ranges::all_of(requests, [&](const request& r)
+                                     { return r.url.starts_with(root); }),
+              "azure writes: projectless default/create/merge/close/delete use optional-project Git routes");
+        root = with_project;
+        requests.clear();
+    }
     {
         // A write follows no redirect, not even one within the organization:
         // a 307/308 would send the change again, a 301-303 turn it into a GET.
