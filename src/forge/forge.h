@@ -147,9 +147,12 @@ struct forge_repo
 };
 inline bool same_repository(const forge_repo& a, const forge_repo& b)
 {
-    if (a.host == "dev.azure.com" && b.host == a.host && !a.azure_id.empty() && !b.azure_id.empty())
+    if (a.host == "dev.azure.com" && b.host == a.host && !a.owner.empty() && !b.owner.empty() &&
+        !a.azure_id.empty() && !b.azure_id.empty())
         return a.owner.substr(0, a.owner.find('/')) == b.owner.substr(0, b.owner.find('/')) &&
                a.azure_id == b.azure_id;
+    if (a.host.empty() || a.owner.empty() || a.name.empty() ||
+        b.host.empty() || b.owner.empty() || b.name.empty()) return false;
     return a == b;
 }
 std::optional<forge_repo> repo_of_url(std::string_view url);

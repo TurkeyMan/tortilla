@@ -132,8 +132,12 @@ pull_request parse_pr(const json::value& v, const forge_repo& r, bool complete)
     p.url = web_repo(r) + "/pullrequest/" + std::to_string(p.number);
     p.head = r;
     if (const auto id = repository_id(v["repository"]); !id.empty()) p.head.azure_id = id;
-    if (const auto fork = v["forkSource"]["repository"]; fork)
+    if (const auto source = v["forkSource"]; source && !source.is_null())
     {
+        // A declared fork is never the target merely because source metadata
+        // is omitted. Only explicit source URL/identity may match a remote.
+        p.head = {};
+        const auto fork = v["forkSource"]["repository"];
         if (const auto other = repo_of_url(fork["remoteUrl"].str())) p.head = *other;
         p.head.azure_id = repository_id(fork);
     }
@@ -602,9 +606,10 @@ std::expected<pull_requests_reply, std::string> pulls(const forge_repo& r, std::
     // not repository names (which are not unique across projects).
     // https://learn.microsoft.com/en-us/rest/api/azure/devops/git/repositories/get-repository?view=azure-devops-rest-7.1
     const auto repository = get(repository_api(r) + "?" + std::string(version), token);
-    if (!repository) return std::unexpected(repository.error());
     auto resolved = r;
-    resolved.azure_id = repository_id(*json::parse(*repository));
+    if (repository)
+        if (const auto id = repository_id(*json::parse(*repository)); !id.empty())
+            resolved.azure_id = id;
     // https://learn.microsoft.com/en-us/rest/api/azure/devops/git/pull-requests/get-pull-requests?view=azure-devops-rest-7.1
     const auto reply =
         helper_get(repository_api(r) + "/pullrequests?searchCriteria.status=active&$top=100&" +

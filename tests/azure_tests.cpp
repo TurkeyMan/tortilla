@@ -397,6 +397,31 @@ void run_azure_tests()
         check(match_pull_requests(remotes, prs).empty(),
               "azure: repository GUID identity remains scoped to the verified organization");
     }
+    forge_detail::set_transport([&](std::string_view, const std::string& url, std::string_view,
+                                     const rap::sys::http_options&)
+    {
+        if (url.find("/pullrequests?") != std::string::npos)
+            return rap::sys::http_response{.status = 200, .body =
+                R"({"value":[{"pullRequestId":42,"sourceRefName":"refs/heads/topic","forkSource":null},{"pullRequestId":43,"sourceRefName":"refs/heads/topic","repository":{"id":"target-guid"},"forkSource":{"repository":{}}}]})"};
+        return rap::sys::http_response{.status = 403, .body = R"({"message":"Metadata unavailable"})"};
+    });
+    const auto enriched_failure = open_pull_requests(forge_kind::azure, repo,
+                                                     "azure-fixture-pat", true, false);
+    check(enriched_failure && enriched_failure->prs.size() == 2 &&
+              enriched_failure->repository && enriched_failure->repository->azure_id.empty(),
+          "azure: optional repository enrichment failure preserves a successful PR list");
+    if (enriched_failure && enriched_failure->prs.size() == 2)
+    {
+        const std::vector<forge_remote> target{{.name = "origin", .repo = repo}};
+        const auto exact = match_pull_requests(target, {{.pr = enriched_failure->prs[0]}});
+        const auto unresolved = match_pull_requests(target, {{.pr = enriched_failure->prs[1]}});
+        check(exact.contains("refs/remotes/origin/topic") && unresolved.empty(),
+              "azure: failed enrichment retains exact paths, but unresolved fork never matches target branch");
+        check(enriched_failure->prs[1].head.host.empty() &&
+                  enriched_failure->prs[1].head.azure_id.empty() &&
+                  !same_repository({}, {}),
+              "azure: unknown fork identity clears target GUID and cannot use empty-path fallback");
+    }
     forge_detail::set_transport(documented);
 
     // E1 synthetic enum fixtures use the exact documented state/result/vote values.
