@@ -234,6 +234,105 @@ void run_azure_tests()
     check(auth_ok && urls_ok,
           "azure: scoped Basic auth and API 7.1; connectionData follows unversioned SDK route");
 
+    // Build.SourceBranch/SourceVersion: PR validation builds the generated merge.
+    // https://learn.microsoft.com/en-us/azure/devops/pipelines/build/variables?view=azure-devops
+    // GitPullRequest.lastMergeSourceCommit / lastMergeCommit:
+    // https://learn.microsoft.com/en-us/rest/api/azure/devops/git/pull-requests/get-pull-request?view=azure-devops-rest-7.1
+    int pr_commit_queries = 0;
+    forge_detail::set_transport([&](std::string_view method, const std::string& url,
+                                     std::string_view body, const rap::sys::http_options& options)
+    {
+        if (url.find("/build/builds?") != std::string::npos)
+            return rap::sys::http_response{.status = 200, .body =
+                R"({"value":[{"id":23,"sourceBranch":"refs/pull/42/merge","sourceVersion":"validation-merge","definition":{"id":1,"name":"Pipeline"}},{"id":24,"sourceBranch":"refs/pull/42/merge","sourceVersion":"unrelated-merge","definition":{"id":2,"name":"Unrelated"}}]})"};
+        if (url.find("/pullrequests/42?") != std::string::npos)
+        {
+            ++pr_commit_queries;
+            return rap::sys::http_response{.status = 200, .body =
+                R"({"pullRequestId":42,"lastMergeSourceCommit":{"commitId":"source-tip"},"lastMergeCommit":{"commitId":"validation-merge"}})"};
+        }
+        return documented(method, url, body, options);
+    });
+    const auto validation = commit_checks(forge_kind::azure, repo, "source-tip", "azure-fixture-pat");
+    check(validation && validation->workflows.size() == 2 &&
+              validation->workflows[0].run_id == 23 && pr_commit_queries == 1,
+          "azure: distinct PR source and validation merge SHAs select only the correlated build");
+    if (validation && !validation->workflows.empty())
+    {
+        const auto failed = job_failure_details(forge_kind::azure, repo,
+                                                validation->workflows[0].jobs[0], "azure-fixture-pat");
+        const auto files = commit_artifacts(forge_kind::azure, repo, "source-tip", *validation,
+                                            "azure-fixture-pat");
+        check(failed && failed->log_tail.find("compiler error") != std::string::npos &&
+                  files && files->size() == 1,
+              "azure: PR source selection retains validation jobs, failure logs and artifacts");
+    }
+    const auto unrelated = commit_checks(forge_kind::azure, repo, "other-source", "azure-fixture-pat");
+    check(unrelated && std::ranges::none_of(unrelated->workflows,
+                                            [](const auto& w) { return w.run_id != 0; }),
+          "azure: another source tip never inherits the PR validation build");
+
+    // Project is optional in modern and legacy clone URLs. Never infer it
+    // from the repository name; use GitRepository.project from the API.
+    // https://learn.microsoft.com/en-us/vsts/git/gitquickstart?tabs=visual-studio
+    const forge_repo projectless{.host = "dev.azure.com", .owner = "fabrikam", .name = "My Repo"};
+    for (const char* remote : {"https://dev.azure.com/fabrikam/_git/My%20Repo",
+                               "https://user@dev.azure.com/fabrikam/_git/My%20Repo",
+                               "https://fabrikam.visualstudio.com/_git/My%20Repo",
+                               "https://fabrikam.visualstudio.com/DefaultCollection/_git/My%20Repo"})
+        check(repo_of_url(remote) == projectless,
+              "azure: modern and legacy projectless clone URLs preserve omitted project");
+    check(azure::repository_api(projectless) ==
+              "https://dev.azure.com/fabrikam/_apis/git/repositories/My%20Repo" &&
+              azure::repository_web(projectless) == "https://dev.azure.com/fabrikam/_git/My%20Repo",
+          "azure: projectless repository and browser routes omit the project segment");
+    int project_queries = 0;
+    bool hydrated_routes = true;
+    forge_detail::set_transport([&](std::string_view method, const std::string& url,
+                                     std::string_view body, const rap::sys::http_options& options)
+    {
+        // GitRepository.id and project.id/name, documented response schema.
+        // https://learn.microsoft.com/en-us/rest/api/azure/devops/git/repositories/get-repository?view=azure-devops-rest-7.1
+        if (url.starts_with("https://dev.azure.com/fabrikam/_apis/git/repositories/My%20Repo?"))
+        {
+            ++project_queries;
+            return rap::sys::http_response{.status = 200, .body =
+                R"({"id":"3411ebc1-d5aa-464f-9615-0b527bc66719","project":{"id":"9a1d7a24-dff7-4ecb-a598-5abaf07ac1db","name":"Different Project"}})"};
+        }
+        if (url.find("/_apis/build/") != std::string::npos)
+            hydrated_routes &= url.starts_with(
+                "https://dev.azure.com/fabrikam/9a1d7a24-dff7-4ecb-a598-5abaf07ac1db/_apis/build/");
+        return documented(method, url, body, options);
+    });
+    const auto projectless_prs = open_pull_requests(forge_kind::azure, projectless,
+                                                    "azure-fixture-pat", true, true);
+    const auto projectless_ci = commit_checks(forge_kind::azure, projectless, "sha", "azure-fixture-pat");
+    check(projectless_prs && projectless_prs->prs.size() == 1 && projectless_ci &&
+              !projectless_ci->workflows.empty(),
+          "azure: projectless remotes retain PR discovery and hydrate Build project identity");
+    if (projectless_ci && !projectless_ci->workflows.empty())
+    {
+        const auto failed = job_failure_details(forge_kind::azure, projectless,
+                                                projectless_ci->workflows[0].jobs[0], "azure-fixture-pat");
+        const auto files = commit_artifacts(forge_kind::azure, projectless, "sha", *projectless_ci,
+                                            "azure-fixture-pat");
+        check(failed && files && files->size() == 1 && hydrated_routes && project_queries == 3,
+              "azure: projectless timeline, logs and artifacts all use returned project, never repo name");
+    }
+    int missing_project_requests = 0;
+    forge_detail::set_transport([&](std::string_view, const std::string&, std::string_view,
+                                     const rap::sys::http_options&)
+    {
+        ++missing_project_requests;
+        return rap::sys::http_response{.status = 200, .body = R"({"id":"repository-id"})"};
+    });
+    const auto missing_project = commit_checks(forge_kind::azure, projectless, "sha", "azure-fixture-pat");
+    const auto no_artifacts = commit_artifacts(forge_kind::azure, projectless, "sha", {}, "azure-fixture-pat");
+    check(!missing_project && missing_project.error().find("repository.project") != std::string::npos &&
+              no_artifacts && no_artifacts->empty() && missing_project_requests == 1,
+          "azure: missing project fails clearly without guessing; empty builds need no project lookup");
+    forge_detail::set_transport(documented);
+
     // E1 synthetic enum fixtures use the exact documented state/result/vote values.
     // https://learn.microsoft.com/en-us/rest/api/azure/devops/build/timeline/get?view=azure-devops-rest-7.1
     for (auto [word, expected] : std::vector<std::pair<std::string, check_state>>{

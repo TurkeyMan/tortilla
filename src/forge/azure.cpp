@@ -64,8 +64,9 @@ std::string org(const forge_repo& r)
 std::string web_repo(const forge_repo& r)
 {
     const size_t slash = r.owner.find('/');
-    return "https://dev.azure.com/" + url_escape(org(r)) + "/" +
-           url_escape(r.owner.substr(slash + 1)) + "/_git/" + url_escape(r.name);
+    return "https://dev.azure.com/" + url_escape(org(r)) +
+           (slash == std::string::npos ? "" : "/" + url_escape(r.owner.substr(slash + 1))) +
+           "/_git/" + url_escape(r.name);
 }
 
 std::expected<std::string, std::string> get(const std::string& url, std::string_view token)
@@ -85,6 +86,28 @@ std::expected<std::string, std::string> get(const std::string& url, std::string_
         return std::unexpected(response_error(reply, url, token) +
                                ": missing documented response array");
     return reply.body;
+}
+
+std::expected<forge_repo, std::string> with_project(const forge_repo& r, const json::value& repo)
+{
+    if (r.owner.find('/') != std::string::npos) return r;
+    // GitRepository.project is documented by Repositories/Get Repository.
+    auto project = repo["project"]["id"].str();
+    if (project.empty()) project = repo["project"]["name"].str();
+    if (project.empty())
+        return std::unexpected(std::string(_("Azure DevOps HTTP 200: repository.project is missing.")));
+    auto scoped = r;
+    scoped.owner = org(r) + "/" + project;
+    return scoped;
+}
+
+std::expected<forge_repo, std::string> resolve_project(const forge_repo& r, std::string_view token)
+{
+    if (r.owner.find('/') != std::string::npos) return r;
+    // https://learn.microsoft.com/en-us/rest/api/azure/devops/git/repositories/get-repository?view=azure-devops-rest-7.1
+    const auto body = get(repository_api(r) + "?" + std::string(version), token);
+    if (!body) return std::unexpected(body.error());
+    return with_project(r, *json::parse(*body));
 }
 
 std::string branch(const json::value& v)
@@ -355,7 +378,9 @@ std::optional<forge_repo> remote(std::string_view host, std::string_view path)
     std::ranges::transform(h, h.begin(), [](unsigned char c) { return char(std::tolower(c)); });
     auto p = segments(path);
     std::string organization, project, name;
-    if (h == "dev.azure.com" && p.size() == 4 && p[2] == "_git")
+    if (h == "dev.azure.com" && p.size() == 3 && p[1] == "_git")
+        organization = p[0], name = p[2];
+    else if (h == "dev.azure.com" && p.size() == 4 && p[2] == "_git")
         organization = p[0], project = p[1], name = p[3];
     else if ((h == "ssh.dev.azure.com" || h == "vs-ssh.visualstudio.com") && p.size() == 4 &&
              p[0] == "v3")
@@ -363,11 +388,12 @@ std::optional<forge_repo> remote(std::string_view host, std::string_view path)
     else if (h.ends_with(".visualstudio.com"))
     {
         if (!p.empty() && p.front() == "DefaultCollection") p.erase(p.begin());
-        if (p.size() != 3 || p[1] != "_git") return {};
         organization = h.substr(0, h.size() - std::string_view(".visualstudio.com").size());
-        project = p[0], name = p[2];
+        if (p.size() == 2 && p[0] == "_git") name = p[1];
+        else if (p.size() == 3 && p[1] == "_git") project = p[0], name = p[2];
+        else return {};
     }
-    if (organization.empty() || project.empty() || name.empty()) return {};
+    if (organization.empty() || name.empty()) return {};
     if (!std::ranges::all_of(organization,
                              [](unsigned char c) {
                                  return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
@@ -376,7 +402,8 @@ std::optional<forge_repo> remote(std::string_view host, std::string_view path)
         return {};
     std::ranges::transform(organization, organization.begin(),
                            [](unsigned char c) { return char(std::tolower(c)); });
-    return forge_repo{.host = "dev.azure.com", .owner = organization + "/" + project, .name = name};
+    return forge_repo{.host = "dev.azure.com",
+                      .owner = organization + (project.empty() ? "" : "/" + project), .name = name};
 }
 
 bool scope_allows(std::string_view scope, std::string_view url)
@@ -525,8 +552,9 @@ std::string account_host(const forge_repo& r)
 }
 std::string project_api(const forge_repo& r)
 {
-    return "https://" + account_host(r) + "/" + url_escape(r.owner.substr(r.owner.find('/') + 1)) +
-           "/_apis";
+    const auto slash = r.owner.find('/');
+    return "https://" + account_host(r) +
+           (slash == std::string::npos ? "" : "/" + url_escape(r.owner.substr(slash + 1))) + "/_apis";
 }
 std::string repository_api(const forge_repo& r)
 {
@@ -612,7 +640,8 @@ std::expected<pull_request, std::string> details(const forge_repo& r, pull_reque
             "vstfs:///CodeReview/CodeReviewId/" + project + "/" + std::to_string(p.number);
         // https://learn.microsoft.com/en-us/rest/api/azure/devops/policy/evaluations/list?view=azure-devops-rest-7.1
         const auto policy =
-            get(project_api(r) + "/policy/evaluations?artifactId=" + url_escape(artifact) +
+            get(project_api({.host = r.host, .owner = org(r) + "/" + project, .name = r.name}) +
+                    "/policy/evaluations?artifactId=" + url_escape(artifact) +
                     "&api-version=7.1-preview.1",
                 token);
         if (!policy) return std::unexpected(policy.error());
@@ -621,16 +650,20 @@ std::expected<pull_request, std::string> details(const forge_repo& r, pull_reque
     return p;
 }
 
-std::expected<commit_ci, std::string> checks(const forge_repo& r, std::string_view sha,
+std::expected<commit_ci, std::string> checks(const forge_repo& remote, std::string_view sha,
                                              std::string_view token)
 {
     // https://learn.microsoft.com/en-us/rest/api/azure/devops/git/repositories/get-repository?view=azure-devops-rest-7.1
-    const auto repo = get(repository_api(r) + "?" + std::string(version), token);
+    const auto repo = get(repository_api(remote) + "?" + std::string(version), token);
     if (!repo) return std::unexpected(repo.error());
+    const auto scoped = with_project(remote, *json::parse(*repo));
+    if (!scoped) return std::unexpected(scoped.error());
+    const auto& r = *scoped;
     const auto repo_id = (*json::parse(*repo))["id"].str();
     if (repo_id.empty())
         return std::unexpected(std::string(_("Azure DevOps HTTP 200: repository.id is missing.")));
     std::map<std::int64_t, std::string> builds;
+    std::map<std::int64_t, std::pair<std::string, std::string>> pr_commits;
     std::string continuation;
     // Azure has no sourceVersion query parameter. Walk all returned pages,
     // taking the newest matching commit per definition, not the latest build
@@ -650,9 +683,37 @@ std::expected<commit_ci, std::string> checks(const forge_repo& r, std::string_vi
             !reply.error.empty())
             return std::unexpected(response_error(reply, url, token));
         for (const json::value& v : (*j)["value"].elements())
-            if (v["sourceVersion"].str_is(sha))
+        {
+            bool matches = v["sourceVersion"].str_is(sha);
+            // Build.SourceBranch for PR validation is refs/pull/N/merge;
+            // sourceVersion is its generated merge, not the PR source tip.
+            // https://learn.microsoft.com/en-us/azure/devops/pipelines/build/variables?view=azure-devops
+            const auto branch = v["sourceBranch"].str();
+            if (!matches && branch.starts_with("refs/pull/") && branch.ends_with("/merge"))
+            {
+                const auto number = std::string_view(branch).substr(10, branch.size() - 16);
+                std::int64_t pr = 0;
+                const auto [end, error] = std::from_chars(number.data(), number.data() + number.size(), pr);
+                if (error == std::errc{} && end == number.data() + number.size() && pr > 0)
+                {
+                    if (!pr_commits.contains(pr))
+                    {
+                        // https://learn.microsoft.com/en-us/rest/api/azure/devops/git/pull-requests/get-pull-request?view=azure-devops-rest-7.1
+                        const auto pull = get(repository_api(r) + "/pullrequests/" +
+                                                  std::to_string(pr) + "?" + std::string(version), token);
+                        if (!pull) return std::unexpected(pull.error());
+                        const auto p = *json::parse(*pull);
+                        pr_commits[pr] = {p["lastMergeSourceCommit"]["commitId"].str(),
+                                          p["lastMergeCommit"]["commitId"].str()};
+                    }
+                    const auto& [source, merge] = pr_commits[pr];
+                    matches = source == sha && !merge.empty() && v["sourceVersion"].str_is(merge);
+                }
+            }
+            if (matches)
                 builds.try_emplace(v["definition"]["id"].integer().value_or(0),
                                    std::string(v.text()));
+        }
         continuation.clear();
         for (const auto& [name, value] : reply.headers)
             if (std::ranges::equal(name, std::string_view("x-ms-continuationtoken"),
@@ -751,8 +812,13 @@ std::expected<commit_ci, std::string> checks(const forge_repo& r, std::string_vi
 }
 
 std::expected<std::vector<ci_artifact>, std::string>
-artifacts(const forge_repo& r, const commit_ci& ci, std::string_view token)
+artifacts(const forge_repo& remote, const commit_ci& ci, std::string_view token)
 {
+    if (std::ranges::none_of(ci.workflows, [](const auto& w) { return w.run_id != 0; }))
+        return std::vector<ci_artifact>{};
+    const auto scoped = resolve_project(remote, token);
+    if (!scoped) return std::unexpected(scoped.error());
+    const auto& r = *scoped;
     std::vector<ci_artifact> out;
     std::set<std::int64_t> seen;
     for (const auto& w : ci.workflows)
@@ -773,11 +839,14 @@ artifacts(const forge_repo& r, const commit_ci& ci, std::string_view token)
     return out;
 }
 
-std::expected<job_failure, std::string> failure_details(const forge_repo& r, const ci_job& job,
+std::expected<job_failure, std::string> failure_details(const forge_repo& remote, const ci_job& job,
                                                         std::string_view token)
 {
     job_failure out{.log_url = job.url};
     if (job.azure_record.empty()) return out;
+    const auto scoped = resolve_project(remote, token);
+    if (!scoped) return std::unexpected(scoped.error());
+    const auto& r = *scoped;
     // https://learn.microsoft.com/en-us/rest/api/azure/devops/build/timeline/get?view=azure-devops-rest-7.1
     const auto body =
         get(build_root(r, job.azure_build) + "/timeline?" + std::string(version), token);

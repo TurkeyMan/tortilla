@@ -13,8 +13,10 @@ std::string repository_api(const forge_repo&);
 bool scope_allows(std::string_view scope, std::string_view url);
 // Whether a redirect of a request made with organization `org`'s credential
 // stays in that organization: https://dev.azure.com/{org}/... (the first
-// path segment once percent-decoded and its dot segments resolved, in any
-// case) or the legacy https://{org}.visualstudio.com. An encoded slash or a
+// path segment with both literal and decoded dot-segment interpretations
+// agreeing, in any case) or the legacy https://{org}.visualstudio.com.
+// Rapport still drops origin credentials on a cross-origin transition.
+// An encoded slash or a
 // backslash, a path that climbs out of the organization, an empty
 // organization, another host, port or scheme: not. An empty or
 // fragment-only `to_url` stays at `from_url`.
