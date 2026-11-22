@@ -17,9 +17,11 @@ Encoded separators and dot segments are rejected. Basic authentication uses
 an empty username and PAT password, restricted to that organization's path.
 Every authenticated read checks each redirect before it is sent:
 
-- Followed, with the credential: https://dev.azure.com/{organization}/... (its
-  first path segment after percent-decoding and resolving dot segments, in
-  any case) or the legacy https://{organization}.visualstudio.com.
+- Organization-approved: https://dev.azure.com/{organization}/... or the
+  legacy https://{organization}.visualstudio.com. Both the as-sent and
+  decoded-dot interpretations must stay in that organization. Rapport keeps
+  origin credentials only on the original origin: a transition between
+  modern and legacy hosts is followed without them, even for the same org.
 - Stopped before the hop, with the error `Azure DevOps redirected outside
   organization X`: another organization on the shared dev.azure.com origin
   (any port) or another organization's legacy host, an encoded slash or

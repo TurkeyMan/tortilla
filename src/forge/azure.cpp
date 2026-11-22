@@ -419,7 +419,7 @@ std::optional<std::string> url_organization(std::string_view url)
     if (at == std::string_view::npos || url[at] != '/') return {};
     std::string_view path = url.substr(at + 1);
     path = path.substr(0, path.find_first_of("?#"));
-    std::vector<std::string> kept;
+    std::vector<std::string> kept, as_sent;
     for (;;)
     {
         const size_t slash = path.find('/');
@@ -442,6 +442,15 @@ std::optional<std::string> url_organization(std::string_view url)
             if (c == '\\' || c < 32 || c == 127) return {};
             segment += char(c);
         }
+        // Rapport preserves escaped dot segments on the wire. A server may
+        // decode them, so both interpretations must name the same tenant.
+        if (piece == "..")
+        {
+            if (as_sent.empty()) return {};
+            as_sent.pop_back();
+        }
+        else if (piece != ".")
+            as_sent.push_back(segment);
         if (segment == "..")
         {
             if (kept.empty()) return {};
@@ -452,7 +461,8 @@ std::optional<std::string> url_organization(std::string_view url)
         if (slash == std::string_view::npos) break;
         path.remove_prefix(slash + 1);
     }
-    if (kept.empty() || kept.front().empty()) return {};
+    if (kept.empty() || kept.front().empty() || as_sent.empty() ||
+        lowered(kept.front()) != lowered(as_sent.front())) return {};
     return lowered(std::move(kept.front()));
 }
 }  // namespace

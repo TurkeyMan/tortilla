@@ -532,6 +532,11 @@ void run_azure_tests()
                   !in("https://dev.azure.com/fabrikam/..") &&
                   !in("https://dev.azure.com/../fabrikam/x"),
               "azure redirect: dot segments that leave the organization stop");
+        for (const char* path : {"/contoso/%2e%2e/fabrikam/x", "/contoso/%2E%2e/fabrikam/x",
+                                 "/contoso/.%2e/fabrikam/x", "/contoso/%2e./fabrikam/x",
+                                 "/fabrikam/%2e%2e/contoso/x"})
+            check(!in(std::string("https://dev.azure.com") + path),
+                  "azure redirect: wire and decoded organization must agree");
         check(in("https://dev.azure.com/fabrikam/./x") &&
                   in("https://dev.azure.com/fabrikam/%2e/x") &&
                   in("https://dev.azure.com/fabrikam/x/../y") &&
@@ -700,6 +705,11 @@ void run_azure_tests()
         r = forge_detail::http_get(start, signed_in);
         check(r.status == 0 && sent.size() == 2 && !r.error.empty(),
               "azure redirect: a downgrade to http stops");
+        chain = {"https://dev.azure.com/contoso/%2e%2e/fabrikam/x"};
+        sent.clear();
+        r = forge_detail::http_get(start, signed_in);
+        check(r.status == 0 && sent.size() == 1 && !r.error.empty(),
+              "azure redirect: encoded dot ambiguity stops before any credentialed hop");
         chain = {"https://dev.azure.com/contoso/x"};
         sent.clear();
         r = forge_detail::http_get(start, signed_in);
