@@ -291,6 +291,10 @@ Every completion carries the expected `lastMergeSourceCommit.commitId`.
 Auto-complete sets `autoCompleteSetBy.id` from the authenticated identity and
 leaves status active. Azure manages future completion under its policies;
 Tortilla does not claim to lock a future auto-complete to the current head.
+Readiness and the expected source SHA come from one validated PR snapshot;
+only blocking policy evaluations affect readiness. Optional checks remain
+visible but cannot prohibit completion. Auto-complete verifies the credential's
+organization scope before the identity lookup.
 An immediate completion is confirmed only by a completed PR response: an
 asynchronous/queued response is reported as unconfirmed, and Tortilla does
 not proceed to branch deletion. There is no mutation retry or completion poll.
@@ -300,11 +304,18 @@ permissions. Authentication is not proof of write permission: the PR list
 leaves access unknown and Azure validates each action. A denied write shows
 HTTP status, sanitized service message and the write-scope hint. If a reason
 thread was posted but abandonment failed, the error says the reason was
-already posted. Branch deletion first reads the exact named ref, then sends
-that old object ID and a zero new object ID. Per-ref HTTP200 errors (including
+already posted. Branch deletion first reads the exact named ref and compares
+it with the source SHA reviewed before merging or closing. A changed or
+recreated branch is preserved. The refs update uses that reviewed old object
+ID and a zero new object ID, so a later push is also protected by Azure's
+compare-and-swap. Per-ref HTTP200 errors (including
 stale head, Force push/write permission, policy, lock and unknown statuses)
 are failures; documented succeeded/nonexistent/corrupt deletion outcomes
 require `success=true`.
+
+Mutations using a repository name require a project-qualified URL. An
+organization-only URL is accepted only with a repository GUID; otherwise
+Tortilla refuses the action with a diagnostic instead of guessing a project.
 
 These write paths have only official-schema fixtures and fake transport
 validation. No live organization, credential store, PR creation/completion,

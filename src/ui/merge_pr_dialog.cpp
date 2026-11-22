@@ -259,7 +259,8 @@ void merge_pr_dialog::send(bool when_ready)
                 return std::unexpected(why);
             // The merge stands even if the branch stays: said, not failed.
             if (delete_after)
-                if (std::string why = delete_branch(k, p.into.repo, p.pr.head_branch, token);
+                if (std::string why = delete_branch(k, p.into.repo, p.pr.head_branch, token,
+                                                    request.head_sha);
                     !why.empty())
                     return rap::i18n::format(_("Merged; the branch couldn't be deleted: {0}"), why);
             return std::string();
@@ -346,7 +347,8 @@ void close_pr_dialog::close_it()
                 !why.empty())
                 return std::unexpected(why);
             if (delete_after)
-                if (std::string why = delete_branch(k, p.into.repo, p.pr.head_branch, token);
+                if (std::string why = delete_branch(k, p.into.repo, p.pr.head_branch, token,
+                                                    p.pr.head_sha);
                     !why.empty())
                     return std::unexpected(
                         rap::i18n::format(_("Closed; the branch couldn't be deleted: {0}"), why));

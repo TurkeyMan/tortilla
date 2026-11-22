@@ -17,6 +17,8 @@ using namespace forge_detail;
 namespace
 {
 constexpr std::string_view version = "api-version=7.1";
+std::expected<pull_request, std::string> snapshot_details(
+    const forge_repo&, const json::value&, std::string_view token, bool blocking_only);
 
 std::string decoded(std::string_view s)
 {
@@ -177,12 +179,13 @@ pull_request parse_pr(const json::value& v, const forge_repo& r, bool complete)
     return p;
 }
 
-void policies(const json::value& v, pull_request& p)
+void policies(const json::value& v, pull_request& p, bool blocking_only = false)
 {
     bool any = false, pending = false, failed = false, unknown = false;
     for (const json::value& policy : v["value"].elements())
     {
         if (!policy["configuration"]["isEnabled"].boolean(true)) continue;
+        if (blocking_only && !policy["configuration"]["isBlocking"].boolean()) continue;
         const auto status = policy["status"].str();
         if (status == "notApplicable") continue;
         const auto mapped = policy_state(status);
@@ -390,6 +393,21 @@ std::string pr_url(const forge_repo& r, int number)
     return repository_api(r) + "/pullrequests/" + std::to_string(number);
 }
 
+std::string action_scope_error(const forge_repo& r)
+{
+    if (r.owner.find('/') != std::string::npos) return {};
+    // A repository name needs a project; only a GUID is organization-unique.
+    // https://github.com/microsoft/azure-devops-mcp/blob/main/src/tools/repositories.ts
+    bool guid = r.name.size() == 36;
+    for (size_t i = 0; guid && i < r.name.size(); ++i)
+        guid = i == 8 || i == 13 || i == 18 || i == 23
+                   ? r.name[i] == '-'
+                   : std::isxdigit(static_cast<unsigned char>(r.name[i])) != 0;
+    if (guid) return {};
+    return _("Azure DevOps changes require a project-qualified repository URL or a repository GUID; "
+             "the repository name alone is ambiguous within the organization.");
+}
+
 // Only GETs negotiate helper authentication. A mutation is sent exactly once,
 // including when its response is lost: a retry could duplicate a PR or comment.
 std::expected<std::string, std::string> write(std::string_view method, const std::string& url,
@@ -426,6 +444,7 @@ std::expected<std::string, std::string> default_branch(const forge_repo& r, std:
 std::expected<pull_request, std::string> create(const forge_repo& r, const new_pull_request& n,
                                                 std::string_view token)
 {
+    if (auto why = action_scope_error(r); !why.empty()) return std::unexpected(std::move(why));
     if (!(r == n.head))
         return std::unexpected(
             std::string(_("Azure DevOps pull requests between forks are not supported; choose "
@@ -458,7 +477,9 @@ std::expected<merge_state, std::string> merge_status(const forge_repo& r, int nu
     const auto reply = get(pr_url(r, number) + "?api-version=7.1", token);
     if (!reply) return std::unexpected(reply.error());
     const auto j = *json::parse(*reply);
-    const auto full = details(r, parse_pr(j, r, true), token);
+    if (j["pullRequestId"].integer().value_or(0) != number)
+        return std::unexpected(std::string(_("Azure DevOps returned a different or missing pull request ID.")));
+    const auto full = snapshot_details(r, j, token, true);
     if (!full) return std::unexpected(full.error());
     merge_state out;
     out.title = full->title;
@@ -489,6 +510,7 @@ std::expected<merge_state, std::string> merge_status(const forge_repo& r, int nu
 
 std::string merge(const forge_repo& r, int number, const merge_request& m, std::string_view token)
 {
+    if (auto why = action_scope_error(r); !why.empty()) return why;
     if (number <= 0 || !object_id(m.head_sha))
         return _("A valid expected head commit is required.");
     std::string strategy;
@@ -510,6 +532,9 @@ std::string merge(const forge_repo& r, int number, const merge_request& m, std::
                        "},\"completionOptions\":" + options;
     if (m.when_ready)
     {
+        const std::string identity_url = "https://" + account_host(r) + "/_apis/connectionData";
+        if (!token_allowed(token, identity_url))
+            return _("The Azure credential is not scoped to this organization.");
         const auto user = identity(account_host(r), token);
         if (!user) return user.error();
         if (user->login.empty()) return _("Azure DevOps did not identify the signed-in user.");
@@ -531,6 +556,7 @@ std::string merge(const forge_repo& r, int number, const merge_request& m, std::
 
 std::string close(const forge_repo& r, int number, std::string_view reason, std::string_view token)
 {
+    if (auto why = action_scope_error(r); !why.empty()) return why;
     if (number <= 0) return _("Invalid Azure pull request number.");
     if (!reason.empty())
     {
@@ -560,9 +586,12 @@ std::string close(const forge_repo& r, int number, std::string_view reason, std:
     return {};
 }
 
-std::string delete_branch(const forge_repo& r, std::string_view name, std::string_view token)
+std::string delete_branch(const forge_repo& r, std::string_view name, std::string_view token,
+                          std::string_view expected_sha)
 {
+    if (auto why = action_scope_error(r); !why.empty()) return why;
     if (!valid_branch(name)) return _("Invalid Azure DevOps branch name.");
+    if (!object_id(expected_sha)) return _("The reviewed source commit is missing; the branch was preserved.");
     const auto ref = "refs/heads/" + std::string(name);
     // https://learn.microsoft.com/en-us/rest/api/azure/devops/git/refs/list?view=azure-devops-rest-7.1
     const auto current =
@@ -576,7 +605,9 @@ std::string delete_branch(const forge_repo& r, std::string_view name, std::strin
     if (!object_id(sha))
         return _("Azure DevOps did not return the exact branch and current commit; nothing was "
                  "deleted.");
-    const auto body = "[{\"name\":" + json::quoted(ref) + ",\"oldObjectId\":" + json::quoted(sha) +
+    if (sha != expected_sha)
+        return _("The source branch moved since it was reviewed; the branch was preserved.");
+    const auto body = "[{\"name\":" + json::quoted(ref) + ",\"oldObjectId\":" + json::quoted(expected_sha) +
                       ",\"newObjectId\":\"0000000000000000000000000000000000000000\"}]";
     // https://learn.microsoft.com/en-us/rest/api/azure/devops/git/refs/update-refs?view=azure-devops-rest-7.1
     const auto reply = write("POST", repository_api(r) + "/refs?api-version=7.1", body, token, 200);
@@ -909,6 +940,14 @@ std::expected<pull_request, std::string> details(const forge_repo& r, pull_reque
                           token);
     if (!body) return std::unexpected(body.error());
     const auto j = *json::parse(*body);
+    return snapshot_details(r, j, token, false);
+}
+
+namespace
+{
+std::expected<pull_request, std::string> snapshot_details(
+    const forge_repo& r, const json::value& j, std::string_view token, bool blocking_only)
+{
     auto p = parse_pr(j, r, true);
     const auto project = j["repository"]["project"]["id"].str();
     if (!project.empty())
@@ -922,10 +961,11 @@ std::expected<pull_request, std::string> details(const forge_repo& r, pull_reque
                     "&api-version=7.1-preview.1",
                 token);
         if (!policy) return std::unexpected(policy.error());
-        policies(*json::parse(*policy), p);
+        policies(*json::parse(*policy), p, blocking_only);
     }
     return p;
 }
+}  // namespace
 
 std::expected<commit_ci, std::string> checks(const forge_repo& remote, std::string_view sha,
                                              std::string_view token)

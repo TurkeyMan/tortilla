@@ -378,9 +378,10 @@ std::string merge_pull_request(forge_kind, const forge_repo&, int number, const 
 std::string close_pull_request(forge_kind, const forge_repo&, int number, std::string_view comment,
                                std::string_view token);
 
-// Deletes a branch on the forge (after its PR is merged or closed).
+// Deletes a branch on the forge (after its PR is merged or closed). Azure
+// requires the source SHA reviewed before that action; a changed branch is kept.
 std::string delete_branch(forge_kind, const forge_repo&, std::string_view branch,
-                          std::string_view token);
+                          std::string_view token, std::string_view expected_sha = {});
 
 // -- authors' pictures --------------------------------------------------------
 

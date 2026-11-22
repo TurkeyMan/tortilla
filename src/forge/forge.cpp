@@ -1656,7 +1656,7 @@ std::string close_pull_request(forge_kind k, const forge_repo& r, int number,
 }
 
 std::string delete_branch(forge_kind k, const forge_repo& r, std::string_view branch,
-                          std::string_view token)
+                          std::string_view token, std::string_view expected_sha)
 {
     const std::string escaped = form_escape(branch);
     switch (k)
@@ -1667,7 +1667,7 @@ std::string delete_branch(forge_kind k, const forge_repo& r, std::string_view br
     case forge_kind::gitlab:
         return send_json(k, "DELETE", gitlab_project(r) + "/repository/branches/" + escaped, {},
                          token);
-    case forge_kind::azure: return azure::delete_branch(r, branch, token);
+    case forge_kind::azure: return azure::delete_branch(r, branch, token, expected_sha);
     case forge_kind::gitea:
         return send_json(k, "DELETE", repo_api(k, r) + "/branches/" + std::string(branch), {},
                          token);

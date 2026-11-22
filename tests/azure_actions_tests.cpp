@@ -23,6 +23,7 @@ void run_azure_actions_tests()
     std::vector<request> requests;
     int status = 200;
     std::string error, ref_status = "succeeded", pr_status = "active", merge_status = "succeeded";
+    std::string ref_sha = sha, policy_body = R"({"value":[]})";
     bool ref_success = true, auto_complete = false, missing_thread = false;
     // W1 GitPullRequest request/response fields: source/target refs, title, description, isDraft,
     // pullRequestId, status, mergeStatus, lastMergeSourceCommit, autoCompleteSetBy, completionOptions.
@@ -65,7 +66,7 @@ void run_azure_actions_tests()
         else if (url.find("/refs?") != url.npos)
             response.body = method == "GET"
                                 ? "{\"value\":[{\"name\":\"refs/heads/topic/one\",\"objectId\":\"" +
-                                      sha + "\"}]}"
+                                      ref_sha + "\"}]}"
                                 : "{\"value\":[{\"name\":\"refs/heads/topic/one\",\"success\":" +
                                       std::string(ref_success ? "true" : "false") +
                                       ",\"updateStatus\":" + json::quoted(ref_status) +
@@ -73,7 +74,7 @@ void run_azure_actions_tests()
         // W6 enabled required policy schema, also exercised by read-only F4.
         // https://learn.microsoft.com/en-us/rest/api/azure/devops/policy/evaluations/list?view=azure-devops-rest-7.1
         else if (url.find("/policy/evaluations?") != url.npos)
-            response.body = R"({"value":[]})";
+            response.body = policy_body;
         else
         {
             response.status = method == "POST" ? 201 : 200;
@@ -166,6 +167,15 @@ void run_azure_actions_tests()
               !(*json::parse(requests[1].body))["status"],
           "azure writes: auto-complete identity read precedes single PATCH; does not complete "
           "immediately");
+    {
+        const std::string elsewhere_token = "actions-other-org-fixture";
+        forge_detail::bind_token(elsewhere_token, "dev.azure.com/other-org");
+        requests.clear();
+        check(!merge_pull_request(forge_kind::azure, repo, 42, when, elsewhere_token).empty() &&
+                  requests.empty() && !forge_detail::token_allowed(
+                      elsewhere_token, "https://dev.azure.com/fabrikam/_apis/connectionData"),
+              "azure writes: auto-complete cannot rebind another organization's credential");
+    }
     for (const auto status_word : {"active", "completed", "abandoned", "future"})
     {
         pr_status = status_word;
@@ -180,6 +190,36 @@ void run_azure_actions_tests()
               merge_state::verdict::checking,
           "azure writes: unknown merge status stays checking");
     merge_status = "succeeded";
+    for (const bool blocking : {false, true})
+        for (const auto status_word : {"rejected", "running"})
+        {
+            policy_body = "{\"value\":[{\"status\":" + json::quoted(status_word) +
+                          ",\"configuration\":{\"isEnabled\":true,\"isBlocking\":" +
+                          (blocking ? "true" : "false") + "}}]}";
+            const auto state = pull_request_merge_state(forge_kind::azure, repo, 42, token);
+            check(state && state->state ==
+                      (!blocking ? merge_state::verdict::ready
+                       : std::string_view(status_word) == "running" ? merge_state::verdict::waiting
+                                                                    : merge_state::verdict::blocked),
+                  "azure writes: only required policies affect merge readiness");
+        }
+    policy_body = R"({"value":[]})";
+    {
+        int snapshots = 0;
+        forge_detail::set_transport([&](auto method, const auto& url, auto body, const auto& options)
+        {
+            auto response = transport(method, url, body, options);
+            if (method == "GET" && url.find("/pullrequests/42?") != std::string::npos &&
+                ++snapshots > 1)
+                response.body = R"({"pullRequestId":42,"status":"completed"})";
+            return response;
+        });
+        const auto state = pull_request_merge_state(forge_kind::azure, repo, 42, token);
+        check(state && state->state == merge_state::verdict::ready && state->head_sha == sha &&
+                  snapshots == 1,
+              "azure writes: readiness and expected head use one PR snapshot despite concurrent changes");
+        forge_detail::set_transport(transport);
+    }
     requests.clear();
     check(close_pull_request(forge_kind::azure, repo, 42, "Reason", token).empty() &&
               requests.size() == 2 && requests[0].method == "POST" &&
@@ -212,7 +252,7 @@ void run_azure_actions_tests()
           "azure writes: partial close failure describes posted reason and HTTP error");
     forge_detail::set_transport(transport);
     requests.clear();
-    check(delete_branch(forge_kind::azure, repo, "topic/one", token).empty() &&
+    check(delete_branch(forge_kind::azure, repo, "topic/one", token, sha).empty() &&
               requests.size() == 2 && requests[0].method == "GET" &&
               requests[0].url == root + "/refs?filter=heads%2Ftopic%2Fone&api-version=7.1" &&
               requests[1].method == "POST" && requests[1].url == root + "/refs?api-version=7.1" &&
@@ -225,34 +265,49 @@ void run_azure_actions_tests()
     {
         ref_status = failure;
         ref_success = false;
-        const auto why = delete_branch(forge_kind::azure, repo, "topic/one", token);
+        const auto why = delete_branch(forge_kind::azure, repo, "topic/one", token, sha);
         check(why.find(failure) != why.npos && why.find("HTTP 200") != why.npos,
               "azure writes: HTTP200 per-ref failure and unknown status are not success");
     }
     ref_status = "succeeded";
     ref_success = true;
+    ref_sha = std::string(40, 'b');
+    requests.clear();
+    check(!delete_branch(forge_kind::azure, repo, "topic/one", token, sha).empty() &&
+              requests.size() == 1 && requests[0].method == "GET",
+          "azure writes: a pushed or recreated source branch is preserved after merge or close");
+    requests.clear();
+    check(!delete_branch(forge_kind::azure, repo, "topic/one", token).empty() && requests.empty(),
+          "azure writes: deletion without reviewed source SHA is refused before requests");
+    ref_sha = sha;
     {
-        // W1/W2/W4/W5 accept an omitted project; Git routes stay organization-scoped.
-        // The documented repository.project hydration is needed for Build, not these routes.
-        const auto with_project = root;
-        root = "https://dev.azure.com/fabrikam/_apis/git/repositories/My%20Repo";
+        // Repository names need a project; only GUIDs can omit it.
+        // https://github.com/microsoft/azure-devops-mcp/blob/main/src/tools/repositories.ts
         const forge_repo projectless{
             .host = "dev.azure.com", .owner = "fabrikam", .name = "My Repo"};
         auto projectless_new = n;
         projectless_new.head = projectless;
         requests.clear();
-        const auto default_ref = default_branch(forge_kind::azure, projectless, token);
         const auto new_pr = create_pull_request(forge_kind::azure, projectless, projectless_new, token);
         const auto merge_error = merge_pull_request(
             forge_kind::azure, projectless, 42, {.head_sha = sha}, token);
         const auto close_error = close_pull_request(
             forge_kind::azure, projectless, 42, "Reason", token);
-        const auto delete_error = delete_branch(forge_kind::azure, projectless, "topic/one", token);
-        check(default_ref && *default_ref == "main" && new_pr && merge_error.empty() &&
-                  close_error.empty() && delete_error.empty() && requests.size() == 7 &&
-                  std::ranges::all_of(requests, [&](const request& r)
-                                     { return r.url.starts_with(root); }),
-              "azure writes: projectless default/create/merge/close/delete use optional-project Git routes");
+        const auto delete_error = delete_branch(forge_kind::azure, projectless, "topic/one", token, sha);
+        check(!new_pr && new_pr.error().find("project-qualified") != std::string::npos &&
+                  !merge_error.empty() && !close_error.empty() && !delete_error.empty() &&
+                  requests.empty(),
+              "azure writes: ambiguous projectless repository names refuse all mutations before requests");
+        auto by_id = projectless;
+        by_id.name = "d6245f20-2af8-44f4-9451-8107cb2767db";
+        auto by_id_new = n;
+        by_id_new.head = by_id;
+        const auto with_project = root;
+        root = "https://dev.azure.com/fabrikam/_apis/git/repositories/" + by_id.name;
+        const auto identified_pr = create_pull_request(forge_kind::azure, by_id, by_id_new, token);
+        check(identified_pr && requests.size() == 1 &&
+                  requests[0].url == root + "/pullrequests?api-version=7.1",
+              "azure writes: a projectless repository GUID identifies an unambiguous mutation route");
         root = with_project;
         requests.clear();
     }
@@ -311,7 +366,7 @@ void run_azure_actions_tests()
         check(closed.find("wasn't followed") != std::string::npos && writes() == 1 && hooked,
               "azure writes: a redirected close stops at its first write");
         requests.clear();
-        const auto deleted = delete_branch(forge_kind::azure, repo, "topic/one", token);
+        const auto deleted = delete_branch(forge_kind::azure, repo, "topic/one", token, sha);
         check(deleted.find("wasn't followed") != std::string::npos && writes() == 1 && hooked &&
                   requests.size() == 2,
               "azure writes: a redirected ref update stops, sent once");
@@ -366,7 +421,7 @@ void run_azure_actions_tests()
                   requests.size() == 1,
               "azure writes: reason auth/network failure sends one comment and never abandons");
         requests.clear();
-        check(!delete_branch(forge_kind::azure, repo, "topic/one", token).empty() &&
+        check(!delete_branch(forge_kind::azure, repo, "topic/one", token, sha).empty() &&
                   requests.size() == 2 && requests[0].method == "GET" &&
                   requests[1].method == "POST",
               "azure writes: branch auth/network failure never repeats guarded mutation");

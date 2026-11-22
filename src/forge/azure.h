@@ -57,7 +57,8 @@ std::expected<merge_state, std::string> merge_status(const forge_repo&, int,
                                                      std::string_view token);
 std::string merge(const forge_repo&, int, const merge_request&, std::string_view token);
 std::string close(const forge_repo&, int, std::string_view reason, std::string_view token);
-std::string delete_branch(const forge_repo&, std::string_view branch, std::string_view token);
+std::string delete_branch(const forge_repo&, std::string_view branch, std::string_view token,
+                          std::string_view expected_sha);
 std::string response_error(const rap::sys::http_response&, std::string_view url,
                            std::string_view token);
 check_state timeline_state(const json::value&);
