@@ -522,6 +522,7 @@ std::string merge(const forge_repo& r, int number, const merge_request& m, std::
     }
     if (strategy.empty()) return _("Unsupported Azure DevOps merge strategy.");
     std::string options = "{\"mergeStrategy\":" + json::quoted(strategy);
+    if (m.delete_source_branch) options += ",\"deleteSourceBranch\":true";
     if (!m.commit_title.empty() || !m.commit_message.empty())
         options += ",\"mergeCommitMessage\":" +
                    json::quoted(m.commit_title +
@@ -593,20 +594,7 @@ std::string delete_branch(const forge_repo& r, std::string_view name, std::strin
     if (!valid_branch(name)) return _("Invalid Azure DevOps branch name.");
     if (!object_id(expected_sha)) return _("The reviewed source commit is missing; the branch was preserved.");
     const auto ref = "refs/heads/" + std::string(name);
-    // https://learn.microsoft.com/en-us/rest/api/azure/devops/git/refs/list?view=azure-devops-rest-7.1
-    const auto current =
-        get(repository_api(r) + "/refs?filter=" + url_escape("heads/" + std::string(name)) +
-                "&api-version=7.1",
-            token);
-    if (!current) return current.error();
-    std::string sha;
-    for (const json::value& v : (*json::parse(*current))["value"].elements())
-        if (v["name"].str() == ref) sha = v["objectId"].str();
-    if (!object_id(sha))
-        return _("Azure DevOps did not return the exact branch and current commit; nothing was "
-                 "deleted.");
-    if (sha != expected_sha)
-        return _("The source branch moved since it was reviewed; the branch was preserved.");
+    // Never adopt a newly read tip: the reviewed commit is the server's CAS guard.
     const auto body = "[{\"name\":" + json::quoted(ref) + ",\"oldObjectId\":" + json::quoted(expected_sha) +
                       ",\"newObjectId\":\"0000000000000000000000000000000000000000\"}]";
     // https://learn.microsoft.com/en-us/rest/api/azure/devops/git/refs/update-refs?view=azure-devops-rest-7.1
@@ -616,6 +604,9 @@ std::string delete_branch(const forge_repo& r, std::string_view name, std::strin
         if (v["name"].str() == ref)
         {
             const auto state = v["updateStatus"].str();
+            if (state == "staleOldObjectId")
+                return _("The source branch moved or was recreated since it was reviewed; "
+                         "the branch was preserved.");
             if (v["success"].boolean() &&
                 (state == "succeeded" || state == "succeededNonExistentRef" ||
                  state == "succeededCorruptRef"))

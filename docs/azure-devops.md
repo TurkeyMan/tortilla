@@ -285,7 +285,9 @@ Azure documents that both rebase strategies update the source branch.
 Repository policies still enforce permitted strategies; the REST PR response
 has no exhaustive allowed-methods field, so an unavailable strategy produces
 Azure's error instead of bypassing policy. No `bypassPolicy`, optional-policy
-exclusions or automatic source deletion is requested.
+exclusions are requested. When the user chooses branch deletion, immediate
+merge and auto-complete set `completionOptions.deleteSourceBranch`; Azure
+performs deletion on completion, with no separate post-merge delete request.
 
 Every completion carries the expected `lastMergeSourceCommit.commitId`.
 Auto-complete sets `autoCompleteSetBy.id` from the authenticated identity and
@@ -304,11 +306,10 @@ permissions. Authentication is not proof of write permission: the PR list
 leaves access unknown and Azure validates each action. A denied write shows
 HTTP status, sanitized service message and the write-scope hint. If a reason
 thread was posted but abandonment failed, the error says the reason was
-already posted. Branch deletion first reads the exact named ref and compares
-it with the source SHA reviewed before merging or closing. A changed or
-recreated branch is preserved. The refs update uses that reviewed old object
-ID and a zero new object ID, so a later push is also protected by Azure's
-compare-and-swap. Per-ref HTTP200 errors (including
+already posted. Explicit branch deletion after abandonment uses the source
+SHA reviewed before closing, without fetching or adopting a newer tip. The
+refs update uses that reviewed old object ID and a zero new object ID.
+Azure's compare-and-swap preserves a changed or recreated branch. Per-ref HTTP200 errors (including
 stale head, Force push/write permission, policy, lock and unknown statuses)
 are failures; documented succeeded/nonexistent/corrupt deletion outcomes
 require `success=true`.

@@ -140,7 +140,8 @@ void run_azure_actions_tests()
     {
         requests.clear();
         merge_request m{
-            .method = method, .commit_title = "Title", .commit_message = "Body", .head_sha = sha};
+            .method = method, .commit_title = "Title", .commit_message = "Body", .head_sha = sha,
+            .delete_source_branch = true};
         const auto why = merge_pull_request(forge_kind::azure, repo, 42, m, token);
         const auto j = json::parse(requests.back().body);
         check(why.empty() && requests.size() == 1 && requests[0].method == "PATCH" &&
@@ -152,19 +153,21 @@ void run_azure_actions_tests()
                        : method == merge_method::squash ? "squash"
                                                         : "rebase") &&
                   (*j)["completionOptions"]["mergeCommitMessage"].str_is("Title\n\nBody") &&
+                  (*j)["completionOptions"]["deleteSourceBranch"].boolean() &&
                   !(*j)["completionOptions"]["bypassPolicy"],
               "azure writes: each UI merge strategy and expected-head guard, no policy bypass");
     }
     requests.clear();
     check(!merge_pull_request(forge_kind::azure, repo, 42, {}, token).empty() && requests.empty(),
           "azure writes: missing expected head refuses mutation");
-    merge_request when{.head_sha = sha, .when_ready = true};
+    merge_request when{.head_sha = sha, .when_ready = true, .delete_source_branch = true};
     check(merge_pull_request(forge_kind::azure, repo, 42, when, token).empty() &&
               requests.size() == 2 && requests[0].method == "GET" &&
               requests[0].url.ends_with("/_apis/connectionData") &&
               (*json::parse(requests[1].body))["autoCompleteSetBy"]["id"].str_is(
                   "d6245f20-2af8-44f4-9451-8107cb2767db") &&
-              !(*json::parse(requests[1].body))["status"],
+              !(*json::parse(requests[1].body))["status"] &&
+              (*json::parse(requests[1].body))["completionOptions"]["deleteSourceBranch"].boolean(),
           "azure writes: auto-complete identity read precedes single PATCH; does not complete "
           "immediately");
     {
@@ -253,14 +256,13 @@ void run_azure_actions_tests()
     forge_detail::set_transport(transport);
     requests.clear();
     check(delete_branch(forge_kind::azure, repo, "topic/one", token, sha).empty() &&
-              requests.size() == 2 && requests[0].method == "GET" &&
-              requests[0].url == root + "/refs?filter=heads%2Ftopic%2Fone&api-version=7.1" &&
-              requests[1].method == "POST" && requests[1].url == root + "/refs?api-version=7.1" &&
-              (*json::parse(requests[1].body))[size_t(0)]["oldObjectId"].str() == sha &&
-              (*json::parse(requests[1].body))[size_t(0)]["newObjectId"].str() ==
+              requests.size() == 1 && requests[0].method == "POST" &&
+              requests[0].url == root + "/refs?api-version=7.1" &&
+              (*json::parse(requests[0].body))[size_t(0)]["oldObjectId"].str() == sha &&
+              (*json::parse(requests[0].body))[size_t(0)]["newObjectId"].str() ==
                   std::string(40, '0'),
-          "azure writes: exact branch lookup and guarded refs deletion");
-    for (const auto failure : {"staleOldObjectId", "forcePushRequired", "writePermissionRequired",
+          "azure writes: one refs POST uses reviewed SHA without fetching a new branch tip");
+    for (const auto failure : {"forcePushRequired", "writePermissionRequired",
                                "rejectedByPolicy", "locked", "future"})
     {
         ref_status = failure;
@@ -271,11 +273,26 @@ void run_azure_actions_tests()
     }
     ref_status = "succeeded";
     ref_success = true;
-    ref_sha = std::string(40, 'b');
-    requests.clear();
-    check(!delete_branch(forge_kind::azure, repo, "topic/one", token, sha).empty() &&
-              requests.size() == 1 && requests[0].method == "GET",
-          "azure writes: a pushed or recreated source branch is preserved after merge or close");
+    for (const bool recreated : {false, true})
+    {
+        ref_sha = std::string(40, recreated ? 'c' : 'b');
+        forge_detail::set_transport([&](auto method, const auto& url, auto body, const auto& options)
+        {
+            // Simulate Azure's oldObjectId comparison against a pushed/recreated ref.
+            ref_success = (*json::parse(body))[size_t(0)]["oldObjectId"].str() == ref_sha;
+            ref_status = ref_success ? "succeeded" : "staleOldObjectId";
+            return transport(method, url, body, options);
+        });
+        requests.clear();
+        const auto why = delete_branch(forge_kind::azure, repo, "topic/one", token, sha);
+        check(why.find("preserved") != why.npos && requests.size() == 1 &&
+                  requests[0].method == "POST" &&
+                  (*json::parse(requests[0].body))[size_t(0)]["oldObjectId"].str() == sha,
+              "azure writes: pushed or recreated branch preserves server tip with reviewed-SHA CAS");
+    }
+    forge_detail::set_transport(transport);
+    ref_status = "succeeded";
+    ref_success = true;
     requests.clear();
     check(!delete_branch(forge_kind::azure, repo, "topic/one", token).empty() && requests.empty(),
           "azure writes: deletion without reviewed source SHA is refused before requests");
@@ -368,7 +385,7 @@ void run_azure_actions_tests()
         requests.clear();
         const auto deleted = delete_branch(forge_kind::azure, repo, "topic/one", token, sha);
         check(deleted.find("wasn't followed") != std::string::npos && writes() == 1 && hooked &&
-                  requests.size() == 2,
+                  requests.size() == 1,
               "azure writes: a redirected ref update stops, sent once");
         forge_detail::set_transport(transport);
     }
@@ -422,8 +439,7 @@ void run_azure_actions_tests()
               "azure writes: reason auth/network failure sends one comment and never abandons");
         requests.clear();
         check(!delete_branch(forge_kind::azure, repo, "topic/one", token, sha).empty() &&
-                  requests.size() == 2 && requests[0].method == "GET" &&
-                  requests[1].method == "POST",
+                  requests.size() == 1 && requests[0].method == "POST",
               "azure writes: branch auth/network failure never repeats guarded mutation");
     }
     forge_detail::set_transport(transport);

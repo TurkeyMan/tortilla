@@ -368,6 +368,7 @@ struct merge_request
     std::string head_sha;                      // refused if the branch has moved since
     bool when_ready = false;                   // merge once the checks pass, rather than now
     std::string node_id;                       // (GitHub, for when_ready)
+    bool delete_source_branch = false;         // Azure: part of server-side completion
 };
 // Merges it (on the forge, which does the work), or sets it to merge when
 // ready. "" when done; else why not.

@@ -245,6 +245,8 @@ void merge_pr_dialog::send(bool when_ready)
                           .when_ready = when_ready,
                           .node_id = state_->node_id};
     const bool delete_after = !when_ready && can_delete_ && delete_->checked();
+    request.delete_source_branch = can_delete_ && delete_->checked() &&
+                                   pr_.into.account.kind == forge_kind::azure;
     busy_ = true;
     update();
     status_->set_text(when_ready ? _("Setting it to merge when ready...") : _("Merging..."));
@@ -258,7 +260,7 @@ void merge_pr_dialog::send(bool when_ready)
                 !why.empty())
                 return std::unexpected(why);
             // The merge stands even if the branch stays: said, not failed.
-            if (delete_after)
+            if (delete_after && k != forge_kind::azure)
                 if (std::string why = delete_branch(k, p.into.repo, p.pr.head_branch, token,
                                                     request.head_sha);
                     !why.empty())
