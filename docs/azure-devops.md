@@ -318,6 +318,9 @@ PR-watch answer, so a reused repository name cannot redirect cleanup. Without
 verified identity cleanup is refused. Once abandonment is confirmed, cleanup
 failure is a warning on that completed close: the log refreshes once and the
 dialog cannot repeat the reason or abandonment while the warning is pending.
+Mutation completion is owned independently of the dialog: dismissing it during
+the worker request does not suppress the log refresh or standalone warning.
+Dialog teardown finishes before owner callbacks or modal warning dispatch.
 
 Mutations using a repository name require a project-qualified URL. An
 organization-only URL is accepted only with a repository GUID; otherwise

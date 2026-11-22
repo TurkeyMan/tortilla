@@ -35,13 +35,15 @@ bool own_branch(const open_pr& p)
 }
 
 // On a worker: the account's token, then `work` with it; `done` on the UI
-// thread with its result, if `alive` still is.
+// thread with its result. Reads need the dialog; mutation completion also
+// belongs to its owning log and must survive dismissal of the dialog.
 template <class Work, class Done>
 void with_token(rap::ui& ui, std::weak_ptr<bool> alive, const forge_account& account, Work work,
-                Done done)
+                Done done, bool complete_after_dismissal = false)
 {
     std::thread(
-        [&ui, alive, account, work = std::move(work), done = std::move(done)]() mutable
+        [&ui, alive, account, work = std::move(work), done = std::move(done),
+         complete_after_dismissal]() mutable
         {
             std::string why;
             auto token = load_token(account, &why);
@@ -50,9 +52,10 @@ void with_token(rap::ui& ui, std::weak_ptr<bool> alive, const forge_account& acc
                       : decltype(work(std::string()))(std::unexpected(
                             why.empty() ? std::string(_("No token for the account.")) : why));
             ui.post(
-                [alive, done = std::move(done), result = std::move(result)]() mutable
+                [alive, done = std::move(done), result = std::move(result),
+                 complete_after_dismissal]() mutable
                 {
-                    if (alive.lock()) done(std::move(result));
+                    if (complete_after_dismissal || alive.lock()) done(std::move(result));
                 });
         })
         .detach();
@@ -267,25 +270,37 @@ void merge_pr_dialog::send(bool when_ready)
                     return rap::i18n::format(_("Merged; the branch couldn't be deleted: {0}"), why);
             return std::string();
         },
-        [this, when_ready](std::expected<std::string, std::string> r)
+        [this, alive = std::weak_ptr<bool>(alive_), ui = &ui_, done = done_, when_ready,
+         title = rap::i18n::format(_("Merge Pull Request #{0}"), pr_.pr.number)]
+        (std::expected<std::string, std::string> r)
         {
-            busy_ = false;
             if (!r)
             {
-                status_->set_text(r.error());
-                update();
+                if (alive.lock())
+                {
+                    busy_ = false;
+                    status_->set_text(r.error());
+                    update();
+                }
+                else
+                    show_message(*ui, nullptr, {.icon = rap::message_spec::icon::error,
+                                                .title = title, .text = r.error()});
                 return;
             }
+            if (alive.lock())
+            {
+                busy_ = false;
+                const auto closed = closed_;
+                window_->close();
+                if (closed) closed();
+            }
+            // Everything below is independent of the dialog, including through
+            // a modal warning's nested event loop or the owner's refresh.
+            if (done) done(!when_ready);
             if (!r->empty())
-                show_message(
-                    ui_, nullptr,
-                    {.icon = rap::message_spec::icon::warning,
-                     .title = rap::i18n::format(_("Merge Pull Request #{0}"), pr_.pr.number),
-                     .text = *r});
-            if (done_) done_(!when_ready);
-            window_->close();
-            if (closed_) closed_();
-        });
+                show_message(*ui, nullptr, {.icon = rap::message_spec::icon::warning,
+                                            .title = title, .text = *r});
+        }, true);
 }
 
 // -- Close --------------------------------------------------------------------
@@ -357,25 +372,36 @@ void close_pr_dialog::close_it()
                     return rap::i18n::format(_("Closed; the branch couldn't be deleted: {0}"), why);
             return std::string();
         },
-        [this](std::expected<std::string, std::string> r)
+        [this, alive = std::weak_ptr<bool>(alive_), ui = &ui_, done = done_,
+         title = rap::i18n::format(_("Close Pull Request #{0}"), pr_.pr.number)]
+        (std::expected<std::string, std::string> r)
         {
-            busy_ = false;
             if (!r)
             {
-                status_->set_text(r.error());
-                ok_->set_enabled(true);
+                if (alive.lock())
+                {
+                    busy_ = false;
+                    status_->set_text(r.error());
+                    ok_->set_enabled(true);
+                }
+                else
+                    show_message(*ui, nullptr, {.icon = rap::message_spec::icon::error,
+                                                .title = title, .text = r.error()});
                 return;
             }
-            completed_ = true;
-            if (done_) done_();
+            if (alive.lock())
+            {
+                busy_ = false;
+                completed_ = true;
+                const auto closed = closed_;
+                window_->close();
+                if (closed) closed();
+            }
+            if (done) done();
             if (!r->empty())
-                show_message(ui_, nullptr,
-                             {.icon = rap::message_spec::icon::warning,
-                              .title = rap::i18n::format(_("Close Pull Request #{0}"), pr_.pr.number),
-                              .text = *r});
-            window_->close();
-            if (closed_) closed_();
-        });
+                show_message(*ui, nullptr, {.icon = rap::message_spec::icon::warning,
+                                            .title = title, .text = *r});
+        }, true);
 }
 
 }  // namespace tortilla

@@ -1214,6 +1214,7 @@ public:
         ++messages;
         last_message = m.text;
         last_message_detail = m.detail;
+        if (auto reenter = std::exchange(during_message, {})) reenter();
         if (hold_dialogs)
         {
             held_messages.push_back(std::move(done));
@@ -1294,6 +1295,7 @@ public:
     std::vector<std::function<void(std::vector<std::string>)>> held_choosers;
     // Messages shown (the null backend answers each with its first button).
     int messages = 0;
+    std::function<void()> during_message;
     int quit_requests = 0;
     bool suppress_quit = false;
     std::string last_message_detail;
@@ -2364,6 +2366,7 @@ void forge_tabs_tests(rap::ui& ui, const std::string& repo)
         const std::string head(40, 'a');
         std::atomic<int> reasons{0}, abandoned{0}, cleanups{0};
         std::atomic<bool> correct_target{false};
+        std::atomic<bool> block_close{false}, entered_close{false}, release_close{false};
         credential_helper::set_runner([](const credential_helper::request&)
             -> std::expected<credential_helper::reply, std::string>
             { return credential_helper::reply{.exit_code = 0,
@@ -2388,6 +2391,11 @@ void forge_tabs_tests(rap::ui& ui, const std::string& repo)
             else if (method == "PATCH")
             {
                 ++abandoned;
+                if (block_close)
+                {
+                    entered_close = true;
+                    while (!release_close) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                }
                 response.body = R"({"status":"abandoned"})";
             }
             else
@@ -2423,6 +2431,39 @@ void forge_tabs_tests(rap::ui& ui, const std::string& repo)
                 check(refreshed == 1 && reasons == 1 && abandoned == 1 && cleanups == 1,
                       "azure close: repeating a completed close cannot repost reason or abandonment");
                 dialog.reset();  // warning is unparented and may outlive its former owner
+                auto messages = g_backend->messages;
+                block_close = true;
+                dialog = close_pr_dialog::open(ui, watch.pull_requests()[0]);
+                dialog->on_done([&] { ++refreshed; });
+                close_pr_dialog_test::submit(*dialog);
+                const bool in_flight = pump(ui, [&] { return entered_close.load(); });
+                dialog.reset();
+                release_close = true;
+                const bool delivered = pump(ui, [&]
+                    { return refreshed == 2 && g_backend->messages == messages + 1; });
+                check(in_flight && delivered &&
+                          reasons == 2 && abandoned == 2 && cleanups == 2,
+                      "azure close: dismissal in flight retains exactly one owner refresh and standalone warning");
+                block_close = false;
+
+                messages = g_backend->messages;
+                dialog = close_pr_dialog::open(ui, watch.pull_requests()[0]);
+                dialog->on_done([&] { ++refreshed; });
+                g_backend->during_message = [&] { dialog.reset(); };
+                close_pr_dialog_test::submit(*dialog);
+                check(pump(ui, [&] { return refreshed == 3 && !dialog; }) &&
+                          g_backend->messages == messages + 1 &&
+                          reasons == 3 && abandoned == 3 && cleanups == 3,
+                      "azure close: reentrant synchronous warning can dispose the dialog safely");
+
+                messages = g_backend->messages;
+                dialog = close_pr_dialog::open(ui, watch.pull_requests()[0]);
+                dialog->on_done([&] { ++refreshed; dialog.reset(); });
+                close_pr_dialog_test::submit(*dialog);
+                check(pump(ui, [&]
+                    { return refreshed == 4 && g_backend->messages == messages + 1; }) && !dialog &&
+                          reasons == 4 && abandoned == 4 && cleanups == 4,
+                      "azure close: owner refresh can dispose the dialog before the standalone warning");
                 g_backend->held_messages.resize(old_messages);
                 g_backend->hold_dialogs = held;
             }
