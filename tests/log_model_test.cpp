@@ -2252,9 +2252,9 @@ void settings_pending_recovery_cases(const std::filesystem::path& root)
         tortilla::finish_settings_recovery(*record);
         fs::remove(temp);fs::remove(backup);
     }
-    // A receipt can still enumerate after DeleteFile while a share-delete
-    // handle holds it pending deletion. Reopen fails with 5 (or 303), not 32.
-    for (int mode=0;mode<4;++mode)
+    // DeleteFile can leave an enumerated receipt pending deletion (5/303),
+    // or unlink its name immediately (2). Both must return the whole target.
+    for (int mode=0;mode<5;++mode)
     {
         const auto raced=root/("receipt-delete-pending-"+std::to_string(mode));
         initialize(raced);const auto expected=slurp(raced);
@@ -2269,7 +2269,8 @@ void settings_pending_recovery_cases(const std::filesystem::path& root)
         HANDLE held=INVALID_HANDLE_VALUE;std::thread release;
         std::atomic<bool> release_held{false};
         bool interleaved=false,deleted=false,refused_open=false;
-        unsigned opens=0;
+        unsigned opens=0,discoveries=0;
+        DWORD delete_error=ERROR_SUCCESS,probe_error=ERROR_SUCCESS;
         PSECURITY_DESCRIPTOR original=nullptr;PACL original_acl=nullptr;
         DWORD changed_acl=ERROR_SUCCESS;
         const auto receipt=record->receipts.front();
@@ -2281,32 +2282,44 @@ void settings_pending_recovery_cases(const std::filesystem::path& root)
                 if(++opens>=2)release_held=true;
                 return ERROR_SUCCESS;
             });
-        if(mode<=1)
+        if(mode==0)
             tortilla::settings_recovery_after_enumerate_for_tests([&](const fs::path& path) {
-                interleaved=true;
+                interleaved=true;++discoveries;
                 held=CreateFileW(path.c_str(),GENERIC_READ,
                     FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,nullptr,OPEN_EXISTING,0,nullptr);
                 if(held==INVALID_HANDLE_VALUE)return;
                 deleted=bool(DeleteFileW(path.c_str()));
+                if(!deleted)delete_error=GetLastError();
                 HANDLE probe=CreateFileW(path.c_str(),GENERIC_READ|READ_CONTROL,
                     FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,nullptr,OPEN_EXISTING,0,nullptr);
                 if(probe==INVALID_HANDLE_VALUE)
                 {
-                    const DWORD error=GetLastError();
-                    refused_open=error==ERROR_ACCESS_DENIED||error==ERROR_DELETE_PENDING;
+                    probe_error=GetLastError();
+                    refused_open=probe_error==ERROR_ACCESS_DENIED||probe_error==ERROR_DELETE_PENDING||
+                                 probe_error==ERROR_FILE_NOT_FOUND;
                 }
                 else CloseHandle(probe);
-                if(mode==0)release=std::thread([&] {
+                release=std::thread([&] {
                     while(!release_held)std::this_thread::sleep_for(std::chrono::milliseconds(1));
                     CloseHandle(held);
                 });
             });
-        else if(mode==2)
-            // Some Windows filesystems report only error 5 in the real case.
+        std::function<void(const fs::path&)> count_discovery;
+        if(mode==1||mode==2||mode==4)
+        {
+            // Keep the receipt discoverable for a deterministic deadline test,
+            // and cover both new codes even if real DeleteFile unlinks at once.
+            count_discovery=[&](const fs::path&) {
+                ++discoveries;
+                tortilla::settings_recovery_after_enumerate_for_tests(count_discovery);
+            };
+            tortilla::settings_recovery_after_enumerate_for_tests(count_discovery);
             tortilla::settings_recovery_receipt_open_error_for_tests([&](const fs::path&) -> uint32_t {
-                return ++opens==1?ERROR_DELETE_PENDING:ERROR_SUCCESS;
+                ++opens;
+                return mode==1||opens==1?(mode==2?ERROR_DELETE_PENDING:ERROR_ACCESS_DENIED):ERROR_SUCCESS;
             });
-        else
+        }
+        else if(mode==3)
         {
             // An openable receipt with an invalid DACL is terminal, not a
             // transient open failure. Restore its DACL for normal cleanup.
@@ -2326,24 +2339,34 @@ void settings_pending_recovery_cases(const std::filesystem::path& root)
         release_held=true;
         tortilla::settings_recovery_receipt_open_error_for_tests({});
         tortilla::settings_recovery_after_enumerate_for_tests({});
+        const bool held_valid=held!=INVALID_HANDLE_VALUE;
         if(release.joinable())release.join();
         else if(held!=INVALID_HANDLE_VALUE)CloseHandle(held);
+        const auto elapsed_ms=std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count();
+        bool good=false;
         if(mode==0)
-            check(interleaved&&deleted&&refused_open&&opens>=1&&bytes&&*bytes==expected,
-                  "settings receipts: delete-pending access denial retries discovery and returns a whole document");
+        {
+            good=interleaved&&held_valid&&deleted&&refused_open&&opens>=1&&bytes&&*bytes==expected;
+            check(good,"settings receipts: real deletion after enumeration returns a whole document");
+        }
         else if(mode==1)
-            check(interleaved&&deleted&&refused_open&&!bytes&&
-                  bytes.error().find("CreateFileW:")!=std::string::npos&&
-                  elapsed>=wait&&elapsed<std::chrono::seconds(1),
-                  "settings receipts: persistent open denial fails closed within the original short deadline");
-        else if(mode==2)
-            check(opens>=2&&bytes&&*bytes==expected,
-                  "settings receipts: explicit ERROR_DELETE_PENDING retries complete inspection");
+        {
+            good=opens>=2&&discoveries==opens&&!bytes&&
+                 bytes.error().find("CreateFileW:")!=std::string::npos&&
+                 elapsed>=wait&&elapsed<std::chrono::seconds(1)&&slurp(raced)==expected;
+            check(good,"settings receipts: persistent open denial fails closed within the original short deadline");
+        }
+        else if(mode==2||mode==4)
+        {
+            good=opens>=2&&discoveries==opens&&bytes&&*bytes==expected;
+            check(good,mode==2?"settings receipts: explicit ERROR_DELETE_PENDING retries complete inspection":
+                              "settings receipts: explicit ERROR_ACCESS_DENIED retries complete inspection");
+        }
         else
         {
-            check(changed_acl==ERROR_SUCCESS&&opens==1&&!bytes&&
-                  bytes.error().find("receipt owner/ACL is not private")!=std::string::npos,
-                  "settings receipts: invalid private ACL is refused without retry or empty fallback");
+            good=changed_acl==ERROR_SUCCESS&&opens==1&&!bytes&&
+                 bytes.error().find("receipt owner/ACL is not private")!=std::string::npos;
+            check(good,"settings receipts: invalid private ACL is refused without retry or empty fallback");
             if(original)
             {
                 check(SetNamedSecurityInfoW(const_cast<wchar_t*>(receipt.c_str()),SE_FILE_OBJECT,
@@ -2353,6 +2376,12 @@ void settings_pending_recovery_cases(const std::filesystem::path& root)
                 LocalFree(original);
             }
         }
+        if(!good)
+            std::printf("  receipt fixture: mode=%d interleaved=%d held=%d deleted=%d delete_error=%lu "
+                        "probe_error=%lu opens=%u discoveries=%u read=%d elapsed_ms=%lld error=%s\n",
+                        mode,int(interleaved),int(held_valid),int(deleted),delete_error,probe_error,
+                        opens,discoveries,int(bool(bytes)),static_cast<long long>(elapsed_ms),
+                        bytes?"":bytes.error().c_str());
         tortilla::finish_settings_recovery(*record);
         fs::remove(temp);fs::remove(backup);
     }
