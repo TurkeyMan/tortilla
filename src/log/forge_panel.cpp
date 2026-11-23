@@ -1381,7 +1381,8 @@ forge_panel::build_pages forge_panel::visible_build_pages(const build* b, bool s
 {
     if (!b || b->local) return {false, false};
     return {b->answered ? !b->ci.empty() : seen_ci,
-            b->artifacts_known ? !b->artifacts.empty() : seen_artifacts};
+            b->artifacts_known ? !b->artifacts.empty()
+                               : seen_artifacts && (!b->answered || b->asking || b->artifacts_asking)};
 }
 
 void forge_panel::update_build()
@@ -1675,6 +1676,7 @@ void forge_panel::ask_build(const std::string& sha)
     {
         b.answered = b.local = true;
         b.asking = false;
+        b.artifacts_asking = false;
         return;
     }
     const bool in_pr = pull_request_of(sha, head, nullptr) != nullptr;
@@ -1708,6 +1710,7 @@ void forge_panel::ask_build(const std::string& sha)
                         build& b = builds_[sha];
                         b.answered = b.local = true;
                         b.asking = false;
+                        b.artifacts_asking = false;
                         if (sha_ == sha) update();
                     });
                 return;
@@ -1720,6 +1723,7 @@ void forge_panel::ask_build(const std::string& sha)
                 {
                     auto& b = builds_[sha];
                     b.answered = true; b.asking = false; b.error = why;
+                    b.artifacts_asking = false;
                     if (sha_ == sha) update();
                 });
                 return;
@@ -1749,12 +1753,15 @@ void forge_panel::ask_build(const std::string& sha)
                     token = other_token;
                 }
             }
+            const bool ask_artifacts = ci && !ci->empty() &&
+                (!had_artifacts || ci->state() == check_state::pending);
             post(
-                [this, sha, ci, remote = *where]
+                [this, sha, ci, ask_artifacts, remote = *where]
                 {
                     build& b = builds_[sha];
                     b.answered = true;
                     b.asking = false;
+                    b.artifacts_asking = ask_artifacts;
                     b.remote = remote;
                     b.at = std::chrono::steady_clock::now();
                     if (ci)
@@ -1773,13 +1780,13 @@ void forge_panel::ask_build(const std::string& sha)
                     if (sha_ == sha || learned) update();
                 });
             // The artifacts once, and again only while the runs go on.
-            if (!ci || ci->empty() || (had_artifacts && ci->state() != check_state::pending))
-                return;
+            if (!ask_artifacts) return;
             auto artifacts = commit_artifacts(where->account.kind, where->repo, sha, *ci, token->access);
             post(
                 [this, sha, artifacts = std::move(artifacts)]
                 {
                     build& b = builds_[sha];
+                    b.artifacts_asking = false;
                     b.artifacts_known = true;
                     if (artifacts)
                     {
@@ -1914,8 +1921,9 @@ void forge_panel::show_download()
     if (!downloading_ || !download_pulsing_) download_timer_.reset();
     if (!root_) return;
     if (sha_)
-        if (auto b = builds_.find(*sha_); b != builds_.end() && !b->second.local &&
-            !b->second.artifacts_known && seen_artifacts_)
+        if (auto b = builds_.find(*sha_); b != builds_.end() &&
+            !b->second.artifacts_known &&
+            visible_build_pages(&b->second, seen_ci_, seen_artifacts_).artifacts)
         {
             // Rebinding or an older download's progress must not overwrite
             // the current row's provisional artifact presentation.

@@ -156,6 +156,7 @@ struct forge_panel_test
         auto& b = p.builds_[sha];
         b.asked = b.answered = true;
         b.artifacts_known = artifacts_known;
+        b.artifacts_asking = present && !artifacts_known;
         b.asking = false;
         b.ci.workflows = present
                              ? std::vector<ci_workflow>{{.jobs = {{.name = "test",
@@ -171,12 +172,14 @@ struct forge_panel_test
     }
     static std::pair<bool, bool> visibility(bool local, bool answered, bool ci,
                                             bool artifacts_known, bool artifacts,
-                                            bool seen_ci, bool seen_artifacts)
+                                            bool seen_ci, bool seen_artifacts,
+                                            bool asking = true, bool artifacts_asking = false)
     {
         forge_panel::build b;
         b.local = local;
         b.answered = answered;
-        b.asking = true; // Cached answers take precedence even during a refresh.
+        b.asking = asking;
+        b.artifacts_asking = artifacts_asking;
         if (ci) b.ci.workflows = {{.jobs = {{.name = "job"}}}};
         b.artifacts_known = artifacts_known;
         if (artifacts) b.artifacts = {{.name = "app.zip"}};
@@ -187,6 +190,7 @@ struct forge_panel_test
     {
         auto& b = p.builds_[sha];
         b.artifacts_known = true;
+        b.artifacts_asking = false;
         b.artifacts = present ? std::vector<ci_artifact>{{.name = "fresh.zip"}}
                               : std::vector<ci_artifact>{};
     }
@@ -231,6 +235,26 @@ struct forge_panel_test
         p.builds_.erase("head");
         p.sha_ = "head";
         p.ask_build("head");
+    }
+    static void prerequisite_failure_context(forge_panel& p, bool token_failure)
+    {
+        forge_remote remote{.name = "origin", .repo = {.host = "gitlab.com", .owner = "fixture", .name = "repo"},
+                            .account = {.kind = forge_kind::gitlab, .host = "gitlab.com"}};
+        if (token_failure)
+        {
+            remote.repo = {.host = "dev.azure.com", .owner = "fabrikam/project", .name = "repo"};
+            remote.account = *azure::automatic_account(
+                "https://dev.azure.com/fabrikam/project/_git/repo", "offline-fixture");
+        }
+        p.prs_[0].pr.into = remote;
+        p.remotes_ = {remote};
+    }
+    static void prerequisite_failure_lookup(forge_panel& p)
+    {
+        p.builds_.erase("head");
+        p.sha_ = "head";
+        p.ask_build("head");
+        p.update();
     }
     static bool azure_lookup_pending(const forge_panel& p)
     { return p.builds_.at("head").asking; }
@@ -2083,6 +2107,12 @@ void forge_pending_tabs_tests(rap::ui& ui, const std::string& repo)
                             c.seen_ci, c.seen_artifacts) == c.visible,
               "pending forge tabs: pure visibility handles local, unseen, pending and cached answers");
 
+    check(t::visibility(false, true, false, false, false, true, true, false) ==
+              std::pair{false, false},
+          "pending forge tabs: a completed failed prerequisite is not an artifact request");
+    check(t::visibility(false, true, true, false, false, true, true, false, true) ==
+              std::pair{true, true},
+          "pending forge tabs: successful CI hands visibility to the outstanding artifact request");
     forge_panel p({.ui = ui, .workdir = repo});
     t::awaiting(p, "new");
     auto window = ui.create(rap::layout::window{"Pending forge tabs", {p.layout()}});
@@ -2191,6 +2221,60 @@ void forge_pending_tabs_tests(rap::ui& ui, const std::string& repo)
     p.unbind();
     window.reset();
     settle(ui);
+}
+
+void forge_artifact_prerequisite_failure_tests(rap::ui& ui, const std::string& repo)
+{
+    using t = forge_panel_test;
+    for (bool token_failure : {true, false})
+    {
+        forge_panel p({.ui = ui, .workdir = repo});
+        t::seed(p);
+        t::presence(p, true, true, true);
+        t::prerequisite_failure_context(p, token_failure);
+        auto window = ui.create(rap::layout::window{"Artifact prerequisite failure", {p.layout()}});
+        p.built();
+        p.show_commit("head");
+        auto* tabs = dynamic_cast<kept_pages*>(t::pages(p));
+        tabs->click(3);
+        std::string diagnostic;
+        t::diagnostic(p, [&](std::string error) { diagnostic = std::move(error); });
+        std::atomic<int> requests = 0;
+        credential_helper::set_runner([](const credential_helper::request&)
+            -> std::expected<credential_helper::reply, std::string>
+            { return std::unexpected("offline token prerequisite failed"); });
+        forge_detail::set_transport([&](std::string_view, const std::string&, std::string_view,
+                                       const rap::sys::http_options&)
+        {
+            ++requests;
+            return rap::sys::http_response{.status = 503, .body = R"({"message":"offline CI prerequisite failed"})"};
+        });
+        t::prerequisite_failure_lookup(p);
+        check(tabs->page_visible(3) && tabs->current() == 3,
+              "artifact prerequisite: known history keeps Artifacts visible while the prerequisite runs");
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+        while (t::azure_lookup_pending(p) && std::chrono::steady_clock::now() < deadline)
+        {
+            settle(ui);
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        settle(ui);
+        check(t::azure_lookup_answered(p) && !t::azure_lookup_pending(p) &&
+                  !tabs->page_visible(3) && p.remembered_page() == 3 && t::seen(p).second &&
+                  !diagnostic.empty() &&
+                  (token_failure ? diagnostic.find("Git credential lookup couldn't start") != std::string::npos
+                                 : diagnostic.find("offline CI prerequisite failed") != std::string::npos) &&
+                  (token_failure ? requests == 0 : requests > 0),
+              token_failure
+                  ? "artifact prerequisite: token failure ends the placeholder and retains its diagnostic"
+                  : "artifact prerequisite: CI failure ends the placeholder and retains its diagnostic");
+        credential_helper::set_runner({});
+        forge_detail::set_transport({});
+        t::diagnostic(p, {});
+        p.unbind();
+        window.reset();
+        settle(ui);
+    }
 }
 
 class forge_observer : public rap::list_observer
@@ -4872,6 +4956,7 @@ void run_log_page_tests(const std::string& root)
     build_tab_icon_tests(ui, repo);
     pr_tab_icon_tests(ui, repo);
     forge_pending_tabs_tests(ui, repo);
+    forge_artifact_prerequisite_failure_tests(ui, repo);
     forge_fresh_canvas_tests(ui, repo);
     forge_download_tests(ui, repo);
     forge_tabs_tests(ui, repo);

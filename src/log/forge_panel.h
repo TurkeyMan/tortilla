@@ -102,6 +102,7 @@ private:
         commit_ci ci;
         std::vector<ci_artifact> artifacts;
         bool artifacts_known = false;
+        bool artifacts_asking = false;  // CI succeeded; its artifact request is outstanding
         forge_remote remote;
         std::chrono::steady_clock::time_point at{};
     };
