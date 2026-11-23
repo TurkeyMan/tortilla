@@ -43,6 +43,9 @@ CI from GitHub, GitLab and Gitea/Forgejo on your branches.
 
 ### Log and history
 
+- The PR tab shows merge status separately from the Build tab's CI status: a
+  grey bang for conflicts, a yellow bang for forge rules, or a green tick.
+
 - The commit graph with branch, tag and remote labels, filters, date ranges,
   the commit's details and its changed files with TortoiseGit's context
   menus. Drag a label onto a commit to move the branch; double-click to

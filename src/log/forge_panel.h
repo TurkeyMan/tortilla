@@ -110,6 +110,9 @@ private:
     void forget_misplaced_builds();
     void update();
     void update_pull_request();
+    enum class pr_icon_state { empty, conflicts, blocked, mergeable };
+    static pr_icon_state pr_icon_for(const pull_request*);
+    void update_pr_icon(const pull_request*);
     void update_build();
     void update_build_icon(check_state);
     void sync_pages();
@@ -256,6 +259,7 @@ private:
     check_state checks_mark_state_ = check_state::none;
     check_state build_mark_state_ = check_state::none;
     check_state build_tab_icon_state_ = check_state::pending;
+    pr_icon_state pr_tab_icon_state_ = pr_icon_state::empty;
     std::shared_ptr<rap::image> picture_;
     std::string full_log_url_;
     std::string pr_url_;

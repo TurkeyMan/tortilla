@@ -87,6 +87,7 @@ struct forge_panel_test
             p.builds_[sha] = {.asked = true, .answered = true, .local = true};
     }
     static void refresh(forge_panel& p) { p.update(); }
+    static pull_request& request(forge_panel& p) { return p.prs_[0].pr.pr; }
     static void forge_possible(forge_panel& p, bool on) { p.set_forge_possible(on); }
     static rap::canvas* checks(forge_panel& p) { return p.pr_checks_mark_; }
     static void checks(forge_panel& p, check_state state) { p.prs_[0].pr.pr.checks = state; }
@@ -825,6 +826,7 @@ public:
         ++g_forge_writes;
         if (dead) return;
         ++icon_changes;
+        ++page_icon_changes[page];
         icons.resize(titles.size());
         if (page >= 0 && size_t(page) < icons.size()) icons[page] = icon;
         inner_.set_page_icon(page, icon);
@@ -876,6 +878,7 @@ public:
     std::vector<std::string> titles;
     std::vector<rap::icon> icons;
     int icon_changes = 0;
+    std::map<int, int> page_icon_changes;
     std::function<void(int)> changed;
 
 private:
@@ -1887,29 +1890,29 @@ void build_tab_icon_tests(rap::ui& ui, const std::string& repo)
     auto window = ui.create(rap::layout::window{"Build icon", {layout}});
     panel.built();
     auto tabs = [&] { return dynamic_cast<kept_pages*>(forge_panel_test::pages(panel)); };
-    check(tabs() && tabs()->icon_changes == 0 && tabs()->icons[2].draw,
+    check(tabs() && tabs()->page_icon_changes[2] == 0 && tabs()->icons[2].draw,
           "build tab icon: unknown hidden build keeps pending without a setter");
     forge_panel_test::seed(panel);
     panel.show_commit("head");
     forge_panel_test::build_state(panel, check_state::pending);
     forge_panel_test::refresh(panel);
-    check(tabs()->icon_changes == 0,
+    check(tabs()->page_icon_changes[2] == 0,
           "build tab icon: first pending answer matches the constructed icon");
     for (auto [state, theme] :
          {std::pair{check_state::success, rap::theme_color::positive},
           std::pair{check_state::failure, rap::theme_color::negative},
           std::pair{check_state::pending, rap::theme_color::warning}})
     {
-        const int before = tabs()->icon_changes;
+        const int before = tabs()->page_icon_changes[2];
         forge_panel_test::build_state(panel, state);
         forge_panel_test::refresh(panel);
         mark_painter paint;
         tabs()->icons[2].draw(paint, {24, 24});
-        check(tabs()->icon_changes == before + 1 && paint.fills == std::vector{theme} &&
+        check(tabs()->page_icon_changes[2] == before + 1 && paint.fills == std::vector{theme} &&
                   paint.rectangles.empty(),
               "build tab icon: changed overall state replaces one themed drawn icon");
         forge_panel_test::refresh(panel);
-        check(tabs()->icon_changes == before + 1,
+        check(tabs()->page_icon_changes[2] == before + 1,
               "build tab icon: unchanged state makes no drawn-icon setter call");
     }
     forge_panel_test::presence(panel, false, false, false);
@@ -1926,7 +1929,7 @@ void build_tab_icon_tests(rap::ui& ui, const std::string& repo)
     panel.built();
     mark_painter rebound;
     tabs()->icons[2].draw(rebound, {16, 16});
-    check(tabs()->icon_changes == 1 &&
+    check(tabs()->page_icon_changes[2] == 1 &&
               rebound.fills == std::vector{rap::theme_color::positive},
           "build tab icon: rebuilt page resets pending cache then applies known state once");
     panel.unbind();
@@ -1939,6 +1942,77 @@ void build_tab_icon_tests(rap::ui& ui, const std::string& repo)
     check(kept.fills == std::vector{rap::theme_color::positive} &&
               old_pending.fills == std::vector{rap::theme_color::warning},
           "build tab icon: retained drawings keep value state without touching unbound widgets");
+}
+
+// Exercise the actual tab drawings and setters, independent of in-page marks.
+void pr_tab_icon_tests(rap::ui& ui, const std::string& repo)
+{
+    forge_panel panel({.ui = ui, .workdir = repo});
+    const auto layout = panel.layout();
+    const auto& spec = std::get<rap::spec::tabs>(layout.spec);
+    check(spec.icons.size() == 4 && bool(spec.icons[1].draw),
+          "PR tab icon: empty page reserves a drawn-icon slot");
+    auto window = ui.create(rap::layout::window{"PR icon", {layout}});
+    panel.built();
+    auto tabs = [&] { return dynamic_cast<kept_pages*>(forge_panel_test::pages(panel)); };
+    mark_painter empty;
+    tabs()->icons[1].draw(empty, {16, 16});
+    check(empty.circles == 0 && tabs()->page_icon_changes[1] == 0,
+          "PR tab icon: hidden empty slot paints nothing without a setter");
+    forge_panel_test::seed(panel);
+    panel.show_commit("head");
+    for (auto checks : {check_state::none, check_state::success,
+                        check_state::pending, check_state::failure})
+        for (int kind = 0; kind < 3; ++kind)
+        {
+            auto& pr = forge_panel_test::request(panel);
+            pr.checks = checks;
+            pr.conflicts = kind == 2;
+            pr.blocks = kind ? std::vector{merge_block::review_required}
+                             : std::vector<merge_block>{};
+            forge_panel_test::refresh(panel);
+            mark_painter paint;
+            tabs()->icons[1].draw(paint, {16, 16});
+            const auto color = kind == 2 ? rap::theme_color::neutral
+                             : kind == 1 ? rap::theme_color::warning
+                                         : rap::theme_color::positive;
+            check(paint.fills == std::vector{color} &&
+                      paint.circles == (kind ? 2 : 1) &&
+                      paint.lines.size() == (kind ? 1u : 2u),
+                  "PR tab icon: merge-only tick or bang ignores all CI states; conflict wins");
+            const int before = tabs()->page_icon_changes[1];
+            pr.checks = checks == check_state::failure ? check_state::pending : check_state::failure;
+            forge_panel_test::refresh(panel);
+            check(tabs()->page_icon_changes[1] == before,
+                  "PR tab icon: unchanged merge state and CI-only changes send no setter");
+        }
+    const auto retained = tabs()->icons[1];
+    panel.unbind();
+    window.reset();
+    settle(ui);
+    window = ui.create(rap::layout::window{"PR icon rebound", {panel.layout()}});
+    panel.built();
+    check(tabs()->page_icon_changes[1] == 1,
+          "PR tab icon: rebound page installs known merge state once");
+    // Closed/merged PRs leave pr_watch's open list; no terminal state is stored.
+    forge_panel_test::presence(panel, false, false, false);
+    forge_panel_test::refresh(panel);
+    mark_painter removed;
+    tabs()->icons[1].draw(removed, {16, 16});
+    check(!tabs()->page_visible(1) && tabs()->icons[1].draw && removed.circles == 0,
+          "PR tab icon: removed open PR hides page and clears drawing while retaining slot");
+    const int cleared = tabs()->page_icon_changes[1];
+    panel.show_commit(std::nullopt);
+    forge_panel_test::refresh(panel);
+    check(tabs()->page_icon_changes[1] == cleared,
+          "PR tab icon: clearing an already empty page sends no setter");
+    panel.unbind();
+    window.reset();
+    settle(ui);
+    mark_painter after;
+    retained.draw(after, {16, 16});
+    check(after.fills == std::vector{rap::theme_color::neutral},
+          "PR tab icon: retained draw callback owns its value after panel unbind");
 }
 
 class forge_observer : public rap::list_observer
@@ -4618,6 +4692,7 @@ void run_log_page_tests(const std::string& root)
     forge_presentation_tests(ui, repo);
     pr_check_mark_tests();
     build_tab_icon_tests(ui, repo);
+    pr_tab_icon_tests(ui, repo);
     forge_fresh_canvas_tests(ui, repo);
     forge_download_tests(ui, repo);
     forge_tabs_tests(ui, repo);

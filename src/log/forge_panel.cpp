@@ -491,6 +491,7 @@ void forge_panel::unbind()
     ++labels_revision_;
     picture_.reset();
     merge_mark_state_ = checks_mark_state_ = build_mark_state_ = check_state::none;
+    pr_tab_icon_state_ = pr_icon_state::empty;
     ++labels_generation_;
     // Its widgets may be there a while yet (ui/page_guard.h): they reach
     // nothing of the panel from now on.
@@ -727,6 +728,7 @@ rap::node forge_panel::layout(rap::node commit)
     page_guard_.open();
     // The builder below installs this icon even while the page is hidden.
     build_tab_icon_state_ = check_state::pending;
+    pr_tab_icon_state_ = pr_icon_state::empty;
     auto mark = [](rap::canvas*& bind, const std::function<void(rap::painter&, rap::size_f)>& paint)
     {
         // The backend clears to the parent surface; a window-colour fill
@@ -813,7 +815,9 @@ rap::node forge_panel::layout(rap::node commit)
              }
                  .stretch()
                  .handle(pr_part_)}
-            .visible(false),
+            .visible(false)
+            // A blank drawn icon reserves the same slot as a merge mark.
+            .icon(mark_icon(check_state::none)),
         page{_("Build"),
              vbox{vbox{
                       hbox{
@@ -1145,6 +1149,7 @@ void forge_panel::update_pull_request()
     if (!e)
     {
         pr_url_.clear();
+        update_pr_icon(nullptr);
     }
     else
     {
@@ -1154,6 +1159,7 @@ void forge_panel::update_pull_request()
         const pull_request& pr =
             known != details_.end() && known->second.head_sha == e->pr.pr.head_sha ? known->second
                                                                                    : e->pr.pr;
+        update_pr_icon(&pr);
         if ((!pr.body_known || !pr.reviews_known) && !details_asked_.contains(key)) ask_details(*e);
 
         const std::string number = "#" + count(pr.number);
@@ -1293,6 +1299,35 @@ void forge_panel::update_pull_request()
             }
         for (; b < pr_buttons_.size(); ++b) show(pr_buttons_[b], false);
     }
+}
+
+forge_panel::pr_icon_state forge_panel::pr_icon_for(const pull_request* pr)
+{
+    // Only open PRs reach this panel through pr_watch. CI belongs to Build;
+    // this mark describes the forge's merge rules, including required checks.
+    if (!pr) return pr_icon_state::empty;
+    if (pr->conflicts) return pr_icon_state::conflicts;
+    if (!pr->blocks.empty()) return pr_icon_state::blocked;
+    return pr_icon_state::mergeable;
+}
+
+void forge_panel::update_pr_icon(const pull_request* pr)
+{
+    const auto state = pr_icon_for(pr);
+    if (!tabs_ || state == pr_tab_icon_state_) return;
+    tabs_->set_page_icon(1, rap::icon::drawn(
+        [state](rap::painter& p, rap::size_f size)
+        {
+            if (state == pr_icon_state::empty) return;
+            const auto merge = state == pr_icon_state::conflicts ? mergeable::conflicts
+                             : state == pr_icon_state::blocked ? mergeable::not_yet
+                                                              : mergeable::yes;
+            paint_check_mark(p, {size.w / 2, size.h / 2}, std::min(size.w, size.h) - 2,
+                             state == pr_icon_state::mergeable ? check_state::success
+                                                               : check_state::none,
+                             merge);
+        }));
+    pr_tab_icon_state_ = state;
 }
 
 void forge_panel::update_build_icon(check_state state)
