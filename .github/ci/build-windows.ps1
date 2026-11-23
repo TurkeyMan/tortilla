@@ -35,7 +35,7 @@ $parts = @($appVersion.Split('.')) + @('0', '0', '0', '0')
 $fileVersion = ($parts[0..3]) -join '.'
 
 Run 'configure' {
-    cmake -S . -B build-win -G 'Visual Studio 17 2022' -A x64 `
+    cmake -S . -B build-win -A x64 `
         "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
         -DVCPKG_TARGET_TRIPLET=x64-windows-static
 }

@@ -147,25 +147,38 @@ menu for just you, without installing; `--unregister-shell` removes it.
 
 ### Windows
 
-Install Visual Studio 2022 with the Desktop development with C++ workload,
-including its bundled CMake tools, and Git for Windows. Clone over HTTPS:
+Install Visual Studio 2022 17.9 or later (tested; older 2022 releases untested),
+or Visual Studio 2026, with the Desktop development with C++ workload,
+including its bundled CMake tools, and Git for Windows. Visual Studio 2026
+has not been tested locally. Clone over HTTPS:
 
-```sh
+```powershell
 git clone --recursive https://github.com/TurkeyMan/tortilla.git
 cd tortilla
+powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 ```
 
-Open the folder in Visual Studio, or run these commands from a Developer
-PowerShell or Developer Command Prompt:
+`build.ps1` finds the newest Visual Studio installation with C++ tools and uses
+its bundled CMake, even if an older CMake comes first on PATH. It builds Release
+in `build\` and prints the path to `tortilla.exe`. An ordinary PowerShell is
+enough; no Developer shell setup is needed. Alternatively, open the folder in
+Visual Studio, or use a Developer PowerShell or Developer Command Prompt:
 
 ```sh
+cmake --version
 cmake -S . -B build
 cmake --build build --config Release
 ```
 
+CMake must be **3.25 or newer**. If `cmake --version` reports an older version,
+use `build.ps1`, use Visual Studio's CMake, or update the CMake on PATH.
+
 CMake downloads and builds a pinned libgit2 release when no installed package
-is found. No SSH key, vcpkg or pkg-config is required. Vcpkg is optional: an
-existing vcpkg toolchain continues to supply libgit2 instead. Set
+is found. No SSH key, vcpkg or pkg-config is required. Vcpkg is optional:
+`build.ps1` uses it when `VCPKG_ROOT` names a bootstrapped full checkout, keeping
+its installation and caches under `build\vcpkg\`; Visual Studio's bundled
+registry-free vcpkg tool is skipped. An explicitly supplied vcpkg toolchain also
+continues to work with the raw CMake commands. Set
 `TORTILLA_FETCH_LIBGIT2=OFF` to require an installed package.
 
 ### Linux

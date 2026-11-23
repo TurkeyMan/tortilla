@@ -4,6 +4,13 @@
 # which pulls in the rest:
 #   tortilla-qt   -> tortilla-core + librapport-qt6  -> librapport
 #   tortilla-gtk3 -> tortilla-core + librapport-gtk3 -> librapport
+if(CMAKE_VERSION VERSION_LESS 3.25)
+    message(FATAL_ERROR
+        "Tortilla requires CMake 3.25 or newer.\n"
+        "This configure ran CMake ${CMAKE_VERSION}: ${CMAKE_COMMAND}\n"
+        "Visual Studio ships a newer CMake. Run build.ps1, open this folder in "
+        "Visual Studio, or update the CMake on PATH.")
+endif()
 cmake_minimum_required(VERSION 3.25)
 project(tortilla VERSION 0.1.0 LANGUAGES CXX)
 
