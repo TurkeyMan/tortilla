@@ -303,9 +303,10 @@ void paint_check_mark(rap::painter& p, rap::point_f c, float d, check_state s, m
         p.circle(c, r, fill, paint{white});
         return paint{ink_on(p.resolve(fill))};
     };
-    // No checks, but it can't be merged: a "!", grey for conflicts, yellow
-    // for the forge's rules.
-    if (s == check_state::none && m != mergeable::yes)
+    // Conflicts always take precedence over checks: a grey "!". Without
+    // checks, the forge's other rules use a yellow "!". The tooltip still
+    // reports the checks independently of what blocks the merge.
+    if (m == mergeable::conflicts || (s == check_state::none && m == mergeable::not_yet))
     {
         const paint ink = disc(m == mergeable::conflicts ? grey : yellow);
         const float w = std::max(1.5f, d / 7);
@@ -317,9 +318,7 @@ void paint_check_mark(rap::painter& p, rap::point_f c, float d, check_state s, m
     {
     case check_state::success:
     {
-        const paint ink = disc(m == mergeable::conflicts ? grey
-                               : m == mergeable::not_yet ? yellow
-                                                         : paint{rap::theme_color::positive});
+        const paint ink = disc(m == mergeable::not_yet ? yellow : paint{rap::theme_color::positive});
         const float w = std::max(1.5f, d / 8);
         const rap::point_f a{c.x - r * 0.45f, c.y + r * 0.02f}, b{c.x - r * 0.12f, c.y + r * 0.36f},
             e{c.x + r * 0.48f, c.y - r * 0.33f};

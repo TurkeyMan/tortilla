@@ -102,7 +102,8 @@ CI from GitHub, GitLab and Gitea/Forgejo on your branches.
   there and why you might want to be.
 - Pull requests on their branches' labels in the log, with a CI mark (passed,
   failed, running) and whether they can be merged; hover for what the mark
-  means and each check's result.
+  means and each check's result. Conflicts always show a grey !, regardless
+  of the checks; the tooltip still reports their results.
 - Create Pull Request from a branch, offering only valid targets (the
   branch's own repository and what it's a fork of); Merge and Close from the
   pull request's menu, which says why a merge isn't possible yet.

@@ -23,6 +23,7 @@
 #include "forge/azure_credentials.h"
 #include "forge/forge_detail.h"
 #include "log/forge_panel.h"
+#include "log/ref_labels.h"
 #include "log/log_model.h"
 #include "log/log_tab.h"
 #include "log/log_window.h"
@@ -1792,14 +1793,83 @@ public:
 class mark_painter : public forge_painter
 {
 public:
+    void line(rap::point_f a, rap::point_f b, const rap::paint&, float, rap::line_cap) override
+    {
+        lines.push_back({a, b});
+    }
     void circle(rap::point_f, float, std::optional<rap::paint> fill,
                 std::optional<rap::paint>) override
     {
+        ++circles;
         if (fill)
             if (auto theme = std::get_if<rap::theme_color>(&*fill)) fills.push_back(*theme);
     }
     std::vector<rap::theme_color> fills;
+    std::vector<std::pair<rap::point_f, rap::point_f>> lines;
+    int circles = 0;
 };
+
+void pr_check_mark_tests()
+{
+    // Observe the real drawing, including its glyph, rather than a parallel
+    // mark-selection helper: two circles plus a vertical stroke form the bang.
+    enum class glyph { none, tick, cross, ring, bang };
+    struct expected_mark
+    {
+        check_state checks;
+        mergeable merge;
+        rap::theme_color fill;
+        glyph shape;
+    };
+    using enum check_state;
+    using enum rap::theme_color;
+    const expected_mark cases[] = {
+        {success, mergeable::conflicts, neutral, glyph::bang},
+        {failure, mergeable::conflicts, neutral, glyph::bang},
+        {pending, mergeable::conflicts, neutral, glyph::bang},
+        {none, mergeable::conflicts, neutral, glyph::bang},
+        {success, mergeable::yes, positive, glyph::tick},
+        {failure, mergeable::yes, negative, glyph::cross},
+        {pending, mergeable::yes, warning, glyph::ring},
+        {none, mergeable::yes, neutral, glyph::none},
+        {success, mergeable::not_yet, warning, glyph::tick},
+        {failure, mergeable::not_yet, negative, glyph::cross},
+        {pending, mergeable::not_yet, warning, glyph::ring},
+        {none, mergeable::not_yet, warning, glyph::bang},
+    };
+    for (const auto& test : cases)
+    {
+        mark_painter p;
+        if (test.merge == mergeable::yes)
+            paint_check_mark(p, {8, 8}, 14, test.checks);  // Accounts/Remotes use the default.
+        else
+            paint_check_mark(p, {8, 8}, 14, test.checks, test.merge);
+        const glyph actual = p.circles == 0 ? glyph::none
+            : p.lines.empty() ? glyph::ring
+            : p.lines.size() == 1 && p.circles == 2 &&
+                  p.lines[0].first.x == p.lines[0].second.x ? glyph::bang
+            : p.lines.size() == 2 && p.lines[0].second.x == p.lines[1].first.x &&
+                  p.lines[0].second.y == p.lines[1].first.y ? glyph::tick : glyph::cross;
+        check(actual == test.shape &&
+                  p.fills == (test.shape == glyph::none ? std::vector<rap::theme_color>{}
+                                                       : std::vector{test.fill}),
+              "PR marks: conflicts are always grey bangs; other check marks retain their glyph and colour");
+    }
+    const std::pair<check_state, const char*> descriptions[] = {
+        {success, "Checks passed"}, {failure, "Checks failed"},
+        {pending, "Checks running"}, {none, "No checks"},
+    };
+    for (const auto& [state, description] : descriptions)
+    {
+        pull_request pr{.number = 977, .base_branch = "main"};
+        pr.checks = state;
+        pr.conflicts = pr.blocked = true;
+        pr.blocks = {merge_block::conflicts, merge_block::review_required};
+        check(pr_tooltip(pr, 0) == std::string("#977 · ") + description +
+                  " · Conflicts with main · Needs an approving review",
+              "PR marks: conflict tooltip retains checks and review requirement");
+    }
+}
 
 void build_tab_icon_tests(rap::ui& ui, const std::string& repo)
 {
@@ -4546,6 +4616,7 @@ void run_log_page_tests(const std::string& root)
     page_tests(ui, repo, git);
     poll_tests(ui, repo, polled);
     forge_presentation_tests(ui, repo);
+    pr_check_mark_tests();
     build_tab_icon_tests(ui, repo);
     forge_fresh_canvas_tests(ui, repo);
     forge_download_tests(ui, repo);

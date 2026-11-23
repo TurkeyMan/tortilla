@@ -63,11 +63,13 @@ std::vector<row> make_rows()
     const std::pair<tortilla::pr_mark, const char*> marks[] = {
         {{870, check_state::success}, "CI passed; can be merged"},
         {{869, check_state::success, false, true}, "CI passed; the rules stop it yet (a review)"},
-        {{868, check_state::success, false, false, true}, "CI passed; conflicts"},
+        {{868, check_state::success, false, false, true}, "CI passed; conflicts (grey !)"},
         {{867, check_state::pending}, "CI running"},
+        {{867, check_state::pending, false, false, true}, "CI running; conflicts (grey !)"},
         {{866, check_state::failure}, "CI failed"},
+        {{866, check_state::failure, false, false, true}, "CI failed; conflicts (grey !)"},
         {{865, check_state::none, false, true}, "no CI; the rules stop it yet"},
-        {{805, check_state::none, false, false, true}, "no CI; conflicts"},
+        {{805, check_state::none, false, false, true}, "no CI; conflicts (grey !)"},
         {{804, check_state::none}, "no CI; can be merged"},
         {{803, check_state::success, true}, "a draft (its number fainter)"},
     };

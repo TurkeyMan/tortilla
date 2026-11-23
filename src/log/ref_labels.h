@@ -22,7 +22,7 @@ struct label_box
 };
 
 // A branch that's a pull request's head wears its number and its checks:
-// a tick, a cross, or a ring while they run.
+// a tick, a cross, or a ring while they run; conflicts always wear a grey "!".
 struct pr_mark
 {
     int number = 0;
@@ -48,7 +48,8 @@ std::string check_duration(std::int64_t seconds, bool to_the_minute = false);
 // The checks' mark, in a circle `diameter` across at `centre`, ringed in
 // white to stand out on any label: a tick, a cross, or a ring while they run.
 // A tick is green when it can be merged, amber when the forge's rules stop
-// it yet (a review), and grey when it conflicts.
+// it yet (a review). Conflicts always show a grey "!", whatever the checks;
+// without checks, other merge blocks show a yellow "!".
 enum class mergeable
 {
     yes,
