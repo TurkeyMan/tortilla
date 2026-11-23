@@ -34,6 +34,7 @@ thread_local bool fail_restore = false;
 thread_local std::function<void()> after_inspect_for_tests;
 thread_local std::function<void(const fs::path&, const fs::path&, bool)> before_publish_for_tests;
 thread_local std::function<void(const fs::path&)> after_enumerate_for_tests;
+thread_local std::function<uint32_t(const fs::path&)> receipt_open_error_for_tests;
 thread_local bool transient_discovery = false;
 std::string utf8(const fs::path& p) { auto s = p.u8string(); return {s.begin(), s.end()}; }
 std::string pending(const fs::path& p, const std::string& why)
@@ -127,28 +128,35 @@ bool private_receipt(HANDLE h)
 std::expected<std::string, std::string> read_bytes(const fs::path& p, size_t limit, bool receipt,
                                                  settings_recovery_snapshot* snapshot = nullptr)
 {
-    handle file{CreateFileW(p.c_str(), GENERIC_READ | READ_CONTROL,
+    const DWORD injected = receipt && receipt_open_error_for_tests ? receipt_open_error_for_tests(p) : 0;
+    handle file{injected ? INVALID_HANDLE_VALUE : CreateFileW(p.c_str(), GENERIC_READ | READ_CONTROL,
         FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
         FILE_FLAG_BACKUP_SEMANTICS | ((receipt || snapshot) ? FILE_FLAG_OPEN_REPARSE_POINT : 0), nullptr)};
     if (file.h == INVALID_HANDLE_VALUE)
     {
-        const DWORD error = GetLastError();
+        const DWORD error = injected ? injected : GetLastError();
+        // DeleteFile leaves a discovered receipt pending deletion while another
+        // shared handle exists; opening it then fails with access denied. Retry
+        // discovery, not ACL/content validation, within the caller's deadline.
         if (error == ERROR_SHARING_VIOLATION || error == ERROR_LOCK_VIOLATION ||
-            error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND)
+            error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND ||
+            (receipt && (error == ERROR_ACCESS_DENIED || error == ERROR_DELETE_PENDING)))
             transient_discovery = true;
-        return std::unexpected(native(error));
+        return std::unexpected("CreateFileW: " + native(error));
     }
     FILE_ATTRIBUTE_TAG_INFO attributes{};
     if (!GetFileInformationByHandleEx(file.h, FileAttributeTagInfo, &attributes, sizeof attributes))
-        return std::unexpected(native(GetLastError()));
+        return std::unexpected("GetFileInformationByHandleEx(FileAttributeTagInfo): " + native(GetLastError()));
     if ((attributes.FileAttributes & FILE_ATTRIBUTE_DIRECTORY) ||
         ((receipt || snapshot) && (attributes.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)))
         return std::unexpected("reparse/directory recovery artifact refused");
     if (receipt && !private_receipt(file.h)) return std::unexpected("receipt owner/ACL is not private to this user");
     FILE_ID_INFO before{};
     LARGE_INTEGER size{};
-    if (!GetFileInformationByHandleEx(file.h, FileIdInfo, &before, sizeof before) || !GetFileSizeEx(file.h, &size))
-        return std::unexpected(native(GetLastError()));
+    if (!GetFileInformationByHandleEx(file.h, FileIdInfo, &before, sizeof before))
+        return std::unexpected("GetFileInformationByHandleEx(FileIdInfo before): " + native(GetLastError()));
+    if (!GetFileSizeEx(file.h, &size))
+        return std::unexpected("GetFileSizeEx(before): " + native(GetLastError()));
     if (size.QuadPart < 0 || uint64_t(size.QuadPart) > limit) return std::unexpected("recovery artifact exceeds bounded size");
     std::string bytes(size_t(size.QuadPart), '\0');
     size_t at = 0;
@@ -156,14 +164,16 @@ std::expected<std::string, std::string> read_bytes(const fs::path& p, size_t lim
     {
         DWORD count = 0;
         if (!ReadFile(file.h, bytes.data() + at, DWORD(std::min<size_t>(65536, bytes.size()-at)), &count, nullptr))
-            return std::unexpected(native(GetLastError()));
+            return std::unexpected("ReadFile: " + native(GetLastError()));
         if (!count) return std::unexpected("incomplete recovery artifact");
         at += count;
     }
     FILE_ID_INFO after{};
     LARGE_INTEGER after_size{};
-    if (!GetFileInformationByHandleEx(file.h, FileIdInfo, &after, sizeof after) || !GetFileSizeEx(file.h, &after_size))
-        return std::unexpected(native(GetLastError()));
+    if (!GetFileInformationByHandleEx(file.h, FileIdInfo, &after, sizeof after))
+        return std::unexpected("GetFileInformationByHandleEx(FileIdInfo after): " + native(GetLastError()));
+    if (!GetFileSizeEx(file.h, &after_size))
+        return std::unexpected("GetFileSizeEx(after): " + native(GetLastError()));
     if (before.VolumeSerialNumber != after.VolumeSerialNumber ||
         std::memcmp(&before.FileId, &after.FileId, sizeof before.FileId) || size.QuadPart != after_size.QuadPart)
         return std::unexpected("recovery artifact changed while reading");
@@ -562,6 +572,8 @@ void settings_recovery_before_publish_for_tests(std::function<void(const fs::pat
 {before_publish_for_tests=std::move(hook);}
 void settings_recovery_after_enumerate_for_tests(std::function<void(const fs::path&)> hook)
 {after_enumerate_for_tests=std::move(hook);}
+void settings_recovery_receipt_open_error_for_tests(std::function<uint32_t(const fs::path&)> hook)
+{receipt_open_error_for_tests=std::move(hook);}
 
 std::expected<std::string,std::string> read_settings_document(const fs::path& file,
     std::chrono::steady_clock::time_point deadline)

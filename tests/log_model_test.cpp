@@ -2252,6 +2252,110 @@ void settings_pending_recovery_cases(const std::filesystem::path& root)
         tortilla::finish_settings_recovery(*record);
         fs::remove(temp);fs::remove(backup);
     }
+    // A receipt can still enumerate after DeleteFile while a share-delete
+    // handle holds it pending deletion. Reopen fails with 5 (or 303), not 32.
+    for (int mode=0;mode<4;++mode)
+    {
+        const auto raced=root/("receipt-delete-pending-"+std::to_string(mode));
+        initialize(raced);const auto expected=slurp(raced);
+        const auto temp=fs::path(raced.native()+L".candidate.tmp");
+        const auto backup=fs::path(raced.native()+L".candidate.bak");
+        write_text(temp,std::string(tortilla::k_settings_format_marker)+"\n"+
+            tortilla::settings_generation_line(*tortilla::settings_document_generation(expected)+1)+"attempt=unpublished\n");
+        write_text(backup,"");
+        auto record=tortilla::begin_settings_recovery(raced,raced,backup,temp);
+        check(bool(record),"settings receipts: delete-pending fixture publishes a verified receipt");
+        if(!record)continue;
+        HANDLE held=INVALID_HANDLE_VALUE;std::thread release;
+        std::atomic<bool> release_held{false};
+        bool interleaved=false,deleted=false,refused_open=false;
+        unsigned opens=0;
+        PSECURITY_DESCRIPTOR original=nullptr;PACL original_acl=nullptr;
+        DWORD changed_acl=ERROR_SUCCESS;
+        const auto receipt=record->receipts.front();
+        if(mode==0)
+            tortilla::settings_recovery_receipt_open_error_for_tests([&](const fs::path&) -> uint32_t {
+                // Do not release before the first real open has failed. A
+                // second open proves discovery retried; disappearance from
+                // enumeration instead lets the complete read release below.
+                if(++opens>=2)release_held=true;
+                return ERROR_SUCCESS;
+            });
+        if(mode<=1)
+            tortilla::settings_recovery_after_enumerate_for_tests([&](const fs::path& path) {
+                interleaved=true;
+                held=CreateFileW(path.c_str(),GENERIC_READ,
+                    FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,nullptr,OPEN_EXISTING,0,nullptr);
+                if(held==INVALID_HANDLE_VALUE)return;
+                deleted=bool(DeleteFileW(path.c_str()));
+                HANDLE probe=CreateFileW(path.c_str(),GENERIC_READ|READ_CONTROL,
+                    FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,nullptr,OPEN_EXISTING,0,nullptr);
+                if(probe==INVALID_HANDLE_VALUE)
+                {
+                    const DWORD error=GetLastError();
+                    refused_open=error==ERROR_ACCESS_DENIED||error==ERROR_DELETE_PENDING;
+                }
+                else CloseHandle(probe);
+                if(mode==0)release=std::thread([&] {
+                    while(!release_held)std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                    CloseHandle(held);
+                });
+            });
+        else if(mode==2)
+            // Some Windows filesystems report only error 5 in the real case.
+            tortilla::settings_recovery_receipt_open_error_for_tests([&](const fs::path&) -> uint32_t {
+                return ++opens==1?ERROR_DELETE_PENDING:ERROR_SUCCESS;
+            });
+        else
+        {
+            // An openable receipt with an invalid DACL is terminal, not a
+            // transient open failure. Restore its DACL for normal cleanup.
+            changed_acl=GetNamedSecurityInfoW(const_cast<wchar_t*>(receipt.c_str()),SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION,nullptr,nullptr,&original_acl,nullptr,&original);
+            if(changed_acl==ERROR_SUCCESS)
+                changed_acl=SetNamedSecurityInfoW(const_cast<wchar_t*>(receipt.c_str()),SE_FILE_OBJECT,
+                    DACL_SECURITY_INFORMATION|PROTECTED_DACL_SECURITY_INFORMATION,nullptr,nullptr,nullptr,nullptr);
+            tortilla::settings_recovery_receipt_open_error_for_tests([&](const fs::path&) -> uint32_t {
+                ++opens;return ERROR_SUCCESS;
+            });
+        }
+        const auto started=std::chrono::steady_clock::now();
+        const auto wait=std::chrono::milliseconds(mode==1?30:1000);
+        auto bytes=tortilla::read_settings_document(raced,started+wait);
+        const auto elapsed=std::chrono::steady_clock::now()-started;
+        release_held=true;
+        tortilla::settings_recovery_receipt_open_error_for_tests({});
+        tortilla::settings_recovery_after_enumerate_for_tests({});
+        if(release.joinable())release.join();
+        else if(held!=INVALID_HANDLE_VALUE)CloseHandle(held);
+        if(mode==0)
+            check(interleaved&&deleted&&refused_open&&opens>=1&&bytes&&*bytes==expected,
+                  "settings receipts: delete-pending access denial retries discovery and returns a whole document");
+        else if(mode==1)
+            check(interleaved&&deleted&&refused_open&&!bytes&&
+                  bytes.error().find("CreateFileW:")!=std::string::npos&&
+                  elapsed>=wait&&elapsed<std::chrono::seconds(1),
+                  "settings receipts: persistent open denial fails closed within the original short deadline");
+        else if(mode==2)
+            check(opens>=2&&bytes&&*bytes==expected,
+                  "settings receipts: explicit ERROR_DELETE_PENDING retries complete inspection");
+        else
+        {
+            check(changed_acl==ERROR_SUCCESS&&opens==1&&!bytes&&
+                  bytes.error().find("receipt owner/ACL is not private")!=std::string::npos,
+                  "settings receipts: invalid private ACL is refused without retry or empty fallback");
+            if(original)
+            {
+                check(SetNamedSecurityInfoW(const_cast<wchar_t*>(receipt.c_str()),SE_FILE_OBJECT,
+                      DACL_SECURITY_INFORMATION|PROTECTED_DACL_SECURITY_INFORMATION,
+                      nullptr,nullptr,original_acl,nullptr)==ERROR_SUCCESS,
+                      "settings receipts: restore private ACL after refusal fixture");
+                LocalFree(original);
+            }
+        }
+        tortilla::finish_settings_recovery(*record);
+        fs::remove(temp);fs::remove(backup);
+    }
     const auto file=root/"recovery/settings";
     initialize(file);const auto original=slurp(file);
     const auto failed=fail_rollback();

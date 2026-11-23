@@ -12,6 +12,8 @@ CI from GitHub, GitLab and Gitea/Forgejo on your branches.
 
 ### Native on every desktop
 
+- Explorer's menu and Tortilla no longer occasionally miss settings while
+  another window is saving them.
 - More reliable window layout, keyboard focus and painting on Windows, and
   splitter sizes and drag notifications on GTK and Qt.
 - One application, drawn with each platform's own widgets through

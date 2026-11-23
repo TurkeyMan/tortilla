@@ -53,6 +53,8 @@ std::expected<std::string, std::string> read_settings_document(const std::filesy
 void settings_recovery_after_inspect_for_tests(std::function<void()>);
 void settings_recovery_before_publish_for_tests(std::function<void(const std::filesystem::path&, const std::filesystem::path&, bool)>);
 void settings_recovery_after_enumerate_for_tests(std::function<void(const std::filesystem::path&)>);
+// Inject only the receipt CreateFileW result; ordinary document opens are untouched.
+void settings_recovery_receipt_open_error_for_tests(std::function<uint32_t(const std::filesystem::path&)>);
 settings_recovery_step recover_settings_before_save(const std::filesystem::path&,
                                                     const std::filesystem::path& locked_target,
                                                     std::chrono::steady_clock::time_point deadline);
