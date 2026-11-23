@@ -12,6 +12,8 @@ CI from GitHub, GitLab and Gitea/Forgejo on your branches.
 
 ### Native on every desktop
 
+- More reliable window layout, keyboard focus and painting on Windows, and
+  splitter sizes and drag notifications on GTK and Qt.
 - One application, drawn with each platform's own widgets through
   [rapport](https://github.com/TurkeyMan/rapport): Win32 on Windows; GTK 4,
   GTK 3 or Qt 6 on Linux, picked to match the desktop when it starts
