@@ -942,6 +942,28 @@ void forge_panel::set_forge_possible(bool possible)
 void forge_panel::set_pull_requests(const std::vector<open_pr>& prs,
                                     const std::vector<forge_remote>& remotes)
 {
+    // pr_watch owns the remote view. Reordering or account display changes
+    // are not a new context, but another repository/account must not inherit
+    // earlier CI history (or a worker's late answer for the old context).
+    const auto same_remote = [](const forge_remote& a, const forge_remote& b)
+    {
+        return a.name == b.name && a.repo == b.repo &&
+               a.account.kind == b.account.kind && a.account.host == b.account.host &&
+               a.account.login == b.account.login && a.account.via_gh == b.account.via_gh &&
+               a.account.via_git_credential == b.account.via_git_credential &&
+               a.account.credential_username == b.account.credential_username;
+    };
+    if (remotes.size() != remotes_.size() ||
+        std::ranges::any_of(remotes, [&](const auto& r)
+            { return std::ranges::none_of(remotes_, [&](const auto& old) { return same_remote(r, old); }); }))
+    {
+        seen_ci_ = seen_artifacts_ = false;
+        ++build_context_;
+        builds_.clear();
+        failed_job_.reset();
+        poll_timer_.reset();
+        poll_after_ = {};
+    }
     remotes_ = remotes;
     // pr_watch's remotes are forge_remotes(), read again on each ask: an
     // account added or removed, a remote changed.
@@ -1074,6 +1096,7 @@ void forge_panel::show_commit(std::optional<std::string> sha, std::string author
 
 void forge_panel::update()
 {
+    for (const auto& [sha, b] : builds_) learn_build(b);
     if (!root_) return;
     update_pull_request();
     update_build();
@@ -1339,6 +1362,28 @@ void forge_panel::update_build_icon(check_state state)
     build_tab_icon_state_ = state;
 }
 
+bool forge_panel::learn_build(const build& b)
+{
+    if (b.local) return false;
+    const bool ci = seen_ci_, artifacts = seen_artifacts_;
+    seen_ci_ = seen_ci_ || (b.answered && !b.ci.empty());
+    seen_artifacts_ = seen_artifacts_ || (b.artifacts_known && !b.artifacts.empty());
+    return ci != seen_ci_ || artifacts != seen_artifacts_;
+}
+
+void forge_panel::accept_build_result(unsigned context, std::function<void()> apply)
+{
+    if (context == build_context_) apply();
+}
+
+forge_panel::build_pages forge_panel::visible_build_pages(const build* b, bool seen_ci,
+                                                         bool seen_artifacts)
+{
+    if (!b || b->local) return {false, false};
+    return {b->answered ? !b->ci.empty() : seen_ci,
+            b->artifacts_known ? !b->artifacts.empty() : seen_artifacts};
+}
+
 void forge_panel::update_build()
 {
     const auto old_mark = build_mark_state_;
@@ -1360,13 +1405,15 @@ void forge_panel::update_build()
             diagnostic += (diagnostic.empty() ? "" : "\n") + b->artifact_error;
         host_.diagnostic(std::move(diagnostic));
     }
-    // Shown once there's something to show: not for a commit that's only
-    // here, nor while it's asked (it's usually quick, and often nothing).
+    // Once this repository has shown content, keep its page available during
+    // the next lookup. A known empty answer or a local commit still hides it.
     const bool shown = b && b->answered && !b->local && !b->ci.empty();
-    ci_present_ = shown;
-    artifacts_present_ = b && b->artifacts_known && !b->artifacts.empty();
-    if (b && b->artifacts_known &&
-        !std::ranges::equal(artifact_list_->rows, b->artifacts,
+    const auto pages = visible_build_pages(b, seen_ci_, seen_artifacts_);
+    ci_present_ = pages.ci;
+    artifacts_present_ = pages.artifacts;
+    const std::vector<ci_artifact> no_artifacts;
+    const auto& artifacts = b && !b->local && b->artifacts_known ? b->artifacts : no_artifacts;
+    if (!std::ranges::equal(artifact_list_->rows, artifacts,
                             [](const ci_artifact& a, const ci_artifact& b)
                             {
                                 return a.name == b.name && a.workflow == b.workflow &&
@@ -1374,13 +1421,39 @@ void forge_panel::update_build()
                                        a.download_url == b.download_url;
                             }))
     {
-        artifact_list_->rows = b->artifacts;
+        artifact_list_->rows = artifacts;
         artifact_list_->notify_reset();
+        if (artifacts.empty() && !artifacts_->selection().empty()) artifacts_->select({});
         enable(download_, false);
     }
+    if (pages.artifacts && b && !b->artifacts_known)
+    {
+        text(download_status_, _("Artifacts: asking..."));
+        show(download_progress_, false);
+        enable(download_, false);
+    }
+    else
+        text(download_status_, download_text_);
     if (!shown)
     {
+        text(build_summary_, pages.ci ? std::string(_("Build: asking...")) : std::string());
+        build_mark_state_ = check_state::pending;
+        show(build_mark_, pages.ci);
+        if (old_mark != build_mark_state_) build_mark_->invalidate();
         update_build_icon(check_state::pending);
+        matrix_->set({}, now_seconds());
+        if (!matrix_list_->selection().empty()) matrix_list_->select({});
+        show(matrix_list_, false);
+        failed_job_.reset();
+        full_log_url_.clear();
+        text(failure_title_, "");
+        text(log_tail_, "");
+        if (!annotation_list_->rows.empty())
+        {
+            annotation_list_->rows.clear();
+            annotation_list_->notify_reset();
+        }
+        show(full_log_, false);
         show(failure_part_, false);
         return;
     }
@@ -1446,7 +1519,7 @@ void forge_panel::update_build()
     }
     update_failure();
 
-    show(download_progress_, downloading_);
+    show(download_progress_, downloading_ && b->artifacts_known);
 }
 
 void forge_panel::update_failure()
@@ -1606,9 +1679,10 @@ void forge_panel::ask_build(const std::string& sha)
     }
     const bool in_pr = pull_request_of(sha, head, nullptr) != nullptr;
     const bool had_artifacts = b.artifacts_known;
+    const unsigned context = build_context_;
     std::thread(
         [sh = shared_, workdir = host_.workdir, sha, candidates = std::move(candidates), in_pr,
-         had_artifacts, this, &ui = host_.ui]
+         had_artifacts, context, this, &ui = host_.ui]
         {
             // A PR's commits are on its repository whether fetched there or
             // not; any other only where it's been pushed.
@@ -1617,13 +1691,13 @@ void forge_panel::ask_build(const std::string& sha)
             auto post = [&](std::function<void()> f)
             {
                 ui.post(
-                    [sh, f = std::move(f)]
+                    [sh, context, this, f = std::move(f)]
                     {
                         {
                             std::lock_guard lock(sh->mutex);
                             if (!sh->alive) return;
                         }
-                        f();
+                        accept_build_result(context, std::move(f));
                     });
             };
             if (!where)
@@ -1687,10 +1761,16 @@ void forge_panel::ask_build(const std::string& sha)
                     {
                         b.ci = *ci;
                         b.error.clear();
+                        if (ci->empty())
+                        {
+                            b.artifacts_known = true;
+                            b.artifacts.clear();
+                        }
                     }
                     else
                         b.error = ci.error();
-                    if (sha_ == sha) update();
+                    const bool learned = learn_build(b);
+                    if (sha_ == sha || learned) update();
                 });
             // The artifacts once, and again only while the runs go on.
             if (!ci || ci->empty() || (had_artifacts && ci->state() != check_state::pending))
@@ -1708,7 +1788,8 @@ void forge_panel::ask_build(const std::string& sha)
                     }
                     else
                         b.artifact_error = artifacts.error();
-                    if (sha_ == sha) update();
+                    const bool learned = learn_build(b);
+                    if (sha_ == sha || learned) update();
                 });
         })
         .detach();
@@ -1832,6 +1913,17 @@ void forge_panel::show_download()
 {
     if (!downloading_ || !download_pulsing_) download_timer_.reset();
     if (!root_) return;
+    if (sha_)
+        if (auto b = builds_.find(*sha_); b != builds_.end() && !b->second.local &&
+            !b->second.artifacts_known && seen_artifacts_)
+        {
+            // Rebinding or an older download's progress must not overwrite
+            // the current row's provisional artifact presentation.
+            text(download_status_, _("Artifacts: asking..."));
+            show(download_progress_, false);
+            enable(download_, false);
+            return;
+        }
     text(download_status_, download_text_);
     show(download_progress_, downloading_);
     download_progress_->set_fraction(download_fraction_);

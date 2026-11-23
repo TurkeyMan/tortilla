@@ -114,6 +114,15 @@ private:
     static pr_icon_state pr_icon_for(const pull_request*);
     void update_pr_icon(const pull_request*);
     void update_build();
+    struct build_pages
+    {
+        bool ci, artifacts;
+    };
+    static build_pages visible_build_pages(const build*, bool seen_ci, bool seen_artifacts);
+    bool learn_build(const build&);
+    void accept_build_result(unsigned context, std::function<void()>);
+    bool seen_ci_ = false, seen_artifacts_ = false;
+    unsigned build_context_ = 0;
     void update_build_icon(check_state);
     void sync_pages();
     void user_page_changed(int page);

@@ -45,6 +45,10 @@ CI from GitHub, GitLab and Gitea/Forgejo on your branches.
 
 ### Log and history
 
+- Build and Artifacts tabs stay available while another pushed commit is being
+  checked once this repository has shown that content; known empty answers and
+  local commits still hide them.
+
 - The PR tab shows merge status separately from the Build tab's CI status: a
   grey bang for conflicts, a yellow bang for forge rules, or a green tick.
 

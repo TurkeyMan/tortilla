@@ -151,10 +151,11 @@ struct forge_panel_test
     {
         p.builds_[sha] = {.asked = true, .asking = true};
     }
-    static void answer_ci(forge_panel& p, const std::string& sha, bool present)
+    static void answer_ci(forge_panel& p, const std::string& sha, bool present, bool artifacts_known = true)
     {
         auto& b = p.builds_[sha];
-        b.asked = b.answered = b.artifacts_known = true;
+        b.asked = b.answered = true;
+        b.artifacts_known = artifacts_known;
         b.asking = false;
         b.ci.workflows = present
                              ? std::vector<ci_workflow>{{.jobs = {{.name = "test",
@@ -168,6 +169,48 @@ struct forge_panel_test
         p.prs_[0].pr.pr.head_sha = sha;
         p.builds_[sha] = p.builds_["head"];
     }
+    static std::pair<bool, bool> visibility(bool local, bool answered, bool ci,
+                                            bool artifacts_known, bool artifacts,
+                                            bool seen_ci, bool seen_artifacts)
+    {
+        forge_panel::build b;
+        b.local = local;
+        b.answered = answered;
+        b.asking = true; // Cached answers take precedence even during a refresh.
+        if (ci) b.ci.workflows = {{.jobs = {{.name = "job"}}}};
+        b.artifacts_known = artifacts_known;
+        if (artifacts) b.artifacts = {{.name = "app.zip"}};
+        const auto pages = forge_panel::visible_build_pages(&b, seen_ci, seen_artifacts);
+        return {pages.ci, pages.artifacts};
+    }
+    static void answer_artifacts(forge_panel& p, const std::string& sha, bool present)
+    {
+        auto& b = p.builds_[sha];
+        b.artifacts_known = true;
+        b.artifacts = present ? std::vector<ci_artifact>{{.name = "fresh.zip"}}
+                              : std::vector<ci_artifact>{};
+    }
+    static void local(forge_panel& p, const std::string& sha)
+    {
+        p.builds_[sha] = {.asked = true, .answered = true, .local = true};
+    }
+    static std::function<void()> queued_answer(forge_panel& p)
+    {
+        return [&p, context = p.build_context_]
+        {
+            p.accept_build_result(context, [&p]
+            {
+                answer_ci(p, "late", true);
+                answer_artifacts(p, "late", true);
+                p.learn_build(p.builds_.at("late"));
+                p.update();
+            });
+        };
+    }
+    static std::pair<bool, bool> seen(const forge_panel& p)
+    { return {p.seen_ci_, p.seen_artifacts_}; }
+    static rap::list* artifacts(forge_panel& p) { return p.artifacts_; }
+    static rap::label* summary(forge_panel& p) { return p.build_summary_; }
     static rap::tabs* pages(forge_panel& p) { return p.tabs_; }
     static void azure_artifact_error(forge_panel& p, std::string error)
     { p.builds_["head"].artifact_error = std::move(error); }
@@ -2015,6 +2058,141 @@ void pr_tab_icon_tests(rap::ui& ui, const std::string& repo)
           "PR tab icon: retained draw callback owns its value after panel unbind");
 }
 
+void forge_pending_tabs_tests(rap::ui& ui, const std::string& repo)
+{
+    using t = forge_panel_test;
+    struct test_case
+    {
+        bool local, answered, ci, known, artifacts, seen_ci, seen_artifacts;
+        std::pair<bool, bool> visible;
+    };
+    const test_case cases[] = {
+        {true, false, false, false, false, true, true, {false, false}},
+        {true, true, true, true, true, true, true, {false, false}},
+        {false, false, false, false, false, false, false, {false, false}},
+        {false, false, false, false, false, true, false, {true, false}},
+        {false, false, false, false, false, true, true, {true, true}},
+        {false, true, false, true, false, true, true, {false, false}},
+        {false, true, true, true, false, false, true, {true, false}},
+        {false, true, true, false, false, true, true, {true, true}},
+        {false, true, true, true, true, false, false, {true, true}},
+        {false, true, false, true, true, true, true, {false, true}},
+    };
+    for (const auto& c : cases)
+        check(t::visibility(c.local, c.answered, c.ci, c.known, c.artifacts,
+                            c.seen_ci, c.seen_artifacts) == c.visible,
+              "pending forge tabs: pure visibility handles local, unseen, pending and cached answers");
+
+    forge_panel p({.ui = ui, .workdir = repo});
+    t::awaiting(p, "new");
+    auto window = ui.create(rap::layout::window{"Pending forge tabs", {p.layout()}});
+    p.built();
+    auto tabs = [&] { return dynamic_cast<kept_pages*>(t::pages(p)); };
+    p.show_commit("new");
+    check(!tabs()->page_visible(2) && !tabs()->page_visible(3),
+          "pending forge tabs: a repository never seen with CI shows no provisional pages");
+    // A queued result for an unselected SHA teaches this panel, not just its row.
+    const auto hidden_answer = t::queued_answer(p);
+    hidden_answer();
+    check(tabs()->page_visible(2) && tabs()->page_visible(3),
+          "pending forge tabs: nonselected cached answers teach CI and artifact history");
+    tabs()->click(2);
+    t::presence(p, false, true, true);
+    p.show_commit("head");
+    t::build(p);
+    t::job_metadata(p, 72, "https://forge.invalid/old", "old failure");
+    t::refresh(p);
+    auto* matrix = dynamic_cast<kept_list*>(t::matrix(p));
+    matrix->click({0}, 0);
+    check(t::picked(p) && matrix->model->row_count() != 0,
+          "pending forge tabs: fixture first shows a selected failed job");
+    t::awaiting(p, "pending");
+    p.show_commit("pending");
+    auto* artifacts = dynamic_cast<kept_list*>(t::artifacts(p));
+    auto* summary = dynamic_cast<kept_label*>(t::summary(p));
+    auto* status = dynamic_cast<kept_label*>(t::status(p));
+    check(tabs()->current() == 2 && t::seen(p) == std::pair{true, true} &&
+              matrix->model->row_count() == 0 && !t::picked(p) &&
+              t::failure_url(p).empty() && t::failure_title(p).empty() &&
+              artifacts->model->row_count() == 0 && summary->text == "Build: asking..." &&
+              status->text == "Artifacts: asking...",
+          "pending forge tabs: Build stays chosen with fresh asking text and no stale rows or failure");
+    const int changes = tabs()->user_changes;
+    g_forge_writes = g_forge_pages = g_forge_invalidates = 0;
+    t::refresh(p);
+    check(g_forge_writes == 0 && g_forge_pages == 0 && g_forge_invalidates == 0 &&
+              tabs()->user_changes == changes,
+          "pending forge tabs: unchanged pending answers do not mutate widgets or selection");
+    p.unbind();
+    window.reset();
+    settle(ui);
+    window = ui.create(rap::layout::window{"Pending row rebound", {p.layout()}});
+    p.built();
+    matrix = dynamic_cast<kept_list*>(t::matrix(p));
+    artifacts = dynamic_cast<kept_list*>(t::artifacts(p));
+    status = dynamic_cast<kept_label*>(t::status(p));
+    check(tabs()->current() == 2 && status->text == "Artifacts: asking...",
+          "pending forge tabs: rebound pending pages retain fresh asking presentation");
+    tabs()->click(3);
+    t::awaiting(p, "next");
+    p.show_commit("next");
+    check(tabs()->current() == 3 && tabs()->page_visible(3),
+          "pending forge tabs: remembered Artifacts stays selected through the next lookup");
+    t::answer_ci(p, "next", true, false); // CI known, artifacts still outstanding
+    t::refresh(p);
+    check(tabs()->current() == 3 && status->text == "Artifacts: asking...",
+          "pending forge tabs: CI answer alone keeps unknown artifacts available");
+    t::answer_artifacts(p, "next", false);
+    t::refresh(p);
+    check(!tabs()->page_visible(3) && p.remembered_page() == 3,
+          "pending forge tabs: known empty artifacts hides immediately without changing user memory");
+    t::answer_ci(p, "next", false);
+    t::refresh(p);
+    check(!tabs()->page_visible(2),
+          "pending forge tabs: known empty CI hides immediately");
+    t::local(p, "local");
+    p.show_commit("local");
+    check(!tabs()->page_visible(2) && !tabs()->page_visible(3),
+          "pending forge tabs: a local commit immediately hides provisional pages");
+    p.show_commit("head");
+    check(tabs()->current() == 3 && matrix->model->row_count() != 0 &&
+              artifacts->model->row_count() != 0,
+          "pending forge tabs: cached content and remembered Artifacts show immediately");
+    p.unbind();
+    window.reset();
+    settle(ui);
+    window = ui.create(rap::layout::window{"Pending forge tabs rebound", {p.layout()}});
+    p.built();
+    check(t::seen(p) == std::pair{true, true} && tabs()->current() == 3,
+          "pending forge tabs: page rebuild preserves session history and selection");
+    p.show_commit(std::nullopt);
+    std::vector<forge_remote> remotes = {{.name = "origin", .repo = {.host = "github.com", .owner = "fixture", .name = "one"}},
+                                        {.name = "upstream", .repo = {.host = "github.com", .owner = "fixture", .name = "two"}}};
+    p.set_pull_requests({}, remotes);
+    check(t::seen(p) == std::pair{false, false},
+          "pending forge tabs: changed remote context resets learned history");
+    t::answer_ci(p, "known", true);
+    t::answer_artifacts(p, "known", true);
+    t::refresh(p);
+    std::reverse(remotes.begin(), remotes.end());
+    remotes[0].account.name = "Updated display name";
+    p.set_pull_requests({}, remotes);
+    check(t::seen(p) == std::pair{true, true},
+          "pending forge tabs: remote reorder and display-name changes preserve history");
+    const auto late = t::queued_answer(p);
+    remotes[0].repo.name = "replacement";
+    p.set_pull_requests({}, remotes);
+    late(); // a previously queued worker completion belongs to the old remote context
+    t::awaiting(p, "fresh");
+    p.show_commit("fresh");
+    check(!tabs()->page_visible(2) && !tabs()->page_visible(3) &&
+              t::seen(p) == std::pair{false, false},
+          "pending forge tabs: replacement remote cannot inherit cached content or provisional pages");
+    p.unbind();
+    window.reset();
+    settle(ui);
+}
+
 class forge_observer : public rap::list_observer
 {
 public:
@@ -2753,15 +2931,15 @@ void forge_tabs_tests(rap::ui& ui, const std::string& repo)
           "forge tabs: appearing pages restore the still-remembered user choice");
     forge_panel_test::awaiting(panel, "unknown");
     panel.show_commit("unknown");
-    check(tabs()->current() == 0 && panel.remembered_page() == 2,
-          "forge tabs: unknown CI falls back to Commit while remembering CI");
+    check(tabs()->current() == 2 && panel.remembered_page() == 2,
+          "forge tabs: previously seen CI keeps Build selected during an unknown lookup");
     const int user_changes = tabs()->user_changes;
-    tabs()->click(0);  // accepted no-op: Commit is already the visible fallback
+    tabs()->click(2);  // accepted no-op: Build stays current during the lookup
     forge_panel_test::answer_ci(panel, "unknown", true);
     forge_panel_test::refresh(panel);
     check(tabs()->current() == 2 && panel.remembered_page() == 2 &&
               tabs()->user_changes == user_changes,
-          "forge tabs: late CI restores explicit state with silent set_current and no-op Commit "
+          "forge tabs: late CI preserves explicit state with silent set_current and no-op Build "
           "re-click");
     forge_panel_test::awaiting(panel, "another");
     panel.show_commit("another");
@@ -2771,8 +2949,8 @@ void forge_tabs_tests(rap::ui& ui, const std::string& repo)
     forge_panel_test::present_commit(panel, "another");
     forge_panel_test::awaiting(panel, "another");
     forge_panel_test::refresh(panel);
-    check(tabs()->page_visible(1) && tabs()->current() == 0,
-          "forge tabs: PR is a visible different-page choice while CI is unknown");
+    check(tabs()->page_visible(1) && tabs()->current() == 2,
+          "forge tabs: PR is a visible different-page choice while Build is pending");
     tabs()->click(1);
     forge_panel_test::answer_ci(panel, "another", true);
     forge_panel_test::refresh(panel);
@@ -2878,20 +3056,20 @@ void lower_page_view_tests(rap::ui& ui, const std::string& repo)
     settle(ui);
     check(panel.selected_page() == 2 && forge_panel_test::pages(panel)->current() == 2,
           "forge tabs: rebuilt or adopted log page restores its CI choice with the commit");
-    // Carry user intent even while the visible fallback is Commit.
+    // Carry user intent while previously seen CI remains provisionally visible.
     forge_panel_test::presence(panel, false, false, false);
     forge_panel_test::awaiting(panel, sha);
     forge_panel_test::refresh(panel);
     auto hidden_view = tab->capture_view();
-    check(hidden_view.lower_page == 2 && panel.selected_page() == 0,
-          "forge tabs: view captures remembered CI while the actual page is Commit");
+    check(hidden_view.lower_page == 2 && panel.selected_page() == 2,
+          "forge tabs: view captures remembered Build while its lookup is pending");
     tab->drop_page();
     window.reset();
     host.w = nullptr;
     window = build(std::move(hidden_view));
     settle(ui);
-    check(panel.remembered_page() == 2 && panel.selected_page() == 0,
-          "forge tabs: rebuilding an unknown-CI row preserves memory without a visible CI page");
+    check(panel.remembered_page() == 2 && panel.selected_page() == 2,
+          "forge tabs: rebuilding an unknown-CI row preserves the provisional Build choice");
     last_page().commits->focus();
     g_focus_calls = 0;
     forge_panel_test::answer_ci(panel, sha, true);
@@ -4693,6 +4871,7 @@ void run_log_page_tests(const std::string& root)
     pr_check_mark_tests();
     build_tab_icon_tests(ui, repo);
     pr_tab_icon_tests(ui, repo);
+    forge_pending_tabs_tests(ui, repo);
     forge_fresh_canvas_tests(ui, repo);
     forge_download_tests(ui, repo);
     forge_tabs_tests(ui, repo);
