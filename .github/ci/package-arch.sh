@@ -3,9 +3,16 @@
 # Linux or Arch Linux ARM container; makepkg itself won't run as root), named
 # for the download: dist/tortilla-<version>-arch-x86_64.pkg.tar.zst, or -arm64.
 set -eu
-# The package's own dependencies too: makepkg checks they're installed.
-pacman -Syu --noconfirm --needed base-devel git git-lfs hicolor-icon-theme cmake ninja libgit2 gtk3 gtk4 qt6-base \
-  libnautilus-extension nemo caja thunar kio wayland-protocols
+# The package's own dependencies too: makepkg checks they're installed. A
+# few tries: a mirror (Arch Linux ARM's especially) can lag its database.
+for try in 1 2 3; do
+  if pacman -Syu --noconfirm --needed base-devel git git-lfs hicolor-icon-theme cmake ninja \
+       libgit2 gtk3 gtk4 qt6-base libnautilus-extension nemo caja thunar kio wayland-protocols; then
+    break
+  fi
+  [ "$try" -lt 3 ] || exit 1
+  sleep 60
+done
 id builder >/dev/null 2>&1 || useradd -m builder
 chown -R builder .
 git config --system --add safe.directory "$PWD"
