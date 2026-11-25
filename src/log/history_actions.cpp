@@ -120,6 +120,12 @@ void log_tab::history_items(menu& m, const std::vector<size_t>& sel)
         why = busy(repo_);
     // One edit at a time (history_writer): the rest wait for it.
     if (history_edit_busy()) why = std::string(_("another edit is under way"));
+    // Every edit would be greyed for the same reason: one line says so.
+    if (why)
+    {
+        m.push_back(maybe(_("Edit history"), why, {}));
+        return;
+    }
     // The edits' own rule (a commit in SVN, a merge, another worktree...),
     // shown: each plan checks it again, whichever way it's asked for.
     auto why_not = [&](const std::vector<oid>& which, bool replays) -> std::optional<std::string>

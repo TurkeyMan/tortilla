@@ -47,6 +47,10 @@ CI from GitHub, GitLab and Gitea/Forgejo on your branches.
 
 ### Log and history
 
+- The commit menu in the log is grouped by what each entry acts on: looking
+  at the commit, new branches and tags at it, the current branch (Reset last),
+  the commit's own branch, then taking it elsewhere. History edits that are
+  all unavailable for one reason show as one line.
 - Build and Artifacts tabs stay available while another pushed commit is being
   checked once this repository has shown that content; known empty answers and
   local commits still hide them.

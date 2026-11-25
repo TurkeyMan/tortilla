@@ -368,6 +368,45 @@ menu log_tab::context_menu(std::optional<size_t> clicked)
                                      [this, hash] { difftool({hash + "^", hash}); }));
             }
         }
+        if (!wc)
+        {
+            if (refs && !is_stash)
+            {
+                // From the row's ref, so the new log follows that branch or
+                // tag; with several, the one to walk from is picked.
+                if (refs->size() == 1)
+                    m.push_back(item(_("Show log..."), "log",
+                                     [this, r = refs->front().full_name] { show_log_at(r); }));
+                else
+                {
+                    menu_item sub{.label = _("Show log..."), .icon = menu_icon("log")};
+                    for (const ref& r : *refs)
+                        sub.children.push_back(item(menu_text(r.name), [this, full = r.full_name]
+                                                    { show_log_at(full); }));
+                    m.push_back(std::move(sub));
+                }
+            }
+            // At this commit, from the path the log is limited to.
+            m.push_back(item(
+                _("_Browse repository"), "repobrowser",
+                [this, hash]
+                {
+                    const std::string from =
+                        path_limited()
+                            ? rap::sys::path_to_utf8(rap::sys::path_from_utf8(repo_.workdir()) /
+                                                     rap::sys::path_from_utf8(rel_path_))
+                            : repo_location();
+                    auto b = repo_browser::open(ui_, from, hash);
+                    if (!b)
+                        return show_message(ui_, parent(),
+                                            {.icon = rap::message_spec::icon::error,
+                                             .title = "Tortilla",
+                                             .text = b.error()});
+                    windows::keep(std::move(*b));
+                }));
+            m.push_back(item(_("Show branches this commit is _on"),
+                             [this, c] { show_branches_containing(*c); }));
+        }
         separator(m);
 
         // Group B: stash
@@ -433,58 +472,6 @@ menu log_tab::context_menu(std::optional<size_t> clicked)
         // Group E: commit rows
         if (!wc)
         {
-            if (refs && !is_stash)
-            {
-                // From the row's ref, so the new log follows that branch or
-                // tag; with several, the one to walk from is picked.
-                if (refs->size() == 1)
-                    m.push_back(item(_("Show log..."), "log",
-                                     [this, r = refs->front().full_name] { show_log_at(r); }));
-                else
-                {
-                    menu_item sub{.label = _("Show log..."), .icon = menu_icon("log")};
-                    for (const ref& r : *refs)
-                        sub.children.push_back(item(menu_text(r.name), [this, full = r.full_name]
-                                                    { show_log_at(full); }));
-                    m.push_back(std::move(sub));
-                }
-            }
-            // At this commit, from the path the log is limited to.
-            m.push_back(item(
-                _("_Browse repository"), "repobrowser",
-                [this, hash]
-                {
-                    const std::string from =
-                        path_limited()
-                            ? rap::sys::path_to_utf8(rap::sys::path_from_utf8(repo_.workdir()) /
-                                                     rap::sys::path_from_utf8(rel_path_))
-                            : repo_location();
-                    auto b = repo_browser::open(ui_, from, hash);
-                    if (!b)
-                        return show_message(ui_, parent(),
-                                            {.icon = rap::message_spec::icon::error,
-                                             .title = "Tortilla",
-                                             .text = b.error()});
-                    windows::keep(std::move(*b));
-                }));
-            if (!head && has_wc && !merging && !is_stash)
-            {
-                // Merge a branch at this commit by name, else the commit.
-                std::string what = hash;
-                if (refs)
-                    for (auto& r : *refs)
-                        if (r.kind == ref_kind::local_branch || r.kind == ref_kind::remote_branch ||
-                            r.kind == ref_kind::tag)
-                        {
-                            what = r.full_name;
-                            break;
-                        }
-                m.push_back(
-                    item(rap::i18n::format(_("_Merge to {0}..."), cur), "merge", [this, c, what] { merge_from(*c, what); }));
-            }
-            if (has_wc && !is_stash)
-                m.push_back(item(rap::i18n::format(_("R_eset {0} to this..."), cur), "revert", [this, c] { reset_to(*c); }));
-
             std::vector<std::string> branches;
             if (refs)
                 for (auto& r : *refs)
@@ -518,12 +505,18 @@ menu log_tab::context_menu(std::optional<size_t> clicked)
                     item(_("Create Br_anch at this version..."), "branch", [this, c] { create_branch(*c); }));
                 m.push_back(item(_("Create _Tag at this version..."), "tag", [this, c] { create_tag(*c); }));
             }
+            if (!is_stash) m.push_back(item(_("Edit _Notes"), [this, c] { edit_notes(*c); }));
+            separator(m);
+
+            // What changes the current branch, the most drastic last.
             if (!head && has_wc && !merging && !is_stash)
-                m.push_back(item(rap::i18n::format(_("Rebase {0} onto this...(_G)"), cur), "rebase",
-                                 [this, hash] { open_rebase(hash); }));
-            m.push_back(item(_("E_xport this version..."), "export",
-                             [this, hash]
-                             { export_revision(ui_, parent(), repo_.workdir(), hash); }));
+                m.push_back(item(_("Cherr_y Pick this commit..."), "patch",
+                                 [this, hash]
+                                 {
+                                     confirm_then_run(
+                                         rap::i18n::format(_("Cherry-pick {0} commit(s) onto the current branch?"), 1),
+                                         _("Cherry Pick"), {{"cherry-pick", hash}});
+                                 }));
             if (has_wc && !merging && !is_stash)
             {
                 auto revert = [this, hash](std::optional<size_t> parent)
@@ -546,7 +539,27 @@ menu log_tab::context_menu(std::optional<size_t> clicked)
                 else
                     m.push_back(item(_("_Revert change by this commit"), "revert", [revert] { revert({}); }));
             }
-            if (!is_stash) m.push_back(item(_("Edit _Notes"), [this, c] { edit_notes(*c); }));
+            if (!head && has_wc && !merging && !is_stash)
+            {
+                // Merge a branch at this commit by name, else the commit.
+                std::string what = hash;
+                if (refs)
+                    for (auto& r : *refs)
+                        if (r.kind == ref_kind::local_branch || r.kind == ref_kind::remote_branch ||
+                            r.kind == ref_kind::tag)
+                        {
+                            what = r.full_name;
+                            break;
+                        }
+                m.push_back(
+                    item(rap::i18n::format(_("_Merge to {0}..."), cur), "merge", [this, c, what] { merge_from(*c, what); }));
+            }
+            if (!head && has_wc && !merging && !is_stash)
+                m.push_back(item(rap::i18n::format(_("Rebase {0} onto this...(_G)"), cur), "rebase",
+                                 [this, hash] { open_rebase(hash); }));
+            if (has_wc && !is_stash)
+                m.push_back(item(rap::i18n::format(_("R_eset {0} to this..."), cur), "revert", [this, c] { reset_to(*c); }));
+
             separator(m);
         }
     }
@@ -630,13 +643,12 @@ menu log_tab::context_menu(std::optional<size_t> clicked)
             }
         if (!picks.empty() && picks.size() == sel.size())
         {
-            if (!any_head && has_wc && !merging)
+            // One commit's is with the current branch's other actions.
+            if (picks.size() > 1 && !any_head && has_wc && !merging)
             {
                 arg_list args{"cherry-pick"};
                 args.insert(args.end(), picks.begin(), picks.end());
-                std::string label = picks.size() == 1 ? _("Cherr_y Pick this commit...")
-                                                      : _("Cherr_y Pick selected commits...");
-                m.push_back(item(label, "patch",
+                m.push_back(item(_("Cherr_y Pick selected commits..."), "patch",
                                  [this, args, n = picks.size()]
                                  {
                                      confirm_then_run(
@@ -644,6 +656,20 @@ menu log_tab::context_menu(std::optional<size_t> clicked)
                                          _("Cherry Pick"), {args});
                                  }));
             }
+            separator(m);
+        }
+
+        // Editing the branch's history in place (history_actions.cpp).
+        history_items(m, sel);
+        separator(m);
+
+        // Taking it elsewhere.
+        if (!picks.empty() && picks.size() == sel.size())
+        {
+            if (const commit* c1 = log_.commit(sel.front()); c1 && sel.size() == 1)
+                m.push_back(item(_("E_xport this version..."), "export",
+                                 [this, hash = c1->id.hex()]
+                                 { export_revision(ui_, parent(), repo_.workdir(), hash); }));
             if (!any_stash && (sel.size() <= 2 || sel.back() - sel.front() + 1 == sel.size()))
             {
                 // Two apart are taken as the range between them, as
@@ -673,10 +699,6 @@ menu log_tab::context_menu(std::optional<size_t> clicked)
             }
             separator(m);
         }
-
-        // Editing the branch's history in place (history_actions.cpp).
-        history_items(m, sel);
-        separator(m);
 
         // Bisect start: the older of the two worked, the newer doesn't.
         if (sel.size() == 2 && picks.size() == 2 && !any_stash && has_wc && !merging && !bisecting)
@@ -855,15 +877,10 @@ menu log_tab::context_menu(std::optional<size_t> clicked)
     if (sel.size() == 1 && log_.refs_of(sel.front()))
         copy.children.push_back(copy_item(_("Tag/branch names"), copy_ref_names));
     m.push_back(std::move(copy));
-    m.push_back(item(_("Search _log messages..."), [this] { focus_filter(); }));
-    if (sel.size() == 1)
-        if (const commit* c = log_.commit(sel.front()))
-            m.push_back(item(_("Show branches this commit is _on"),
-                             [this, c] { show_branches_containing(*c); }));
     // Without git: what reads in process stays; the rest is greyed.
     grey_without_git(m, {_("Show changes as _unified diff"), _("_Unified diff with"),
                          _("Show log..."), _("Show log of {0}"), _("_Browse repository"),
-                         _("Stash List"), _("Copy to clipboard"), _("Search _log messages..."),
+                         _("Stash List"), _("Copy to clipboard"),
                          _("Show branches this commit is _on"), _("Open _worktree “{0}”"),
                          _("U_npin"), _("_Pin: always show"), _("_Hide branch")});
     return m;
