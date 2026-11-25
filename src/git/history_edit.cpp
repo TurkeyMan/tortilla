@@ -480,6 +480,15 @@ const ref_move* head_move(git_repository* r, const history_edit& e)
 // checkout leaves them, or refuses to overwrite them).
 bool has_local_changes(git_repository* r)
 {
+    // The repository keeps its index loaded, and libgit2 rereads it only
+    // when the file's time (to the second, on Windows) or size changes: a
+    // git command that rewrote it within the second at the same size (a
+    // stash, an add) would go unseen. Read again what git wrote since.
+    {
+        owned_index index;
+        if (git_repository_index(&index.p, r) != 0 || git_index_read(index.p, true) != 0)
+            return true;
+    }
     git_status_options opts = GIT_STATUS_OPTIONS_INIT;
     opts.show = GIT_STATUS_SHOW_INDEX_AND_WORKDIR;
     opts.flags = GIT_STATUS_OPT_EXCLUDE_SUBMODULES;
