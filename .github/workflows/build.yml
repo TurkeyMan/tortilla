@@ -220,6 +220,18 @@ jobs:
         run: |
           ls -l dist
           v=${GITHUB_REF_NAME#v}
+          # Every download the notes name, and nothing else: two jobs writing
+          # one name would leave one file, silently.
+          expected=
+          for a in x86_64 arm64; do
+            expected="$expected tortilla-$v-windows-$a-setup.exe tortilla-$v-windows-$a.zip"
+            expected="$expected tortilla-$v-debian-$a.deb tortilla-$v-fedora-$a.rpm"
+            expected="$expected tortilla-$v-arch-$a.pkg.tar.zst"
+          done
+          for f in $expected; do
+            [ -f "dist/$f" ] || { echo "::error::Missing $f"; exit 1; }
+          done
+          [ "$(ls dist | wc -l)" -eq 10 ] || { echo "::error::Expected 10 files in dist"; exit 1; }
           sed "s/@VERSION@/$v/g; s|@COMMITS@|https://github.com/$GITHUB_REPOSITORY/commits/$GITHUB_REF_NAME|g" \
             .github/release-notes.md > notes.md
           gh release create "$GITHUB_REF_NAME" dist/* \
