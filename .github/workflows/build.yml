@@ -130,12 +130,12 @@ jobs:
 
       # The kernel and firmware are no use in a container, and the kernel's
       # upgrade would build an initramfs. pacman can't tell a container's
-      # free space.
+      # free space, or sandbox its downloads there (Landlock is refused).
       - name: Build, test and package
         run: |
           docker run --rm -v "$PWD:/src" -w /src -e GITHUB_REF alarm sh -c '
             set -eu
-            sed -i "s/^CheckSpace/#CheckSpace/" /etc/pacman.conf
+            sed -i "s/^CheckSpace/#CheckSpace/; /^\[options\]/a DisableSandbox" /etc/pacman.conf
             pacman-key --init
             pacman-key --populate archlinuxarm
             pacman -Rdd --noconfirm linux-aarch64 linux-firmware 2>/dev/null || true

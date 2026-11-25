@@ -3,7 +3,8 @@
 # Linux or Arch Linux ARM container; makepkg itself won't run as root), named
 # for the download: dist/tortilla-<version>-arch-x86_64.pkg.tar.zst, or -arm64.
 set -eu
-pacman -Syu --noconfirm --needed base-devel git cmake ninja libgit2 gtk3 gtk4 qt6-base \
+# The package's own dependencies too: makepkg checks they're installed.
+pacman -Syu --noconfirm --needed base-devel git git-lfs hicolor-icon-theme cmake ninja libgit2 gtk3 gtk4 qt6-base \
   libnautilus-extension nemo caja thunar kio wayland-protocols
 id builder >/dev/null 2>&1 || useradd -m builder
 chown -R builder .

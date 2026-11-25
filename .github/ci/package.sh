@@ -35,7 +35,7 @@ if [ "$1" = DEB ]; then
   elf=$(find "$stage" -type f -exec sh -c '[ "$(head -c4 "$1" | tail -c3)" = ELF ]' _ {} \; -print)
   private=$(dirname "$(find "$stage" -name 'librapport.so.0' | head -n1)")
   mkdir "$stage/debian"
-  printf 'Source: tortilla\n\nPackage: tortilla\n' > "$stage/debian/control"
+  printf 'Source: tortilla\n\nPackage: tortilla\nArchitecture: any\n' > "$stage/debian/control"
   # shellcheck disable=SC2086 # one argument per file
   deps=$(cd "$stage" && dpkg-shlibdeps -O -l"$private" --ignore-missing-info $elf |
          sed -n 's/^shlibs:Depends=//p')
