@@ -14,19 +14,44 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
 namespace tortilla
 {
 
+// Amend with changes (the log's): the dialog folds the checked files into
+// an older commit of the checked-out branch instead of committing.
+struct amend_request
+{
+    std::vector<std::string> paths;        // repository-relative, renames' old paths too
+    std::vector<std::string> unversioned;  // new files, added
+    std::optional<std::string> message;    // the commit's new one, when it was edited
+};
+enum class amend_result
+{
+    not_started,  // asked about and not wanted, or refused before anything ran
+    failed,       // nothing changed
+    done,
+};
+struct amend_target
+{
+    oid into;
+    std::string short_hash;
+    std::string message;  // prefilled
+    // Runs it, then `finished` once with what came of it.
+    std::function<void(amend_request, std::function<void(amend_result)> finished)> run;
+};
+
 class commit_window
 {
 public:
     // `paths` are files or folders in one repository; the root (or none)
-    // means the whole repository.
+    // means the whole repository. With `amend`, it amends that commit.
     static std::expected<std::unique_ptr<commit_window>, std::string>
-    open(rap::ui&, const std::vector<std::string>& paths);
+    open(rap::ui&, const std::vector<std::string>& paths,
+         std::optional<amend_target> amend = std::nullopt);
     ~commit_window();
 
     // The message has the focus once shown (showing gives it to the first
@@ -52,6 +77,10 @@ private:
     // `push`: Commit & Push, the branch pushed after (push_dialog's
     // push_committed).
     void commit(bool push = false);
+    // Amend with changes: the checked files handed to amend_target's run.
+    void amend_into(const std::vector<file_change>&);
+    // After a commit or an amend: the held-back files put back, then closed.
+    void after_commit();
     // Cancel or the close box: asks first about files to be restored.
     void cancel();
     void close(bool committed);
@@ -76,6 +105,8 @@ private:
     changes_view files_;
     std::unique_ptr<rap::window> window_;
     std::function<void(bool)> closed_;
+    std::optional<amend_target> amend_into_;
+    std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
     std::string pre_amend_message_;  // the message before Amend replaced it
     // Restore after commit: by path, the kept content as a blob in the
     // repository, byte for byte (git's filters skipped).

@@ -688,33 +688,51 @@ void history_edit_tests(const std::string& root)
         check(snapshot() == dirty, "history: fold keeps local changes");
     }
 
-    // Amend with staged changes: the index folded into an older commit,
-    // the working tree untouched.
+    // Amend with changes: the files picked, as the working tree has them,
+    // folded into an older commit; the rest of the index and the working
+    // tree as they were.
     {
         sh("cd '" + dir +
-           "' && git stash push -q -m history-test3 && printf 'two amended\\n' > "
-           "two.txt && git add two.txt && printf 'unstaged\\n' >> base.txt");
-        const std::string unstaged = read_bytes(dir + "/base.txt");
+           "' && git stash push -q -m history-test3 && printf 'two amended\\n' > two.txt && "
+           "printf 'new\\n' > new.txt && printf 'staged\\n' >> base.txt && git add base.txt && "
+           "printf 'unstaged\\n' >> base.txt");
+        const std::string base = read_bytes(dir + "/base.txt");
+        const std::string staged = git({"diff", "--cached"});
         auto h = branch_holding(*r, {*r->resolve("HEAD")}, mainline);
-        check(!why_nothing_staged(*r), "history: staged changes to amend with");
-        auto staged = staged_commit(*r);
         const size_t at = by_subject(*h, "two and three");
-        auto plan = staged ? plan_amend(*h, *staged, h->line[at]) : std::unexpected(std::string());
-        auto tip = plan ? replay(*r, *plan) : std::unexpected(replay_failure{});
-        check(tip && tree(tip->hex()) == tree(staged->hex()), "history: amend replays");
-        if (tip)
-        {
-            history_edit e = edit_from(*r, *h, *plan, *tip, "tortilla: amend");
-            e.keep_index = true;
-            check(effect_of(*r, e) == tree_effect::none && apply_edit(*r, e) &&
-                      git({"diff", "--cached"}).empty() &&
-                      read_bytes(dir + "/base.txt") == unstaged &&
-                      git({"show", "HEAD~" + std::to_string(at) + ":two.txt"}) == "two amended",
-                  "history: amend folds the staged changes into an older commit");
-        }
-        check(!staged_commit(*r) && staged_commit(*r).error() == _("nothing staged") &&
-                  why_nothing_staged(*r) == _("nothing staged"),
-              "history: amend needs staged changes");
+        auto e = amend_with_changes(*r, *h, h->line[at], {"two.txt"}, {"new.txt"},
+                                    std::string("two, three and new\n"), "tortilla: amend");
+        const std::string old = "HEAD~" + std::to_string(at);
+        check(e && e->keep_index && effect_of(*r, *e) == tree_effect::none && apply_edit(*r, *e) &&
+                  git({"show", old + ":two.txt"}) == "two amended" &&
+                  git({"show", old + ":new.txt"}) == "new" &&
+                  git({"log", "-1", "--format=%B", old}) == "two, three and new",
+              "history: amend with changes folds the files picked into an older commit");
+        check(git({"diff", "--cached"}) == staged && read_bytes(dir + "/base.txt") == base &&
+                  git({"status", "--porcelain", "--", "two.txt", "new.txt"}).empty(),
+              "history: the rest of the index and working tree stay as they were");
+
+        // A later commit changes the same lines: nothing changes at all.
+        const std::string tip = git({"rev-parse", "HEAD"});
+        commit("conf.txt", "a\n", "conf a");
+        commit("conf.txt", "b\n", "conf b");
+        sh("cd '" + dir + "' && printf 'c\\n' > conf.txt");
+        const std::string index = read_bytes(dir + "/.git/index");
+        h = branch_holding(*r, {*r->resolve("HEAD")}, mainline);
+        auto conflict = amend_with_changes(*r, *h, h->line[1], {"conf.txt"}, {}, std::nullopt,
+                                           "tortilla: amend");
+        check(!conflict && conflict.error().message.find("Fixup into") != std::string::npos &&
+                  read_bytes(dir + "/.git/index") == index &&
+                  read_bytes(dir + "/conf.txt") == "c\n" &&
+                  git({"rev-parse", "HEAD"}) == h->tip.hex(),
+              "history: amend with changes that don't fold in changes nothing");
+        // Nothing picked: the message alone.
+        auto reword = amend_with_changes(*r, *h, h->line[1], {}, {}, std::string("conf A\n"),
+                                         "tortilla: amend");
+        check(reword && apply_edit(*r, *reword) && subject("HEAD~1") == "conf A" &&
+                  read_bytes(dir + "/conf.txt") == "c\n" && git({"diff", "--cached"}) == staged,
+              "history: amend with only a new message rewords");
+        sh(g + "reset -q --hard " + tip);
         sh("cd '" + dir + "' && git checkout -q -- base.txt && git stash pop -q --index");
     }
 

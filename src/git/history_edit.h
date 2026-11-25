@@ -103,7 +103,7 @@ struct history_edit
     std::vector<ref_move> moves;
     // The checked-out branch moves but the index and working tree stay as
     // they are, even when its tree changes: Undo last commit (reset --soft)
-    // and Amend with staged changes (the index is what the new tip has).
+    // and Amend with changes (the index is what the new tip has).
     bool keep_index = false;
     bool pushed = false;  // rewritten commits were on the upstream already
     // The upstream's remote-tracking tip the edit was made from (the
@@ -194,18 +194,32 @@ std::expected<edit_plan, std::string> plan_fold(const branch_history&, const oid
 // bottom), keeping their order.
 std::expected<edit_plan, std::string>
 plan_reorder(const branch_history&, const std::vector<oid>& moved, size_t destination);
-// Amend with staged changes: `staged` (staged_commit's) folded into
-// `into`, the commits above replayed on the result.
+// Amend with changes: `staged` (staged_commit's) folded into `into`, the
+// commits above replayed on the result; `message`, when given, is the
+// amended commit's.
 std::expected<edit_plan, std::string> plan_amend(const branch_history&, const oid& staged,
-                                                 const oid& into);
+                                                 const oid& into,
+                                                 std::optional<std::string> message = {});
 // The index's staged changes as a commit of their own on HEAD, unreferenced,
 // for folding into an older commit; why not when there's nothing staged or
 // a conflict.
 std::expected<oid, std::string> staged_commit(const repo&);
 
-// Why there are no staged changes to amend with ("nothing staged",
-// "conflicts"), without writing anything; nullopt when there are.
-std::optional<std::string> why_nothing_staged(const repo&);
+// Amend with changes, from the Commit dialog: the working tree's `paths`
+// and `unversioned` files (repository-relative; those added) folded into
+// `into`, an older commit of the checked-out branch, as Commit would commit
+// them:
+// the index made of HEAD and those paths alone, staged_commit, plan_amend,
+// the replay, which must give the index's tree. `message`, when given, is
+// `into`'s new one; with no paths, only that changes (a reword). After, the
+// index is as it was but for those paths, which have the new tip's content;
+// the edit keeps the index (keep_index). On failure nothing is changed:
+// the index is put back byte for byte, the working tree never touched.
+std::expected<history_edit, replay_failure>
+amend_with_changes(const repo&, const branch_history&, const oid& into,
+                   const std::vector<std::string>& paths,
+                   const std::vector<std::string>& unversioned,
+                   std::optional<std::string> message, std::string reflog);
 
 // Whether two commits have the same tree (an amend's result has the
 // index's, or the index wouldn't match it).

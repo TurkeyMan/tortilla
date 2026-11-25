@@ -4,6 +4,7 @@
 // and applied there, and goes in the window's journal for Undo and Redo.
 #include "log_tab.h"
 
+#include "changes/commit_window.h"
 #include "log/branch_filter.h"
 #include "log/history_dialogs.h"
 
@@ -14,6 +15,7 @@
 #include "util/notices.h"
 
 #include <algorithm>
+#include <utility>
 
 namespace tortilla
 {
@@ -229,48 +231,14 @@ void log_tab::history_items(menu& m, const std::vector<size_t>& sel)
         }
         m.push_back(std::move(fixup));
 
-        // The index folded into this commit.
+        // The working tree's changes folded into this commit, picked in the
+        // Commit dialog (staging stays Tortilla's own business).
         std::optional<std::string> amend_why = why_not({c}, true);
         if (!amend_why && !h.checked_out) amend_why = _("not checked out");
-        if (!amend_why) amend_why = why_nothing_staged(repo_);
-        m.push_back(maybe(
-            _("A_mend with staged changes"), amend_why,
-            [this, h, c, hash, pushed]
-            {
-                confirm_history_edit(
-                    _("Amend with Staged Changes"), {}, pushed, h,
-                    [this, h, c, hash]
-                    {
-                        start_history_edit(
-                            _("Amend with Staged Changes"),
-                            [h, c,
-                             hash](const repo& r) -> std::expected<history_edit, replay_failure>
-                            {
-                                auto staged = staged_commit(r);
-                                if (!staged)
-                                    return std::unexpected(
-                                        replay_failure{.message = staged.error()});
-                                auto plan = plan_amend(h, *staged, c);
-                                if (!plan)
-                                    return std::unexpected(replay_failure{.message = plan.error()});
-                                auto tip = replay(r, *plan);
-                                // The index must be what the new tip has, or
-                                // it would undo or redo changes.
-                                if (!tip || !same_tree(r, *tip, *staged))
-                                    return std::unexpected(replay_failure{
-                                        .message = _("The staged changes don't fold into that "
-                                                     "commit cleanly: a later commit changes the "
-                                                     "same lines. Commit them, then use Fixup "
-                                                     "into.")});
-                                history_edit e =
-                                    edit_from(r, h, *plan, *tip,
-                                              "tortilla: amend " + hash + " with staged changes");
-                                e.keep_index = true;
-                                return e;
-                            },
-                            {}, rap::i18n::format(_("Amend {0}"), hash));
-                    });
-            }));
+        if (!amend_why && log_.working_tree_known() && log_.working_tree_files().empty())
+            amend_why = _("no changes");
+        m.push_back(maybe(_("A_mend with changes..."), amend_why, [this, h, c, pushed]
+                          { open_amend_with_changes(h, c, pushed); }));
     }
     else
     {
@@ -428,21 +396,65 @@ void log_tab::history_items(menu& m, const std::vector<size_t>& sel)
 }
 
 void log_tab::confirm_history_edit(const std::string& title, const std::string& question,
-                                   bool pushed, const branch_history& h, std::function<void()> go)
+                                   bool pushed, const branch_history& h, std::function<void()> go,
+                                   std::function<void()> declined)
 {
     std::string text = question;
     if (pushed) text += (text.empty() ? "" : "\n\n") + pushed_warning(h);
     if (text.empty()) return go();
+    if (!declined) declined = [] {};
     show_message(
         ui_, parent(),
         {.icon = pushed ? rap::message_spec::icon::warning : rap::message_spec::icon::question,
          .title = title,
          .text = text,
          .buttons = {rap::dialog_role::yes, rap::dialog_role::no}},
-        [go = guarded(std::move(go))](rap::dialog_role r) mutable
+        [go = guarded(std::move(go)), no = guarded(std::move(declined))](rap::dialog_role r) mutable
         {
-            if (r == rap::dialog_role::yes) go();
+            if (r == rap::dialog_role::yes)
+                go();
+            else
+                no();
         });
+}
+
+// The Commit dialog in its amend mode: its files and message, then this
+// edit (amend_with_changes) on the worker, as the other edits go.
+void log_tab::open_amend_with_changes(const branch_history& h, const oid& into, bool pushed)
+{
+    const std::string hash = into.hex(8);
+    const auto commit = repo_.lookup(into);
+    amend_target target{
+        .into = into,
+        .short_hash = hash,
+        .message = commit ? commit->message : std::string(),
+        .run =
+            [this, alive = std::weak_ptr<bool>(alive_), h, into, hash, pushed](
+                amend_request request, std::function<void(amend_result)> finished)
+        {
+            if (!alive.lock()) return finished(amend_result::not_started);
+            const repo_identity_scope scope = tab_scope();
+            const std::string title = _("Amend with Changes");
+            confirm_history_edit(
+                title, {}, pushed, h,
+                [this, h, into, hash, title, request, finished]
+                {
+                    const bool started = start_history_edit(
+                        title,
+                        [h, into, hash, request](const repo& r)
+                        {
+                            return amend_with_changes(r, h, into, request.paths,
+                                                      request.unversioned, request.message,
+                                                      "tortilla: amend " + hash + " with changes");
+                        },
+                        {}, rap::i18n::format(_("Amend {0}"), hash), journal_use::record,
+                        [finished](bool applied)
+                        { finished(applied ? amend_result::done : amend_result::failed); });
+                    if (!started) finished(amend_result::not_started);
+                },
+                [finished] { finished(amend_result::not_started); });
+        }};
+    keep_dialog(commit_window::open(ui_, {repo_.workdir()}, std::move(target)));
 }
 
 bool log_tab::reorder_rows(const std::vector<size_t>& rows, size_t destination,
@@ -635,11 +647,12 @@ bool log_tab::claim_history_writer(const std::string& title)
     return true;
 }
 
-void log_tab::start_history_edit(const std::string& title, edit_maker make,
+bool log_tab::start_history_edit(const std::string& title, edit_maker make,
                                  std::optional<rebase_todo> fallback, std::string label,
-                                 journal_use use)
+                                 journal_use use, std::function<void(bool)> finished)
 {
-    if (!claim_history_writer(title)) return;
+    if (!claim_history_writer(title)) return false;
+    edit_finished_ = std::move(finished);
     if (page_) page_->status->set_text(rap::i18n::format(_("{0}..."), title));
     if (label.empty()) label = title;
     edit_writer_->prepare(
@@ -656,6 +669,12 @@ void log_tab::start_history_edit(const std::string& title, edit_maker make,
             return [this, title, e = std::move(e), effect, fallback, label, use]
             { history_replayed(title, e, effect, fallback, label, use); };
         });
+    return true;
+}
+
+void log_tab::edit_finished(bool applied)
+{
+    if (auto f = std::exchange(edit_finished_, {})) f(applied);
 }
 
 void log_tab::history_replayed(const std::string& title,
@@ -668,6 +687,7 @@ void log_tab::history_replayed(const std::string& title,
     {
         // Nothing written: free for the next.
         cancel_history_edit();
+        edit_finished(false);
         const replay_failure& f = e.error();
         if (f.conflict && fallback)
             return choose(title, f.message + "\n" + _("Nothing was changed."),
@@ -690,7 +710,11 @@ void log_tab::history_replayed(const std::string& title,
                           "changes come back."),
                         [this, title, edit = *e, label, use]
                         { apply_history_edit(title, edit, true, label, use); }}},
-                      [this] { cancel_history_edit(); });
+                      [this]
+                      {
+                          cancel_history_edit();
+                          edit_finished(false);
+                      });
     apply_history_edit(title, std::move(*e), false, std::move(label), use);
 }
 
@@ -713,6 +737,7 @@ void log_tab::history_applied(const history_outcome& o)
 {
     update_undo_buttons();
     reload();
+    edit_finished(o.applied.has_value());
     if (!o.applied)
         // Refs it moved all the same and couldn't put back are a one-way
         // step of their own in the journal already: Undo puts them back.

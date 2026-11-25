@@ -78,6 +78,10 @@ CI from GitHub, GitLab and Gitea/Forgejo on your branches.
   and Restore after commit to split a change across commits. Commit & Push
   pushes straight after a fast-forward of the branch's upstream, and opens
   Push otherwise (Force with lease ticked after amending a pushed commit).
+- Amend with changes..., on a commit of the checked-out branch in the log:
+  the Commit dialog folds the files you pick (Restore after commit too) into
+  that older commit, its message there to edit, and the commits above are
+  replayed on it.
 - Check for modifications, Add, Revert, Resolve, Clean up and Remove, sharing
   one changes list.
 - Interactive rebase: pick, squash, edit or skip, reorder by dragging, and add

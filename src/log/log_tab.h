@@ -572,9 +572,14 @@ private:
     // empty); `use`: a new step, or the journal's own undoing or redoing.
     // One at a time (git/history_writer.h): while one is outstanding,
     // another, Undo and Redo are refused, and their buttons greyed.
-    void start_history_edit(const std::string& title, edit_maker,
+    // `finished`, when it started (true returned), gets whether the edit
+    // was applied, before any message about it.
+    bool start_history_edit(const std::string& title, edit_maker,
                             std::optional<rebase_todo> fallback = {}, std::string label = {},
-                            journal_use use = journal_use::record);
+                            journal_use use = journal_use::record,
+                            std::function<void(bool applied)> finished = {});
+    std::function<void(bool)> edit_finished_;  // the outstanding edit's
+    void edit_finished(bool applied);
     void history_replayed(const std::string& title, std::expected<history_edit, replay_failure>,
                           tree_effect, std::optional<rebase_todo> fallback, std::string label,
                           journal_use);
@@ -591,9 +596,13 @@ private:
     void show_notices();
     // The claimed edit given up before anything was written.
     void cancel_history_edit();
-    // A question first when the commits are on the upstream already.
+    // A question first when the commits are on the upstream already;
+    // `declined` when it's answered No.
     void confirm_history_edit(const std::string& title, const std::string& question, bool pushed,
-                              const branch_history&, std::function<void()> go);
+                              const branch_history&, std::function<void()> go,
+                              std::function<void()> declined = {});
+    // Amend with changes: the Commit dialog, amending `into`.
+    void open_amend_with_changes(const branch_history&, const oid& into, bool pushed);
     std::string pushed_warning(const branch_history&) const;
     void offer_force_push(const history_edit&);
     // -- Undo and Redo: what this window did to the refs (history edits,

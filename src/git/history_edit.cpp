@@ -2,14 +2,19 @@
 
 #include "git/command.h"
 #include "git/libgit2_oid.h"
+#include "git/pathspec_file.h"
 #include "git/svn.h"
 #include "git/worktrees.h"
+#include "git/temp_files.h"
 #include "i18n.h"
 
 #include <git2.h>
+#include <rapport/sys.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <unordered_set>
 
 namespace tortilla
@@ -38,7 +43,6 @@ using owned_index = owned<git_index, git_index_free>;
 using owned_signature = owned<git_signature, git_signature_free>;
 using owned_transaction = owned<git_transaction, git_transaction_free>;
 using owned_status = owned<git_status_list, git_status_list_free>;
-using owned_diff = owned<git_diff, git_diff_free>;
 
 std::string short_name(std::string_view full)
 {
@@ -283,26 +287,6 @@ std::optional<std::string> why_not_editable(const branch_history& h,
     if (replays)
         for (size_t m : h.merges)
             if (m < oldest) return std::string(_("a merge follows"));
-    return std::nullopt;
-}
-
-std::optional<std::string> why_nothing_staged(const repo& repository)
-{
-    git_repository* r = repository.raw();
-    owned_index index;
-    if (git_repository_index(&index.p, r) != 0 || git_index_read(index.p, false) != 0)
-        return last_git_error();
-    if (git_index_has_conflicts(index.p)) return std::string(_("conflicts"));
-    const auto head = repository.head_id();
-    if (!head) return std::string(_("no commits"));
-    git_oid head_id = to_git(*head);
-    owned_commit c;
-    owned_tree tree;
-    if (git_commit_lookup(&c.p, r, &head_id) != 0 || git_commit_tree(&tree.p, c.p) != 0)
-        return last_git_error();
-    owned_diff diff;
-    if (git_diff_tree_to_index(&diff.p, r, tree.p, index.p, nullptr) != 0) return last_git_error();
-    if (git_diff_num_deltas(diff.p) == 0) return std::string(_("nothing staged"));
     return std::nullopt;
 }
 
@@ -888,13 +872,14 @@ std::expected<edit_plan, std::string> plan_fold(const branch_history& h, const o
 }
 
 std::expected<edit_plan, std::string> plan_amend(const branch_history& h, const oid& staged,
-                                                 const oid& into)
+                                                 const oid& into,
+                                                 std::optional<std::string> message)
 {
     if (auto why = why_not_editable(h, {into}, true)) return std::unexpected(*why);
     if (!h.checked_out) return std::unexpected(std::string(_("not checked out")));
     const size_t ii = *h.index_of(into);
     edit_plan p{.branch = h.branch, .old_tip = h.tip, .base = h.parent_of(ii)};
-    p.steps.push_back({.commit = into});
+    p.steps.push_back({.commit = into, .message = std::move(message)});
     p.steps.push_back({.commit = staged, .fold = true});
     pick_above(h, ii, p.steps);
     return p;
@@ -962,6 +947,138 @@ std::expected<oid, std::string> staged_commit(const repo& repository)
                           parents) != 0)
         return std::unexpected(last_git_error());
     return to_oid(&made);
+}
+
+namespace
+{
+
+// The index file as it is, to put back byte for byte (its stat data and
+// flags too, which a read-tree of its tree would lose).
+class saved_index
+{
+public:
+    explicit saved_index(const repo& repository)
+    {
+        owned_index index;
+        if (git_repository_index(&index.p, repository.raw()) != 0) return;
+        const char* p = git_index_path(index.p);
+        if (!p) return;
+        path_ = rap::sys::path_from_utf8(p);
+        std::error_code ec;
+        if (!std::filesystem::exists(path_, ec))
+        {
+            ok_ = !ec;  // none yet: putting back is removing
+            return;
+        }
+        if (std::FILE* f = rap::sys::fopen(path_, "rb"))
+        {
+            std::string bytes;
+            char buf[65536];
+            while (size_t n = std::fread(buf, 1, sizeof buf, f)) bytes.append(buf, n);
+            ok_ = !std::ferror(f);
+            std::fclose(f);
+            bytes_ = std::move(bytes);
+        }
+    }
+    bool ok() const { return ok_; }
+    // Written beside it, then renamed over it: never half there.
+    bool put_back() const
+    {
+        std::error_code ec;
+        if (!bytes_)
+            return !std::filesystem::exists(path_, ec) || std::filesystem::remove(path_, ec);
+        std::filesystem::path next = path_;
+        next += ".tortilla";
+        if (!write_file(next, *bytes_)) return false;
+        std::filesystem::rename(next, path_, ec);
+        if (ec) std::filesystem::remove(next, ec);
+        return !ec;
+    }
+
+private:
+    std::filesystem::path path_;
+    std::optional<std::string> bytes_;
+    bool ok_ = false;
+};
+
+// git <verb> [options] --pathspec-from-file for `paths`, names taken
+// literally; true when there are none.
+bool git_on_paths(const std::string& workdir, std::vector<std::string> args,
+                  const std::vector<std::string>& paths, std::string& error)
+{
+    if (paths.empty()) return true;
+    const auto file = pathspec_file::write(paths);
+    if (!file)
+    {
+        error = _("The list of files couldn't be written.");
+        return false;
+    }
+    for (std::string& a : file->arguments()) args.push_back(std::move(a));
+    const git_result r = run_git(workdir, literal_paths(args));
+    if (!r.ok()) error = r.output;
+    return r.ok();
+}
+
+}  // namespace
+
+std::expected<history_edit, replay_failure>
+amend_with_changes(const repo& repository, const branch_history& h, const oid& into,
+                   const std::vector<std::string>& paths,
+                   const std::vector<std::string>& unversioned,
+                   std::optional<std::string> message, std::string reflog)
+{
+    auto refuse = [](std::string why)
+    { return std::unexpected(replay_failure{.message = std::move(why)}); };
+    if (auto why = why_not_editable(h, {into}, true)) return refuse(*why);
+    if (!h.checked_out) return refuse(_("not checked out"));
+    // Nothing picked: the message alone.
+    if (paths.empty() && unversioned.empty())
+    {
+        if (!message) return refuse(_("nothing to amend with"));
+        auto plan = plan_reword(h, into, *message);
+        if (!plan) return refuse(plan.error());
+        auto tip = replay(repository, *plan);
+        if (!tip) return std::unexpected(tip.error());
+        return edit_from(repository, h, *plan, *tip, std::move(reflog));
+    }
+
+    const std::string workdir = repository.workdir();
+    const saved_index saved(repository);
+    if (!saved.ok()) return refuse(_("The index couldn't be read."));
+    // Any failure from here: the index as it was.
+    auto undo = [&](std::string why)
+    {
+        if (!saved.put_back())
+            why += "\n" + std::string(_("The index couldn't be put back as it was."));
+        return std::unexpected(replay_failure{.message = std::move(why)});
+    };
+    // The index made what Commit's --only takes: HEAD, and the paths as
+    // the working tree has them.
+    std::string error;
+    const git_result reset = run_git(workdir, {"read-tree", h.tip.hex()});
+    if (!reset.ok()) return undo(reset.output);
+    if (!git_on_paths(workdir, {"add", "-f"}, unversioned, error) ||
+        !git_on_paths(workdir, {"add", "-A"}, paths, error))
+        return undo(error);
+    auto staged = staged_commit(repository);
+    if (!staged) return undo(staged.error());
+    auto plan = plan_amend(h, *staged, into, std::move(message));
+    if (!plan) return undo(plan.error());
+    auto tip = replay(repository, *plan);
+    // The index must be what the new tip has, or it would undo or redo
+    // changes.
+    if (!tip || !same_tree(repository, *tip, *staged))
+        return undo(_("These changes don't fold into that commit cleanly: a later commit changes "
+                      "the same lines. Commit them, then use Fixup into."));
+    history_edit e = edit_from(repository, h, *plan, *tip, std::move(reflog));
+    e.keep_index = true;
+    // The index as it was, but the paths as the new tip has them: what
+    // git commit --only leaves.
+    if (!saved.put_back()) return refuse(_("The index couldn't be put back as it was."));
+    std::vector<std::string> all = paths;
+    all.insert(all.end(), unversioned.begin(), unversioned.end());
+    if (!git_on_paths(workdir, {"reset", "-q", tip->hex()}, all, error)) return undo(error);
+    return e;
 }
 
 rebase_todo todo_for(const edit_plan& p)

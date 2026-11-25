@@ -1,5 +1,6 @@
 #include "commit_window.h"
 
+#include "git/history_edit.h"
 #include "git/pathspec_file.h"
 #include "git/remotes.h"
 #include "git/repo.h"
@@ -60,7 +61,8 @@ bool versioned(const file_change& f)
 }  // namespace
 
 std::expected<std::unique_ptr<commit_window>, std::string>
-commit_window::open(rap::ui& ui, const std::vector<std::string>& paths)
+commit_window::open(rap::ui& ui, const std::vector<std::string>& paths,
+                    std::optional<amend_target> amend)
 {
     const std::string first = paths.empty() ? "." : paths.front();
     auto repo = repo::open(first);
@@ -75,6 +77,7 @@ commit_window::open(rap::ui& ui, const std::vector<std::string>& paths)
     if (w->config("user.name").empty() || w->config("user.email").empty())
         return std::unexpected(
             _("git doesn't know who you are: set user.name and user.email (git config --global)."));
+    w->amend_into_ = std::move(amend);
     w->build();
     w->reload();
     return w;
@@ -136,6 +139,7 @@ void commit_window::build()
                     entry{}.bind(branch_).read_only().frame(false).width(24_ch),
                     check{_("new branch")}
                         .bind(new_branch_)
+                        .visible(!amend_into_)
                         .on_toggled(
                             [this](bool on)
                             {
@@ -157,18 +161,24 @@ void commit_window::build()
                                   .on_changed([this] { update_state(); })
                                   .height(8_lines)
                                   .stretch(),
-                              check{_("Amend _Last Commit")}.bind(amend_).on_toggled(
-                                  [this](bool on) { amend_toggled(on); }),
+                              check{_("Amend _Last Commit")}
+                                  .bind(amend_)
+                                  .visible(!amend_into_)
+                                  .on_toggled([this](bool on) { amend_toggled(on); }),
                               // The checks as labels, so the date and author line up.
                               // Shown greyed until wanted: the rows keep their layout
                               // when they're turned on.
                               form{
-                                  {check{_("Set author _date")}.bind(set_date_).on_toggled(
-                                       [this](bool on)
-                                       {
-                                           date_->set_enabled(on);
-                                           time_->set_enabled(on);
-                                       }),
+                                  // (An amend keeps the commit's author and date.)
+                                  {check{_("Set author _date")}
+                                       .bind(set_date_)
+                                       .enabled(!amend_into_)
+                                       .on_toggled(
+                                           [this](bool on)
+                                           {
+                                               date_->set_enabled(on);
+                                               time_->set_enabled(on);
+                                           }),
                                    hbox{
                                        date_picker{}.bind(date_).enabled(false),
                                        entry{}
@@ -181,6 +191,7 @@ void commit_window::build()
                                   // Long names have room as the window widens.
                                   {check{_("Set au_thor")}
                                        .bind(set_author_)
+                                       .enabled(!amend_into_)
                                        .on_toggled([this](bool on) { author_->set_enabled(on); }),
                                    hbox{
                                        entry{}.bind(author_).enabled(false).width(36_ch).stretch(),
@@ -252,11 +263,15 @@ void commit_window::build()
                     .stretch(),
                 hbox{
                     spacer{},
-                    button{_("C_ommit")}.bind(commit_).enabled(false).on_click([this]
-                                                                               { commit(); }),
+                    button{amend_into_ ? rap::i18n::format(_("_Amend {0}"), amend_into_->short_hash)
+                                       : std::string(_("C_ommit"))}
+                        .bind(commit_)
+                        .enabled(false)
+                        .on_click([this] { commit(); }),
                     button{_("Commit & _Push")}
                         .bind(commit_push_)
                         .enabled(false)
+                        .visible(!amend_into_)
                         .on_click([this] { commit(true); }),
                     button{_("Cancel")}.on_click([this] { cancel(); }),
                 },
@@ -302,16 +317,19 @@ void commit_window::build()
     time_->set_text(hms);
     // A merge's or squash's message is waiting in the repository [spec 5.4.3].
     const fs::path git_dir = rap::sys::path_from_utf8(repo_.git_dir());
-    for (const char* name : {"SQUASH_MSG", "MERGE_MSG"})
-        if (std::FILE* f = rap::sys::fopen(git_dir / name, "rb"))
-        {
-            std::string text;
-            char buf[4096];
-            while (size_t n = std::fread(buf, 1, sizeof buf, f)) text.append(buf, n);
-            std::fclose(f);
-            message_->set_text(text);
-            break;
-        }
+    if (amend_into_)
+        message_->set_text(amend_into_->message);  // to keep or edit
+    else
+        for (const char* name : {"SQUASH_MSG", "MERGE_MSG"})
+            if (std::FILE* f = rap::sys::fopen(git_dir / name, "rb"))
+            {
+                std::string text;
+                char buf[4096];
+                while (size_t n = std::fread(buf, 1, sizeof buf, f)) text.append(buf, n);
+                std::fclose(f);
+                message_->set_text(text);
+                break;
+            }
     update_title();
     update_state();
     message_->focus();
@@ -325,6 +343,10 @@ void commit_window::update_title()
     fs::path shown = rap::sys::path_from_utf8(root);
     if (!whole_project_->checked() && paths_.size() == 1)
         shown /= rap::sys::path_from_utf8(paths_.front());
+    if (amend_into_)
+        return window_->set_title(rap::i18n::format(_("{0} - Amend {1} - Tortilla"),
+                                                    rap::sys::path_to_utf8(shown.make_preferred()),
+                                                    amend_into_->short_hash));
     window_->set_title(rap::i18n::format(_("{0} - Commit - Tortilla"),
                                          rap::sys::path_to_utf8(shown.make_preferred())));
 }
@@ -436,6 +458,7 @@ void commit_window::commit(bool push)
                       .text = _("One or more files are in a conflicted state.")});
         return;
     }
+    if (amend_into_) return amend_into(files);
     std::string branch;
     if (new_branch_->checked())
     {
@@ -518,27 +541,68 @@ void commit_window::commit(bool push)
                             committing_ = false;
                             if (ok)
                             {
-                                const std::vector<std::string> failed = restore(restoring());
                                 // Before this window goes: the push keeps the program.
                                 if (push)
                                     push_dialog::push_committed(ui_, workdir_,
                                                                 current_branch(workdir_), before);
-                                if (failed.empty()) return close(true);
-                                show_message(
-                                    ui_, window_.get(),
-                                    {.icon = rap::message_spec::icon::error,
-                                     .title = _("Restore after commit"),
-                                     .text = rap::i18n::format(
-                                         _("Committed, but these files couldn't be put back:\n{0}"),
-                                         lines(failed))},
-                                    [this](rap::dialog_role) { close(true); });
+                                return after_commit();
                             }
-                            else
-                            {
-                                update_state();
-                                reload();
-                            }
+                            update_state();
+                            reload();
                         });
+}
+
+// The checked files, as the working tree has them, folded into the commit
+// through the log's history edit (amend_with_changes), which builds the
+// index from them as git commit --only would.
+void commit_window::amend_into(const std::vector<file_change>& files)
+{
+    amend_request request;
+    for (const file_change& f : files)
+    {
+        (f.status == '?' ? request.unversioned : request.paths).push_back(f.path);
+        if (!f.old_path.empty()) request.paths.push_back(f.old_path);
+    }
+    std::string text = tidy_message(message_->text());
+    if (text != tidy_message(amend_into_->message)) request.message = std::move(text);
+
+    committing_ = true;
+    update_state();
+    if (load_) load_->cancel();
+    amend_into_->run(std::move(request),
+                     [this, alive = std::weak_ptr<bool>(alive_)](amend_result r)
+                     {
+                         if (!alive.lock()) return;
+                         committing_ = false;
+                         if (r == amend_result::done) return after_commit();
+                         if (r == amend_result::not_started)
+                         {
+                             update_state();
+                             return reload();
+                         }
+                         // Nothing changed: the held-back files back too, as before.
+                         const std::vector<std::string> failed = restore(restoring());
+                         if (failed.empty()) return close(false);
+                         show_message(ui_, window_.get(),
+                                      {.icon = rap::message_spec::icon::error,
+                                       .title = _("Restore after commit"),
+                                       .text = rap::i18n::format(
+                                           _("These files couldn't be put back:\n{0}"),
+                                           lines(failed))},
+                                      [this](rap::dialog_role) { close(false); });
+                     });
+}
+
+void commit_window::after_commit()
+{
+    const std::vector<std::string> failed = restore(restoring());
+    if (failed.empty()) return close(true);
+    show_message(ui_, window_.get(),
+                 {.icon = rap::message_spec::icon::error,
+                  .title = _("Restore after commit"),
+                  .text = rap::i18n::format(
+                      _("Committed, but these files couldn't be put back:\n{0}"), lines(failed))},
+                 [this](rap::dialog_role) { close(true); });
 }
 
 void commit_window::cancel()
