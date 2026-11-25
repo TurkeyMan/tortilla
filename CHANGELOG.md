@@ -75,7 +75,9 @@ CI from GitHub, GitLab and Gitea/Forgejo on your branches.
 ### Committing and changing history
 
 - Commit: choose the files, amend, set the author and date, Signed-off-by,
-  and Restore after commit to split a change across commits.
+  and Restore after commit to split a change across commits. Commit & Push
+  pushes straight after a fast-forward of the branch's upstream, and opens
+  Push otherwise (Force with lease ticked after amending a pushed commit).
 - Check for modifications, Add, Revert, Resolve, Clean up and Remove, sharing
   one changes list.
 - Interactive rebase: pick, squash, edit or skip, reorder by dragging, and add
