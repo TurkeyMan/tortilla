@@ -58,6 +58,27 @@ struct open_pr
 std::unordered_map<std::string, open_pr> match_pull_requests(const std::vector<forge_remote>&,
                                                              const std::vector<open_pr>&);
 
+// The local branch that tracks a PR's head: its upstream is the head branch
+// on a remote that's the head repository, as match_pull_requests has them;
+// not one that's merely at the same commit. The checked-out one first.
+// `unpushed`: it has commits its upstream doesn't (or its upstream is gone).
+// A git query.
+struct pr_local_branch
+{
+    std::string name;
+    bool unpushed = false;
+    bool checked_out = false;
+};
+std::optional<pr_local_branch> pr_local_branch_of(const std::string& workdir,
+                                                  const std::vector<forge_remote>&,
+                                                  const open_pr&);
+// After the merge, that branch deleted, as git branch -d would: checked out,
+// it's switched off first, to the PR's base (fast-forwarded to its upstream
+// when it can be). Nothing is forced and uncommitted work stays where it is:
+// "" when it's gone, else why it stays. For a worker thread.
+std::string delete_pr_local_branch(const std::string& workdir, const std::vector<forge_remote>&,
+                                   const open_pr&);
+
 // A PR's menu as what Tortilla may do there allows (`access`, pr_watch's):
 // Merge... and Close..., greyed with why not when they can't be, briefly:
 // "sign in to GitHub", "needs write access", "conflicts". Its author may

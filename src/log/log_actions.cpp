@@ -1502,7 +1502,9 @@ void log_tab::create_pull_request(const ref& r)
 // ready, the fetch waits for the watch to see it go.
 void log_tab::merge_pull_request(const open_pr& p)
 {
-    auto d = merge_pr_dialog::open(ui_, p);
+    auto d = merge_pr_dialog::open(
+        ui_, p, repo_location(),
+        pr_watch_ ? pr_watch_->remotes() : forge_remotes(repo_location()));
     d->on_done(
         [this, alive = std::weak_ptr<bool>(alive_), p](bool now)
         {

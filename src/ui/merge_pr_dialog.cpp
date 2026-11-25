@@ -2,6 +2,7 @@
 
 #include "i18n.h"
 #include "settings.h"
+#include "ui/menu_text.h"
 #include "ui/modal_dialogs.h"
 #include "ui/repo_icon.h"
 #include "ui/windows.h"
@@ -72,17 +73,23 @@ void with_token(rap::ui& ui, std::weak_ptr<bool> alive, const forge_account& acc
 
 // -- Merge --------------------------------------------------------------------
 
-std::unique_ptr<merge_pr_dialog> merge_pr_dialog::open(rap::ui& ui, const open_pr& p)
+std::unique_ptr<merge_pr_dialog> merge_pr_dialog::open(rap::ui& ui, const open_pr& p,
+                                                       std::string workdir,
+                                                       std::vector<forge_remote> remotes)
 {
-    std::unique_ptr<merge_pr_dialog> d(new merge_pr_dialog(ui, p));
+    std::unique_ptr<merge_pr_dialog> d(
+        new merge_pr_dialog(ui, p, std::move(workdir), std::move(remotes)));
     d->build();
     d->ask();
     return d;
 }
 
-merge_pr_dialog::merge_pr_dialog(rap::ui& ui, open_pr p)
+merge_pr_dialog::merge_pr_dialog(rap::ui& ui, open_pr p, std::string workdir,
+                                 std::vector<forge_remote> remotes)
     : ui_(ui)
     , pr_(std::move(p))
+    , workdir_(std::move(workdir))
+    , remotes_(std::move(remotes))
 {
 }
 
@@ -91,6 +98,15 @@ void merge_pr_dialog::build()
     using namespace rap::layout;
     using namespace rap::literals;
     const pull_request& pr = pr_.pr;
+    local_ = pr_local_branch_of(workdir_, remotes_, pr_);
+    // Greyed, saying why, when deleting it would lose commits.
+    std::string local_label;
+    if (local_)
+        local_label =
+            local_->unpushed
+                ? rap::i18n::format(_("Delete _local branch {0} (has unpushed commits)"),
+                                    menu_text(local_->name))
+                : rap::i18n::format(_("Delete _local branch {0}"), menu_text(local_->name));
     window_ = create_window(
         ui_,
         dialog{rap::i18n::format(_("Merge Pull Request #{0}"), pr.number),
@@ -114,6 +130,11 @@ void merge_pr_dialog::build()
                    check{_("_Delete the branch after"),
                          settings::get().value("pr.deleteBranch", "1") == "1"}
                        .bind(delete_)
+                       .visible(false),
+                   check{local_label,
+                         local_ && !local_->unpushed &&
+                             settings::get().value("pr.deleteLocalBranch", "1") == "1"}
+                       .bind(delete_local_)
                        .visible(false),
                    check{_("Merge _anyway, bypassing the branch's rules (as an administrator)")}
                        .bind(bypass_)
@@ -212,6 +233,9 @@ void merge_pr_dialog::update()
     const bool known = state_ && !state_->methods.empty();
     const bool ready = known && (state_->state == v::ready || bypass_->checked());
     merge_->set_enabled(!busy_ && ready);
+    // Only for a merge now: set to merge when ready, nothing merges yet.
+    delete_local_->set_visible(local_ && ready);
+    delete_local_->set_enabled(!busy_ && local_ && !local_->unpushed);
     when_ready_->set_visible(known && state_->state == v::waiting && state_->can_merge_when_ready &&
                              !state_->merge_when_ready_set);
     when_ready_->set_enabled(!busy_);
@@ -222,6 +246,8 @@ void merge_pr_dialog::merge(bool when_ready)
 {
     if (!state_) return;
     settings::get().set("pr.deleteBranch", delete_->checked() ? "1" : "0");
+    if (local_ && !local_->unpushed && !when_ready)
+        settings::get().set("pr.deleteLocalBranch", delete_local_->checked() ? "1" : "0");
     if (!when_ready && state_->state != merge_state::verdict::ready && bypass_->checked())
     {
         // Going round the rules is the administrator's call, made knowingly.
@@ -255,6 +281,8 @@ void merge_pr_dialog::send(bool when_ready)
                           .when_ready = when_ready,
                           .node_id = state_->node_id};
     const bool delete_after = !when_ready && can_delete_ && delete_->checked();
+    const bool delete_local =
+        !when_ready && local_ && !local_->unpushed && delete_local_->checked();
     request.delete_source_branch = can_delete_ && delete_->checked() &&
                                    pr_.into.account.kind == forge_kind::azure;
     busy_ = true;
@@ -263,20 +291,30 @@ void merge_pr_dialog::send(bool when_ready)
     const auto app = std::make_shared<mutation_hold>();
     with_token(
         ui_, alive_, pr_.into.account,
-        [p = pr_, request, app,
-         delete_after](const std::string& token) -> std::expected<std::string, std::string>
+        [p = pr_, request, app, delete_after, delete_local, dir = workdir_, remotes = remotes_,
+         local = local_ ? local_->name : std::string()](
+            const std::string& token) -> std::expected<std::string, std::string>
         {
             const forge_kind k = p.into.account.kind;
             if (std::string why = merge_pull_request(k, p.into.repo, p.pr.number, request, token);
                 !why.empty())
                 return std::unexpected(why);
-            // The merge stands even if the branch stays: said, not failed.
+            // The merge stands even if a branch stays: said, not failed.
+            std::string said;
             if (delete_after && k != forge_kind::azure)
                 if (std::string why = delete_branch(k, p.into.repo, p.pr.head_branch, token,
                                                     request.head_sha);
                     !why.empty())
-                    return rap::i18n::format(_("Merged; the branch couldn't be deleted: {0}"), why);
-            return std::string();
+                    said = rap::i18n::format(_("Merged; the branch couldn't be deleted: {0}"), why);
+            // Only once it's merged; git refuses what would lose work.
+            if (delete_local)
+                if (std::string why = delete_pr_local_branch(dir, remotes, p); !why.empty())
+                {
+                    if (!said.empty()) said += "\n\n";
+                    said += rap::i18n::format(
+                        _("Merged; the local branch {0} couldn't be deleted: {1}"), local, why);
+                }
+            return said;
         },
         [this, alive = std::weak_ptr<bool>(alive_), ui = &ui_, done = done_, when_ready, app,
          title = rap::i18n::format(_("Merge Pull Request #{0}"), pr_.pr.number)]

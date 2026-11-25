@@ -10,7 +10,9 @@
 
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
+#include <vector>
 
 namespace tortilla
 {
@@ -18,14 +20,16 @@ namespace tortilla
 class merge_pr_dialog
 {
 public:
-    static std::unique_ptr<merge_pr_dialog> open(rap::ui&, const open_pr&);
+    // `workdir` and `remotes`: the repository's, for its local branch.
+    static std::unique_ptr<merge_pr_dialog> open(rap::ui&, const open_pr&, std::string workdir,
+                                                 std::vector<forge_remote> remotes);
     void show();
     void on_closed(std::function<void()> f) { closed_ = std::move(f); }
     // After the forge merged it (`now`), or set it to merge when ready.
     void on_done(std::function<void(bool now)> f) { done_ = std::move(f); }
 
 private:
-    merge_pr_dialog(rap::ui&, open_pr);
+    merge_pr_dialog(rap::ui&, open_pr, std::string workdir, std::vector<forge_remote> remotes);
     void build();
     void ask();
     void answered(std::expected<merge_state, std::string>);
@@ -36,6 +40,9 @@ private:
 
     rap::ui& ui_;
     open_pr pr_;
+    std::string workdir_;
+    std::vector<forge_remote> remotes_;
+    std::optional<pr_local_branch> local_;  // the local branch tracking its head
     std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
     std::unique_ptr<rap::window> window_;
     std::function<void()> closed_;
@@ -52,6 +59,7 @@ private:
     rap::entry* title_ = nullptr;
     rap::text_view* message_ = nullptr;
     rap::check* delete_ = nullptr;
+    rap::check* delete_local_ = nullptr;
     rap::check* bypass_ = nullptr;
     rap::button* merge_ = nullptr;
     rap::button* when_ready_ = nullptr;

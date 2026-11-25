@@ -6,6 +6,7 @@
 #include "git/remotes.h"
 #include "git/repo.h"
 #include "i18n.h"
+#include "util/strings.h"
 
 #include <algorithm>
 #include <array>
@@ -142,6 +143,133 @@ match_pull_requests(const std::vector<forge_remote>& remotes, const std::vector<
             if (same_repository(r.repo, p.pr.head))
                 out.emplace("refs/remotes/" + r.name + "/" + p.pr.head_branch, p);
     return out;
+}
+
+namespace
+{
+
+// A local branch, its upstream's full name, and how it stands against it.
+struct local_ref
+{
+    std::string name, upstream, track;
+    bool head = false;
+};
+
+std::vector<local_ref> local_refs(const std::string& workdir)
+{
+    std::vector<local_ref> out;
+    const git_result r = run_git(workdir,
+                                 {"for-each-ref",
+                                  "--format=%(refname)%09%(upstream)%09"
+                                  "%(upstream:track,nobracket)%09%(HEAD)",
+                                  "refs/heads"},
+                                 git_output::stdout_only, git_prompts::never);
+    if (!r.ok()) return out;
+    std::string_view rest = r.output;
+    while (!rest.empty())
+    {
+        const size_t eol = rest.find('\n');
+        std::string_view line = rest.substr(0, eol);
+        rest = eol == std::string_view::npos ? std::string_view() : rest.substr(eol + 1);
+        if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
+        std::array<std::string_view, 4> f;
+        for (size_t i = 0; i < f.size(); ++i)
+        {
+            const size_t tab = i + 1 < f.size() ? line.find('\t') : std::string_view::npos;
+            f[i] = line.substr(0, tab);
+            line = tab == std::string_view::npos ? std::string_view() : line.substr(tab + 1);
+        }
+        if (!f[0].starts_with("refs/heads/")) continue;
+        f[0].remove_prefix(11);
+        out.push_back({std::string(f[0]), std::string(f[1]), std::string(f[2]), f[3] == "*"});
+    }
+    return out;
+}
+
+// git's own words, briefly: its last line ("error: ..." / "fatal: ...").
+std::string git_said(const git_result& r)
+{
+    std::string_view s = trimmed_view(r.output);
+    if (const size_t nl = s.rfind('\n'); nl != std::string_view::npos) s = s.substr(nl + 1);
+    s = trimmed_view(s);
+    return s.empty() ? rap::i18n::format(_("git exited with {0}"), r.exit_code) : std::string(s);
+}
+
+}  // namespace
+
+std::optional<pr_local_branch> pr_local_branch_of(const std::string& workdir,
+                                                  const std::vector<forge_remote>& remotes,
+                                                  const open_pr& p)
+{
+    std::vector<std::string> heads;
+    for (const forge_remote& r : remotes)
+        if (same_repository(r.repo, p.pr.head))
+            heads.push_back("refs/remotes/" + r.name + "/" + p.pr.head_branch);
+    if (heads.empty() || p.pr.head_branch.empty()) return std::nullopt;
+    std::optional<pr_local_branch> out;
+    for (const local_ref& b : local_refs(workdir))
+    {
+        if (std::ranges::find(heads, b.upstream) == heads.end()) continue;
+        if (out && !b.head) continue;
+        out = pr_local_branch{.name = b.name,
+                              .unpushed = b.track.find("ahead") != std::string::npos ||
+                                          b.track == "gone",
+                              .checked_out = b.head};
+        if (b.head) break;
+    }
+    return out;
+}
+
+std::string delete_pr_local_branch(const std::string& workdir,
+                                   const std::vector<forge_remote>& remotes, const open_pr& p)
+{
+    const auto branch = pr_local_branch_of(workdir, remotes, p);
+    if (!branch) return {};  // gone already
+    if (branch->unpushed) return _("it has commits that aren't pushed");
+    if (branch->checked_out)
+    {
+        // Not with uncommitted changes: they'd go along to the base, or stop it.
+        const git_result dirty =
+            run_git(workdir, {"status", "--porcelain", "--untracked-files=no"},
+                    git_output::stdout_only, git_prompts::never);
+        if (!dirty.ok()) return git_said(dirty);
+        if (!trimmed_view(dirty.output).empty())
+            return _("it's checked out, with uncommitted changes");
+        // The base: the local branch on its upstream (one by its name first),
+        // else the one by its name, else made from the upstream.
+        const std::string base = p.pr.base_branch,
+                          upstream = "refs/remotes/" + p.into.name + "/" + base;
+        if (base.empty()) return _("the pull request's base branch isn't known");
+        std::string local;
+        bool tracks = false;
+        for (const local_ref& b : local_refs(workdir))
+            if (b.name != branch->name && b.upstream == upstream &&
+                (local.empty() || b.name == base))
+            {
+                local = b.name;
+                tracks = true;
+            }
+        if (local.empty() && ref_exists(workdir, "refs/heads/" + base) && base != branch->name)
+            local = base;
+        git_result r;
+        if (!local.empty())
+            r = run_git(workdir, {"checkout", local, "--"});
+        else if (ref_exists(workdir, upstream))
+        {
+            local = base;
+            tracks = true;
+            r = run_git(workdir, {"checkout", "-b", base, "--track", upstream});
+        }
+        else
+            return rap::i18n::format(_("there's no {0} here to switch to"), base);
+        if (!r.ok())
+            return rap::i18n::format(_("switching to {0} failed: {1}"), local, git_said(r));
+        // Up to date with its upstream where that's a fast-forward; else as it was.
+        if (tracks) run_git(workdir, {"merge", "--ff-only", "--quiet", "@{u}"});
+    }
+    if (const git_result d = run_git(workdir, {"branch", "-d", "--", branch->name}); !d.ok())
+        return git_said(d);
+    return {};
 }
 
 std::string sign_in_to(const forge_remote& r)

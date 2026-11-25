@@ -4055,6 +4055,73 @@ int main(int argc, char** argv)
                       heads.at("refs/remotes/upstream/feat/x").pr.number == 8,
                   "forge: pull requests' head branches, remote ones only");
         }
+        // A PR's local branch: the one whose upstream is its head on the head
+        // repository's remote, not one merely at its commit; deleted after the
+        // merge from the base, and kept when that would lose work.
+        {
+            using namespace tortilla;
+            const std::string dir = std::string(argv[1]) + "/pr-local";
+            const std::string g = "git -C '" + dir + "' -c user.name=Ada -c user.email=a@b ";
+            sh("git init -q -b main '" + dir + "' && " + g + "config core.autocrlf false");
+            sh("printf 'one\\n' > '" + dir + "/f' && " + g + "add f && " + g + "commit -qm one");
+            sh(g + "remote add upstream https://github.com/org/engine.git && " + g +
+               "remote add origin https://github.com/ada/engine.git");
+            sh(g + "update-ref refs/remotes/upstream/main HEAD && " + g +
+               "update-ref refs/remotes/upstream/fix HEAD && " + g +
+               "update-ref refs/remotes/origin/fix HEAD");
+            auto track = [&](const std::string& b, const std::string& remote,
+                             const std::string& on)
+            {
+                sh(g + "branch -q --no-track " + b + " HEAD 2>/dev/null || true");
+                sh(g + "config branch." + b + ".remote " + remote + " && " + g + "config branch." +
+                   b + ".merge refs/heads/" + on);
+            };
+            track("main", "upstream", "main");
+            sh(g + "branch -q --no-track same HEAD");  // the same commit, no upstream
+            track("theirs", "upstream", "fix");
+            track("mine", "origin", "fix");
+            const forge_repo base{"github.com", "org", "engine"},
+                fork{"github.com", "ada", "engine"};
+            const std::vector<forge_remote> remotes{{.name = "upstream", .repo = base},
+                                                    {.name = "origin", .repo = fork}};
+            const open_pr from_fork{
+                .pr = {.number = 7, .head = fork, .head_branch = "fix", .base_branch = "main"},
+                .into = remotes[0]};
+            const open_pr from_base{
+                .pr = {.number = 8, .head = base, .head_branch = "fix", .base_branch = "main"},
+                .into = remotes[0]};
+            open_pr elsewhere = from_fork;
+            elsewhere.pr.head_branch = "same";
+            const auto mine = pr_local_branch_of(dir, remotes, from_fork);
+            const auto theirs = pr_local_branch_of(dir, remotes, from_base);
+            check(mine && mine->name == "mine" && !mine->unpushed && !mine->checked_out &&
+                      theirs && theirs->name == "theirs" &&
+                      !pr_local_branch_of(dir, remotes, elsewhere),
+                  "forge: a PR's local branch tracks its head on the head repository's remote");
+            sh(g + "checkout -q mine && printf 'two\\n' > '" + dir + "/f' && " + g +
+               "commit -qam two");
+            const auto ahead = pr_local_branch_of(dir, remotes, from_fork);
+            check(ahead && ahead->unpushed && ahead->checked_out,
+                  "forge: a PR's local branch with commits its upstream doesn't have");
+            check(!delete_pr_local_branch(dir, remotes, from_fork).empty() &&
+                      current_branch(dir) == "mine",
+                  "forge: a PR's local branch with unpushed commits stays");
+            sh(g + "reset -q --hard refs/remotes/origin/fix && printf 'dirty\\n' > '" + dir +
+               "/f'");
+            check(!delete_pr_local_branch(dir, remotes, from_fork).empty() &&
+                      current_branch(dir) == "mine" &&
+                      git_out(dir, {"status", "--porcelain"}) == " M f",
+                  "forge: a PR's checked-out branch with uncommitted changes stays");
+            sh(g + "checkout -q -- f");
+            // The base a commit behind its upstream: fast-forwarded on the way.
+            sh(g + "update-ref refs/remotes/upstream/main $(" + g +
+               "commit-tree -p HEAD -m three HEAD^{tree})");
+            check(delete_pr_local_branch(dir, remotes, from_fork).empty() &&
+                      current_branch(dir) == "main" && !ref_exists(dir, "refs/heads/mine") &&
+                      resolve(dir, "main") == resolve(dir, "refs/remotes/upstream/main") &&
+                      ref_exists(dir, "refs/heads/theirs"),
+                  "forge: a PR's checked-out branch deleted from its base, fast-forwarded");
+        }
         // A commit's author is a PR's, as far as can be told without the forge.
         {
             using tortilla::author_is;

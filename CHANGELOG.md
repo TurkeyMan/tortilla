@@ -118,6 +118,9 @@ CI from GitHub, GitLab and Gitea/Forgejo on your branches.
 - Create Pull Request from a branch, offering only valid targets (the
   branch's own repository and what it's a fork of); Merge and Close from the
   pull request's menu, which says why a merge isn't possible yet.
+- Merge Pull Request can delete your local branch that tracks it too, once
+  it's merged: switching to the base branch first if it's checked out, and
+  never when it has unpushed commits or uncommitted changes.
 
 ### Packaging
 
