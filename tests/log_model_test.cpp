@@ -2,6 +2,8 @@
 //   tortilla-tests <scratch dir>
 // Builds a repo with branches and merges via the git CLI, then loads it
 // through log_model on the null UI backend.
+#include <git2.h>
+
 #include "cache/badge_cache.h"
 #include "cache/badge_changes.h"
 #include "cache/cache_main.h"
@@ -434,6 +436,30 @@ void diff_sides_tests(rap::ui& ui, const std::string& root)
 // History editing (git/history_edit.h) on throwaway repositories: each
 // action's commits and trees, the refusals, the working tree kept or
 // stashed, conflicts, undo and names beyond ASCII.
+// What libgit2's status sees, as has_local_changes() asks it: for a test's
+// failure to say which path, and how.
+std::string libgit2_status(const tortilla::repo& repository)
+{
+    git_status_options opts = GIT_STATUS_OPTIONS_INIT;
+    opts.show = GIT_STATUS_SHOW_INDEX_AND_WORKDIR;
+    opts.flags = GIT_STATUS_OPT_EXCLUDE_SUBMODULES;
+    git_status_list* list = nullptr;
+    if (git_status_list_new(&list, repository.raw(), &opts) != 0) return "(status failed)";
+    std::string out;
+    for (size_t i = 0; i < git_status_list_entrycount(list); ++i)
+    {
+        const git_status_entry* e = git_status_byindex(list, i);
+        const git_diff_delta* d = e->index_to_workdir ? e->index_to_workdir : e->head_to_index;
+        out += std::to_string(e->status) + ":" + (d && d->new_file.path ? d->new_file.path : "?");
+        if (e->index_to_workdir)
+            out += "(wd " + std::to_string(e->index_to_workdir->old_file.size) + "->" +
+                   std::to_string(e->index_to_workdir->new_file.size) + ")";
+        out += " ";
+    }
+    git_status_list_free(list);
+    return out;
+}
+
 void history_edit_tests(const std::string& root)
 {
     using namespace tortilla;
@@ -937,7 +963,8 @@ void history_edit_tests(const std::string& root)
         const std::string status_before = git({"status", "--porcelain"});
         check(e && effect == tree_effect::follow,
               ("history: drop with non-ASCII names follows the tree (effect " +
-               std::to_string(int(effect)) + ", status \"" + status_before + "\")").c_str());
+               std::to_string(int(effect)) + ", status \"" + status_before + "\", libgit2 \"" +
+               libgit2_status(*r) + "\")").c_str());
         const bool applied = e && apply_edit(*r, *e);
         const std::string status = git({"status", "--porcelain"});
         check(applied && !std::filesystem::exists(dir + "/" + a) &&
