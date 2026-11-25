@@ -311,12 +311,12 @@ lock_taken take_lock(const fs::path& lock_file, steady::time_point deadline)
         return lock_taken{.error = rap::i18n::format(_("Couldn't lock the settings ({0}): {1}"),
                                                      shown(lock_file), why)};
     };
-    std::chrono::milliseconds pause(1);
 #ifdef _WIN32
     HANDLE h =
         CreateFileW(lock_file.c_str(), GENERIC_READ | GENERIC_WRITE,
                     FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_ALWAYS,
-                    FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+                    FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_OVERLAPPED,
+                    nullptr);
     if (h == INVALID_HANDLE_VALUE)
     {
         const DWORD e = GetLastError();
@@ -327,32 +327,36 @@ lock_taken take_lock(const fs::path& lock_file, steady::time_point deadline)
         CloseHandle(h);
         return failed(native_error(ERROR_INVALID_FUNCTION));
     }
-    for (;;)
+    // Waiting in the lock's queue, not polling it: Windows grants a lock
+    // waited for in the order asked, so a writer saving again and again
+    // can't keep taking it from one that waits. Past the deadline the wait
+    // is cancelled, unless the lock came first.
+    HANDLE event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    if (!event)
     {
-        OVERLAPPED at{};
-        if (LockFileEx(h, LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, &at))
-            return {.handle = reinterpret_cast<std::intptr_t>(h)};
-        const DWORD e = GetLastError();
-        if (e == ERROR_NOT_SUPPORTED || e == ERROR_INVALID_FUNCTION)
-        {
-            CloseHandle(h);  // no locks here: unlocked
-            return {};
-        }
-        if (e != ERROR_LOCK_VIOLATION && e != ERROR_IO_PENDING)
-        {
-            lock_taken out = failed(native_error(e));
-            CloseHandle(h);
-            return out;
-        }
-        if (steady::now() >= deadline)
-        {
-            CloseHandle(h);
-            return busy();
-        }
-        std::this_thread::sleep_for(pause);
-        pause = std::min(pause * 2, std::chrono::milliseconds(10));
+        lock_taken out = failed(native_error(GetLastError()));
+        CloseHandle(h);
+        return out;
     }
+    OVERLAPPED at{};
+    at.hEvent = event;
+    DWORD e = LockFileEx(h, LOCKFILE_EXCLUSIVE_LOCK, 0, 1, 0, &at) ? ERROR_SUCCESS : GetLastError();
+    if (e == ERROR_IO_PENDING)
+    {
+        const auto left = std::chrono::ceil<std::chrono::milliseconds>(deadline - steady::now());
+        const DWORD wait = left.count() <= 0 ? 0 : DWORD(std::min<long long>(left.count(), 0x7fffffff));
+        if (WaitForSingleObject(event, wait) != WAIT_OBJECT_0) CancelIoEx(h, &at);
+        DWORD unused = 0;
+        e = GetOverlappedResult(h, &at, &unused, TRUE) ? ERROR_SUCCESS : GetLastError();
+    }
+    CloseHandle(event);
+    if (e == ERROR_SUCCESS) return {.handle = reinterpret_cast<std::intptr_t>(h)};
+    CloseHandle(h);
+    if (e == ERROR_NOT_SUPPORTED || e == ERROR_INVALID_FUNCTION) return {};  // no locks here: unlocked
+    if (e == ERROR_OPERATION_ABORTED || e == ERROR_LOCK_VIOLATION) return busy();
+    return failed(native_error(e));
 #else
+    std::chrono::milliseconds pause(1);
     // O_NOFOLLOW: a link planted in the lock's place isn't followed.
     const int fd = ::open(lock_file.c_str(), O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
     if (fd < 0)
