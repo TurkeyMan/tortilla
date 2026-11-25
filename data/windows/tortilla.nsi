@@ -1,5 +1,7 @@
 ; Tortilla's Windows installer. Built by .github/ci/build-windows.ps1:
-;   makensis -DVERSION=0.1.0 -DVERSION4=0.1.0.0 -DSTAGE=<install tree> -DOUT=<setup.exe> tortilla.nsi
+;   makensis -DVERSION=0.1.0 -DVERSION4=0.1.0.0 -DARCH=x86_64 -DSTAGE=<install tree> -DOUT=<setup.exe> tortilla.nsi
+; ARCH is the app's: x86_64 or arm64. Each installs only on its own Windows:
+; Explorer loads only an extension of its own architecture.
 ; VERSION is CMakeLists.txt's project version (or the tag's, without a
 ; -beta suffix); VERSION4 the same in the four numbers Windows wants.
 ; STAGE holds the app as installed: bin\ (tortilla.exe, self-contained, and
@@ -19,6 +21,9 @@ Unicode true
 !include "MUI2.nsh"
 !include "LogicLib.nsh"
 !include "x64.nsh"
+!ifndef ARCH
+  !define ARCH x86_64
+!endif
 
 Name "Tortilla"
 OutFile "${OUT}"
@@ -117,10 +122,21 @@ Var Restart    ; Explorer is to be restarted when Setup is done
 !macroend
 
 Function .onInit
+!if "${ARCH}" == "arm64"
+  ${IfNot} ${IsNativeARM64}
+    MessageBox MB_ICONSTOP "This is Tortilla for ARM64 Windows. On this PC, use the x86_64 installer."
+    Abort
+  ${EndIf}
+!else
   ${IfNot} ${RunningX64}
     MessageBox MB_ICONSTOP "Tortilla needs 64-bit Windows."
     Abort
   ${EndIf}
+  ${If} ${IsNativeARM64}
+    MessageBox MB_ICONSTOP "This is Tortilla for x86_64 Windows. On this ARM64 PC, use the arm64 installer."
+    Abort
+  ${EndIf}
+!endif
   SetRegView 64
 FunctionEnd
 

@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  # Every toolkit backend, and the tests; then the .deb packages.
+  # Every toolkit backend, and the tests; then the .deb package.
   linux:
     name: debian ${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
@@ -48,7 +48,7 @@ jobs:
           path: dist/*.deb
           if-no-files-found: error
 
-  # The same on Fedora, for the .rpm packages.
+  # The same on Fedora, for the .rpm package.
   fedora:
     name: fedora ${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
@@ -84,8 +84,7 @@ jobs:
           path: dist/*.rpm
           if-no-files-found: error
 
-  # The Arch packages, built and tested by makepkg from packaging/arch. The
-  # archlinux image is x86_64 only.
+  # The Arch package, built and tested by makepkg from packaging/arch.
   arch:
     name: arch x86_64
     runs-on: ubuntu-24.04
@@ -102,10 +101,50 @@ jobs:
       - name: Build, test and package
         run: .github/ci/package-arch.sh
 
-      - name: Upload packages
+      - name: Upload package
         uses: actions/upload-artifact@v4
         with:
           name: tortilla-arch-x86_64
+          path: dist/*.pkg.tar.zst
+          if-no-files-found: error
+
+  # The same on Arch Linux ARM, which has no image of its own: one is made
+  # from its root filesystem, as Arch Linux ARM publishes it.
+  arch-arm64:
+    name: arch arm64
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Arch Linux ARM image
+        run: |
+          base=http://os.archlinuxarm.org/os
+          curl -fsSL -o alarm.tar.gz "$base/ArchLinuxARM-aarch64-latest.tar.gz"
+          curl -fsSL -o alarm.tar.gz.md5 "$base/ArchLinuxARM-aarch64-latest.tar.gz.md5"
+          echo "$(cut -d' ' -f1 alarm.tar.gz.md5)  alarm.tar.gz" | md5sum -c -
+          docker import alarm.tar.gz alarm
+          rm alarm.tar.gz alarm.tar.gz.md5
+
+      # The kernel and firmware are no use in a container, and the kernel's
+      # upgrade would build an initramfs. pacman can't tell a container's
+      # free space.
+      - name: Build, test and package
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src -e GITHUB_REF alarm sh -c '
+            set -eu
+            sed -i "s/^CheckSpace/#CheckSpace/" /etc/pacman.conf
+            pacman-key --init
+            pacman-key --populate archlinuxarm
+            pacman -Rdd --noconfirm linux-aarch64 linux-firmware 2>/dev/null || true
+            .github/ci/package-arch.sh'
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: tortilla-arch-arm64
           path: dist/*.pkg.tar.zst
           if-no-files-found: error
 
@@ -113,8 +152,14 @@ jobs:
   # tortilla.exe and the Explorer extension, as a zip and an NSIS installer
   # that registers the extension.
   windows:
-    name: windows x86_64
-    runs-on: windows-2022
+    name: windows ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64, runner: windows-2022,  triplet: x64-windows-static }
+          - { arch: arm64,  runner: windows-11-arm, triplet: arm64-windows-static }
     steps:
       # rapport's URL is SSH; with no SSH key given, checkout fetches
       # submodules over HTTPS with the job's token.
@@ -126,12 +171,12 @@ jobs:
         id: vcpkg
         uses: ./rapport/.github/actions/vcpkg
         with:
-          triplet: x64-windows-static
+          triplet: ${{ matrix.triplet }}
 
       # Configuring builds the vcpkg ports; they're saved before anything
       # later can fail and lose them.
       - name: Configure
-        run: .github/ci/build-windows.ps1 -ConfigureOnly
+        run: .github/ci/build-windows.ps1 -Arch ${{ matrix.arch }} -ConfigureOnly
 
       - uses: actions/cache/save@v4
         if: always() && steps.vcpkg.outputs.cache-hit != 'true'
@@ -140,27 +185,30 @@ jobs:
           key: ${{ steps.vcpkg.outputs.cache-key }}
 
       - name: Build, test and package
-        run: .github/ci/build-windows.ps1
+        run: .github/ci/build-windows.ps1 -Arch ${{ matrix.arch }}
 
       - name: Upload installer and zip
         uses: actions/upload-artifact@v4
         with:
-          name: tortilla-windows-x86_64
+          name: tortilla-windows-${{ matrix.arch }}
           path: |
             dist/*.exe
             dist/*.zip
           if-no-files-found: error
 
-  # A pushed tag (v0.1, v0.2-beta, ...) becomes a GitHub release carrying the
-  # Windows installer and zip, and the Linux packages.
+  # A pushed tag (v0.1.0, v0.2.0-beta, ...) becomes the latest GitHub release:
+  # the Windows installers and zips, and one package per Linux distribution.
+  # Short notes, so the downloads are near the top of the page.
   release:
     name: Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [linux, fedora, arch, windows]
+    needs: [linux, fedora, arch, arch-arm64, windows]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -171,8 +219,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           ls -l dist
-          prerelease=
-          case "$GITHUB_REF_NAME" in *-*) prerelease=--prerelease ;; esac
+          v=${GITHUB_REF_NAME#v}
+          sed "s/@VERSION@/$v/g; s|@COMMITS@|https://github.com/$GITHUB_REPOSITORY/commits/$GITHUB_REF_NAME|g" \
+            .github/release-notes.md > notes.md
           gh release create "$GITHUB_REF_NAME" dist/* \
-            --repo "$GITHUB_REPOSITORY" --title "Tortilla ${GITHUB_REF_NAME#v}" \
-            --generate-notes --verify-tag $prerelease
+            --repo "$GITHUB_REPOSITORY" --title "Tortilla $v" \
+            --notes-file notes.md --verify-tag --latest

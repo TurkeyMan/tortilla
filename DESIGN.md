@@ -150,7 +150,14 @@ polish first. Qt is the default first backend.
 
 ## Source layout and packaging
 
-The source tree mirrors the packages. Users install `tortilla`, or the
+A release is one package per distribution and architecture: `tortilla`, with
+everything below in it, every backend and every file manager's extension. A
+download has to be one file, as `apt install ./file.deb` fetches nothing of
+ours beside it. It requires the app's own libraries and any one toolkit; a
+backend or extension loads only where its toolkit or file manager is.
+
+The source tree mirrors the split packages, which `TORTILLA_PACKAGE_SPLIT`
+builds for a package repository, where a user installs `tortilla`, or the
 package for their toolkit if they know it, and it pulls in the rest:
 
 ```

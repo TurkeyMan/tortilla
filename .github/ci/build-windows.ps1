@@ -2,10 +2,11 @@
 # in), run the tests, and package: a zip and an NSIS installer, each holding
 # a self-contained tortilla.exe and the Explorer extension. Leaves them in
 # dist\. Expects VCPKG_ROOT (rapport's vcpkg action sets it).
-#   .github/ci/build-windows.ps1 [-Version 0.2.0] [-ConfigureOnly]
+#   .github/ci/build-windows.ps1 [-Arch x86_64|arm64] [-Version 0.2.0] [-ConfigureOnly]
+# -Arch is the target's, and must be the machine's: the tests run.
 # -ConfigureOnly stops once vcpkg has built the ports, so CI can save its
 # cache before anything else can fail.
-param([string]$Version = '', [switch]$ConfigureOnly)
+param([ValidateSet('x86_64', 'arm64')][string]$Arch = 'x86_64', [string]$Version = '', [switch]$ConfigureOnly)
 $ErrorActionPreference = 'Stop'
 # Runs a command, showing its output; if it fails, its last lines also go
 # up as a GitHub error annotation, readable without the full log.
@@ -34,10 +35,12 @@ $suffix = if ($Version) { "-$Version" } else { '' }
 $parts = @($appVersion.Split('.')) + @('0', '0', '0', '0')
 $fileVersion = ($parts[0..3]) -join '.'
 
+$platform = if ($Arch -eq 'arm64') { 'ARM64' } else { 'x64' }
+$triplet = if ($Arch -eq 'arm64') { 'arm64-windows-static' } else { 'x64-windows-static' }
 Run 'configure' {
-    cmake -S . -B build-win -A x64 `
+    cmake -S . -B build-win -A $platform `
         "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
-        -DVCPKG_TARGET_TRIPLET=x64-windows-static
+        "-DVCPKG_TARGET_TRIPLET=$triplet"
 }
 if ($ConfigureOnly) { return }
 Run 'build' {
@@ -70,7 +73,7 @@ Copy-Item README.md, LICENSE, NOTICES.md $stage
 # extension Explorer loads.
 Run 'the import check' { python rapport/ci/check-imports.py "$stage/bin/tortilla.exe" "$stage/bin/tortilla-shell.dll" }
 
-Compress-Archive -Path $stage -DestinationPath "dist/tortilla$suffix-windows-x86_64.zip"
+Compress-Archive -Path $stage -DestinationPath "dist/tortilla$suffix-windows-$Arch.zip"
 $makensis = Get-Command makensis -ErrorAction SilentlyContinue
 if (-not $makensis) {
     $default = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
@@ -78,7 +81,7 @@ if (-not $makensis) {
     $makensis = $default
 }
 Run 'makensis' {
-    & $makensis /V2 "/DVERSION=$appVersion" "/DVERSION4=$fileVersion" "/DSTAGE=$((Resolve-Path $stage).Path)" `
+    & $makensis /V2 "/DVERSION=$appVersion" "/DVERSION4=$fileVersion" "/DARCH=$Arch" "/DSTAGE=$((Resolve-Path $stage).Path)" `
         "/DOUT=$((Resolve-Path dist).Path)\tortilla$suffix-windows-x86_64-setup.exe" (Resolve-Path data/windows/tortilla.nsi).Path
 }
 Remove-Item -Recurse -Force $stage

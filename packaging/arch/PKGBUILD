@@ -1,26 +1,35 @@
-# Tortilla's Arch packages, built from this checkout: the same split as the
-# .deb and .rpm (see DESIGN.md, "Source layout and packaging"), each package
-# one CMake install component.
+# Tortilla's Arch package, built from this checkout: one package with
+# everything, as the .deb and .rpm are (cmake/packaging.cmake).
 #
 #   cd packaging/arch && makepkg -s
-#   sudo pacman -U tortilla-gtk4-*.pkg.tar.zst ...   (or tortilla-qt, tortilla-gtk3)
+#   sudo pacman -U tortilla-*.pkg.tar.zst
 #
-# Plain "tortilla" carries every backend and no toolkit: the desktop has at
-# least one, and rapport loads the backend that matches it at run time. So
-# the backends depend on no toolkit; each tortilla-<toolkit> names its own.
+# It carries every backend and file manager extension, and needs none of
+# their toolkits or file managers: rapport loads the backend that matches
+# the desktop, and each file manager loads its own extension.
 #
 # Maintainer: Manu Evans <turkeyman@gmail.com>
-pkgbase=tortilla
-pkgname=(tortilla-rapport tortilla-rapport-gtk3 tortilla-rapport-gtk4 tortilla-rapport-qt6
-         tortilla-core tortilla tortilla-gtk3 tortilla-gtk4 tortilla-qt
-         tortilla-nautilus tortilla-nemo tortilla-caja tortilla-thunar tortilla-dolphin
-         tortilla-pcmanfm)
+pkgname=tortilla
 pkgver=0.1.0
 pkgrel=1
-pkgdesc='A fast, native git client'
+pkgdesc="A fast, native git client, with every user interface and the file managers' context menus"
 arch=(x86_64 aarch64)
 url='https://github.com/TurkeyMan/tortilla'
 license=(GPL-3.0-only MIT)
+depends=(libgit2 git git-lfs hicolor-icon-theme gcc-libs glibc)
+optdepends=('gtk4: the GTK 4 user interface'
+            'qt6-base: the Qt 6 user interface'
+            'gtk3: the GTK 3 user interface'
+            'curl: HTTP (Gravatar pictures)'
+            'gdk-pixbuf2: decoding images (Gravatar pictures)'
+            'ifritview: comparing images, side by side or as their difference')
+# Tortilla's split packages of 0.1.0-alpha, and its packages before its
+# rapport was its own: all in this one now.
+replaces=(tortilla-rapport tortilla-rapport-gtk3 tortilla-rapport-gtk4 tortilla-rapport-qt6
+          tortilla-core tortilla-gtk3 tortilla-gtk4 tortilla-qt
+          tortilla-nautilus tortilla-nemo tortilla-caja tortilla-thunar tortilla-dolphin
+          tortilla-pcmanfm librapport librapport-dev librapport-gtk3 librapport-gtk4 librapport-qt6)
+conflicts=("${replaces[@]}")
 makedepends=(cmake ninja git libgit2 gtk3 gtk4 qt6-base
              libnautilus-extension nemo caja thunar kio wayland-protocols)
 
@@ -64,149 +73,13 @@ check() {
   done
 }
 
-_install() {
-  DESTDIR="$pkgdir" cmake --install build --component "$1"
-}
-
-# rapport is Tortilla's own copy, in /usr/lib/tortilla: an app on another
-# rapport version keeps its own the same way, so neither replaces the
-# other's library. Its headers aren't packaged.
-package_tortilla-rapport() {
-  pkgdesc="Tortilla's copy of rapport, the toolkit-neutral UI library it is built on"
-  # Tortilla's packages before its rapport was its own: removed on upgrade,
-  # so their old backends in /usr/lib/rapport can't be found first.
-  replaces=(librapport librapport-dev)
-  conflicts=(librapport librapport-dev)
-  license=(MIT)
-  depends=(gcc-libs glibc)
-  # Loaded on first use: HTTP, and decoding images.
-  optdepends=('curl: HTTP (Gravatar pictures)'
-              'gdk-pixbuf2: decoding images (Gravatar pictures)'
-              'tortilla-rapport-gtk4: GTK 4 user interface'
-              'tortilla-rapport-qt6: Qt 6 user interface'
-              'tortilla-rapport-gtk3: GTK 3 user interface')
-  _install core
-  install -Dm644 "$_root/rapport/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
-}
-
-_backend() {
-  license=(MIT)
-  replaces=("librapport-$1")
-  conflicts=("librapport-$1")
-  _install "$1"
-  install -Dm644 "$_root/rapport/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
-}
-
-package_tortilla-rapport-gtk3() {
-  pkgdesc="The GTK 3 backend of Tortilla's copy of rapport"
-  depends=("tortilla-rapport=$pkgver-$pkgrel" gcc-libs glibc)
-  _backend gtk3
-}
-
-package_tortilla-rapport-gtk4() {
-  pkgdesc="The GTK 4 backend of Tortilla's copy of rapport"
-  depends=("tortilla-rapport=$pkgver-$pkgrel" gcc-libs glibc)
-  _backend gtk4
-}
-
-package_tortilla-rapport-qt6() {
-  pkgdesc="The Qt 6 backend of Tortilla's copy of rapport"
-  depends=("tortilla-rapport=$pkgver-$pkgrel" gcc-libs glibc)
-  _backend qt6
-}
-
-package_tortilla-core() {
-  pkgdesc='A fast, native git client (the application; install tortilla, or tortilla-gtk4, tortilla-qt or tortilla-gtk3)'
-  license=(GPL-3.0-only)
-  depends=("tortilla-rapport=$pkgver-$pkgrel" libgit2 git git-lfs hicolor-icon-theme gcc-libs glibc)
-  optdepends=('tortilla-nautilus: entries in the context menu of Nautilus (GNOME Files)'
-              'tortilla-nemo: entries in the context menu of Nemo'
-              'tortilla-caja: entries in the context menu of Caja'
-              'tortilla-thunar: entries in the context menu of Thunar'
-              'tortilla-dolphin: entries in the context menu of Dolphin'
-              'tortilla-pcmanfm: entries in the context menu of PCManFM-Qt and PCManFM')
-  _install tortilla
-}
-
-package_tortilla() {
-  pkgdesc='A fast, native git client (every user interface; it uses the one that matches your desktop)'
-  license=(GPL-3.0-only)
-  depends=("tortilla-core=$pkgver-$pkgrel" "tortilla-rapport-gtk3=$pkgver-$pkgrel"
-           "tortilla-rapport-gtk4=$pkgver-$pkgrel" "tortilla-rapport-qt6=$pkgver-$pkgrel")
-  optdepends=('ifritview: comparing images, side by side or as their difference')
-  _install tortilla_all
-}
-
-# $1 the backend, then the toolkit it needs.
-_frontend() {
-  license=(GPL-3.0-only)
-  depends=("tortilla-core=$pkgver-$pkgrel" "tortilla-rapport-$1=$pkgver-$pkgrel" "${@:2}")
-  # Images in a comparison open in IfritView (Settings > Diff Viewer). One
-  # package for now; each toolkit's own once IfritView splits like this.
-  optdepends=('ifritview: comparing images, side by side or as their difference')
-  _install "tortilla_$1"
-}
-
-package_tortilla-gtk3() {
-  pkgdesc='A fast, native git client (GTK 3)'
-  _frontend gtk3 gtk3 glib2 cairo pango
-}
-
-package_tortilla-gtk4() {
-  pkgdesc='A fast, native git client (GTK 4)'
-  _frontend gtk4 gtk4 glib2 cairo pango graphene
-}
-
-package_tortilla-qt() {
-  pkgdesc='A fast, native git client (Qt 6)'
-  _frontend qt6 qt6-base
-}
-
-# The file managers' context menus. Each loads its extensions when it starts:
-# quit it (nautilus -q, nemo -q, caja -q, thunar -q) for the menu to appear.
-_shell() {
-  license=(GPL-3.0-only)
-  depends+=("tortilla-core=$pkgver-$pkgrel" gcc-libs glibc glib2)
-  _install "tortilla-shell-$1"
-}
-
-package_tortilla-nautilus() {
-  pkgdesc='Tortilla in the context menu of Nautilus (GNOME Files)'
-  depends=(libnautilus-extension)
-  _shell nautilus
-}
-
-package_tortilla-nemo() {
-  pkgdesc='Tortilla in the context menu of Nemo'
-  depends=(nemo)
-  _shell nemo
-}
-
-package_tortilla-caja() {
-  pkgdesc='Tortilla in the context menu of Caja'
-  depends=(caja)
-  _shell caja
-}
-
-package_tortilla-thunar() {
-  pkgdesc='Tortilla in the context menu of Thunar'
-  depends=(thunar)
-  _shell thunar
-}
-
-package_tortilla-dolphin() {
-  pkgdesc='Tortilla in the context menu of Dolphin and other KIO file managers'
-  depends=(kio qt6-base)
-  optdepends=('dolphin: the file manager')
-  _shell dolphin
-}
-
-package_tortilla-pcmanfm() {
-  pkgdesc='Tortilla in the context menu of PCManFM-Qt and PCManFM (file manager actions; Caja shows them too with caja-actions)'
-  arch=(any)
-  license=(GPL-3.0-only)
-  depends=("tortilla-core=$pkgver-$pkgrel" git sh)
-  optdepends=('pcmanfm-qt: the LXQt file manager'
-              'pcmanfm: the LXDE file manager')
-  _install tortilla-shell-pcmanfm
+# rapport is Tortilla's own copy, in /usr/lib/tortilla, so no other app's
+# rapport replaces it; its headers aren't packaged. The file managers load
+# their extensions when they start: quit one (nautilus -q, ...) for the menu.
+package() {
+  local c
+  for c in core tortilla tortilla_all gtk3 gtk4 qt6 tortilla-shell-{nautilus,nemo,caja,thunar,dolphin,pcmanfm}; do
+    DESTDIR="$pkgdir" cmake --install build --component "$c"
+  done
+  install -Dm644 "$_root/rapport/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/rapport-LICENSE"
 }

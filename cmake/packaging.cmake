@@ -1,6 +1,7 @@
-# Linux packages: .deb and .rpm through CPack, split the way DESIGN.md's
-# "Source layout and packaging" describes. The Arch package builds the same
-# install components from packaging/arch/PKGBUILD.
+# Linux packages: .deb and .rpm through CPack. One package with everything
+# (below), or with TORTILLA_PACKAGE_SPLIT the split DESIGN.md's "Source
+# layout and packaging" describes. packaging/arch/PKGBUILD builds the one
+# package from the same install components.
 #
 #   cpack -G DEB    (on Debian/Ubuntu: needs dpkg-shlibdeps)
 #   cpack -G RPM    (on Fedora/RHEL: needs rpmbuild)
@@ -72,6 +73,110 @@ set(CPACK_PACKAGE_HOMEPAGE_URL https://github.com/TurkeyMan/tortilla)
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "A fast, native git client")
 set(CPACK_RESOURCE_FILE_LICENSE ${CMAKE_CURRENT_SOURCE_DIR}/LICENSE)
 set(CPACK_PACKAGE_DIRECTORY ${CMAKE_BINARY_DIR}/packages)
+
+# Folders that are other packages' in an .rpm: the menu's, and the icon
+# theme's, which are hicolor-icon-theme's (the app's icons, the menu's, and
+# the badges' emblems, data/linux/icons).
+list(APPEND CPACK_RPM_EXCLUDE_FROM_AUTO_FILELIST_ADDITION
+    ${CMAKE_INSTALL_FULL_DATADIR}/applications
+    ${CMAKE_INSTALL_FULL_DATADIR}/icons
+    ${CMAKE_INSTALL_FULL_DATADIR}/icons/hicolor)
+# The icon theme's folders are hicolor-icon-theme's: the app's icons, the
+# menu's, and the badges' emblems (data/linux/icons).
+file(GLOB sizes RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}/data/icons/hicolor
+     ${CMAKE_CURRENT_SOURCE_DIR}/data/icons/hicolor/*)
+file(GLOB linux_sizes RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}/data/linux/icons/hicolor
+     ${CMAKE_CURRENT_SOURCE_DIR}/data/linux/icons/hicolor/*)
+list(APPEND sizes ${linux_sizes})
+list(REMOVE_DUPLICATES sizes)
+foreach(size IN LISTS sizes)
+    list(APPEND CPACK_RPM_EXCLUDE_FROM_AUTO_FILELIST_ADDITION
+         ${CMAKE_INSTALL_FULL_DATADIR}/icons/hicolor/${size}
+         ${CMAKE_INSTALL_FULL_DATADIR}/icons/hicolor/${size}/apps
+         ${CMAKE_INSTALL_FULL_DATADIR}/icons/hicolor/${size}/emblems)
+endforeach()
+
+# -- One package --------------------------------------------------------------
+# What a release offers: one "tortilla" with everything in it, the app, every
+# backend and every file manager's extension, so a download is one file per
+# distribution. Each backend and extension is loaded only where its toolkit
+# or file manager is, so their libraries are no one's requirement: the
+# package needs the app's own libraries and any one toolkit.
+# TORTILLA_PACKAGE_SPLIT makes the split packages instead, for a package
+# repository, where apt or dnf fetches what each one needs.
+option(TORTILLA_PACKAGE_SPLIT "One package per install component (for a package repository)" OFF)
+if(NOT TORTILLA_PACKAGE_SPLIT)
+    set(CPACK_COMPONENTS_ALL core tortilla tortilla_all ${tortilla_toolkits})
+    foreach(fm IN LISTS tortilla_shells)
+        list(APPEND CPACK_COMPONENTS_ALL tortilla-shell-${fm})
+    endforeach()
+    set(CPACK_COMPONENTS_GROUPING ALL_COMPONENTS_IN_ONE)
+    set(CPACK_PACKAGE_DESCRIPTION
+        "A fast, native git client, with every user interface (it uses the one that\n"
+        "matches your desktop) and the context menu of Nautilus, Nemo, Caja, Thunar,\n"
+        "Dolphin, PCManFM-Qt and PCManFM.")
+    list(JOIN CPACK_PACKAGE_DESCRIPTION "" CPACK_PACKAGE_DESCRIPTION)
+    # The split packages of 0.1.0-alpha, and Tortilla's before its rapport
+    # was its own: all of them are in this one now.
+    set(split tortilla-rapport tortilla-core tortilla-gtk3 tortilla-gtk4 tortilla-qt
+        librapport librapport-dev)
+    foreach(tk gtk3 gtk4 qt6)
+        list(APPEND split tortilla-rapport-${tk} librapport-${tk})
+    endforeach()
+    foreach(fm nautilus nemo caja thunar dolphin pcmanfm)
+        list(APPEND split tortilla-${fm})
+    endforeach()
+
+    # .deb: the app's and the core's libraries, as dpkg-shlibdeps finds them
+    # (.github/ci/package.sh passes TORTILLA_DEB_DEPENDS); a backend's or an
+    # extension's would make every toolkit and file manager a requirement.
+    set(TORTILLA_DEB_DEPENDS "libc6, libstdc++6, libgcc-s1" CACHE STRING
+        "The app's and rapport core's shared library dependencies, for the .deb")
+    set(CPACK_DEB_COMPONENT_INSTALL ON)
+    set(CPACK_DEBIAN_PACKAGE_NAME tortilla)
+    set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
+    set(CPACK_DEBIAN_PACKAGE_SECTION vcs)
+    set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS OFF)
+    set(CPACK_DEBIAN_PACKAGE_DEPENDS
+        "${TORTILLA_DEB_DEPENDS}, git, git-lfs, libgtk-4-1 | libgtk-3-0t64 | libgtk-3-0 | libqt6widgets6t64 | libqt6widgets6")
+    set(CPACK_DEBIAN_PACKAGE_RECOMMENDS
+        "libcurl4t64 | libcurl4 | libcurl3t64-gnutls, libgdk-pixbuf-2.0-0, ifritview")
+    set(CPACK_DEBIAN_PACKAGE_ENHANCES "nautilus, nemo, caja, thunar, dolphin, pcmanfm-qt, pcmanfm")
+    list(JOIN split ", " split_deb)
+    set(CPACK_DEBIAN_PACKAGE_REPLACES "${split_deb}")
+    set(CPACK_DEBIAN_PACKAGE_BREAKS "${split_deb}")
+
+    # .rpm: rpmbuild finds the libraries, but not in the backends' and the
+    # extensions' folders, whose libraries are only there to be loaded.
+    set(CPACK_RPM_COMPONENT_INSTALL ON)
+    set(CPACK_RPM_PACKAGE_NAME tortilla)
+    set(CPACK_RPM_FILE_NAME RPM-DEFAULT)
+    set(CPACK_RPM_PACKAGE_LICENSE "GPL-3.0-only AND MIT")
+    set(CPACK_RPM_PACKAGE_GROUP "Development/Tools")
+    set(CPACK_RPM_PACKAGE_REQUIRES "git, git-lfs, (gtk4 or gtk3 or qt6-qtbase-gui)")
+    set(CPACK_RPM_PACKAGE_SUGGESTS "libcurl, gdk-pixbuf2, ifritview")
+    list(JOIN split ", " split_rpm)
+    set(CPACK_RPM_PACKAGE_OBSOLETES "${split_rpm}")
+    cmake_path(ABSOLUTE_PATH RAPPORT_INSTALL_LIBDIR BASE_DIRECTORY ${CMAKE_INSTALL_PREFIX}
+               OUTPUT_VARIABLE rapport_libdir)
+    set(loaded_dirs ${rapport_libdir}/rapport)
+    foreach(var IN ITEMS RAPPORT_SHELL_DIR_nautilus RAPPORT_SHELL_DIR_nemo RAPPORT_SHELL_DIR_caja
+                         RAPPORT_SHELL_DIR_thunar RAPPORT_SHELL_DIR_dolphin
+                         RAPPORT_SHELL_DIR_dolphin_badges)
+        if(DEFINED ${var})
+            cmake_path(ABSOLUTE_PATH ${var} BASE_DIRECTORY ${CMAKE_INSTALL_PREFIX} OUTPUT_VARIABLE dir)
+            list(APPEND loaded_dirs ${dir})
+        endif()
+    endforeach()
+    list(JOIN loaded_dirs "|" loaded_dirs)
+    # Our libraries are no one else's: none offered to other packages.
+    set(CPACK_RPM_SPEC_MORE_DEFINE
+        "%global __provides_exclude_from ^(${rapport_libdir}|${loaded_dirs})/.*$\n%global __requires_exclude_from ^(${loaded_dirs})/.*$\n%global __requires_exclude ^librapport[.]so.*$")
+    include(CPack)
+    return()
+endif()
+
+# -- Split packages -------------------------------------------------------------
 # The null backend is for tests, and isn't installed; rapport's headers
 # (its "dev" component) aren't for others to build against Tortilla's copy.
 set(CPACK_COMPONENTS_ALL core tortilla tortilla_all)
@@ -226,23 +331,4 @@ foreach(tk IN LISTS tortilla_toolkits)
     set(CPACK_RPM_TORTILLA_${TK}_PACKAGE_SUGGESTS ${ifritview_for_${tk}})
 endforeach()
 set(CPACK_RPM_TORTILLA_ALL_PACKAGE_SUGGESTS ifritview)
-list(APPEND CPACK_RPM_EXCLUDE_FROM_AUTO_FILELIST_ADDITION
-    ${CMAKE_INSTALL_FULL_DATADIR}/applications
-    ${CMAKE_INSTALL_FULL_DATADIR}/icons
-    ${CMAKE_INSTALL_FULL_DATADIR}/icons/hicolor)
-# The icon theme's folders are hicolor-icon-theme's: the app's icons, the
-# menu's, and the badges' emblems (data/linux/icons).
-file(GLOB sizes RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}/data/icons/hicolor
-     ${CMAKE_CURRENT_SOURCE_DIR}/data/icons/hicolor/*)
-file(GLOB linux_sizes RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}/data/linux/icons/hicolor
-     ${CMAKE_CURRENT_SOURCE_DIR}/data/linux/icons/hicolor/*)
-list(APPEND sizes ${linux_sizes})
-list(REMOVE_DUPLICATES sizes)
-foreach(size IN LISTS sizes)
-    list(APPEND CPACK_RPM_EXCLUDE_FROM_AUTO_FILELIST_ADDITION
-         ${CMAKE_INSTALL_FULL_DATADIR}/icons/hicolor/${size}
-         ${CMAKE_INSTALL_FULL_DATADIR}/icons/hicolor/${size}/apps
-         ${CMAKE_INSTALL_FULL_DATADIR}/icons/hicolor/${size}/emblems)
-endforeach()
-
 include(CPack)

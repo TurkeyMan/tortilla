@@ -93,26 +93,26 @@ There's no macOS version.
 
 ## Installing
 
-Tortilla 0.1.0 is about to be released. Once it's tagged, the Windows installer
-and zip and the Linux packages are on
-[GitHub Releases](https://github.com/TurkeyMan/tortilla/releases). Until then,
-every [CI run](https://github.com/TurkeyMan/tortilla/actions/workflows/build.yml)
-builds the same packages as artifacts, or you can build from source (below).
+Download the one file for your system from the latest
+[GitHub release](https://github.com/TurkeyMan/tortilla/releases/latest), for
+x86_64 or arm64. Every
+[CI run](https://github.com/TurkeyMan/tortilla/actions/workflows/build.yml)
+also builds the same files as artifacts, or you can build from source (below).
 
-On Windows, run the installer. It adds Tortilla to Explorer's context menu for
-every user, and restarts Explorer (after asking) so the badges show straight
-away.
+On Windows, run the installer (`-x86_64-setup.exe`, or `-arm64-setup.exe` on an
+ARM PC). It adds Tortilla to Explorer's context menu for every user, and
+restarts Explorer (after asking) so the badges show straight away.
 
-On Linux, there are .deb (Debian, Ubuntu), .rpm (Fedora) and Arch packages.
-Install `tortilla`, together with the `tortilla-core` and `tortilla-rapport*`
-packages beside it: it carries every user interface and uses the one that
-matches your desktop. If you know your desktop's toolkit, you can install just
-its package instead: `tortilla-gtk4`, `tortilla-qt` or `tortilla-gtk3`. For
-the context menu, add your file manager's: `tortilla-nautilus`,
-`tortilla-nemo`, `tortilla-caja`, `tortilla-thunar`, `tortilla-dolphin` or
-`tortilla-pcmanfm` (PCManFM-Qt and PCManFM), then restart the file manager. On
-Arch you can also build them from a checkout:
-`cd packaging/arch && makepkg -si`.
+On Linux, there is one package for each of Debian and Ubuntu (.deb), Fedora
+(.rpm) and Arch (.pkg.tar.zst): `sudo apt install ./tortilla-*.deb`,
+`sudo dnf install ./tortilla-*.rpm` or `sudo pacman -U tortilla-*.pkg.tar.zst`.
+It has everything: every user interface (it uses the one that matches your
+desktop) and the context menu of Nautilus, Nemo, Caja, Thunar, Dolphin,
+PCManFM-Qt and PCManFM. Restart your file manager for the menu to appear. On
+Arch you can also build it from a checkout: `cd packaging/arch && makepkg -si`.
+A package repository can have the split packages instead (a package per user
+interface, file manager and backend): configure with
+`-DTORTILLA_PACKAGE_SPLIT=ON`.
 
 Tortilla carries its own copy of rapport, in `/usr/lib/<arch>/tortilla` (or
 `/usr/lib64/tortilla`, `/usr/lib/tortilla`): it never replaces, or is
