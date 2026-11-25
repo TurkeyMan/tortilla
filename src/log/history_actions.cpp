@@ -12,6 +12,7 @@
 #include "ui/menu_items.h"
 #include "ui/menu_text.h"
 #include "ui/progress_dialog.h"
+#include "ui/windows.h"
 #include "util/notices.h"
 
 #include <algorithm>
@@ -454,7 +455,16 @@ void log_tab::open_amend_with_changes(const branch_history& h, const oid& into, 
                 },
                 [finished] { finished(amend_result::not_started); });
         }};
-    keep_dialog(commit_window::open(ui_, {repo_.workdir()}, std::move(target)));
+    auto w = commit_window::open(ui_, {repo_.workdir()}, std::move(target));
+    if (!w)
+        return show_message(
+            ui_, parent(),
+            {.icon = rap::message_spec::icon::error, .title = "Tortilla", .text = w.error()});
+    windows::keep(std::move(*w), std::function<void(bool)>(guarded(
+                                     [this](bool changed)
+                                     {
+                                         if (changed) reload();
+                                     })));
 }
 
 bool log_tab::reorder_rows(const std::vector<size_t>& rows, size_t destination,
