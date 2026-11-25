@@ -1,0 +1,2 @@
+# vcpkg overlay ports patch files: applied byte for byte, never converted.
+ports/**/*.diff -text

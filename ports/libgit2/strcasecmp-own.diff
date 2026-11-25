@@ -1,0 +1,23 @@
+Compare paths case-insensitively with libgit2's own functions on Windows.
+
+The index sorted and searched its entries with _stricmp, the working
+tree iterator with git__strcasecmp. On Windows ARM64 the C runtime's
+_stricmp orders bytes from 0x80 differently, so with core.ignorecase a
+non-ASCII path in the index never met its file on disk: status showed
+it deleted and untracked at once. One comparison on both sides.
+
+--- a/src/util/win32/msvc-compat.h
++++ b/src/util/win32/msvc-compat.h
+@@ -18,8 +18,10 @@
+ # define SSIZE_MAX LONG_MAX
+ #endif
+ 
+-#define strcasecmp(s1, s2) _stricmp(s1, s2)
+-#define strncasecmp(s1, s2, c) _strnicmp(s1, s2, c)
++extern int git__strcasecmp(const char *a, const char *b);
++extern int git__strncasecmp(const char *a, const char *b, size_t sz);
++#define strcasecmp(s1, s2) git__strcasecmp(s1, s2)
++#define strncasecmp(s1, s2, c) git__strncasecmp(s1, s2, c)
+ 
+ #endif
+ 
