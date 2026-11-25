@@ -342,6 +342,19 @@ std::string push_remote_of(const std::string& workdir, const std::string& branch
     return branch.empty() ? "" : config_value(workdir, "branch." + branch + ".remote");
 }
 
+push_route push_route_after_commit(const std::string& workdir, const std::string& branch,
+                                   const std::string& before)
+{
+    const upstream up = upstream_of(workdir, branch);
+    if (up.remote.empty() || up.remote == "." || push_remote_of(workdir, branch) != up.remote)
+        return push_route::dialog;
+    const std::string there = resolve(workdir, branch + "@{upstream}");
+    if (there.empty()) return push_route::dialog;
+    if (is_ancestor(workdir, there, branch)) return push_route::direct;
+    return !before.empty() && is_ancestor(workdir, there, before) ? push_route::dialog_force
+                                                                  : push_route::dialog;
+}
+
 std::string clone_folder_name(std::string url)
 {
     std::replace(url.begin(), url.end(), '\\', '/');

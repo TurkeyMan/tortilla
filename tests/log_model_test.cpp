@@ -1088,6 +1088,50 @@ std::vector<std::string> lines_of(const std::string& text)
     return out;
 }
 
+// Commit & Push: straight to the upstream when it's a fast-forward, else
+// the Push dialog, with Force with lease after an amend of a pushed commit.
+void push_route_tests(const std::string& root)
+{
+    using namespace tortilla;
+    const std::string origin = root + "/route-origin.git", dir = root + "/route",
+                      other = root + "/route-other";
+    const std::string g = "git -C '" + dir + "' ";
+    sh("git init -q --bare -b main '" + origin + "' && git init -q -b main '" + dir + "' && " + g +
+       "config user.name Tester && " + g + "config user.email t@example.com && " + g +
+       "remote add origin '" + origin + "' && " + g + "commit -q --allow-empty -m one && " + g +
+       "push -q -u origin main");
+    auto head = [&] { return git_out(dir, {"rev-parse", "HEAD"}); };
+
+    std::string before = head();
+    sh(g + "commit -q --allow-empty -m two");
+    check(push_route_after_commit(dir, "main", before) == push_route::direct,
+          "push route: a new commit on the upstream's tip goes straight");
+    before = head();
+    sh(g + "commit -q --amend --allow-empty -m two-again");
+    check(push_route_after_commit(dir, "main", before) == push_route::direct,
+          "push route: amending an unpushed commit still goes straight");
+    sh(g + "push -q origin main");
+    before = head();
+    sh(g + "commit -q --amend --allow-empty -m two-amended");
+    check(push_route_after_commit(dir, "main", before) == push_route::dialog_force,
+          "push route: amending a pushed commit asks, with a force");
+
+    // Someone else's commit on the upstream: never forced over.
+    sh(g + "reset -q --hard origin/main && git clone -q '" + origin + "' '" + other +
+       "' && git -C '" + other + "' -c user.name=O -c user.email=o@example.com commit -q " +
+       "--allow-empty -m theirs && git -C '" + other + "' push -q origin main && " + g +
+       "fetch -q origin");
+    before = head();
+    sh(g + "commit -q --allow-empty -m mine");
+    check(push_route_after_commit(dir, "main", before) == push_route::dialog,
+          "push route: an upstream with commits of its own asks, without a force");
+
+    sh(g + "switch -q -c topic && " + g + "commit -q --allow-empty -m topic");
+    check(push_route_after_commit(dir, "topic", head()) == push_route::dialog &&
+              push_route_after_commit(dir, "", head()) == push_route::dialog,
+          "push route: no upstream (or no branch) asks");
+}
+
 void libgit2_parity_tests(const std::string& root)
 {
     using namespace tortilla;
@@ -7272,6 +7316,7 @@ int main(int argc, char** argv)
         check(!called, "refresh: a model gone before its labels came isn't called back");
     }
     history_edit_tests(argv[1]);
+    push_route_tests(argv[1]);
     diff_sides_tests(**ui, argv[1]);
     tortilla::test::run_journal_tests(**ui, argv[1]);
     tortilla::test::run_log_host_tests(**ui, repo);

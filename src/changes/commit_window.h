@@ -49,7 +49,9 @@ private:
     void update_state();
     void amend_toggled(bool on);
     void add_signoff();
-    void commit();
+    // `push`: Commit & Push, the branch pushed after (push_dialog's
+    // push_committed).
+    void commit(bool push = false);
     // Cancel or the close box: asks first about files to be restored.
     void cancel();
     void close(bool committed);
@@ -99,6 +101,7 @@ private:
     rap::check* message_only_ = nullptr;
     rap::label* stats_ = nullptr;
     rap::button* commit_ = nullptr;
+    rap::button* commit_push_ = nullptr;
 };
 
 }  // namespace tortilla

@@ -60,6 +60,21 @@ upstream upstream_of(const std::string& workdir, const std::string& branch);
 // branch.<b>.remote [spec 7.3.2]; "" if none says.
 std::string push_remote_of(const std::string& workdir, const std::string& branch);
 
+// How Commit & Push sends `branch` after a commit moved it from `before`:
+// straight to its upstream when that's a fast-forward there; else through
+// the Push dialog (no upstream, or it pushes elsewhere), with Force with
+// lease ticked when the commit rewrote what the upstream has (an amend of
+// a pushed commit). Not when the upstream has commits the branch never had:
+// those aren't forced over.
+enum class push_route
+{
+    direct,
+    dialog,
+    dialog_force,
+};
+push_route push_route_after_commit(const std::string& workdir, const std::string& branch,
+                                   const std::string& before);
+
 // The folder a clone of `url` makes by default: its last component without
 // ".git" [spec 7.1.2].
 std::string clone_folder_name(std::string url);

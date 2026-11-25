@@ -5,6 +5,7 @@
 #include "git/repo.h"
 #include "git/temp_files.h"
 #include "i18n.h"
+#include "remote/push_dialog.h"
 #include "settings.h"
 #include "ui/menu_items.h"
 #include "ui/modal_dialogs.h"
@@ -253,6 +254,10 @@ void commit_window::build()
                     spacer{},
                     button{_("C_ommit")}.bind(commit_).enabled(false).on_click([this]
                                                                                { commit(); }),
+                    button{_("Commit & _Push")}
+                        .bind(commit_push_)
+                        .enabled(false)
+                        .on_click([this] { commit(true); }),
                     button{_("Cancel")}.on_click([this] { cancel(); }),
                 },
             }}}
@@ -366,6 +371,7 @@ void commit_window::update_state()
     const bool something = checked > 0 || message_only_->checked() || amend_->checked();
     can_commit_ = !committing_ && !trimmed(message_->text()).empty() && something;
     commit_->set_enabled(can_commit_);
+    commit_push_->set_enabled(can_commit_);
 }
 
 // Amend: the last commit's message to edit, and its author [spec 5.4.4].
@@ -418,7 +424,7 @@ void commit_window::add_signoff()
 // git commit --only takes exactly those paths and leaves whatever else is
 // staged alone (TortoiseGit rewrites the index to match the boxes, then
 // re-stages what it unstaged) [spec 5.4.6].
-void commit_window::commit()
+void commit_window::commit(bool push)
 {
     const std::vector<file_change> files =
         message_only_->checked() ? std::vector<file_change>{} : files_.checked_files();
@@ -497,11 +503,15 @@ void commit_window::commit()
     }
     commands.push_back(files.empty() ? c : literal_paths(c));
 
+    // Where the branch was, for Commit & Push to tell a fast-forward from a
+    // rewrite (an amend of a pushed commit).
+    const std::string before = push ? resolve(workdir_, "HEAD") : std::string();
+
     committing_ = true;
     update_state();
     if (load_) load_->cancel();
     run_progress_dialog(ui_, window_.get(), _("Commit"), workdir_, std::move(commands),
-                        [this, message_file, paths_file, add_file](bool ok)
+                        [this, message_file, paths_file, add_file, push, before](bool ok)
                         {
                             std::error_code ec;
                             fs::remove(message_file, ec);  // the path lists go with the lambda
@@ -509,6 +519,10 @@ void commit_window::commit()
                             if (ok)
                             {
                                 const std::vector<std::string> failed = restore(restoring());
+                                // Before this window goes: the push keeps the program.
+                                if (push)
+                                    push_dialog::push_committed(ui_, workdir_,
+                                                                current_branch(workdir_), before);
                                 if (failed.empty()) return close(true);
                                 show_message(
                                     ui_, window_.get(),

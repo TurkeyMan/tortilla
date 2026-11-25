@@ -26,6 +26,13 @@ public:
     // the dialog gone: not when it was cancelled.
     void on_done(std::function<void()> f) { done_ = std::move(f); }
 
+    // Commit & Push, after a commit to `branch` (that was at `before`): a
+    // fast-forward of its upstream pushed at once, as this dialog would
+    // with nothing changed, without showing it; else this dialog for it,
+    // Force with lease ticked when the commit rewrote what was pushed.
+    static void push_committed(rap::ui&, const std::string& workdir, const std::string& branch,
+                               const std::string& before);
+
 private:
     push_dialog(rap::ui&, std::string workdir);
     void build(const std::string& local);

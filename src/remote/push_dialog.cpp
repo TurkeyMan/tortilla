@@ -41,6 +41,33 @@ push_dialog::open(rap::ui& ui, const std::string& path, const std::string& local
     return d;
 }
 
+void push_dialog::push_committed(rap::ui& ui, const std::string& workdir,
+                                 const std::string& branch, const std::string& before)
+{
+    const push_route route = push_route_after_commit(workdir, branch, before);
+    auto d = open(ui, workdir, branch);
+    if (!d)
+        return show_message(ui, nullptr,
+                            {.icon = rap::message_spec::icon::error,
+                             .title = _("Push"),
+                             .text = d.error()});
+    // Just this branch, whatever was pushed last time.
+    (*d)->all_branches_->set_checked(false);
+    (*d)->update_state();
+    if (route == push_route::direct)
+    {
+        // Never shown: push() runs it in the progress dialog and closes it.
+        (*d)->push(false);
+        return;
+    }
+    if (route == push_route::dialog_force)
+    {
+        (*d)->force_with_lease_->set_checked(true);
+        (*d)->update_state();
+    }
+    windows::keep(std::move(*d));
+}
+
 push_dialog::push_dialog(rap::ui& ui, std::string workdir)
     : ui_(ui)
     , workdir_(std::move(workdir))
