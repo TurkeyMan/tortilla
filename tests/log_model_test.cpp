@@ -438,11 +438,12 @@ void diff_sides_tests(rap::ui& ui, const std::string& root)
 // stashed, conflicts, undo and names beyond ASCII.
 // What libgit2's status sees, as has_local_changes() asks it: for a test's
 // failure to say which path, and how.
-std::string libgit2_status(const tortilla::repo& repository)
+std::string libgit2_status(const tortilla::repo& repository, bool untracked = false)
 {
     git_status_options opts = GIT_STATUS_OPTIONS_INIT;
     opts.show = GIT_STATUS_SHOW_INDEX_AND_WORKDIR;
     opts.flags = GIT_STATUS_OPT_EXCLUDE_SUBMODULES;
+    if (untracked) opts.flags |= GIT_STATUS_OPT_INCLUDE_UNTRACKED;
     git_status_list* list = nullptr;
     if (git_status_list_new(&list, repository.raw(), &opts) != 0) return "(status failed)";
     std::string out;
@@ -457,6 +458,40 @@ std::string libgit2_status(const tortilla::repo& repository)
         out += " ";
     }
     git_status_list_free(list);
+    return out;
+}
+
+// A folder's names as bytes, and the settings that decide how they're
+// matched: for a test's failure to say what's on disk.
+std::string names_on_disk(const tortilla::repo& repository, const std::string& dir)
+{
+    std::string out;
+    std::error_code ec;
+    for (const auto& entry : std::filesystem::directory_iterator(rap::sys::path_from_utf8(dir), ec))
+    {
+        const std::string name = rap::sys::path_to_utf8(entry.path().filename());
+        if (name == ".git") continue;
+        out += name + "[";
+        for (unsigned char ch : name)
+            if (ch >= 0x80)
+            {
+                char hex[4];
+                std::snprintf(hex, sizeof hex, "%02x", ch);
+                out += hex;
+            }
+        out += "] ";
+    }
+    git_config* config = nullptr;
+    if (git_repository_config_snapshot(&config, repository.raw()) == 0)
+    {
+        for (const char* key : {"core.ignorecase", "core.precomposeunicode", "core.protectntfs"})
+        {
+            int value = -1;
+            git_config_get_bool(&value, config, key);
+            out += std::string(key) + "=" + std::to_string(value) + " ";
+        }
+        git_config_free(config);
+    }
     return out;
 }
 
@@ -956,6 +991,13 @@ void history_edit_tests(const std::string& root)
               "history: combine with non-ASCII names");
         h = branch_holding(*r, {*r->resolve("HEAD")}, mainline);
         auto drop = plan_drop(*h, {h->line[0]});
+        const std::string before_stash = "libgit2 \"" + libgit2_status(*r, true) + "\", git \"" +
+                                         git({"status", "--porcelain"}) + "\", disk " +
+                                         names_on_disk(*r, dir) + ", exists " +
+                                         std::to_string(std::filesystem::exists(
+                                             rap::sys::path_from_utf8(dir + "/" + a))) +
+                                         std::to_string(std::filesystem::exists(
+                                             rap::sys::path_from_utf8(dir + "/" + b)));
         sh("cd '" + dir + "' && git stash push -q -m history-test5");
         auto dropped = drop ? replay(*r, *drop) : std::unexpected(replay_failure{});
         auto e = dropped ? std::optional(edit_from(*r, *h, *drop, *dropped, "x")) : std::nullopt;
@@ -964,7 +1006,8 @@ void history_edit_tests(const std::string& root)
         check(e && effect == tree_effect::follow,
               ("history: drop with non-ASCII names follows the tree (effect " +
                std::to_string(int(effect)) + ", status \"" + status_before + "\", libgit2 \"" +
-               libgit2_status(*r) + "\")").c_str());
+               libgit2_status(*r, true) + "\", disk " + names_on_disk(*r, dir) + "; before the stash: " +
+               before_stash + ")").c_str());
         const bool applied = e && apply_edit(*r, *e);
         const std::string status = git({"status", "--porcelain"});
         check(applied && !std::filesystem::exists(dir + "/" + a) &&
