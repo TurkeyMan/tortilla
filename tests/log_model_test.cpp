@@ -933,11 +933,17 @@ void history_edit_tests(const std::string& root)
         sh("cd '" + dir + "' && git stash push -q -m history-test5");
         auto dropped = drop ? replay(*r, *drop) : std::unexpected(replay_failure{});
         auto e = dropped ? std::optional(edit_from(*r, *h, *drop, *dropped, "x")) : std::nullopt;
-        check(e && effect_of(*r, *e) == tree_effect::follow && apply_edit(*r, *e) &&
-                  !std::filesystem::exists(dir + "/" + a) &&
-                  !std::filesystem::exists(dir + "/" + b) &&
-                  git({"status", "--porcelain"}) == "?? untracked.bin",
-              "history: drop with non-ASCII names");
+        const auto effect = e ? effect_of(*r, *e) : tree_effect::none;
+        const std::string status_before = git({"status", "--porcelain"});
+        check(e && effect == tree_effect::follow,
+              ("history: drop with non-ASCII names follows the tree (effect " +
+               std::to_string(int(effect)) + ", status \"" + status_before + "\")").c_str());
+        const bool applied = e && apply_edit(*r, *e);
+        const std::string status = git({"status", "--porcelain"});
+        check(applied && !std::filesystem::exists(dir + "/" + a) &&
+                  !std::filesystem::exists(dir + "/" + b) && status == "?? untracked.bin",
+              ("history: drop with non-ASCII names (applied " + std::to_string(applied) +
+               ", status \"" + status + "\")").c_str());
         sh("cd '" + dir + "' && git stash pop -q --index");
     }
 

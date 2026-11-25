@@ -16,7 +16,8 @@ done
 id builder >/dev/null 2>&1 || useradd -m builder
 chown -R builder .
 git config --system --add safe.directory "$PWD"
-su builder -c 'cd packaging/arch && makepkg --noconfirm'
+# Arch Linux ARM's makepkg.conf makes .pkg.tar.xz: .zst for both, as Arch's.
+su builder -c 'cd packaging/arch && PKGEXT=.pkg.tar.zst makepkg --noconfirm'
 rm -f packaging/arch/*-debug-*.pkg.tar.zst  # makepkg.conf's debug symbols
 set -- packaging/arch/tortilla-*.pkg.tar.zst
 if [ $# -ne 1 ]; then
